@@ -169,6 +169,10 @@ Promotion also requires signed verification evidence. Set `SHIPGREMLINS_VERIFICA
 
 ## When setup stops
 
+On Windows, `npm ci` can fail with `EPERM` when a running ShipGremlins server or watch process holds `node_modules/@esbuild/win32-x64/esbuild.exe` open. Stop the process running from this checkout (usually Ctrl+C in its terminal), rerun `npm ci`, and restart it with `npm start`. Other checkouts can keep running. Administrator access is not needed to release this file lock.
+
+A failed `npm ci` can leave dependencies partially removed. If the CLI then reports "ShipGremlins runtime is missing," finish the reinstall before retrying `npm run hub -- setup --help`.
+
 | Result                                     | Next action                                                                                          |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | Existing configuration conflicts           | Use a fresh `--dir`, or deliberately edit the existing file after review. Setup will not replace it. |
