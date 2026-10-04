@@ -15,7 +15,7 @@ import { canOpenFolders, openDashboardFolder } from "./openFolder.ts";
 const directories: string[] = [];
 function temporary(): string {
   const directory = mkdtempSync(
-    join(realpathSync(tmpdir()), "sg-open-folder-test-"),
+    join(realpathSync.native(tmpdir()), "sg-open-folder-test-"),
   );
   directories.push(directory);
   return directory;
@@ -73,7 +73,7 @@ describe("dashboard folder opening", () => {
         });
         expect(launch).toHaveBeenLastCalledWith(
           command,
-          [realpathSync(expected)],
+          [realpathSync.native(expected)],
           { detached: true, stdio: "ignore", windowsHide: true, shell: false },
         );
       }
@@ -97,7 +97,7 @@ describe("dashboard folder opening", () => {
     });
     expect(launch).toHaveBeenCalledWith(
       "explorer.exe",
-      [realpathSync(installation)],
+      [realpathSync.native(installation)],
       expect.objectContaining({ shell: false }),
     );
   });
