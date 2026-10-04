@@ -9,10 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="https://shipgremlins-site.vercel.app"><strong>Meet ShipGremlins</strong></a> ·
+  <a href="https://shipgremlins.ai"><strong>Meet ShipGremlins</strong></a> ·
   <a href="#get-started">Get started</a> ·
   <a href="docs/SETUP.md">Docs</a> ·
   <a href="docs/ROADMAP.md">Roadmap</a> ·
+  <a href="https://shipgremlins.ai/brand.html">Brand kit</a> ·
   <a href="CONTRIBUTING.md">Join the crew</a>
 </p>
 
