@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadHub, loadProject } from "../config.ts";
-import { validateName } from "./files.ts";
+import { isExampleHub, validateName } from "./files.ts";
 
 export type Tool = "git" | "npm" | "docker" | "claude" | "gcloud";
 export interface ToolResult {
@@ -99,6 +99,12 @@ export function inspectSetup(
   try {
     const hub = loadHub(root);
     add("hub", "pass", "hub.json is valid.");
+    if (isExampleHub(root))
+      add(
+        "hub-repository",
+        "warn",
+        "hub.json is a public example. Choose the repository that will run your automation, edit hubRepo if needed, and pass that same identity explicitly as --hub-repo when initializing. --repo is the separate app repository.",
+      );
     if (hub.runners.mode === "gce") {
       const gcloud = probe("gcloud");
       add(
@@ -125,7 +131,7 @@ export function inspectSetup(
     add(
       "hub",
       "fail",
-      "hub.json is missing or invalid. Run hub setup init with --hub-repo, or repair the file.",
+      "hub.json is missing or invalid. From the clone run npm run hub -- setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub, or repair the existing file.",
     );
   }
   const projectsDir = join(root, "projects");
@@ -141,7 +147,7 @@ export function inspectSetup(
     add(
       "projects",
       "fail",
-      "No projects configured. Run hub setup init --project NAME --repo owner/app.",
+      "No projects configured. From the clone run npm run hub -- setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub. Use a lowercase project ID such as my-app, not a domain. Review an existing hub.json before choosing --hub-repo.",
     );
   for (const name of names) {
     try {
@@ -160,20 +166,20 @@ export function inspectSetup(
         placeholders ? "fail" : "pass",
         placeholders
           ? "Replace Vercel/Linear placeholders in project.json and areas.json."
-          : "Provider IDs configured; run hub doctor for live validation.",
+          : `Provider IDs configured; run npm run hub -- doctor ${name} for live validation.`,
       );
       add(
         `verified:${name}`,
         project.config.verified ? "pass" : "warn",
         project.config.verified
           ? "Project previously passed doctor; rerun after connection or branch changes."
-          : "Run hub doctor after configuring provider credentials and branches.",
+          : `Run npm run hub -- doctor ${name} after configuring provider credentials and branches.`,
       );
       add(
         `agents:${name}`,
         project.areas.some((area) => area.enabled) ? "pass" : "warn",
         project.areas.some((area) => area.enabled)
-          ? "At least one PM is enabled; workflow schedules are managed by hub crons."
+          ? "At least one PM is enabled; manage workflow schedules with npm run hub -- crons."
           : "PMs are disabled until you review their mandates and enable their areas.",
       );
     } catch {
@@ -203,6 +209,12 @@ export function inspectSetup(
       ? `Missing environment variables: ${missing.map((secret) => secret.name).join(", ")}.`
       : "Local connection variables are present; credentials have not been sent to providers.",
   );
+  if (missing.length)
+    add(
+      "env-loading",
+      "warn",
+      "A .env file is not loaded automatically. After creating and filling .env in your clone, run node --env-file=.env bin/shipgremlins.mjs setup --check. For another location, replace .env with that file's path. Existing exported environment variables take precedence.",
+    );
   const ai = Boolean(deps.env.CLAUDE_CODE_OAUTH_TOKEN?.trim());
   add(
     "ai-runtime",
@@ -250,7 +262,7 @@ export function inspectSetup(
         name: "Dashboard connection management",
         status: "planned",
         detail:
-          "The local site is a landing page and setup guide; connection secrets remain in environment/CI settings.",
+          "The local site is an operator-help page; connection secrets remain in environment/CI settings.",
       },
     ],
   };

@@ -9,14 +9,17 @@ export interface SetupDeps extends PreflightDeps {
 
 const USAGE = `ShipGremlins setup
 
-  hub setup [--check] [--json] [--dir PATH] [--project NAME]
-  hub setup init --project NAME --repo owner/app [--hub-repo owner/hub]
+  npm run hub -- setup [--check] [--json] [--dir PATH] [--project my-app]
+  npm run hub -- setup init --project my-app --repo owner/app [--hub-repo owner/hub]
                  [--dir PATH] [--area core] [--runner self-hosted|gce]
                  [--runner-label pm] [--json]
 
 Status is read-only. --check exits 1 when local preflight fails.
 Init creates missing files, preserves valid existing settings, and starts PMs disabled.
-No secret values are accepted, printed, or copied. Provider checks use hub doctor.
+Run from your clone; no global hub command or npm link is required.
+--project is a lowercase local ID (my-app), --repo is the app, and --hub-repo runs workflows.
+No secret values are accepted, printed, or copied. Provider checks use npm run hub -- doctor my-app.
+Local .env files require: node --env-file=.env bin/shipgremlins.mjs setup --check
 GitLab/Railway integration and dashboard connection management are planned.`;
 
 export async function runSetup(
@@ -78,7 +81,7 @@ export async function runSetup(
       const repo = string("repo");
       if (!project || !repo)
         throw new Error(
-          "setup init requires --project NAME and --repo owner/app",
+          "Run npm run hub -- setup init --project my-app --repo owner/app --hub-repo owner/your-hub. --project is a lowercase local ID, not a domain.",
         );
       const runner = string("runner");
       if (runner !== undefined && runner !== "self-hosted" && runner !== "gce")
@@ -100,7 +103,9 @@ export async function runSetup(
         io.log(`Connection variable names: ${result.secretNames.join(", ")}`);
         if (resolve(directory) !== resolve(root))
           io.log(
-            `Set SHIPGREMLINS_HOME to ${result.directory} when running commands against this configuration.`,
+            process.platform === "win32"
+              ? `For the following commands in this PowerShell session, run: $env:SHIPGREMLINS_HOME = '${result.directory.replace(/'/g, "''")}'`
+              : `For the following commands in this shell, run: export SHIPGREMLINS_HOME='${result.directory.replace(/'/g, "'\\''")}'`,
           );
         for (const [index, next] of result.next.entries())
           io.log(`${index + 1}. ${next}`);
@@ -129,7 +134,7 @@ export async function runSetup(
         "GitHub/Actions/Vercel integration is implemented. GitLab/Railway and dashboard connection management are planned.",
       );
       io.log(
-        "This checks local prerequisites only. Run hub doctor PROJECT for live provider validation.",
+        `This checks local prerequisites only. Run npm run hub -- doctor ${string("project") ?? "my-app"} for live provider validation after loading credentials.`,
       );
     }
     return values.check && !report.ready ? 1 : 0;
@@ -138,7 +143,7 @@ export async function runSetup(
     if (values.json) io.error(JSON.stringify({ error: message }));
     else {
       io.error(message);
-      io.error("Run hub setup --help for usage.");
+      io.error("Run npm run hub -- setup --help from your clone for usage.");
     }
     return 1;
   }

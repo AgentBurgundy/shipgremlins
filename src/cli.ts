@@ -191,7 +191,7 @@ async function promote(args: string[]): Promise<number> {
   const { values } = parseFlags(args);
   if (typeof values.project !== "string" || typeof values.area !== "string") {
     io.error(
-      "usage: hub promote --project <name> --area <key> [--target target]",
+      "usage: npm run hub -- promote --project <name> --area <key> [--target target]",
     );
     return 1;
   }
@@ -226,7 +226,7 @@ async function promote(args: string[]): Promise<number> {
 async function slack(args: string[]): Promise<number> {
   const file = args[0];
   if (!file || file.startsWith("-")) {
-    io.error("usage: hub slack <report.json>");
+    io.error("usage: npm run hub -- slack <report.json>");
     return 1;
   }
   const report = JSON.parse(
@@ -263,7 +263,7 @@ async function tickets(args: string[]): Promise<number> {
   const { values } = parseFlags(args);
   if (typeof values.project !== "string") {
     io.error(
-      "usage: hub tickets audit|reconcile --project NAME [--manifest reviewed.json] [--json] [--apply]",
+      "usage: npm run hub -- tickets audit|reconcile --project NAME [--manifest reviewed.json] [--json] [--apply]",
     );
     return 1;
   }
@@ -323,7 +323,10 @@ function validate(): number {
   }
 }
 
-const USAGE = `usage: shipgremlins <command> (or npm run hub -- <command>)
+const USAGE = `usage from your clone: npm run hub -- <command>
+
+No global hub/shipgremlins installation is required. Local .env files must be passed explicitly:
+  node --env-file=.env bin/shipgremlins.mjs <command>
 
   setup [--check] [--json] [--dir PATH]                     inspect local prerequisites without changing files
   setup init --project NAME --repo owner/app [--dir PATH] initialize configuration; use --help for all options

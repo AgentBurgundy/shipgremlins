@@ -46,15 +46,77 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("setup initialization", () => {
+  it("requires an explicit hub identity for public examples and never silently replaces it", async () => {
+    const sample = {
+      $comment: "Generic public example. Choose your own operational hub.",
+      hubRepo: "sample/source",
+      runners: { mode: "self-hosted", label: "pm" },
+      gce: {
+        project: "",
+        zone: "us-central1-a",
+        image: "pm-runner",
+        machineType: "e2-standard-4",
+        spot: false,
+      },
+    };
+    writeFileSync(join(root, "hub.json"), JSON.stringify(sample));
+    const before = readFileSync(join(root, "hub.json"), "utf8");
+    const args = ["init", "--project", "demo-app", "--repo", "example/app"];
+    expect(await runSetup(root, args, io, deps)).toBe(1);
+    expect(errors.join("\n")).toContain("--hub-repo");
+    expect(errors.join("\n")).toContain("public example");
+    expect(existsSync(join(root, "projects"))).toBe(false);
+    expect(
+      await runSetup(
+        root,
+        [...args, "--hub-repo", "example/operations"],
+        io,
+        deps,
+      ),
+    ).toBe(1);
+    expect(errors.join("\n")).toContain("Edit its hubRepo");
+    expect(readFileSync(join(root, "hub.json"), "utf8")).toBe(before);
+    expect(
+      await runSetup(root, [...args, "--hub-repo", "sample/source"], io, deps),
+    ).toBe(0);
+    expect(loadProject(root, "demo-app").config.repo).toBe("example/app");
+    expect(readFileSync(join(root, "hub.json"), "utf8")).toBe(before);
+  });
+
+  it("turns domain-like project-name errors into a usable local ID suggestion without writing", async () => {
+    expect(
+      await runSetup(
+        root,
+        [
+          "init",
+          "--project",
+          "Example.com",
+          "--repo",
+          "example/app",
+          "--hub-repo",
+          "example/hub",
+        ],
+        io,
+        deps,
+      ),
+    ).toBe(1);
+    expect(errors.join("\n")).toContain("--project example-com");
+    expect(errors.join("\n")).toContain("not a domain or URL");
+    expect(errors.join("\n")).toContain("npm run hub -- setup --help");
+    expect(readdirSync(root)).toEqual([]);
+  });
   it("creates a valid fresh config with disabled PMs and only empty secret names", () => {
     const result = initializeSetup(root, templatesRoot, input);
-    expect(result.created).toHaveLength(10);
+    expect(result.created).toHaveLength(11);
     expect(loadHub(root).hubRepo).toBe("example/hub");
     const project = loadProject(root, "demo-app");
     expect(project.config.repo).toBe("example/app");
     expect(project.config.verified).toBeNull();
     expect(project.areas[0]!.enabled).toBe(false);
     const env = readFileSync(join(root, ".env.example"), "utf8");
+    expect(
+      readFileSync(join(root, "projects", "demo-app", ".env.example"), "utf8"),
+    ).toBe(env);
     expect(env).toContain("VERCEL_BYPASS_DEMO_APP=\n");
     expect(
       env
@@ -95,6 +157,25 @@ describe("setup initialization", () => {
     expect(readFileSync(join(root, ".env.example"), "utf8")).not.toContain(
       "private-token",
     );
+  });
+
+  it("creates a complete per-project env template without replacing a clone's shared example or local secrets", () => {
+    writeFileSync(join(root, ".env.example"), "GITHUB_TOKEN=\n");
+    writeFileSync(join(root, ".env"), "GITHUB_TOKEN=existing-private-value\n");
+    initializeSetup(root, templatesRoot, input);
+    expect(readFileSync(join(root, ".env.example"), "utf8")).toBe(
+      "GITHUB_TOKEN=\n",
+    );
+    expect(readFileSync(join(root, ".env"), "utf8")).toBe(
+      "GITHUB_TOKEN=existing-private-value\n",
+    );
+    const env = readFileSync(
+      join(root, "projects", "demo-app", ".env.example"),
+      "utf8",
+    );
+    expect(env).toContain("SLACK_WEBHOOK_DEMO_APP=\n");
+    expect(env).toContain("VERCEL_BYPASS_DEMO_APP=\n");
+    expect(env).not.toContain("existing-private-value");
   });
 
   it("fails all conflicts before changing any files", () => {
@@ -167,6 +248,31 @@ describe("setup initialization", () => {
 });
 
 describe("setup status and CLI", () => {
+  it("gives clone-local first-run commands without depending on a global hub install", async () => {
+    await runSetup(root, ["--help"], io, deps);
+    await runSetup(root, [], io, deps);
+    const result = initializeSetup(root, templatesRoot, input);
+    const guidance = [...output, ...result.next].join("\n");
+    expect(guidance).toContain("npm run hub -- setup init --project my-app");
+    expect(guidance).toContain("--hub-repo your-org/your-hub");
+    expect(guidance).toContain("npm run hub -- doctor demo-app");
+    expect(guidance).not.toMatch(/(?:^|\s)hub (?:setup|doctor|crons)\b/m);
+  });
+
+  it("explains explicit .env loading without reading or disclosing a local secret file", () => {
+    writeFileSync(
+      join(root, ".env"),
+      "GITHUB_TOKEN=do-not-load-or-print-this\n",
+    );
+    const report = inspectSetup(root, deps);
+    expect(
+      report.secrets.find((secret) => secret.name === "GITHUB_TOKEN")?.present,
+    ).toBe(false);
+    expect(
+      report.checks.find((check) => check.id === "env-loading")?.detail,
+    ).toContain("node --env-file=.env bin/shipgremlins.mjs setup --check");
+    expect(JSON.stringify(report)).not.toContain("do-not-load-or-print-this");
+  });
   it.each([
     { version: "22.0.0", status: "fail" },
     { version: "22.11.9", status: "fail" },

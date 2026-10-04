@@ -16,9 +16,36 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export function validateName(value: string, kind: string): void {
   if (!PORTABLE_NAME.test(value) || RESERVED_NAME.test(value)) {
+    const suggestion = /^[A-Za-z][A-Za-z0-9.-]{0,62}$/.test(value)
+      ? value.toLowerCase().replace(/\.+/g, "-")
+      : "";
+    const example =
+      PORTABLE_NAME.test(suggestion) && !RESERVED_NAME.test(suggestion)
+        ? suggestion
+        : kind === "area"
+          ? "core"
+          : kind === "runner label"
+            ? "pm"
+            : "my-app";
+    const flag = kind === "runner label" ? "runner-label" : kind;
     throw new Error(
-      `${kind} must be portable lowercase kebab-case (1–63 characters)`,
+      `${kind} must be portable lowercase kebab-case (1–63 characters). Use --${flag} ${example}. This is a local identifier, not a domain or URL.`,
     );
+  }
+}
+
+/** Public distribution examples are not proof that an operator chose this hub. */
+export function isExampleHub(root: string): boolean {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(root, "hub.json"), "utf8"),
+    ) as Record<string, unknown>;
+    return (
+      typeof raw.$comment === "string" &&
+      raw.$comment.startsWith("Generic public example.")
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -146,7 +173,12 @@ export function initializeSetup(
     }
     if (input.hubRepo && hub.hubRepo !== input.hubRepo) {
       throw new Error(
-        "Existing hub.json names a different repository. No files changed.",
+        "Existing hub.json names a different repository. No files changed. Edit its hubRepo to the repository that will run your workflows, then repeat this command; or initialize separately with --dir .run/my-hub --hub-repo your-org/your-hub. --repo names the app under test; --hub-repo names its automation hub.",
+      );
+    }
+    if (isExampleHub(target) && !input.hubRepo) {
+      throw new Error(
+        "hub.json is a public example, not an enrolled automation hub. Review its hubRepo and pass the same repository explicitly with --hub-repo owner/your-hub; edit hubRepo first if you want a different repository. No files changed.",
       );
     }
     if (
@@ -245,6 +277,7 @@ export function initializeSetup(
     secrets = [`SLACK_WEBHOOK_${vars.NAME}`, `VERCEL_BYPASS_${vars.NAME}`];
   }
   plan(".env.example", environmentTemplate(secrets));
+  plan(join(projectPath, ".env.example"), environmentTemplate(secrets));
   plan(
     ".gitignore",
     ".env\n.env.*\n!.env.example\nnode_modules/\n.run/\ntarget/\n*.log\n",
@@ -275,9 +308,10 @@ export function initializeSetup(
       `Edit projects/${input.project}/project.json: Vercel IDs, branch names, database recipe, and commands for your app.`,
       `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
       `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
-      "Configure connection secrets in your environment and GitHub Actions settings using .env.example as a list of names.",
-      `Run hub setup --check --project ${input.project}, then hub doctor ${input.project} for live provider checks.`,
-      "After reviewing the mandate, set its area enabled=true, run hub crons write in the hub checkout, and review the generated schedule before committing.",
+      `Configure connection secrets in your environment and GitHub Actions settings. The complete variable-name template for this project is projects/${input.project}/.env.example; copy it to your clone's .env only if .env does not exist, otherwise add the missing names to the existing file. A local .env is not loaded automatically.`,
+      `From the clone, run npm run hub -- setup --check --project ${input.project}. If using a local .env, create/fill it first, then use node --env-file=.env bin/shipgremlins.mjs setup --check --project ${input.project}.`,
+      `For live provider checks run node --env-file=.env bin/shipgremlins.mjs doctor ${input.project} (or npm run hub -- doctor ${input.project} when credentials are already exported).`,
+      "After reviewing the mandate, set its area enabled=true, run npm run hub -- crons write in the hub checkout, and review the generated schedule before committing.",
       "GitHub Actions executes the agents. The local site container is an operator guide, not a background scheduler.",
     ],
   };

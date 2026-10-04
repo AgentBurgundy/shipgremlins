@@ -113,7 +113,9 @@ export async function runAddProject(
     typeof repo !== "string" ||
     (area !== undefined && typeof area !== "string")
   ) {
-    io.error("usage: hub add-project <name> --repo owner/name [--area core]");
+    io.error(
+      "usage: npm run hub -- add-project <name> --repo owner/name [--area core]",
+    );
     return 1;
   }
   try {
@@ -127,7 +129,7 @@ export async function runAddProject(
       `Secrets to add on the hub repo: SLACK_WEBHOOK_${result.vars.NAME} (the Slack incoming webhook URL) and VERCEL_BYPASS_${result.vars.NAME} (the Vercel protection-bypass secret).`,
     );
     io.log(
-      `Then run \`hub doctor ${name}\`; the PM crons are generated only once it passes.`,
+      `Then run \`npm run hub -- doctor ${name}\`; the PM crons are generated only once it passes.`,
     );
     return 0;
   } catch (err) {
