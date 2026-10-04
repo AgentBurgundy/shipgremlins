@@ -8,13 +8,13 @@ The public promise should be concrete: give your web app a team of AI PMs that e
 
 **ShipGremlins** suggests a small, persistent crew finding problems and helping ship fixes. It provides room for original characters associated with security, onboarding, accessibility, and specific features. Keep the technical descriptor “self-hosted AI product teams” alongside the name so the joke does not obscure the product.
 
-| Asset                   | Selected destination                          | Publication requirement                                                |
-| ----------------------- | --------------------------------------------- | ---------------------------------------------------------------------- |
-| Primary domain          | `shipgremlins.com`                            | Serve the landing site over HTTPS with this canonical host             |
-| Alternate domain        | `shipgremlins.ai`                             | Redirect to the corresponding path on the primary `.com` host          |
-| Open-source repository  | `AgentBurgundy/shipgremlins`                  | Publish a sanitized source snapshot under Apache-2.0                   |
-| Landing-site repository | `AgentBurgundy/shipgremlins-site`             | Keep private and deploy separately from the agent runtime              |
-| CLI                     | `shipgremlins`, with the existing `hub` alias | Source-checkout launcher is included; npm publication is separate work |
+| Asset                   | Selected destination                          | Publication requirement                                                    |
+| ----------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| Primary domain          | `shipgremlins.com`                            | Serve the landing site over HTTPS with this canonical host                 |
+| Alternate domain        | `shipgremlins.ai`                             | Redirect to the corresponding path on the primary `.com` host              |
+| Open-source repository  | `AgentBurgundy/shipgremlins`                  | Publish a sanitized source snapshot under Apache-2.0                       |
+| Landing-site repository | `AgentBurgundy/shipgremlins-site`             | Keep private and deploy separately from the agent runtime                  |
+| CLI                     | `shipgremlins`, with the existing `hub` alias | Global installation from GitHub; npm registry publication is separate work |
 
 The selected name does not establish trademark clearance or npm/social-handle availability. No availability or ownership claim is made by this document. Canonical URLs, social preview metadata, and repository links should use the selected destinations consistently once published.
 
@@ -37,7 +37,7 @@ Current alpha claims must stay narrower than the overall vision:
 - Self-hosted Linux runners and GCE tooling exist. A fresh cloud install still needs operator configuration and validation.
 - Production completion has a read-only audit and explicit `--apply` reconciler with reviewed scope manifests. It is not yet a scheduled webhook service and conservatively flags complex historical mappings.
 - Promotion gates and bounded recovery have automated scenario tests. A public real-environment demonstration should identify its exact revision, evidence, and remaining limits.
-- The landing page is a marketing site. Connections management, agent administration, and a run-history dashboard are planned.
+- The landing page is a marketing site. The CLI opens a separate local dashboard for supported connection tokens and project setup. Agent administration and run history remain planned.
 
 Make broader claims only after the corresponding certification:
 

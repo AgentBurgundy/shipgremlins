@@ -1,7 +1,19 @@
 {
   "name": "shipgremlins",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
+  "files": [
+    "bin/shipgremlins.mjs",
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/**/*test-support.ts",
+    "projects/_templates/",
+    "prompts/",
+    "dashboard/",
+    "site/dist/index.html",
+    "site/dist/operator.css",
+    "LICENSE"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "description": "AI product managers, evidence-gated delivery, and production-aware ticket tracking for your web applications.",
@@ -17,6 +29,7 @@
     "setup": "node bin/shipgremlins.mjs setup",
     "start": "node bin/shipgremlins.mjs serve",
     "test": "vitest run",
+    "test:package": "node bin/verify-install.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",

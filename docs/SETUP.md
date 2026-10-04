@@ -1,187 +1,133 @@
-# Run ShipGremlins locally
+# Set up ShipGremlins
 
-ShipGremlins currently runs PM and developer jobs through GitHub Actions, with Vercel previews and Linear tracking. The local CLI creates configuration and checks prerequisites. The public source distribution serves a small local operator-help page. The full marketing site is maintained separately. It does not run a second scheduler or provide dashboard secret management.
-
-GitLab CI and Railway adapters are planned. They are not selectable as working integrations yet. Self-hosted GitHub runners and GCE provisioning already have workflow implementations; a specific installation still needs its credentials, registration, and an end-to-end run verified.
-
-Run commands from the cloned repository's directory, where `package.json` and `bin/` exist. `npm ci` installs this project's dependencies; it does **not** install a global `hub` command. Use `npm run hub -- ...` or `node bin/shipgremlins.mjs ...` in PowerShell, macOS, and Linux. No global install or `npm link` is necessary.
+Install the global CLI with Node.js **22.12+**, npm, and Git:
 
 ```sh
-npm ci
-npm run hub -- setup --help
-npm run hub -- setup --check
+npm install -g git+https://github.com/AgentBurgundy/shipgremlins.git
+shipgremlins setup
 ```
 
-An initial failed preflight is expected until you enroll a project and supply provider IDs and credentials. It prints a checklist and does not start an agent.
+This installs from the public GitHub repository; a registry package named `shipgremlins` is not published yet. Both `shipgremlins` and the shorter `hub` alias work globally. Everyday commands do not need a clone, `npm link`, or an `npm run` wrapper.
 
-## Choose the three setup names
+## Your local setup dashboard
 
-| Option       | Meaning                                                                                                             | Example                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `--project`  | Local project ID used in folders and commands. Lowercase letters, digits, and hyphens; not a website domain or URL. | `my-app` (`Example.com` could use `example-com`) |
-| `--repo`     | Existing source repository of the application you want PMs to inspect.                                              | `your-org/my-app`                                |
-| `--hub-repo` | Repository that contains your ShipGremlins configuration and runs its GitHub Actions workflows.                     | `your-org/your-hub`                              |
+`shipgremlins setup` opens a private dashboard in your browser with project enrollment, connection-token entry, and gremlins. `shipgremlins --help` introduces their ASCII cousin.
 
-The application and automation hub are different roles. Cloning the public source does not create your operational hub repository or enroll an application.
+Enter your GitHub, Linear, Vercel, and optional Claude Code tokens, then add an app by its `owner/repository` and a short local ID such as `my-app`. Review its generated configuration, provider IDs, mandate, and isolated test accounts before enabling agents.
 
-If the clone contains a sample `hub.json`, review its `hubRepo` before initialization. Setup never replaces an existing hub identity automatically. To use a different repository in this checkout, edit **only the intended settings** in `hub.json` first, then pass the matching `--hub-repo`. A public example requires this flag explicitly so the source repository is not silently treated as your operational hub. To evaluate without editing the sample or existing configuration, use the isolated-directory example below.
+Supported connection keys are saved in the selected configuration directory's `.env`. Subsequent CLI commands load those keys; exported variables take precedence. Blank fields preserve saved values. API responses report only whether a connection is configured; existing tokens are never returned to the browser. Files use owner-only permissions where supported. The local file is not encrypted: keep the directory private and out of Git.
 
-When the operational hub identity has been chosen:
+The dashboard listens only on `127.0.0.1` and authenticates with a random session credential in the launch URL fragment. The browser removes the fragment after connecting. Do not share that link. Restarting the dashboard creates a new session. This is a local setup tool, not a public multi-user service.
+
+GitHub Actions executes agents. Local tokens are not automatically copied to Actions: configure the runner's CI secrets separately. GitLab/Railway adapters, dashboard agent logs, and runner administration remain planned.
+
+## Where configuration lives
+
+The CLI selects configuration in this order:
+
+1. `--home PATH`, or `SHIPGREMLINS_HOME`.
+2. The nearest `hub.json` in the current directory or its parents.
+3. `~/.shipgremlins` outside a configured hub.
+
+Code and templates stay in the global installation. Upgrades do not replace your projects, mandates, or connection files.
 
 ```sh
-npm run hub -- setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub
+shipgremlins --home /path/to/my-hub setup
+shipgremlins --home /path/to/my-hub setup status --json
 ```
 
-## Start the local site
+Quote Windows paths containing spaces: `shipgremlins --home 'F:\My Projects\my-hub' setup`. `setup init --dir PATH` creates configuration relative to the current working directory; use `--home PATH` for subsequent commands there.
 
-From a checkout with Node.js 22.12 or newer:
+## Why there is an automation repository
+
+The **app repository** contains the software PMs inspect. The **automation repository** stores ShipGremlins configuration and runs the supplied GitHub Actions workflows. The runtime needs its identity to dispatch developers.
+
+You normally do not need `--hub-repo`: setup reuses `hub.json` or detects a GitHub `origin` for a fresh configuration in a Git checkout. The dashboard displays the chosen repository.
 
 ```sh
-npm ci
-npm start
+shipgremlins setup init --project my-app --repo your-org/my-app
 ```
 
-Open <http://127.0.0.1:4310>. The default listener is local to your machine. The application server is a static site, not an authenticated administrative dashboard.
-
-Or, on a server with Docker Engine and Compose:
+For a fresh configuration outside any hub checkout, choose the automation repository once:
 
 ```sh
-docker compose up --build -d hub
+shipgremlins setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub
 ```
 
-The Compose service binds `127.0.0.1:4310`, uses a non-root user, has a read-only root filesystem, and restarts after a host reboot. Its health check requests the home page. The image contains code and public templates, excluding the checkout's `hub.json`, private project directories, `.env` files, Git history, and run output. The named `shipgremlins-data` volume holds configuration created through the separate CLI service. The site mounts that volume read-only.
+Setup does not create the GitHub repository or install workflows remotely. Use your operational fork/checkout and commit reviewed configuration before enabling Actions. When forking a public example, set `hubRepo` in its sample `hub.json` to your fork. Setup rejects a mismatch between a marked sample and Git origin; existing configured hub identities are never silently replaced.
 
-To inspect the container:
+| Option       | Meaning                                                     | Example                |
+| ------------ | ----------------------------------------------------------- | ---------------------- |
+| `--project`  | Local folder/command ID: lowercase letters, digits, hyphens | `example-com`          |
+| `--repo`     | App under test                                              | `your-org/app`         |
+| `--hub-repo` | Optional explicit automation repository                     | `your-org/your-hub`    |
+| `--area`     | Starting PM mandate                                         | `security`             |
+| `--runner`   | Runner mode                                                 | `self-hosted` or `gce` |
+
+Initialization creates `hub.json`, `.gitignore`, empty `.env.example` templates, and `projects/PROJECT/` with settings, areas, tiers, mandate, features, queue, and memory. PMs start disabled and unverified. Repeating initialization preserves existing files; identity conflicts stop before writing. It creates no cloud resources, provider projects, workers, credentials, or schedules.
+
+## Terminal checks and credentials
 
 ```sh
-docker compose ps
-docker compose logs hub
-docker compose run --rm cli setup --json
+shipgremlins setup status
+shipgremlins setup --check --json
+shipgremlins doctor my-app
 ```
 
-The site container is not a browser runner. Agent execution still happens in the configured GitHub Actions runners. For remote access, place the site behind your own HTTPS reverse proxy, or use an SSH tunnel to the loopback port. No cloud deployment or public domain is created by setup.
+`setup status` is read-only. `--check` exits 1 for missing requirements. An initial **needs setup** result is expected. Local checks report prerequisites and credential presence, not an online runner or valid token. `doctor` performs live provider checks and stamps the project verified only on success.
 
-## Inspect without changing anything
+The dashboard manages `GITHUB_TOKEN`, `LINEAR_API_KEY`, `VERCEL_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN`. Supply other project-specific variables, GitHub App credentials, and verification settings through your shell or an explicit environment file:
 
 ```sh
-node bin/shipgremlins.mjs setup
-node bin/shipgremlins.mjs setup --check --json
+shipgremlins --env-file .env setup --check --project my-app
+shipgremlins --env-file .env doctor my-app
 ```
 
-`setup` and `setup status` are read-only. They check the actual local Node version and bounded `--version` probes for Git, npm, Docker, and Claude. Node 22.12 or newer, Git, and npm are required for local setup. Docker and Claude on the control machine are optional; Claude must be available on the agent runner. GCE configuration also checks its project field and probes `gcloud`.
+The file path is relative to your current directory. Exported variables take precedence. Automatic loading only accepts supported connection keys; it never applies arbitrary `.env` entries such as `NODE_OPTIONS`. Keep credential values out of command arguments and committed files. Use the generated `projects/PROJECT/.env.example` for the full variable-name list and preserve existing `.env` values.
 
-Preflight validates configuration, reports placeholder IDs, and lists credential **names and presence only**. It does not contact providers, read `.env` automatically, verify worker capacity, or prove that a token works. `--check` exits with status 1 if a required local check fails, while normal status returns 0 after producing the report. `ready: true` means ready for live checks; it does not certify the deployment.
+Promotion requires `SHIPGREMLINS_VERIFICATION_FILE` and the Ed25519 **public** PEM in `SHIPGREMLINS_ATTESTATION_PUBLIC_KEY` on the dispatcher. Keep the private `SHIPGREMLINS_ATTESTATION_KEY` only in a separate trusted signing job. See the [verification guide](VERIFICATION.md).
 
-## Initialize an isolated configuration
+## First agent run
 
-Use an explicit destination while evaluating the software. Existing repository and project files are never overwritten:
+1. Configure project branches, Vercel IDs, Linear areas, test commands, and mandate.
+2. Create isolated staging accounts/data and install the GitHub App on both repositories.
+3. Configure CI secrets and register a runner. See [connections](README.md) and [runner operations](runners.md). The current workflow token must cover both repositories under the same GitHub owner.
+4. Run `shipgremlins doctor my-app` with appropriate credentials.
+5. Enable the reviewed area, run `shipgremlins crons write` in the operational hub checkout, and review/commit the schedule.
+6. Start a manual PM run. Inspect screenshots, report, checks, and ticket transitions before relying on daily automation.
+
+Self-hosted runners and GCE provisioning have workflow implementations; registration, cloud permissions, and an end-to-end run still need verification. Green local preflight is not a completed agent deployment.
+
+## Server use
 
 ```sh
-node bin/shipgremlins.mjs setup init --dir .run/my-hub --hub-repo your-org/your-hub --project my-app --repo your-org/my-app
+shipgremlins dashboard --no-open --port 4311
 ```
 
-This creates:
+The terminal prints a session link. For a remote machine, keep loopback binding and use an SSH tunnel to the same local port. Do not expose the dashboard directly to the internet.
 
-```text
-.run/my-hub/
-  hub.json
-  .env.example
-  .gitignore
-  projects/my-app/
-    .env.example
-    project.json
-    areas.json
-    tiers.json
-    core/mandate.md
-    core/features.md
-    core/queue.md
-    core/memory.md
-```
-
-Choose a starting PM with `--area security` or another lowercase name. Add `--runner gce` for the existing GCE workflow path, and `--runner-label pm` to choose the self-hosted runner label. GCE's project, image, zone, IAM, and identity federation must still be configured.
-
-New PMs start disabled and projects remain unverified. Setup creates no remote branches, repositories, Linear projects, credentials, workers, schedules, or cloud resources. Its printed checklist tells you which fields to fill next.
-
-Rerunning the same command preserves customized mandates and settings. A different hub repository, project repository, area, or explicitly requested runner setting conflicts with existing configuration and exits before writing. Invalid existing configuration also blocks initialization. Existing `.env` and `.env.example` files are preserved. Parent traversal, invalid portable names, and symbolic links in output paths are rejected. There is intentionally no `--force` flag.
-
-`SHIPGREMLINS_HOME` chooses the configuration directory for CLI commands. For example, on macOS/Linux:
-
-```sh
-export SHIPGREMLINS_HOME="$PWD/.run/my-hub"
-node bin/shipgremlins.mjs setup --check --project my-app
-```
-
-On PowerShell:
-
-```powershell
-$env:SHIPGREMLINS_HOME = (Resolve-Path .run/my-hub).Path
-node bin/shipgremlins.mjs setup --check --project my-app
-```
-
-The code and templates still come from the installation directory. An isolated configuration is not a complete copy of the hub repository. Before enabling scheduled execution, review and place its `hub.json` and `projects/my-app/` into the hub repository that will run the supplied GitHub workflows. Do not replace an existing operator's configuration without reviewing it. Run schedule-writing commands from that actual hub checkout with `SHIPGREMLINS_HOME` unset, or pointing to the checkout. The workflows load committed configuration from their own checkout.
-
-For Docker, initialize its named volume:
+The older `shipgremlins serve` and Docker Compose `hub` service still serve the operator-help page on port 4310. Compose's CLI service can initialize its persistent volume:
 
 ```sh
 docker compose run --rm cli setup init --hub-repo your-org/your-hub --project my-app --repo your-org/my-app
-docker compose run --rm cli setup --json
+docker compose run --rm cli setup status --json
 ```
 
-The configuration lives at `/data`. Export it for review with `docker compose cp hub:/data ./shipgremlins-config`. The named volume persists across `docker compose down`; `down --volumes` deletes it. The image and Compose service do not back up this volume automatically.
+## Upgrade and troubleshoot
 
-## Connect the first app
+Repeat the global installation command to upgrade, then run `shipgremlins --version`. Stop a running dashboard before upgrading that installation. Configuration is stored separately and preserved.
 
-1. In `project.json`, set the actual Vercel project and optional team IDs; confirm production, staging, and integration branches. Set install, test, lint, and type-check commands for the application's own stack. Select the correct database recipe; the template's Neon integration is an example, not a requirement for every web app.
-2. In `areas.json`, set the Linear project ID, ownership paths, schedule, and WIP limit. Review the mandate, forbidden actions, and test identities. Keep PMs disabled until the environment is ready.
-3. Install the GitHub App on the hub and target repositories, configure isolated `pm-staging` previews and test data, and register a runner. See [connection setup](README.md) and [runner operations](runners.md). The current workflow token must cover both repositories under the same GitHub owner.
-4. Add the environment variables listed in `projects/my-app/.env.example` to the appropriate local or CI secret store. This project-specific template includes its Slack webhook and Vercel bypass variable names even when the clone already contained a shared `.env.example`. Existing templates are preserved. App sign-in recipes may require a separate preview database variable.
-5. Run local preflight, then `npm run hub -- doctor my-app` with exported credentials, or the explicit `.env` command below, for live branch, Vercel, Linear, and credential checks. Doctor stamps the project verified only after its checks pass. It does not complete the full first-agent acceptance test.
-6. Explicitly enable the reviewed area in `areas.json`, run `npm run hub -- crons write` in the configured hub repository, and review/commit the generated workflow schedule. Start a manual PM run first and inspect its real screenshots, report, checks, and resulting ticket transitions before relying on daily automation.
+| Result                            | Next action                                                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command not recognized            | Reopen the terminal after installing. Check `npm config get prefix`: its directory on Windows, or `bin` subdirectory on macOS/Linux, must be on `PATH`. |
+| Install permission error          | Use a user-owned npm prefix or Node version manager. Daily commands do not need administrator access.                                                   |
+| Windows `EPERM` on `esbuild.exe`  | Stop that installation's running dashboard/watch process with Ctrl+C and repeat the install. Other checkouts can keep running.                          |
+| Runtime missing                   | Finish the global reinstall. Contributors can repair source dependencies with `npm ci`.                                                                 |
+| No automation repository detected | Use the configured hub or choose `--hub-repo owner/name` once.                                                                                          |
+| Configuration conflict            | Review existing settings or choose a fresh `--home PATH`.                                                                                               |
+| Domain/capitals in project ID     | Use a local ID such as `example-com`.                                                                                                                   |
+| Expired dashboard session         | Run `shipgremlins setup` and use the new browser link.                                                                                                  |
+| Missing provider IDs/credentials  | Fill project settings and dashboard connections, then rerun checks.                                                                                     |
+| Runner unavailable                | Check registration, labels, networking, and the runner guide.                                                                                           |
 
-The launcher is available as `node bin/shipgremlins.mjs ...` or `npm run hub -- ...`; an npm-linked install also provides `hub` and `shipgremlins`. It uses the locally installed `tsx` runtime and never downloads another package implicitly.
-
-For local credentials, create an ignored `.env` from the project's `.env.example`, fill in its values, and pass it explicitly. Preserve an existing `.env`; initialization does not read, replace, or populate it. On PowerShell, the following copy is safe to repeat:
-
-```powershell
-if (-not (Test-Path -LiteralPath .env)) { Copy-Item -LiteralPath projects/my-app/.env.example -Destination .env }
-```
-
-For an isolated configuration, prefix the template path with that configuration directory (for example `.run/my-hub/projects/my-app/.env.example`). If `.env` already exists, add any missing variable names from the project template without replacing its existing values. Edit `.env` locally using your preferred editor, then:
-
-```sh
-node --env-file=.env bin/shipgremlins.mjs setup --check --project my-app
-node --env-file=.env bin/shipgremlins.mjs doctor my-app
-```
-
-`--env-file` is a **Node option**, so it appears before `bin/shipgremlins.mjs`. `npm run hub -- setup --check` by itself reads only variables already exported into the process. Existing exported variables take precedence over `.env`; if an old exported token is being used, clear or correct that specific variable before retrying. Never paste credential values into chat, command arguments, or repository files other than your ignored local secret file.
-
-For a container check, export the credentials in your shell and pass only their names:
-
-```sh
-docker compose run --rm -e GITHUB_TOKEN -e LINEAR_API_KEY -e VERCEL_TOKEN -e SLACK_WEBHOOK_MY_APP -e VERCEL_BYPASS_MY_APP cli setup --check --project my-app
-```
-
-Compose's ordinary `.env` interpolation file does not automatically inject all of its values into containers. Keep secret values out of command arguments and use your deployment secret manager for unattended operation.
-
-Never pass credentials as setup flags. The CLI accepts provider identifiers and secret variable names in configuration, not credential values. The current workflow uses `CLAUDE_CODE_OAUTH_TOKEN`; other model providers and dashboard-managed AI connections remain roadmap work.
-
-Promotion also requires signed verification evidence. Set `SHIPGREMLINS_VERIFICATION_FILE` and the Ed25519 **public** PEM in `SHIPGREMLINS_ATTESTATION_PUBLIC_KEY` on the dispatcher. The private PEM, `SHIPGREMLINS_ATTESTATION_KEY`, belongs only in a separate trusted signing job. Do not give it to PMs, developers, or application build jobs. Follow the [verification guide](VERIFICATION.md) to generate and validate evidence for the exact candidate revision.
-
-## When setup stops
-
-On Windows, `npm ci` can fail with `EPERM` when a running ShipGremlins server or watch process holds `node_modules/@esbuild/win32-x64/esbuild.exe` open. Stop the process running from this checkout (usually Ctrl+C in its terminal), rerun `npm ci`, and restart it with `npm start`. Other checkouts can keep running. Administrator access is not needed to release this file lock.
-
-A failed `npm ci` can leave dependencies partially removed. If the CLI then reports "ShipGremlins runtime is missing," finish the reinstall before retrying `npm run hub -- setup --help`.
-
-| Result                                     | Next action                                                                                          |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Existing configuration conflicts           | Use a fresh `--dir`, or deliberately edit the existing file after review. Setup will not replace it. |
-| `hub` is not recognized                    | Run `npm run hub -- ...` from the cloned repository. `npm ci` does not install global commands.      |
-| Project name contains a domain or capitals | Choose a lowercase local ID, such as `example-com`, and reuse that ID in later commands.             |
-| Vercel/Linear placeholders                 | Fill `project.json` and `areas.json`, then rerun preflight.                                          |
-| Missing environment variables              | Supply them to the process/CI secret store; an `.env` file is not auto-loaded.                       |
-| Runner unavailable                         | Verify GitHub registration, labels, networking, and runner toolchain using the runner guide.         |
-| GCE project missing                        | Fill `gce.project` and complete image/identity setup before selecting cloud execution.               |
-| GitLab/Railway requested                   | The current adapter set cannot run this stack; follow the roadmap instead of labeling it connected.  |
-
-Initialization and inspection are safe to repeat. Enabling CI jobs, merging changes, and provisioning runners remain explicit operational steps; the setup command does not perform them.
+Source contributors can use `npm ci` and `node bin/shipgremlins.mjs`. The release check `npm run test:package` packs an allowlisted artifact, installs it to an isolated global prefix, and exercises real command shims outside the checkout on Windows and Linux CI.

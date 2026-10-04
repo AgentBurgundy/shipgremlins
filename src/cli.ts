@@ -31,11 +31,14 @@ import { runDoctor } from "./commands/doctor.ts";
 import { runMetric } from "./commands/metric.ts";
 import { runTicket } from "./commands/ticket.ts";
 import { runSetup } from "./commands/setup.ts";
+import { configurationRoot } from "./setup/location.ts";
+import { welcome } from "./terminal.ts";
 
 export const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
-export const ROOT = process.env.SHIPGREMLINS_HOME
-  ? resolve(process.env.SHIPGREMLINS_HOME)
-  : PACKAGE_ROOT;
+export const ROOT = configurationRoot(
+  process.cwd(),
+  process.env.SHIPGREMLINS_HOME,
+);
 const DEFAULT_BOT_LOGIN = "pm-hub[bot]";
 
 // ── neighbouring modules (dispatcher, promotion, report, clients, git) are
@@ -191,7 +194,7 @@ async function promote(args: string[]): Promise<number> {
   const { values } = parseFlags(args);
   if (typeof values.project !== "string" || typeof values.area !== "string") {
     io.error(
-      "usage: npm run hub -- promote --project <name> --area <key> [--target target]",
+      "usage: shipgremlins promote --project <name> --area <key> [--target target]",
     );
     return 1;
   }
@@ -226,7 +229,7 @@ async function promote(args: string[]): Promise<number> {
 async function slack(args: string[]): Promise<number> {
   const file = args[0];
   if (!file || file.startsWith("-")) {
-    io.error("usage: npm run hub -- slack <report.json>");
+    io.error("usage: shipgremlins slack <report.json>");
     return 1;
   }
   const report = JSON.parse(
@@ -263,7 +266,7 @@ async function tickets(args: string[]): Promise<number> {
   const { values } = parseFlags(args);
   if (typeof values.project !== "string") {
     io.error(
-      "usage: npm run hub -- tickets audit|reconcile --project NAME [--manifest reviewed.json] [--json] [--apply]",
+      "usage: shipgremlins tickets audit|reconcile --project NAME [--manifest reviewed.json] [--json] [--apply]",
     );
     return 1;
   }
@@ -323,13 +326,17 @@ function validate(): number {
   }
 }
 
-const USAGE = `usage from your clone: npm run hub -- <command>
+const USAGE = `usage: shipgremlins <command>
 
-No global hub/shipgremlins installation is required. Local .env files must be passed explicitly:
-  node --env-file=.env bin/shipgremlins.mjs <command>
+  shipgremlins setup                                       open your private setup dashboard
 
-  setup [--check] [--json] [--dir PATH]                     inspect local prerequisites without changing files
+Global options: --home PATH selects configuration; --env-file PATH loads credentials.
+Configuration: SHIPGREMLINS_HOME, nearest hub.json from this directory, or ~/.shipgremlins.
+Saved dashboard connections are loaded automatically; exported variables take precedence.
+
+  setup status [--check] [--json] [--dir PATH]              inspect local prerequisites without changing files
   setup init --project NAME --repo owner/app [--dir PATH] initialize configuration; use --help for all options
+  dashboard [--no-open] [--port PORT]                     open the local setup and connections dashboard
   serve [--host 127.0.0.1] [--port 4310]                    serve the local ShipGremlins site
   dispatch [--project <name>] [--dry-run] [--target target]   sync → line → heal → repair → merge → dispatch → promote
   promote --project <name> --area <key> [--target target]     cherry-pick verified merges into ONE PR to staging
@@ -350,6 +357,45 @@ No global hub/shipgremlins installation is required. Local .env files must be pa
 
 export async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
+  const dashboard =
+    command === "dashboard" ||
+    (command === "setup" &&
+      (args.length === 0 ||
+        args.includes("--no-open") ||
+        args.some((arg) => arg === "--port" || arg.startsWith("--port="))));
+  if (
+    !args.includes("--json") &&
+    [undefined, "help", "--help", "-h", "setup", "dashboard"].includes(command)
+  )
+    io.log(
+      welcome(
+        Boolean(process.stdout.isTTY && !process.env.NO_COLOR),
+        process.stdout.columns,
+      ),
+    );
+  if (dashboard) {
+    const { runDashboard } = await import("./commands/dashboard.ts");
+    return runDashboard(ROOT, PACKAGE_ROOT, args, io);
+  }
+  if (
+    command &&
+    ![
+      "help",
+      "--help",
+      "-h",
+      "serve",
+      "fixture",
+      "validate",
+      "crons",
+      "add-project",
+    ].includes(command) &&
+    !args.includes("--help") &&
+    !args.includes("-h")
+  ) {
+    const { readConnections } = await import("./setup/connections.ts");
+    for (const [name, value] of Object.entries(readConnections(ROOT)))
+      if (process.env[name] === undefined) process.env[name] = value;
+  }
   switch (command) {
     case "setup":
       return runSetup(ROOT, args, io, {
@@ -383,7 +429,7 @@ export async function main(argv: string[]): Promise<number> {
     case "crons":
       return runCrons(ROOT, args, io);
     case "add-project":
-      return runAddProject(ROOT, args, io);
+      return runAddProject(ROOT, args, io, PACKAGE_ROOT);
     case "doctor":
       return runDoctor(ROOT, args, io);
     case "linear-projects":
@@ -412,7 +458,7 @@ export async function main(argv: string[]): Promise<number> {
     case "--help":
     case "-h":
       console.log(USAGE);
-      return command === undefined ? 1 : 0;
+      return 0;
     default:
       io.error(`unknown command "${command}"\n\n${USAGE}`);
       return 1;

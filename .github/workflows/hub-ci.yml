@@ -29,3 +29,18 @@ jobs:
       - run: npm test
       - run: npx tsx src/cli.ts validate
       - run: npx tsx src/cli.ts crons --check
+
+  global-install:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:package

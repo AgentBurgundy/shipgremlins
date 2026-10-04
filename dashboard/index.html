@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#13231c" />
+    <title>Your crew · ShipGremlins</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/mark.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to setup</a>
+    <div class="workspace">
+      <aside class="sidebar" aria-label="Workspace navigation">
+        <a class="brand" href="#overview" aria-label="ShipGremlins overview">
+          <span class="brand-mark" aria-hidden="true">{g}</span>
+          <span
+            >Ship<span class="brand-light">Gremlins</span
+            ><small>YOUR PRODUCT CREW</small></span
+          >
+        </a>
+        <div class="workspace-label">WORKSPACE</div>
+        <nav class="navigation" aria-label="Main">
+          <a class="nav-item" href="#overview"
+            ><span aria-hidden="true">◈</span> Overview</a
+          >
+          <a class="nav-item" href="#connections"
+            ><span aria-hidden="true">⌘</span> Connections
+            <span class="nav-count" id="connection-count">—</span></a
+          >
+          <a class="nav-item" href="#projects"
+            ><span aria-hidden="true">▤</span> Projects
+            <span class="nav-count" id="project-count">—</span></a
+          >
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="local-indicator">
+            <span aria-hidden="true"></span> Running on your machine
+          </div>
+          <a
+            href="https://github.com/AgentBurgundy/shipgremlins/blob/main/docs/SETUP.md"
+            target="_blank"
+            rel="noreferrer"
+            >Setup guide <span aria-hidden="true">↗</span></a
+          >
+          <p>Open source. Slightly feral.</p>
+        </div>
+      </aside>
+
+      <div class="main-shell">
+        <header class="topbar">
+          <span
+            >Mission control <span class="topbar-separator">/</span>
+            <strong>Your crew</strong></span
+          ><span class="local-pill"
+            ><span aria-hidden="true"></span> LOCAL</span
+          >
+        </header>
+        <main id="main" tabindex="-1">
+          <div id="global-message" class="notice" role="status" hidden></div>
+          <section class="hero" id="overview" aria-labelledby="welcome-title">
+            <div class="hero-copy">
+              <span class="eyebrow"
+                ><span aria-hidden="true">✦</span> A LITTLE CHAOS. A LOT OF
+                CARE.</span
+              >
+              <h1 id="welcome-title">Meet your new<br />product crew.</h1>
+              <p>
+                Connect your tools. Add your app.<br class="desktop-break" />
+                Give your gremlins a place to work.
+              </p>
+              <a class="button button-dark" href="#connections"
+                >Set up your crew <span aria-hidden="true">↗</span></a
+              >
+            </div>
+            <div class="hero-art">
+              <div class="hero-orbit" aria-hidden="true"></div>
+              <span class="mascot-note" aria-hidden="true"
+                >READY TO NITPICK.</span
+              ><img
+                src="/assets/gremlin.webp"
+                width="480"
+                height="540"
+                alt="A friendly green gremlin proudly holding a checked bug report"
+                fetchpriority="high"
+              />
+            </div>
+            <div class="hero-footnote">
+              <span class="tiny-star" aria-hidden="true">✳</span> Real browser
+              evidence. Human-approved work.
+            </div>
+          </section>
+
+          <section class="setup-status" aria-label="Setup progress">
+            <div>
+              <span class="eyebrow muted">GETTING STARTED</span>
+              <h2 id="setup-title">Make yourself at home.</h2>
+            </div>
+            <ol class="steps">
+              <li id="connection-step">
+                <span class="step-number">1</span
+                ><span
+                  >Connect your tools<small id="connections-summary"
+                    >Checking configuration…</small
+                  ></span
+                >
+              </li>
+              <li id="project-step">
+                <span class="step-number">2</span
+                ><span
+                  >Add your first app<small id="projects-summary"
+                    >Checking projects…</small
+                  ></span
+                >
+              </li>
+            </ol>
+          </section>
+
+          <section
+            class="panel connections-panel"
+            id="connections"
+            aria-labelledby="connections-title"
+          >
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow muted">01 / THE CONNECTIONS</span>
+                <h2 id="connections-title">Give your crew the keys.</h2>
+                <p>
+                  Save credentials here. Keep secrets out of your terminal
+                  history.
+                </p>
+              </div>
+              <span class="section-symbol" aria-hidden="true">⌘</span>
+            </div>
+            <form id="connections-form">
+              <fieldset id="connections-fields" disabled>
+                <legend class="sr-only">Provider credentials</legend>
+                <div class="token-grid">
+                  <div class="token-field">
+                    <div class="field-heading">
+                      <label for="github-token"
+                        ><span class="provider-icon" aria-hidden="true">GH</span
+                        >GitHub</label
+                      ><span class="saved-state" data-connection="GITHUB_TOKEN"
+                        >Checking…</span
+                      >
+                    </div>
+                    <p id="github-help">
+                      Repositories and GitHub Actions workflows.
+                    </p>
+                    <div class="password-wrap">
+                      <input
+                        id="github-token"
+                        name="GITHUB_TOKEN"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="Paste your GitHub token"
+                        aria-describedby="github-help"
+                      /><button
+                        class="reveal-button"
+                        type="button"
+                        data-reveal="github-token"
+                        aria-label="Show GitHub token"
+                        aria-pressed="false"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                  <div class="token-field">
+                    <div class="field-heading">
+                      <label for="linear-token"
+                        ><span
+                          class="provider-icon linear-icon"
+                          aria-hidden="true"
+                          >LI</span
+                        >Linear</label
+                      ><span
+                        class="saved-state"
+                        data-connection="LINEAR_API_KEY"
+                        >Checking…</span
+                      >
+                    </div>
+                    <p id="linear-help">
+                      Approved tickets and delivery status.
+                    </p>
+                    <div class="password-wrap">
+                      <input
+                        id="linear-token"
+                        name="LINEAR_API_KEY"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="Paste your Linear API key"
+                        aria-describedby="linear-help"
+                      /><button
+                        class="reveal-button"
+                        type="button"
+                        data-reveal="linear-token"
+                        aria-label="Show Linear API key"
+                        aria-pressed="false"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                  <div class="token-field">
+                    <div class="field-heading">
+                      <label for="vercel-token"
+                        ><span
+                          class="provider-icon vercel-icon"
+                          aria-hidden="true"
+                          >▲</span
+                        >Vercel</label
+                      ><span class="saved-state" data-connection="VERCEL_TOKEN"
+                        >Checking…</span
+                      >
+                    </div>
+                    <p id="vercel-help">Deployment checks for your web app.</p>
+                    <div class="password-wrap">
+                      <input
+                        id="vercel-token"
+                        name="VERCEL_TOKEN"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="Paste your Vercel token"
+                        aria-describedby="vercel-help"
+                      /><button
+                        class="reveal-button"
+                        type="button"
+                        data-reveal="vercel-token"
+                        aria-label="Show Vercel token"
+                        aria-pressed="false"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                  <div class="token-field">
+                    <div class="field-heading">
+                      <label for="claude-token"
+                        ><span
+                          class="provider-icon claude-icon"
+                          aria-hidden="true"
+                          >✳</span
+                        >Claude Code</label
+                      ><span
+                        class="saved-state"
+                        data-connection="CLAUDE_CODE_OAUTH_TOKEN"
+                        >Checking…</span
+                      >
+                    </div>
+                    <p id="claude-help">
+                      Optional local token. Runners need their own AI secret.
+                    </p>
+                    <div class="password-wrap">
+                      <input
+                        id="claude-token"
+                        name="CLAUDE_CODE_OAUTH_TOKEN"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="Paste an OAuth token (optional)"
+                        aria-describedby="claude-help"
+                      /><button
+                        class="reveal-button"
+                        type="button"
+                        data-reveal="claude-token"
+                        aria-label="Show Claude Code token"
+                        aria-pressed="false"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-bottom">
+                  <p>
+                    Already saved? Leave a field blank to keep its current
+                    token.
+                  </p>
+                  <button
+                    class="button button-dark"
+                    type="submit"
+                    id="save-connections"
+                  >
+                    Save connections <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
+              </fieldset>
+              <div
+                class="form-message"
+                id="connections-message"
+                role="status"
+                hidden
+              ></div>
+            </form>
+            <div class="privacy-note">
+              <span class="privacy-icon" aria-hidden="true">⌑</span>
+              <p>
+                <strong>Your machine. Your credentials.</strong> Tokens are
+                stored in your local .env file, outside browser storage. Saved
+                values are never sent back to the dashboard. “Saved” means
+                configured; live access still needs verification.
+              </p>
+            </div>
+          </section>
+
+          <section class="panel" id="projects" aria-labelledby="projects-title">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow muted">02 / THE PLAYGROUND</span>
+                <h2 id="projects-title">Which app are we improving?</h2>
+                <p>
+                  Add a GitHub repository to create its local project
+                  configuration.
+                </p>
+              </div>
+              <span class="section-symbol" aria-hidden="true">▤</span>
+            </div>
+            <div
+              id="project-list"
+              class="project-list"
+              aria-label="Configured projects"
+            ></div>
+            <form id="project-form">
+              <fieldset id="project-fields" disabled>
+                <legend class="sr-only">New project</legend>
+                <div class="project-form-grid">
+                  <div class="field">
+                    <label for="project-repo">GitHub repository</label
+                    ><input
+                      id="project-repo"
+                      name="repo"
+                      type="text"
+                      required
+                      autocomplete="off"
+                      spellcheck="false"
+                      autocapitalize="none"
+                      placeholder="your-team/your-app"
+                      pattern="[^\/\s]+/[^\/\s]+"
+                      aria-describedby="repo-help"
+                    />
+                    <p id="repo-help">Use the owner/repository format.</p>
+                  </div>
+                  <div class="field">
+                    <label for="project-name">Project name</label
+                    ><input
+                      id="project-name"
+                      name="project"
+                      type="text"
+                      required
+                      autocomplete="off"
+                      spellcheck="false"
+                      autocapitalize="none"
+                      placeholder="your-app"
+                      pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+                      aria-describedby="name-help"
+                    />
+                    <p id="name-help">
+                      Lowercase letters, numbers, and hyphens.
+                    </p>
+                  </div>
+                </div>
+                <div class="advanced" id="hub-options" hidden>
+                  <p class="advanced-heading">One-time workspace setup</p>
+                  <div class="field">
+                    <label for="hub-repo">Automation repository</label
+                    ><input
+                      id="hub-repo"
+                      name="hubRepo"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      autocapitalize="none"
+                      placeholder="your-team/your-automation-hub"
+                      pattern="[^\/\s]+/[^\/\s]+"
+                      aria-describedby="hub-help"
+                    />
+                    <p id="hub-help">
+                      Your ShipGremlins repository that stores PM configuration
+                      and runs GitHub Actions. Choose it once for this
+                      workspace; you won’t need to enter it for each app. Start
+                      from a fork or copy of the ShipGremlins repository.
+                    </p>
+                  </div>
+                </div>
+                <div class="form-bottom">
+                  <p>
+                    Creates configuration and templates. It doesn’t start agents
+                    or change your app.
+                  </p>
+                  <button
+                    class="button button-dark"
+                    type="submit"
+                    id="add-project"
+                  >
+                    Add project <span aria-hidden="true">+</span>
+                  </button>
+                </div>
+              </fieldset>
+              <div
+                class="form-message"
+                id="project-message"
+                role="status"
+                hidden
+              ></div>
+            </form>
+          </section>
+
+          <section class="next-card" aria-labelledby="next-title">
+            <img
+              src="/assets/gremlin-security.webp"
+              width="512"
+              height="576"
+              alt="A gremlin inspector ready to check your setup"
+              loading="lazy"
+            />
+            <div>
+              <span class="eyebrow muted">NEXT UP</span>
+              <h2 id="next-title">Ready is better than probably ready.</h2>
+              <p>
+                After saving your connections and project, verify provider
+                access, configure your runner secrets, and finish the project
+                settings. Agents only run once you enable them.
+              </p>
+              <div class="command-line">
+                <code id="doctor-command">shipgremlins doctor PROJECT</code
+                ><button
+                  type="button"
+                  id="copy-command"
+                  class="copy-button"
+                  aria-label="Copy verification command"
+                >
+                  Copy
+                </button>
+              </div>
+              <span
+                class="copy-status sr-only"
+                id="copy-status"
+                role="status"
+              ></span>
+            </div>
+          </section>
+          <footer class="page-footer">
+            <span
+              ><span class="footer-mark" aria-hidden="true">{g}</span> Small
+              gremlins. High standards.</span
+            ><span class="config-location"
+              >Config <code id="config-directory">loading…</code></span
+            >
+          </footer>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

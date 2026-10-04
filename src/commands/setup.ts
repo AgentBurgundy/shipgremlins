@@ -1,26 +1,38 @@
-import { resolve } from "node:path";
-import { initializeSetup, setupDirectory } from "../setup/files.ts";
+import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import {
+  initializeSetup,
+  isExampleHub,
+  setupDirectory,
+} from "../setup/files.ts";
+import { detectHubRepository } from "../setup/location.ts";
+import { loadHub } from "../config.ts";
+import { preflightSummary } from "../terminal.ts";
 import { inspectSetup, type PreflightDeps } from "../setup/preflight.ts";
 import { parseFlags, type Io } from "./crons.ts";
 
 export interface SetupDeps extends PreflightDeps {
   templatesRoot?: string;
+  detectHubRepo?: (directory: string) => string | undefined;
 }
 
 const USAGE = `ShipGremlins setup
 
-  npm run hub -- setup [--check] [--json] [--dir PATH] [--project my-app]
-  npm run hub -- setup init --project my-app --repo owner/app [--hub-repo owner/hub]
+  shipgremlins setup                                      open the local setup dashboard
+  shipgremlins setup status [--check] [--json] [--verbose] [--dir PATH] [--project my-app]
+  shipgremlins setup init --project my-app --repo owner/app [--hub-repo owner/hub]
                  [--dir PATH] [--area core] [--runner self-hosted|gce]
                  [--runner-label pm] [--json]
 
 Status is read-only. --check exits 1 when local preflight fails.
 Init creates missing files, preserves valid existing settings, and starts PMs disabled.
-Run from your clone; no global hub command or npm link is required.
---project is a lowercase local ID (my-app), --repo is the app, and --hub-repo runs workflows.
-No secret values are accepted, printed, or copied. Provider checks use npm run hub -- doctor my-app.
-Local .env files require: node --env-file=.env bin/shipgremlins.mjs setup --check
-GitLab/Railway integration and dashboard connection management are planned.`;
+Works from any directory after the global install. Use --home PATH to select a configuration.
+--project is a lowercase local ID; --repo is the app. The automation repository is reused
+from hub.json or detected from Git origin. --hub-repo is an optional explicit selection.
+No secret values are accepted, printed, or copied. Provider checks use shipgremlins doctor my-app.
+Load local credentials with: shipgremlins --env-file .env setup --check
+Dashboard connections are stored locally and loaded by subsequent CLI commands.
+GitLab/Railway integration is planned.`;
 
 export async function runSetup(
   root: string,
@@ -38,6 +50,7 @@ export async function runSetup(
     const allowed = new Set([
       "check",
       "json",
+      "verbose",
       "dir",
       "project",
       "repo",
@@ -52,7 +65,7 @@ export async function runSetup(
       );
     if (positionals.length > 1 || !["init", "status"].includes(mode))
       throw new Error("Expected setup init or setup status.");
-    for (const key of ["check", "json"])
+    for (const key of ["check", "json", "verbose"])
       if (values[key] !== undefined && values[key] !== true)
         throw new Error(`--${key} does not accept a value`);
     for (const key of [
@@ -71,7 +84,9 @@ export async function runSetup(
         throw new Error(`--${key} requires a value`);
     const string = (key: string): string | undefined =>
       typeof values[key] === "string" ? (values[key] as string) : undefined;
-    const directory = setupDirectory(root, string("dir") ?? ".");
+    const directory = string("dir")
+      ? setupDirectory(process.cwd(), string("dir")!)
+      : setupDirectory(root, ".");
     if (mode === "init") {
       if (values.check)
         throw new Error(
@@ -81,15 +96,31 @@ export async function runSetup(
       const repo = string("repo");
       if (!project || !repo)
         throw new Error(
-          "Run npm run hub -- setup init --project my-app --repo owner/app --hub-repo owner/your-hub. --project is a lowercase local ID, not a domain.",
+          "Run shipgremlins setup init --project my-app --repo owner/app --hub-repo owner/your-hub. --project is a lowercase local ID, not a domain.",
         );
       const runner = string("runner");
       if (runner !== undefined && runner !== "self-hosted" && runner !== "gce")
         throw new Error("--runner must be self-hosted or gce");
+      let hubRepo = string("hub-repo");
+      if (!hubRepo) {
+        if (existsSync(join(directory, "hub.json"))) {
+          const saved = loadHub(directory).hubRepo;
+          const detected = isExampleHub(directory)
+            ? (deps.detectHubRepo ?? detectHubRepository)(directory)
+            : undefined;
+          if (detected && detected !== saved)
+            throw new Error(
+              "The sample hub.json names a different repository than this checkout. Set hubRepo in hub.json to your fork's owner/name, then rerun setup. Existing files were preserved.",
+            );
+          hubRepo = saved;
+        } else {
+          hubRepo = (deps.detectHubRepo ?? detectHubRepository)(directory);
+        }
+      }
       const result = initializeSetup(directory, deps.templatesRoot ?? root, {
         project,
         repo,
-        hubRepo: string("hub-repo"),
+        hubRepo,
         area: string("area"),
         runner,
         runnerLabel: string("runner-label"),
@@ -97,6 +128,7 @@ export async function runSetup(
       if (values.json) io.log(JSON.stringify(result, null, 2));
       else {
         io.log(`ShipGremlins configuration: ${result.directory}`);
+        io.log(`Automation repository: ${loadHub(directory).hubRepo}`);
         io.log(
           `${result.created.length} file(s) created; ${result.preserved.length} existing path(s) preserved.`,
         );
@@ -122,28 +154,22 @@ export async function runSetup(
       );
     const report = inspectSetup(directory, deps, string("project"));
     if (values.json) io.log(JSON.stringify(report, null, 2));
-    else {
+    else
       io.log(
-        `ShipGremlins local preflight: ${report.ready ? "ready for live checks" : "needs setup"}`,
+        preflightSummary(
+          report,
+          values.verbose === true,
+          Boolean(process.stdout.isTTY && !process.env.NO_COLOR),
+          process.stdout.columns,
+        ),
       );
-      for (const check of report.checks)
-        io.log(
-          `${check.status.toUpperCase().padEnd(4)} ${check.id}: ${check.detail}`,
-        );
-      io.log(
-        "GitHub/Actions/Vercel integration is implemented. GitLab/Railway and dashboard connection management are planned.",
-      );
-      io.log(
-        `This checks local prerequisites only. Run npm run hub -- doctor ${string("project") ?? "my-app"} for live provider validation after loading credentials.`,
-      );
-    }
     return values.check && !report.ready ? 1 : 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Setup failed.";
     if (values.json) io.error(JSON.stringify({ error: message }));
     else {
       io.error(message);
-      io.error("Run npm run hub -- setup --help from your clone for usage.");
+      io.error("Run shipgremlins setup --help for usage.");
     }
     return 1;
   }

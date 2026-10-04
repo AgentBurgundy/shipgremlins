@@ -103,7 +103,7 @@ export function inspectSetup(
       add(
         "hub-repository",
         "warn",
-        "hub.json is a public example. Choose the repository that will run your automation, edit hubRepo if needed, and pass that same identity explicitly as --hub-repo when initializing. --repo is the separate app repository.",
+        "hub.json is a public example. Setup reuses its saved repository and checks it against Git origin. If you forked the project, set hubRepo to your fork before initializing. --repo is the app repository.",
       );
     if (hub.runners.mode === "gce") {
       const gcloud = probe("gcloud");
@@ -131,7 +131,7 @@ export function inspectSetup(
     add(
       "hub",
       "fail",
-      "hub.json is missing or invalid. From the clone run npm run hub -- setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub, or repair the existing file.",
+      "hub.json is missing or invalid. Run shipgremlins setup init --project my-app --repo your-org/my-app, or repair the existing file.",
     );
   }
   const projectsDir = join(root, "projects");
@@ -147,7 +147,7 @@ export function inspectSetup(
     add(
       "projects",
       "fail",
-      "No projects configured. From the clone run npm run hub -- setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub. Use a lowercase project ID such as my-app, not a domain. Review an existing hub.json before choosing --hub-repo.",
+      "No projects configured. Run shipgremlins setup init --project my-app --repo your-org/my-app. Use a lowercase project ID such as my-app, not a domain. Setup reuses the saved automation repository.",
     );
   for (const name of names) {
     try {
@@ -166,20 +166,20 @@ export function inspectSetup(
         placeholders ? "fail" : "pass",
         placeholders
           ? "Replace Vercel/Linear placeholders in project.json and areas.json."
-          : `Provider IDs configured; run npm run hub -- doctor ${name} for live validation.`,
+          : `Provider IDs configured; run shipgremlins doctor ${name} for live validation.`,
       );
       add(
         `verified:${name}`,
         project.config.verified ? "pass" : "warn",
         project.config.verified
           ? "Project previously passed doctor; rerun after connection or branch changes."
-          : `Run npm run hub -- doctor ${name} after configuring provider credentials and branches.`,
+          : `Run shipgremlins doctor ${name} after configuring provider credentials and branches.`,
       );
       add(
         `agents:${name}`,
         project.areas.some((area) => area.enabled) ? "pass" : "warn",
         project.areas.some((area) => area.enabled)
-          ? "At least one PM is enabled; manage workflow schedules with npm run hub -- crons."
+          ? "At least one PM is enabled; manage workflow schedules with shipgremlins crons."
           : "PMs are disabled until you review their mandates and enable their areas.",
       );
     } catch {
@@ -213,7 +213,7 @@ export function inspectSetup(
     add(
       "env-loading",
       "warn",
-      "A .env file is not loaded automatically. After creating and filling .env in your clone, run node --env-file=.env bin/shipgremlins.mjs setup --check. For another location, replace .env with that file's path. Existing exported environment variables take precedence.",
+      "Save supported tokens through shipgremlins setup. For additional settings or another environment file, run shipgremlins --env-file .env setup --check. Existing exported environment variables take precedence.",
     );
   const ai = Boolean(deps.env.CLAUDE_CODE_OAUTH_TOKEN?.trim());
   add(
@@ -260,9 +260,9 @@ export function inspectSetup(
       },
       {
         name: "Dashboard connection management",
-        status: "planned",
+        status: "implemented",
         detail:
-          "The local site is an operator-help page; connection secrets remain in environment/CI settings.",
+          "Local dashboard stores supported connection tokens. Configure runner/Actions secrets separately; saved tokens still need live verification.",
       },
     ],
   };

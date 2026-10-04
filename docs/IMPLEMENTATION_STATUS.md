@@ -10,7 +10,7 @@ every capability is shipped. This page records the implemented foundation.
 | Promotion     | Local install/lint/typecheck/test/build gates; authenticated source evidence; Ed25519-signed browser evidence for the assembled candidate and base; missing evidence blocks staging PR creation/update |
 | Linear Done   | Read-only audit and explicit, dry-run-first reconciliation using an operator-reviewed complete deliverable manifest; merged production PR and Git-tree proof required                                  |
 | Test fixtures | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                 |
-| Setup         | Resumable, non-overwriting CLI initialization and local preflight; PMs start disabled; credentials reported by name only                                                                               |
+| Setup         | Global `shipgremlins` / `hub` commands, ASCII gremlins, compact checks, and resumable initialization; local browser dashboard for project setup and supported connection tokens; PMs start disabled    |
 | Local hosting | Non-root Docker image and Compose with a read-only static operator-help site; CLI configuration stored separately                                                                                      |
 | Runners       | Existing self-hosted GitHub runners and GCE launch tooling; no claim of live GCP certification in this release                                                                                         |
 | Website       | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                |
@@ -22,11 +22,11 @@ receipts; this release does not automatically install a browser verifier, manage
 its protected keys, or supply authenticated test accounts for arbitrary apps.
 Existing PM/developer environments must never receive the private signing key.
 
-The full control dashboard, provider/model connection management, durable database
+The full control dashboard, additional provider/model connection management, durable database
 leases/outbox, automatic ticket lifecycle webhooks, GitLab/Railway adapters,
 additional AI runtimes, semantic image generation, and automatic fixture cleanup
 remain roadmap work. Run logs are currently available through GitHub Actions.
-There is no published npm package or complete one-command cloud control plane.
+The CLI installs globally from GitHub; there is no npm registry publication or complete one-command cloud control plane. Local connection storage does not configure runner/Actions secrets automatically.
 
 Promotions retain the existing per-area selective `pm-release/*` model. Whole-branch
 `pm-staging` → staging releases are planned. CI adapters currently use aggregate

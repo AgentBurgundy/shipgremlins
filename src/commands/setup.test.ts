@@ -46,7 +46,89 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("setup initialization", () => {
-  it("requires an explicit hub identity for public examples and never silently replaces it", async () => {
+  it("detects a fresh hub's Git origin without requiring --hub-repo", async () => {
+    expect(
+      await runSetup(
+        root,
+        ["init", "--project", input.project, "--repo", input.repo],
+        io,
+        {
+          ...deps,
+          detectHubRepo: () => "example/operations",
+        },
+      ),
+    ).toBe(0);
+    expect(loadHub(root).hubRepo).toBe("example/operations");
+    expect(output.join("\n")).toContain(
+      "Automation repository: example/operations",
+    );
+  });
+
+  it("keeps an existing configured hub when origin changes", async () => {
+    initializeSetup(root, templatesRoot, input);
+    expect(
+      await runSetup(
+        root,
+        ["init", "--project", input.project, "--repo", input.repo],
+        io,
+        {
+          ...deps,
+          detectHubRepo: () => "different/repository",
+        },
+      ),
+    ).toBe(0);
+    expect(loadHub(root).hubRepo).toBe(input.hubRepo);
+  });
+
+  it("honors an explicit hub selection before a detected origin", async () => {
+    expect(
+      await runSetup(
+        root,
+        [
+          "init",
+          "--project",
+          input.project,
+          "--repo",
+          input.repo,
+          "--hub-repo",
+          input.hubRepo,
+        ],
+        io,
+        {
+          ...deps,
+          detectHubRepo: () => "different/repository",
+        },
+      ),
+    ).toBe(0);
+    expect(loadHub(root).hubRepo).toBe(input.hubRepo);
+  });
+
+  it("does not point a fork at the upstream sample repository", async () => {
+    initializeSetup(root, templatesRoot, input);
+    const hubFile = join(root, "hub.json");
+    const sample = {
+      ...loadHub(root),
+      $comment: "Generic public example. Choose your hub.",
+    };
+    writeFileSync(hubFile, JSON.stringify(sample));
+    const before = readFileSync(hubFile, "utf8");
+    expect(
+      await runSetup(
+        root,
+        ["init", "--project", "second", "--repo", input.repo],
+        io,
+        {
+          ...deps,
+          detectHubRepo: () => "fork/operations",
+        },
+      ),
+    ).toBe(1);
+    expect(errors.join("\n")).toContain("fork's owner/name");
+    expect(readFileSync(hubFile, "utf8")).toBe(before);
+    expect(existsSync(join(root, "projects", "second"))).toBe(false);
+  });
+
+  it("reuses a saved hub identity without an extra flag and never silently replaces it", async () => {
     const sample = {
       $comment: "Generic public example. Choose your own operational hub.",
       hubRepo: "sample/source",
@@ -62,10 +144,8 @@ describe("setup initialization", () => {
     writeFileSync(join(root, "hub.json"), JSON.stringify(sample));
     const before = readFileSync(join(root, "hub.json"), "utf8");
     const args = ["init", "--project", "demo-app", "--repo", "example/app"];
-    expect(await runSetup(root, args, io, deps)).toBe(1);
-    expect(errors.join("\n")).toContain("--hub-repo");
-    expect(errors.join("\n")).toContain("public example");
-    expect(existsSync(join(root, "projects"))).toBe(false);
+    expect(await runSetup(root, args, io, deps)).toBe(0);
+    expect(loadHub(root).hubRepo).toBe("sample/source");
     expect(
       await runSetup(
         root,
@@ -102,7 +182,7 @@ describe("setup initialization", () => {
     ).toBe(1);
     expect(errors.join("\n")).toContain("--project example-com");
     expect(errors.join("\n")).toContain("not a domain or URL");
-    expect(errors.join("\n")).toContain("npm run hub -- setup --help");
+    expect(errors.join("\n")).toContain("shipgremlins setup --help");
     expect(readdirSync(root)).toEqual([]);
   });
   it("creates a valid fresh config with disabled PMs and only empty secret names", () => {
@@ -248,14 +328,15 @@ describe("setup initialization", () => {
 });
 
 describe("setup status and CLI", () => {
-  it("gives clone-local first-run commands without depending on a global hub install", async () => {
+  it("gives global CLI commands for first-run setup", async () => {
     await runSetup(root, ["--help"], io, deps);
     await runSetup(root, [], io, deps);
     const result = initializeSetup(root, templatesRoot, input);
     const guidance = [...output, ...result.next].join("\n");
-    expect(guidance).toContain("npm run hub -- setup init --project my-app");
-    expect(guidance).toContain("--hub-repo your-org/your-hub");
-    expect(guidance).toContain("npm run hub -- doctor demo-app");
+    expect(guidance).toContain("shipgremlins setup init --project my-app");
+    expect(guidance).toContain("--hub-repo is an optional explicit selection");
+    expect(guidance).not.toContain("npm run hub");
+    expect(guidance).toContain("shipgremlins doctor demo-app");
     expect(guidance).not.toMatch(/(?:^|\s)hub (?:setup|doctor|crons)\b/m);
   });
 
@@ -270,7 +351,7 @@ describe("setup status and CLI", () => {
     ).toBe(false);
     expect(
       report.checks.find((check) => check.id === "env-loading")?.detail,
-    ).toContain("node --env-file=.env bin/shipgremlins.mjs setup --check");
+    ).toContain("shipgremlins --env-file .env setup --check");
     expect(JSON.stringify(report)).not.toContain("do-not-load-or-print-this");
   });
   it.each([
@@ -303,7 +384,7 @@ describe("setup status and CLI", () => {
         [
           "init",
           "--dir",
-          "fresh",
+          join(root, "fresh"),
           "--project",
           input.project,
           "--repo",
@@ -323,7 +404,7 @@ describe("setup status and CLI", () => {
     expect(existsSync(join(root, "hub.json"))).toBe(false);
   });
 
-  it("does not misrepresent GitLab/Railway or a static site as implemented", () => {
+  it("distinguishes implemented local connection management from planned providers", () => {
     const report = inspectSetup(root, deps);
     expect(
       report.capabilities.find((capability) =>
@@ -334,7 +415,7 @@ describe("setup status and CLI", () => {
       report.capabilities.find((capability) =>
         capability.name.includes("Dashboard"),
       )?.status,
-    ).toBe("planned");
+    ).toBe("implemented");
   });
 
   it("fails on old Node and missing git/npm, but absent optional tools only warn", () => {

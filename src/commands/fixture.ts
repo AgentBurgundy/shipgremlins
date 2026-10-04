@@ -15,7 +15,8 @@ const USAGE = `usage: hub fixture csv --input rows.json --output data.csv [--bom
 
 Creates reproducible upload fixtures. Never overwrites files or prints their data.
 CSV accepts arrays of scalar arrays or objects. PNG is a deterministic test grid.
-Paths resolve against SHIPGREMLINS_HOME, or the installation directory by default.`;
+Paths resolve against the configuration directory selected by --home, SHIPGREMLINS_HOME,
+the nearest hub.json, or ~/.shipgremlins.`;
 
 function field(value: unknown): string {
   if (value === null || value === undefined) return "";

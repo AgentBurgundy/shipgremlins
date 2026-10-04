@@ -65,6 +65,7 @@ export function fillTemplate(
 export function addProject(
   root: string,
   input: AddProjectInput,
+  templatesRoot = root,
 ): AddProjectResult {
   const { name, repo } = input;
   const area = input.area ?? "core";
@@ -76,7 +77,7 @@ export function addProject(
   if (!NAME_RE.test(area))
     throw new Error(`area "${area}" must be lowercase kebab-case`);
 
-  const templates = join(root, "projects", "_templates");
+  const templates = join(templatesRoot, "projects", "_templates");
   const dir = join(root, "projects", name);
   if (existsSync(dir))
     throw new Error(`projects/${name} already exists — refusing to overwrite`);
@@ -103,6 +104,7 @@ export async function runAddProject(
   root: string,
   args: string[],
   io: Io,
+  templatesRoot = root,
 ): Promise<number> {
   const { values, positionals } = parseFlags(args);
   const name = positionals[0];
@@ -114,12 +116,12 @@ export async function runAddProject(
     (area !== undefined && typeof area !== "string")
   ) {
     io.error(
-      "usage: npm run hub -- add-project <name> --repo owner/name [--area core]",
+      "usage: shipgremlins add-project <name> --repo owner/name [--area core]",
     );
     return 1;
   }
   try {
-    const result = addProject(root, { name, repo, area });
+    const result = addProject(root, { name, repo, area }, templatesRoot);
     io.log(`Created projects/${name}/ (${result.files.length} files):`);
     for (const f of result.files) io.log(`  ${f.replace(/\\/g, "/")}`);
     io.log("");
@@ -129,7 +131,7 @@ export async function runAddProject(
       `Secrets to add on the hub repo: SLACK_WEBHOOK_${result.vars.NAME} (the Slack incoming webhook URL) and VERCEL_BYPASS_${result.vars.NAME} (the Vercel protection-bypass secret).`,
     );
     io.log(
-      `Then run \`npm run hub -- doctor ${name}\`; the PM crons are generated only once it passes.`,
+      `Then run \`shipgremlins doctor ${name}\`; the PM crons are generated only once it passes.`,
     );
     return 0;
   } catch (err) {

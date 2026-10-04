@@ -225,7 +225,7 @@ export async function runDoctor(
 ): Promise<number> {
   const name = args[0];
   if (!name || name.startsWith("-")) {
-    io.error("usage from your clone: npm run hub -- doctor <name>");
+    io.error("usage: shipgremlins doctor <name>");
     return 1;
   }
   const project = loadProject(root, name);
@@ -234,7 +234,7 @@ export async function runDoctor(
   const failed = checks.filter((c) => !c.ok);
   if (failed.length > 0) {
     io.error(
-      `${failed.length} check(s) failed — fix them and run \`npm run hub -- doctor ${name}\` again; for local .env credentials use \`node --env-file=.env bin/shipgremlins.mjs doctor ${name}\``,
+      `${failed.length} check(s) failed — fix them and run \`shipgremlins doctor ${name}\` again; for local .env credentials use \`shipgremlins --env-file .env doctor ${name}\``,
     );
     return 1;
   }

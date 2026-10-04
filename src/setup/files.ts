@@ -105,7 +105,7 @@ export function environmentTemplate(names: string[]): string {
   return [
     "# ShipGremlins connection names only. No credentials are generated or copied.",
     "# Copy to .env locally; keep values in your secret manager or CI settings.",
-    "# .env is not loaded automatically. Supply it explicitly with Node --env-file.",
+    "# Dashboard connection keys load automatically. For other settings use shipgremlins --env-file .env.",
     "# GITHUB_TOKEN is needed locally; CI creates a short-lived token from APP_ID/APP_PRIVATE_KEY.",
     "# ATTESTATION_KEY belongs only in the trusted signing job. The dispatcher uses ATTESTATION_PUBLIC_KEY.",
     ...unique.map((name) => `${name}=`),
@@ -176,11 +176,6 @@ export function initializeSetup(
         "Existing hub.json names a different repository. No files changed. Edit its hubRepo to the repository that will run your workflows, then repeat this command; or initialize separately with --dir .run/my-hub --hub-repo your-org/your-hub. --repo names the app under test; --hub-repo names its automation hub.",
       );
     }
-    if (isExampleHub(target) && !input.hubRepo) {
-      throw new Error(
-        "hub.json is a public example, not an enrolled automation hub. Review its hubRepo and pass the same repository explicitly with --hub-repo owner/your-hub; edit hubRepo first if you want a different repository. No files changed.",
-      );
-    }
     if (
       (input.runner && hub.runners.mode !== input.runner) ||
       (input.runnerLabel && hub.runners.label !== input.runnerLabel)
@@ -193,7 +188,7 @@ export function initializeSetup(
   } else {
     if (!input.hubRepo)
       throw new Error(
-        "--hub-repo owner/name is required for a fresh directory",
+        "No automation repository could be detected. Run setup in your ShipGremlins hub checkout, or use --hub-repo owner/name once for a fresh configuration. This is the repository that stores PM configuration and runs GitHub Actions.",
       );
     const hub: HubConfig = {
       hubRepo: input.hubRepo,
@@ -308,10 +303,10 @@ export function initializeSetup(
       `Edit projects/${input.project}/project.json: Vercel IDs, branch names, database recipe, and commands for your app.`,
       `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
       `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
-      `Configure connection secrets in your environment and GitHub Actions settings. The complete variable-name template for this project is projects/${input.project}/.env.example; copy it to your clone's .env only if .env does not exist, otherwise add the missing names to the existing file. A local .env is not loaded automatically.`,
-      `From the clone, run npm run hub -- setup --check --project ${input.project}. If using a local .env, create/fill it first, then use node --env-file=.env bin/shipgremlins.mjs setup --check --project ${input.project}.`,
-      `For live provider checks run node --env-file=.env bin/shipgremlins.mjs doctor ${input.project} (or npm run hub -- doctor ${input.project} when credentials are already exported).`,
-      "After reviewing the mandate, set its area enabled=true, run npm run hub -- crons write in the hub checkout, and review the generated schedule before committing.",
+      `Use shipgremlins setup to save supported local connections. Configure GitHub Actions secrets separately. The full variable-name template is projects/${input.project}/.env.example; preserve existing .env values when adding missing names. Use --env-file for additional settings.`,
+      `Run shipgremlins setup --check --project ${input.project}. If using a local .env, create/fill it first, then use shipgremlins --env-file .env setup --check --project ${input.project}.`,
+      `For live provider checks run shipgremlins --env-file .env doctor ${input.project} (or shipgremlins doctor ${input.project} when credentials are already exported).`,
+      "After reviewing the mandate, set its area enabled=true, run shipgremlins crons write in the hub checkout, and review the generated schedule before committing.",
       "GitHub Actions executes the agents. The local site container is an operator guide, not a background scheduler.",
     ],
   };
