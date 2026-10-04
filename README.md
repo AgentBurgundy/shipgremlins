@@ -21,12 +21,19 @@
 
 You build the product. Give a few gremlins a mandate to explore it.
 
-**ShipGremlins gives AI product managers a real browser, a job to do, and a memory.** They click through your app, capture screenshots, and turn findings into Linear tickets. Developer agents work on approved tickets. The dispatcher checks the work, retries bounded failures, and prepares changes for your review.
+**ShipGremlins gives AI product managers a real browser, a job to do, and a memory.** They click through your app, capture screenshots, and turn findings into Linear tickets. Local Docker workers run PMs and developers on your computer or homelab. Developers work on approved tickets and prepare draft changes for your review.
 
 Real browser evidence. Approved work. **Done means merged into production.**
 
+**Give PMs the signals behind the screen.** Connect Sentry logs and errors,
+Datadog logs, and Mixpanel analytics so each PM can investigate its project's
+failures and usage alongside browser evidence. Optional connections use scoped
+reads and per-project credentials. [Connect project telemetry →](docs/TELEMETRY.md)
+
+**Keep the crew in your Slack channel.** PMs report their patrols; Coding Gremlins announce drafts ready for review and flag blockers. Updates carry the project, mandate or ticket, and run number. [Connect Slack →](docs/SLACK.md)
+
 > [!NOTE]
-> **Early alpha.** The current stack is GitHub, GitHub Actions, Vercel, Linear, and Claude Code. You configure the test environment and credentials, and control staging and production merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md) before connecting a project.
+> **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. GitHub/GitLab app repositories, Vercel previews, Linear, and Claude Code are wired into local jobs; full live certification of both provider stacks remains pending. You control merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
 
 ## A particular set of nitpicks
 
@@ -59,19 +66,19 @@ flowchart LR
     F --> G[Production audit]
 ```
 
-| Step        | What actually happens                                                                                                                                      |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Explore** | Scheduled PMs use Playwright MCP to inspect the app. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                |
-| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open implementation PRs against `pm-staging`.                                   |
-| **Recover** | The dispatcher monitors checks and retries recoverable failures within limits. When it cannot recover, it leaves an actionable blocker.                    |
-| **Verify**  | Promotion gates check trusted verification receipts and the candidate revision before preparing a staging PR. You supply the trusted verifier.             |
-| **Ship**    | You control staging and production merges. An explicit audit and reconciler tie completion to all approved deliverables merged into the production branch. |
+| Step        | What actually happens                                                                                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Explore** | Scheduled PMs use Playwright MCP to inspect the app. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                             |
+| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open implementation PRs against `pm-staging`.                                                                                |
+| **Recover** | The local queue survives controller restarts, reconciles existing containers, and retries a launch failure once. Failed agent jobs are not blindly repeated.                                            |
+| **Verify**  | Worker readiness requires an actual Chromium screenshot. Developer jobs run configured checks before proposing a draft; you review the candidate and its evidence.                                      |
+| **Ship**    | You control integration, staging, and production merges. The separate release tools provide signed promotion gates and an explicit production audit; the local queue does not automate these steps yet. |
 
 **“Trust me” isn't a test.** Missing or stale evidence blocks promotion. A staging merge does not close a ticket. [Read the verification model →](docs/VERIFICATION.md)
 
 ## Get started
 
-You need Git and **Node.js 22.12+**. Install the global CLI once, then open your private setup dashboard:
+You need Git, **Node.js 22.12+**, and Docker running Linux containers. Install the global CLI once, then open your private setup dashboard:
 
 ```bash
 npm install -g git+https://github.com/AgentBurgundy/shipgremlins.git
@@ -88,9 +95,21 @@ Install future updates from the dashboard's **Updates** panel or with `gremlins 
 gremlins --help
 ```
 
-Configuration lives in the nearest hub checkout, or `~/.shipgremlins` outside one. Use `gremlins --home PATH setup` to choose another location. Setup reuses the saved automation repository or detects its Git origin. `--hub-repo` is available for an explicit selection.
+Configuration lives in the nearest existing configuration directory, or `~/.shipgremlins` outside one. Use `gremlins --home PATH setup` to choose another location. Add your app repository directly; local mode does not require `--hub-repo`.
 
-New PMs start disabled. Dashboard connections are saved locally; configure the runner's GitHub Actions secrets separately before enabling jobs. Follow the [setup guide](docs/SETUP.md) for provider connections, runner configuration, and the first agent run.
+Save connections, add your app, and choose **Create runner on this machine**. That machine is the CLI/dashboard server, even when you visit it from a phone. A worker becomes Ready only after Chromium produces verified screenshot evidence. Review each mandate, choose **Verify connections** (or run `gremlins doctor my-app`), and enable the areas you want to schedule. New PMs start disabled.
+
+The local runtime provisions its PostgreSQL activity store when preparing work. The dashboard retains visible tool activity, summaries, checks, logs, and bounded artifacts. Private model reasoning is not exposed. Slack delivery runs separately from job execution and records each attempt so restarts do not repeat messages.
+
+Keep the controller running after you close the terminal:
+
+```bash
+gremlins start --lan
+gremlins status
+gremlins stop
+```
+
+Omit `--lan` for a local-only dashboard. Stop pauses scheduling; already-running Docker jobs continue. For unattended restart after a server reboot, use the [service-manager example](docs/SETUP.md#restart-after-a-server-reboot).
 
 <details>
 <summary><strong>Local credentials and live connection checks</strong></summary>
@@ -104,7 +123,7 @@ gremlins --env-file .env doctor my-app
 
 `setup --check` is local and read-only. `doctor` contacts providers and stamps the project's local verification date on success. Use isolated staging accounts and synthetic test data.
 
-Running the CLI or the local operator-help page does not start a background agent service. See [runner configuration](docs/runners.md).
+`gremlins setup` runs the dashboard and controller in the foreground. `gremlins start` runs them in the background. The old static operator-help page is separate. See [local workers and advanced CI runners](docs/runners.md).
 
 </details>
 
@@ -136,17 +155,19 @@ Read the [manifest format and limitations](docs/LINEAR_LIFECYCLE.md) before enab
 
 ## What works. What's next.
 
-| Available in the alpha                        | On the roadmap                                     |
-| --------------------------------------------- | -------------------------------------------------- |
-| GitHub + Actions + Vercel + Linear            | GitLab CI + Railway adapters                       |
-| Claude Code + Playwright MCP                  | Additional AI providers and connection management  |
-| Self-hosted Linux runner support; GCE tooling | Simpler cloud provisioning and runner management   |
-| Mandates, memory, CSV/PNG fixtures            | Richer generated fixtures and cleanup              |
-| Bounded recovery and verified promotion gates | Durable coordination and broader recovery coverage |
-| Production audit and explicit reconciliation  | Automatic production lifecycle hooks               |
-| CLI setup and local preflight                 | An agent dashboard and guided onboarding           |
+| Available in the alpha                                                   | On the roadmap                                                    |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Local Docker jobs with GitHub/GitLab, Vercel and Linear                  | Railway deployment verification; full live provider certification |
+| Claude Code + Playwright MCP                                             | Additional AI providers and connection management                 |
+| Sentry + Datadog project logs; Mixpanel Insights                         | Broader telemetry queries and live certification                  |
+| Branded PM/developer Slack updates and local PostgreSQL activity history | Broader team collaboration and distributed queue coordination     |
+| Persistent local queue, browser-verified workers, logs and artifacts     | Automatic OS service installation and cloud fleet management      |
+| Mandates, memory, CSV/PNG fixtures                                       | Richer generated fixtures and cleanup                             |
+| Bounded launch recovery; separate signed promotion tools                 | Local automatic promotion and broader recovery coverage           |
+| Production audit and explicit reconciliation                             | Automatic production lifecycle hooks                              |
+| Global CLI, LAN dashboard, config editor and background controller       | Richer agent editing and deployment orchestration                 |
 
-GCE tooling is included but has not been certified in a live environment. The landing page and local operator-help page are introductions and documentation; the management dashboard is planned.
+The local queue opens draft changes and leaves merges to you. The older GitHub Actions workflows and GCE tooling remain advanced options; GCE and the complete GitLab/Railway stack have not been live-certified.
 
 [Implementation status](docs/IMPLEMENTATION_STATUS.md) · [Roadmap](docs/ROADMAP.md) · [Master plan](docs/MASTER_PLAN.md)
 
@@ -182,13 +203,15 @@ Copyright 2026 ShipGremlins contributors. [Apache-2.0](LICENSE). Third-party dep
 <details>
 <summary><strong>Public snapshot defaults</strong></summary>
 
-This distribution contains generic configuration and no enrolled projects. Scheduled
-PM and dispatcher workflows are gated by the repository variable
+This distribution contains generic configuration and no enrolled projects. Local
+Docker mode schedules enabled, verified areas through the local controller.
+The optional legacy PM and dispatcher workflows are gated by the repository variable
 `SHIPGREMLINS_ENABLE_SCHEDULES=true`. Leave it unset until your private hub repository,
 credentials, runner, test accounts, and enabled PM mandates have been reviewed.
 Manual workflow dispatch remains available. Run `gremlins crons write` in your operational
 hub after enabling areas; the public snapshot starts with an inert placeholder cron.
 
+Do not enable the legacy workflow schedules for a project already scheduled locally.
 `gremlins setup` opens the local connection and project dashboard. The older
 `npm start` command and Docker image serve an operator-help page. The public
 marketing site is maintained separately.

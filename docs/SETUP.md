@@ -1,78 +1,75 @@
 # Set up ShipGremlins
 
-Install the global CLI with Node.js **22.12+**, npm, and Git:
+Install the global CLI with Node.js **22.12+**, npm, and Git. Workers also need Docker Desktop or Docker Engine running **Linux containers**.
 
 ```sh
 npm install -g git+https://github.com/AgentBurgundy/shipgremlins.git
 gremlins setup
 ```
 
-This installs from the public GitHub repository; a registry package named `shipgremlins` is not published yet. The command is `gremlins`; `shipgremlins` and `hub` remain compatibility aliases. Everyday commands do not need a clone, `npm link`, or an `npm run` wrapper.
+This installs from the official GitHub repository; an npm registry package is not published yet. `gremlins` works from any directory on PowerShell, macOS, and Linux. `shipgremlins` and `hub` remain compatibility aliases.
 
-## Your local setup dashboard
+**On a homelab server, use `gremlins setup --lan`.** Open a printed session link from your laptop or phone. Workers, configuration, and connections stay on the server. See [server use](#server-use).
 
-`gremlins setup` opens a private dashboard in your browser with project enrollment, connection-token entry, and gremlins. `gremlins --help` introduces their ASCII cousin.
+## Your setup dashboard
 
-Enter your GitHub, Linear, Vercel, and optional Claude Code tokens, then add an app by its `owner/repository` and a short local ID such as `my-app`. Review its generated configuration, provider IDs, mandate, and isolated test accounts before enabling agents.
+1. Save the source connection for your app: GitHub or GitLab. Connect Linear, Vercel, and Claude Code.
+2. Add the **app repository** and a short local ID such as `my-app`. Local Docker execution is the default. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
+3. Review branches, provider IDs, test commands, and the PM mandate. Use isolated staging accounts and synthetic data.
+4. Choose **Create runner on this machine**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
+5. Choose **Verify connections** for the project, or run `gremlins doctor my-app`. Review the area's settings and enable it in Configuration. PMs start disabled and unverified.
+6. Queue a supervised PM run. Inspect logs and artifacts before relying on the schedule. Developer jobs require an open, approved Linear ticket in an enabled area; approval is checked again immediately before launch.
 
-Supported connection keys are saved in the selected configuration directory's `.env`. Subsequent CLI commands load those keys; exported variables take precedence. Blank fields preserve saved values. API responses report only whether a connection is configured; existing tokens are never returned to the browser. Files use owner-only permissions where supported. The local file is not encrypted: keep the directory private and out of Git.
+Approval uses `pm-approved`; proposals use `pm-proposal`. Area labels remain `pm:core`, `pm:security`, and similar. After the agent's work passes configured checks, the worker publishes its unique branch and opens a **draft** PR or MR targeting integration. The agent does not publish directly. The local queue does not merge changes or mark tickets Done.
 
-The dashboard defaults to `127.0.0.1` and authenticates with a random session credential in the launch URL fragment. The browser removes the fragment after connecting. Do not share that link. A fresh CLI launch creates a new session; the dashboard's update restart preserves its URL and session. Use the explicit LAN mode below for a homelab; this is a self-hosted setup tool, not a public multi-user service.
+The dashboard provides pause/resume, browser verification, repair, idle-worker removal, and job logs/artifacts. Pausing lets the current job finish. Removing a busy worker is refused. Multiple PMs share capacity: each worker runs one job at a time. One click creates one worker; the local pool is capped at four.
 
-GitHub Actions executes agents. Local tokens are not automatically copied to Actions: configure the runner's CI secrets separately. GitLab/Railway adapters, dashboard agent logs, and runner administration remain planned.
+Optional [project telemetry](TELEMETRY.md) lets PMs read scoped Sentry logs/errors, Datadog logs, and Mixpanel Insights reports. Provider accounts still require live validation.
 
-## Where configuration lives
+Connect an optional [Slack channel](SLACK.md) for PM patrol results, coding drafts ready for review, and blockers. Choose Add to Slack in Connections, or save an incoming webhook when the OAuth broker is unavailable. Browser readiness checks do not post messages.
 
-The CLI selects configuration in this order:
+The local runtime prepares a PostgreSQL activity store before launching work. This adds a local Docker service and persistent volume; it is managed on the CLI/dashboard server. Visible tool activity, result summaries, checks, redacted logs, and bounded artifacts appear in the dashboard. Private model reasoning is not stored or displayed. Activity storage failures are separate from the recorded outcome of an already-running job; Docker output remains available.
+
+## Connections and configuration
+
+Supported tokens are saved in the configuration directory's `.env`. Existing values are not returned to the browser. Blank fields preserve saved values; exported variables take precedence. Files use owner-only permissions where supported. The file is not encrypted: keep the directory private and out of Git.
+
+The controller supplies only the job's required credentials to its container. Credentials are not written into queue metadata or shell arguments. The worker redacts known credential values from persistent logs. Local mode does not copy tokens to GitHub Actions secrets or GitLab CI variables.
+
+The configuration directory is selected in this order:
 
 1. `--home PATH`, or `SHIPGREMLINS_HOME`.
 2. The nearest `hub.json` in the current directory or its parents.
-3. `~/.shipgremlins` outside a configured hub.
-
-Code and templates stay in the global installation or a staged runtime selected by the updater. Upgrades do not replace your projects, mandates, or connection files.
+3. `~/.shipgremlins` outside an existing configuration directory.
 
 ```sh
-gremlins --home /path/to/my-hub setup
-gremlins --home /path/to/my-hub setup status --json
+gremlins --home /path/to/my-gremlins setup
+gremlins --home /path/to/my-gremlins setup status --json
 ```
 
-Quote Windows paths containing spaces: `gremlins --home 'F:\My Projects\my-hub' setup`. `setup init --dir PATH` creates configuration relative to the current working directory; use `--home PATH` for subsequent commands there.
+Quote Windows paths containing spaces: `gremlins --home 'F:\My Projects\my-gremlins' setup`. `setup init --dir PATH` creates configuration relative to the current directory; use `--home PATH` for later commands there.
 
-## Why there is an automation repository
+The **Configuration** editor supports `hub.json` and each project's `project.json`, `areas.json`, and `tiers.json`. Saving validates JSON and schema before atomic replacement. A stale edit reports a conflict and preserves your draft; reload the latest file and reapply the intended changes. Use Connections for tokens; `.env` is not exposed in this editor. The local controller uses saved configuration without a commit or push.
 
-The **app repository** contains the software PMs inspect. The **automation repository** stores ShipGremlins configuration and runs the supplied GitHub Actions workflows. The runtime needs its identity to dispatch developers.
+**File locations** shows the installed runtime and configuration directory. Copy either path; local desktop sessions also offer Open folder through Explorer, Finder, or the Linux file manager. On a remote/headless server, paths refer to that server; a browser cannot open a server folder in your laptop's file manager.
 
-You normally do not need `--hub-repo`: setup reuses `hub.json` or detects a GitHub `origin` for a fresh configuration in a Git checkout. The dashboard displays the chosen repository.
+Terminal initialization is also available:
 
 ```sh
 gremlins setup init --project my-app --repo your-org/my-app
 ```
 
-For a fresh configuration outside any hub checkout, choose the automation repository once:
+| Option       | Meaning                                                | Example                                 |
+| ------------ | ------------------------------------------------------ | --------------------------------------- |
+| `--project`  | Local lowercase folder/command ID                      | `example-com`                           |
+| `--repo`     | App under test                                         | `your-org/app`                          |
+| `--area`     | Starting PM mandate                                    | `security`                              |
+| `--runner`   | Execution mode                                         | `local` (default), `self-hosted`, `gce` |
+| `--hub-repo` | Advanced CI automation repository; unnecessary locally | `your-org/automation`                   |
 
-```sh
-gremlins setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub
-```
+Initialization preserves existing files and creates settings, templates, mandates, and memory. It does not activate PMs. Local configuration needs no `hubRepo` field. Existing installations retain their execution mode: disable old workflow schedules before changing `hub.json` → `runners.mode` to `local`.
 
-Setup does not create the GitHub repository or install workflows remotely. Use your operational fork/checkout and commit reviewed configuration before enabling Actions. When forking a public example, set `hubRepo` in its sample `hub.json` to your fork. Setup rejects a mismatch between a marked sample and Git origin; existing configured hub identities are never silently replaced.
-
-| Option       | Meaning                                                     | Example                |
-| ------------ | ----------------------------------------------------------- | ---------------------- |
-| `--project`  | Local folder/command ID: lowercase letters, digits, hyphens | `example-com`          |
-| `--repo`     | App under test                                              | `your-org/app`         |
-| `--hub-repo` | Optional explicit automation repository                     | `your-org/your-hub`    |
-| `--area`     | Starting PM mandate                                         | `security`             |
-| `--runner`   | Runner mode                                                 | `self-hosted` or `gce` |
-
-Initialization creates `hub.json`, `.gitignore`, empty `.env.example` templates, and `projects/PROJECT/` with settings, areas, tiers, mandate, features, queue, and memory. PMs start disabled and unverified. Repeating initialization preserves existing files; identity conflicts stop before writing. It creates no cloud resources, provider projects, workers, credentials, or schedules.
-
-## Terminal checks and credentials
-
-The dashboard's **Configuration** section edits `hub.json` and each project's `project.json`, `areas.json`, and `tiers.json`. Choose a file, edit its JSON, then save. The server validates settings before replacing the file; invalid JSON or configuration leaves the original intact. If another tab or process changed a file, saving reports a conflict instead of overwriting the newer version. Keep your draft, reload the latest file, and apply the intended changes again.
-
-The editor does not expose `.env`; use Connections for tokens. Changes are saved to this server's configuration, not committed or pushed to GitHub. Review and commit operational configuration before expecting GitHub Actions to use it.
-
-**File locations** shows both the installation directory (the global npm package or source checkout) and configuration directory. Each path can be copied. Local desktop sessions also offer **Open folder**, using Explorer, Finder, or the Linux file manager. Homelab/LAN and headless sessions show server paths with copy controls and the in-browser editor; the browser cannot open a remote server's folder on your laptop.
+## Checks and the first run
 
 ```sh
 gremlins setup status
@@ -80,84 +77,105 @@ gremlins setup --check --json
 gremlins doctor my-app
 ```
 
-`setup status` is read-only. `--check` exits 1 for missing requirements. An initial **needs setup** result is expected. Local checks report prerequisites and credential presence, not an online runner or valid token. `doctor` performs live provider checks and stamps the project verified only on success.
+`setup status` is read-only. `--check` exits 1 while requirements are missing; an initial **needs setup** result is expected. `doctor` contacts providers and stamps the project verified only on success. Worker verification separately proves Chromium can produce a matching PNG. Neither check certifies your entire app: review the first PM run.
 
-The dashboard manages `GITHUB_TOKEN`, `LINEAR_API_KEY`, `VERCEL_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN`. Supply other project-specific variables, GitHub App credentials, and verification settings through your shell or an explicit environment file:
+Use generated `projects/PROJECT/.env.example` names for project-specific secrets. Save their values privately in the configuration `.env`, or select a file explicitly with `gremlins --env-file .env doctor my-app`. Automatic connection loading accepts supported keys and does not apply arbitrary entries such as `NODE_OPTIONS`.
 
-```sh
-gremlins --env-file .env setup --check --project my-app
-gremlins --env-file .env doctor my-app
-```
+The controller reads enabled areas' five-field schedules in **UTC** and considers approved open tickets. Each scheduled slot/ticket attempt has an idempotency key. Jobs have a 45-minute execution limit. Failed agent jobs are not automatically replayed; a failure before container launch gets one infrastructure retry. Manual requests for an already queued/running PM or ticket are rejected.
 
-The file path is relative to your current directory. Exported variables take precedence. Automatic loading only accepts supported connection keys; it never applies arbitrary `.env` entries such as `NODE_OPTIONS`. Keep credential values out of command arguments and committed files. Use the generated `projects/PROJECT/.env.example` for the full variable-name list and preserve existing `.env` values.
+An area's WIP limit includes approved tickets awaiting review: a completed worker job does not close its ticket or free that slot. Failed work also needs review and an explicit retry. Close or otherwise resolve reviewed tickets through the project's lifecycle before expecting later approved tickets to move forward. Never mark a ticket Done merely to free capacity before its production deliverables are merged.
 
-Promotion requires `SHIPGREMLINS_VERIFICATION_FILE` and the Ed25519 **public** PEM in `SHIPGREMLINS_ATTESTATION_PUBLIC_KEY` on the dispatcher. Keep the private `SHIPGREMLINS_ATTESTATION_KEY` only in a separate trusted signing job. See the [verification guide](VERIFICATION.md).
-
-## First agent run
-
-1. Configure project branches, Vercel IDs, Linear areas, test commands, and mandate.
-2. Create isolated staging accounts/data and install the GitHub App on both repositories.
-3. Configure CI secrets and register a runner. See [connections](README.md) and [runner operations](runners.md). The current workflow token must cover both repositories under the same GitHub owner.
-4. Run `gremlins doctor my-app` with appropriate credentials.
-5. Enable the reviewed area, run `gremlins crons write` in the operational hub checkout, and review/commit the schedule.
-6. Start a manual PM run. Inspect screenshots, report, checks, and ticket transitions before relying on daily automation.
-
-Self-hosted runners and GCE provisioning have workflow implementations; registration, cloud permissions, and an end-to-end run still need verification. Green local preflight is not a completed agent deployment.
+Queue state lives under `.run/local-runners/` in the configuration directory. Restart recovery inspects the existing container before deciding what to do. Docker containers/output volumes retain logs and artifacts independently of the dashboard. Older completed metadata is archived. Back up configuration and Docker storage according to your server's retention policy.
 
 ## Server use
 
-To open the dashboard from another device on your homelab network:
+For a foreground dashboard on your trusted LAN:
 
 ```sh
 gremlins setup --lan
 ```
 
-LAN mode uses port **4311**, prints your server's private IPv4 addresses with authenticated session links, and does not try to open a browser on the server. Open a printed link from your laptop or phone. Keep the `#session=...` part for the first visit. The credentials and configuration stay on the server.
+LAN mode uses port **4311**, prints private IPv4/Tailscale session links, and skips opening a browser on the server. Include `#session=...` on the first visit; the browser removes it after connecting. Keep the link private. This is a private operator dashboard, not a public multi-user service.
 
-Allow inbound TCP 4311 through the server's firewall for your trusted local subnet if needed. The CLI does not change firewall rules. LAN mode uses HTTP: keep it inside a trusted network and do not port-forward it to the internet. `--port 4312` selects another fixed port; `--port 0` chooses an available port. IPv4 private LAN and Tailscale interfaces are discovered automatically.
+Allow inbound TCP 4311 only from your trusted subnet if needed. The CLI does not change firewall rules. LAN mode uses HTTP; do not port-forward it to the internet. `--port 4312` selects another fixed port; `--port 0` selects an available one.
 
-For encrypted access without exposing a LAN listener, start loopback mode on a fixed port:
-
-```sh
-gremlins dashboard --no-open --port 4311
-```
-
-On your laptop, run `ssh -L 4311:127.0.0.1:4311 USER@SERVER_IP`, then open the loopback session link printed by the server. Keep the CLI running in the server terminal while using either mode. This command does not install a background service.
-
-The older `gremlins serve` and Docker Compose `hub` service still serve the operator-help page on port 4310. Compose's CLI service can initialize its persistent volume:
+Keep the controller running after closing the terminal:
 
 ```sh
-docker compose run --rm cli setup init --hub-repo your-org/your-hub --project my-app --repo your-org/my-app
-docker compose run --rm cli setup status --json
+gremlins start --lan
+gremlins status
+gremlins stop
 ```
 
-## Upgrade and troubleshoot
+Omit `--lan` for loopback-only access. `status` prints the background dashboard link. `stop` stops scheduling and the dashboard; existing Docker jobs continue. Starting again reconciles them. Background start does not install an operating-system boot service.
 
-Use **Updates** in the dashboard to check the available version, install it, and restart the dashboard on the same URL. The page stays usable during installation. Unsaved form changes are checked before a restart. You can also use the global CLI:
+For encrypted access without a LAN listener, run `gremlins dashboard --no-open --port 4311`. On your laptop, run `ssh -L 4311:127.0.0.1:4311 USER@SERVER_IP`, then open the server's printed loopback session link.
+
+### Restart after a server reboot
+
+On Linux, a systemd user service can supervise the foreground controller. Find the installed commands with `command -v gremlins` and `command -v node`. Use their actual absolute paths below; version-manager installations often live outside the service manager's default PATH.
+
+Save `~/.config/systemd/user/gremlins.service`:
+
+```ini
+[Unit]
+Description=ShipGremlins local controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=/home/YOUR_USER/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/YOUR_USER/.local/bin/gremlins --home /home/YOUR_USER/.shipgremlins dashboard --lan --port 4311
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+Replace `YOUR_USER`, the CLI path, and PATH. Include the directory containing Node. Docker must start with the server and this user must be able to run it. Stop a manually started background dashboard before enabling a service on the same port.
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now gremlins.service
+journalctl --user -u gremlins.service -n 30
+```
+
+The private session link appears in this user's service log. For user services without an interactive login, enable lingering with `loginctl enable-linger YOUR_USER` using the host's required permissions. This is manual host configuration, not an automatically installed service. Windows/macOS boot-service installation remains a separate step. Docker jobs do not automatically restart: interrupted agents are reconciled as failed rather than silently replayed after a host reboot.
+
+## Updates and recovery
+
+Use the dashboard's **Updates** panel or the global CLI:
 
 ```sh
 gremlins update --check
 gremlins update
-gremlins --version
+gremlins update --rollback
 ```
 
-The updater requires successful CI for the selected official commit, then installs it into a separate, per-user runtime directory under `~/.shipgremlins/runtime`. It checks that the candidate starts and can read your existing configuration before atomically selecting it for future commands. It does not run setup again, reseed PMs, change credentials, pull/reset your operational Git checkout, or stop running GitHub Actions jobs. Failed installation or validation leaves the selected runtime unchanged. The dashboard needs a restart to load the new code; other commands use it on their next launch.
+The updater pins an official commit with passing release CI, installs into a separate per-user runtime directory, and verifies startup/configuration compatibility before atomic selection. It does not reinitialize projects, replace credentials, change a Git checkout, or stop Docker jobs. Restart the dashboard to load new code; later CLI commands use the selected release. Original and previous runtimes are retained for rollback.
 
-The previous runtime is retained. Use **Roll back** in the dashboard or `gremlins update --rollback` to switch back after a compatibility check. Updates apply to this machine and user; they do not update workflows or code committed in a separate automation repository. Review those changes in your operational fork normally.
+For an older installation without `update`, stop its dashboard once, repeat the global installation command, and reopen setup. Stop processes using the global installation before a manual reinstall on Windows to avoid locked binaries.
 
-For older installations without the update command, stop their dashboard once, repeat the global installation command at the top of this guide, then run `gremlins setup` (or `gremlins setup --lan` on a homelab). Subsequent updates use the staged updater. A manually repeated global npm install replaces the bootstrap installation, so stop its running processes first on Windows.
+| Result                                         | Next action                                                                                                                                 |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command not recognized                         | Reopen the terminal. Check `npm config get prefix`: its directory on Windows, or `bin` subdirectory on macOS/Linux, must be on PATH.        |
+| Windows `EPERM` on `esbuild.exe`               | Stop this installation's dashboard/watch process and repeat the install. Leave unrelated Node processes alone.                              |
+| Runtime missing                                | Finish the global reinstall. Source contributors can repair dependencies with `npm ci`.                                                     |
+| Missing Docker or wrong mode                   | Start Docker Desktop/Engine and select Linux containers. Workers are created on the dashboard host.                                         |
+| Worker verification failed                     | Inspect its log/evidence, fix Docker/image access, then use Repair. Ready requires matching browser evidence.                               |
+| Another runner operation is in progress        | Wait for the image build or queue operation to finish, then retry. Abandoned process locks are recovered without deleting jobs.             |
+| Corrupt runner state                           | Keep `.run/local-runners/state.json` and Docker outputs for recovery. The controller refuses to erase/recreate corrupt state automatically. |
+| Legacy setup asks for an automation repository | Choose local execution; advanced CI modes still need their operational repository.                                                          |
+| Invalid project ID                             | Use a lowercase ID such as `example-com`, not a domain or URL.                                                                              |
+| Expired dashboard session                      | Use `gremlins status` for the background link or reopen foreground setup.                                                                   |
+| Missing provider settings                      | Complete Configuration and Connections, then rerun doctor before enabling the PM.                                                           |
 
-| Result                            | Next action                                                                                                                                             |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Command not recognized            | Reopen the terminal after installing. Check `npm config get prefix`: its directory on Windows, or `bin` subdirectory on macOS/Linux, must be on `PATH`. |
-| Install permission error          | Use a user-owned npm prefix or Node version manager. Daily commands do not need administrator access.                                                   |
-| Windows `EPERM` on `esbuild.exe`  | Stop that installation's running dashboard/watch process with Ctrl+C and repeat the install. Other checkouts can keep running.                          |
-| Runtime missing                   | Finish the global reinstall. Contributors can repair source dependencies with `npm ci`.                                                                 |
-| No automation repository detected | Use the configured hub or choose `--hub-repo owner/name` once.                                                                                          |
-| Configuration conflict            | Review existing settings or choose a fresh `--home PATH`.                                                                                               |
-| Domain/capitals in project ID     | Use a local ID such as `example-com`.                                                                                                                   |
-| Expired dashboard session         | Run `gremlins setup` and use the new browser link.                                                                                                      |
-| Missing provider IDs/credentials  | Fill project settings and dashboard connections, then rerun checks.                                                                                     |
-| Runner unavailable                | Check registration, labels, networking, and the runner guide.                                                                                           |
+## Advanced CI installations
 
-Source contributors can use `npm ci` and `node bin/shipgremlins.mjs`. The release check `npm run test:package` packs an allowlisted artifact, installs it to an isolated global prefix, and exercises real command shims outside the checkout on Windows, macOS, and Linux CI. Dashboard, updater, credential store, configuration editor, and folder helpers also run on all three CI platforms.
+Existing `self-hosted`/`gce` GitHub Actions workflows remain available. They still need an automation repository, CI secrets, provider registration, and reviewed schedules. Do not schedule the same project through both CI and the local controller. See [the advanced runner reference](runners.md#advanced-github-actions-and-gce-reference).
+
+Signed staging promotion and explicit production reconciliation remain separate tools. The local queue stops at draft integration PRs/MRs and does not provide automatic promotion or production lifecycle parity. Keep private signing keys out of PM/developer containers. See [verification](VERIFICATION.md) and [Linear lifecycle](LINEAR_LIFECYCLE.md).
+
+Source contributors can use `npm ci` and `node bin/shipgremlins.mjs`. Package-install and helper tests run on Windows, macOS, and Linux CI. These checks do not certify Docker Desktop on every host or a complete live GitHub/GitLab/Vercel/Linear application workflow.

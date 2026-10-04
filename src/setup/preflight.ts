@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadHub, loadProject } from "../config.ts";
+import { telemetrySecrets } from "../telemetry/config.ts";
 import { isExampleHub, validateName } from "./files.ts";
 
 export type Tool = "git" | "npm" | "docker" | "claude" | "gcloud";
@@ -62,11 +63,7 @@ export function inspectSetup(
 ): SetupReport {
   if (selectedProject) validateName(selectedProject, "project");
   const checks: SetupCheck[] = [];
-  const secretNames = new Set([
-    "GITHUB_TOKEN",
-    "LINEAR_API_KEY",
-    "VERCEL_TOKEN",
-  ]);
+  const secretNames = new Set(["LINEAR_API_KEY", "VERCEL_TOKEN"]);
   const add = (
     id: string,
     status: SetupCheck["status"],
@@ -87,19 +84,19 @@ export function inspectSetup(
   const probe = deps.probe ?? probeTool;
   for (const tool of ["git", "npm", "docker", "claude"] as const) {
     const result = probe(tool);
-    const required = tool === "git" || tool === "npm";
+    const required = tool === "git" || tool === "npm" || tool === "docker";
     add(
       tool,
       result.available ? "pass" : required ? "fail" : "warn",
       result.available
         ? `${tool} installed${result.version ? ` (${result.version})` : ""}.`
-        : `${tool} unavailable${required ? "; required for local checkout/setup" : tool === "docker" ? "; optional for container hosting" : "; needed on an agent runner, optional on this machine"}.`,
+        : `${tool} unavailable${tool === "docker" ? "; required for local workers; start Docker Engine or Docker Desktop (Linux containers)" : required ? "; required for local checkout/setup" : "; installed inside the worker image, optional on this machine"}.`,
     );
   }
   try {
     const hub = loadHub(root);
     add("hub", "pass", "hub.json is valid.");
-    if (isExampleHub(root))
+    if (hub.runners.mode !== "local" && isExampleHub(root))
       add(
         "hub-repository",
         "warn",
@@ -125,7 +122,9 @@ export function inspectSetup(
     add(
       "runner-enrollment",
       "warn",
-      "Runner registration and capacity need live verification; local configuration does not prove an online worker.",
+      hub.runners.mode === "local"
+        ? "Create a local Docker worker in the dashboard. Ready requires a real Chromium screenshot check; no CI registration is needed."
+        : "Runner registration and capacity need live verification; local configuration does not prove an online worker.",
     );
   } catch {
     add(
@@ -147,15 +146,20 @@ export function inspectSetup(
     add(
       "projects",
       "fail",
-      "No projects configured. Run gremlins setup init --project my-app --repo your-org/my-app. Use a lowercase project ID such as my-app, not a domain. Setup reuses the saved automation repository.",
+      "No projects configured. Open gremlins setup or run gremlins setup init --project my-app --repo your-org/my-app. Use a lowercase project ID such as my-app, not a domain.",
     );
+  if (names.length === 0) secretNames.add("GITHUB_TOKEN");
   for (const name of names) {
     try {
       validateName(name, "project");
       const project = loadProject(root, name);
+      secretNames.add(
+        project.config.provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN",
+      );
       add(`project:${name}`, "pass", "Project configuration is valid.");
-      secretNames.add(project.config.slackWebhookSecret);
       secretNames.add(project.config.vercel.bypassSecret);
+      for (const secret of telemetrySecrets(project.config.telemetry))
+        secretNames.add(secret.name);
       if (project.config.signIn)
         secretNames.add(project.config.signIn.databaseUrlSecret);
       const placeholders =
@@ -179,7 +183,7 @@ export function inspectSetup(
         `agents:${name}`,
         project.areas.some((area) => area.enabled) ? "pass" : "warn",
         project.areas.some((area) => area.enabled)
-          ? "At least one PM is enabled; manage workflow schedules with gremlins crons."
+          ? "At least one PM is enabled. Local mode follows its UTC schedule while the controller runs; CI mode uses gremlins crons."
           : "PMs are disabled until you review their mandates and enable their areas.",
       );
     } catch {
@@ -221,7 +225,7 @@ export function inspectSetup(
     ai ? "pass" : "warn",
     ai
       ? "Claude runner credential is present; validity is not checked."
-      : "Configure CLAUDE_CODE_OAUTH_TOKEN in GitHub Actions for the current Claude runner. Other model providers are planned.",
+      : "Save CLAUDE_CODE_OAUTH_TOKEN in dashboard Connections for local Claude workers. Other model providers are planned.",
   );
   const evidenceConfigured =
     Boolean(deps.env.SHIPGREMLINS_VERIFICATION_FILE?.trim()) &&
@@ -241,10 +245,10 @@ export function inspectSetup(
     secrets,
     capabilities: [
       {
-        name: "GitHub + Actions + Vercel",
+        name: "Local Docker workers + GitHub/GitLab + Vercel",
         status: "implemented",
         detail:
-          "Existing integration; each project requires live doctor checks and end-to-end verification.",
+          "Local queue, UTC schedules, approved-ticket jobs, browser verification and artifacts. Source providers need no CI runner registration. Each project requires live doctor checks.",
       },
       {
         name: "Self-hosted and GCE runners",
@@ -253,7 +257,7 @@ export function inspectSetup(
           "Existing GitHub runner workflows; enrollment, image build, and cloud permissions require operator setup.",
       },
       {
-        name: "GitLab + CI + Railway",
+        name: "Railway deployment checks and GitLab CI",
         status: "planned",
         detail:
           "Adapters and live certification are not implemented. Setup will not create a misleading active configuration.",
@@ -262,7 +266,7 @@ export function inspectSetup(
         name: "Dashboard connection management",
         status: "implemented",
         detail:
-          "Local dashboard stores supported connection tokens. Configure runner/Actions secrets separately; saved tokens still need live verification.",
+          "Local dashboard stores connection tokens and supplies job-scoped credentials to Docker workers. Saved tokens still need live verification. Legacy CI secrets are configured separately.",
       },
     ],
   };

@@ -4,9 +4,14 @@
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import {
+  ID_RE,
+  parseTelemetry,
+  type TelemetryConfig,
+} from "./telemetry/config.ts";
 
 export interface HubConfig {
-  runners: { mode: "self-hosted" | "gce"; label: string };
+  runners: { mode: "local" | "self-hosted" | "gce"; label: string };
   gce: {
     project: string;
     zone: string;
@@ -19,8 +24,12 @@ export interface HubConfig {
 }
 
 export interface ProjectConfig {
+  telemetry?: TelemetryConfig;
   name: string;
   repo: string;
+  /** Omitted in older configurations, where GitHub is the default. */
+  provider?: "github" | "gitlab";
+  serverUrl?: string;
   branches: { production: string; staging: string; integration: string };
   vercel: { projectId: string; teamId: string | null; bypassSecret: string };
   database: "neon-vercel-integration" | "none";
@@ -52,6 +61,8 @@ export interface ProjectConfig {
 }
 
 export interface AreaConfig {
+  /** Optional saved Mixpanel Insights report, scoped to this project's connection. */
+  mixpanelReportId?: string;
   key: string;
   name: string;
   /** prefixes inside the target repo this area owns */
@@ -134,29 +145,76 @@ const oneOf =
 const CRON_RE = /^(\S+\s+){4}\S+$/;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
+export function validSourceRepository(
+  value: unknown,
+  provider: string = "github",
+): value is string {
+  return (
+    typeof value === "string" &&
+    (provider === "gitlab"
+      ? /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/
+      : REPO_RE
+    ).test(value) &&
+    !value.split("/").some((part) => part === "." || part === "..")
+  );
+}
+
+export function validSourceServer(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === "/"
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function loadHub(root: string): HubConfig {
   const file = join(root, "hub.json");
   const raw = readJson(file);
   if (!isObj(raw)) throw new ConfigError(file, "must be an object");
   const runners = need(file, raw, "runners", isObj, "an object");
-  const gce = need(file, raw, "gce", isObj, "an object");
+  const local = runners.mode === "local";
+  const gce =
+    local && raw.gce === undefined
+      ? {
+          project: "",
+          zone: "us-central1-a",
+          image: "pm-runner",
+          machineType: "e2-standard-4",
+          spot: false,
+        }
+      : need(file, raw, "gce", isObj, "an object");
   return {
-    hubRepo: need(
-      file,
-      raw,
-      "hubRepo",
-      (v): v is string => isString(v) && REPO_RE.test(v),
-      '"owner/name"',
-    ),
+    hubRepo:
+      local && raw.hubRepo === undefined
+        ? "local/shipgremlins"
+        : need(
+            file,
+            raw,
+            "hubRepo",
+            (v): v is string => isString(v) && REPO_RE.test(v),
+            '"owner/name"',
+          ),
     runners: {
       mode: need(
         file,
         runners,
         "mode",
-        oneOf("self-hosted", "gce"),
-        '"self-hosted" or "gce"',
+        oneOf("local", "self-hosted", "gce"),
+        '"local", "self-hosted" or "gce"',
       ),
-      label: need(file, runners, "label", isString, "a label"),
+      label:
+        local && runners.label === undefined
+          ? "local"
+          : need(file, runners, "label", isString, "a label"),
     },
     gce: {
       project: typeof gce.project === "string" ? gce.project : "",
@@ -213,13 +271,45 @@ export function loadProject(root: string, name: string): Project {
   const branches = need(pf, raw, "branches", isObj, "an object");
   const vercel = need(pf, raw, "vercel", isObj, "an object");
   const commands = need(pf, raw, "commands", isObj, "an object");
+  let telemetry: TelemetryConfig | undefined;
+  try {
+    telemetry = parseTelemetry(raw.telemetry);
+  } catch (error) {
+    throw new ConfigError(pf, (error as Error).message);
+  }
   const config: ProjectConfig = {
+    ...(telemetry ? { telemetry } : {}),
     name,
+    provider:
+      raw.provider === undefined
+        ? "github"
+        : need(
+            pf,
+            raw,
+            "provider",
+            oneOf("github", "gitlab"),
+            '"github" or "gitlab"',
+          ),
+    ...(raw.serverUrl === undefined
+      ? {}
+      : {
+          serverUrl: need(
+            pf,
+            raw,
+            "serverUrl",
+            validSourceServer,
+            "an HTTPS server origin without credentials or a path",
+          ),
+        }),
     repo: need(
       pf,
       raw,
       "repo",
-      (v): v is string => isString(v) && REPO_RE.test(v),
+      (v): v is string =>
+        validSourceRepository(
+          v,
+          typeof raw.provider === "string" ? raw.provider : "github",
+        ),
       '"owner/name"',
     ),
     branches: {
@@ -319,6 +409,18 @@ export function loadProject(root: string, name: string): Project {
     if (label !== `pm:${key}`)
       throw new ConfigError(af, `area "${key}" label must be "pm:${key}"`);
     areas.push({
+      ...(a.mixpanelReportId === undefined
+        ? {}
+        : {
+            mixpanelReportId: need(
+              af,
+              a,
+              "mixpanelReportId",
+              (v): v is string =>
+                isString(v) && ID_RE.test(v) && !!telemetry?.mixpanel,
+              "a positive numeric report ID string with telemetry.mixpanel configured",
+            ),
+          }),
       key,
       name: need(af, a, "name", isString, "a name"),
       paths: need(af, a, "paths", isStringArray, "an array of path prefixes"),

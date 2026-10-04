@@ -1,7 +1,6 @@
 {
-  "$comment": "Generic public example. Set hubRepo to your own operational hub repository before setup. No projects are enrolled.",
-  "hubRepo": "AgentBurgundy/shipgremlins",
-  "runners": { "mode": "self-hosted", "label": "pm" },
+  "$comment": "Generic public example. Local Docker workers need no automation repository. No projects are enrolled.",
+  "runners": { "mode": "local", "label": "local" },
   "gce": {
     "project": "",
     "zone": "us-central1-a",

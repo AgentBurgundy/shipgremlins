@@ -1,4 +1,16 @@
-# PM Hub delivery roadmap
+# ShipGremlins delivery roadmap
+
+Current execution decision: local Docker workers are the default, with no fork,
+automation repository, GitHub Actions, or GitLab CI requirement. The local queue,
+background controller, browser verification, worker controls, and job logs/artifacts
+are implemented foundations. The provider-CI and cloud items below are advanced
+follow-up work. Local automatic staging promotion/production reconciliation,
+automatic boot-service installation, and full live provider certification remain
+open. See [implementation status](IMPLEMENTATION_STATUS.md) for the boundary.
+
+Implemented telemetry foundation: project-scoped Sentry/Datadog reads and
+per-area Mixpanel Insights reports. See [configuration and current limits](TELEMETRY.md).
+Live account certification and broader telemetry queries remain follow-up work.
 
 Updated October 4, 2026. This is an implementation backlog for the [master plan](MASTER_PLAN.md), not a claim that the items are already built or approved Linear tickets. No external tickets were created during planning.
 

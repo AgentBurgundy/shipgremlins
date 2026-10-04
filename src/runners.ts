@@ -16,6 +16,10 @@ export function resolveRunsOn(
   project: ProjectConfig | null,
   runLabel: string,
 ): string {
+  if (hub.runners.mode === "local")
+    throw new Error(
+      "Local Docker workers do not use GitHub Actions runs-on. Start gremlins setup to manage them.",
+    );
   if (hub.runners.mode === "gce") return JSON.stringify([runLabel]);
   const label = project?.runnerLabel ?? hub.runners.label;
   return JSON.stringify(["self-hosted", label]);

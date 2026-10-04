@@ -35,6 +35,13 @@
             ><span aria-hidden="true">▤</span> Projects
             <span class="nav-count" id="project-count">—</span></a
           >
+          <a class="nav-item" href="#runners"
+            ><span aria-hidden="true">◉</span> Your gremlins
+            <span class="nav-count" id="runner-count">—</span></a
+          >
+          <a class="nav-item" href="#activity"
+            ><span aria-hidden="true">↗</span> Activity</a
+          >
           <a class="nav-item" href="#configuration"
             ><span aria-hidden="true">⚙</span> Configuration</a
           >
@@ -73,7 +80,7 @@
               <h1 id="welcome-title">Meet your new<br />product crew.</h1>
               <p>
                 Connect your tools. Add your app.<br class="desktop-break" />
-                Give your gremlins a place to work.
+                PM Gremlins find the gaps. Coding Gremlins build the fixes.
               </p>
               <a class="button button-dark" href="#connections"
                 >Set up your crew <span aria-hidden="true">↗</span></a
@@ -119,6 +126,14 @@
                   ></span
                 >
               </li>
+              <li id="runner-step">
+                <span class="step-number">3</span
+                ><span
+                  >Create a local worker<small id="runners-summary"
+                    >Checking this machine…</small
+                  ></span
+                >
+              </li>
             </ol>
           </section>
 
@@ -152,7 +167,7 @@
                       >
                     </div>
                     <p id="github-help">
-                      Repositories and GitHub Actions workflows.
+                      Repositories, branches, and pull requests.
                     </p>
                     <div class="password-wrap">
                       <input
@@ -169,6 +184,42 @@
                         type="button"
                         data-reveal="github-token"
                         aria-label="Show GitHub token"
+                        aria-pressed="false"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                  <div class="token-field">
+                    <div class="field-heading">
+                      <label for="gitlab-token"
+                        ><span
+                          class="provider-icon gitlab-icon"
+                          aria-hidden="true"
+                          >GL</span
+                        >GitLab</label
+                      ><span class="saved-state" data-connection="GITLAB_TOKEN"
+                        >Checking…</span
+                      >
+                    </div>
+                    <p id="gitlab-help">
+                      Repositories, branches, and merge requests.
+                    </p>
+                    <div class="password-wrap">
+                      <input
+                        id="gitlab-token"
+                        name="GITLAB_TOKEN"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="Paste your GitLab token"
+                        aria-describedby="gitlab-help"
+                      /><button
+                        class="reveal-button"
+                        type="button"
+                        data-reveal="gitlab-token"
+                        aria-label="Show GitLab token"
                         aria-pressed="false"
                       >
                         Show
@@ -262,7 +313,7 @@
                       >
                     </div>
                     <p id="claude-help">
-                      Optional local token. Runners need their own AI secret.
+                      AI access for your local PM and developer jobs.
                     </p>
                     <div class="password-wrap">
                       <input
@@ -272,7 +323,7 @@
                         autocomplete="off"
                         spellcheck="false"
                         autocapitalize="none"
-                        placeholder="Paste an OAuth token (optional)"
+                        placeholder="Paste your Claude Code OAuth token"
                         aria-describedby="claude-help"
                       /><button
                         class="reveal-button"
@@ -286,6 +337,12 @@
                     </div>
                   </div>
                 </div>
+                <p class="field-help">
+                  Optional project telemetry: add Sentry, Datadog or Mixpanel in
+                  your project's configuration. Credential fields appear here
+                  after saving.
+                </p>
+                <div class="token-grid" id="telemetry-connections"></div>
                 <div class="form-bottom">
                   <p>
                     Already saved? Leave a field blank to keep its current
@@ -316,6 +373,110 @@
                 configured; live access still needs verification.
               </p>
             </div>
+            <section class="slack-card" aria-labelledby="slack-title">
+              <div class="slack-heading">
+                <span class="slack-mark" aria-hidden="true">#</span>
+                <div>
+                  <span class="eyebrow muted">KEEP THE CREW CLOSE</span>
+                  <h3 id="slack-title">Meet them in Slack.</h3>
+                  <p>
+                    PM findings. Coding updates. One channel for the useful
+                    stuff.
+                  </p>
+                </div>
+              </div>
+              <div class="slack-status-row">
+                <span class="runtime-badge" id="slack-state"
+                  >Checking Slack…</span
+                >
+                <p id="slack-workspace">Loading connection status.</p>
+              </div>
+              <p class="runner-guidance" id="slack-guidance">
+                Choose your workspace and channel when connecting.
+              </p>
+              <div class="button-row slack-actions">
+                <button
+                  class="button button-dark"
+                  id="slack-connect"
+                  type="button"
+                  disabled
+                >
+                  Add to Slack <span aria-hidden="true">↗</span></button
+                ><button
+                  class="small-button"
+                  id="slack-refresh"
+                  type="button"
+                  disabled
+                >
+                  Refresh status</button
+                ><button
+                  class="small-button"
+                  id="slack-disconnect"
+                  type="button"
+                  hidden
+                >
+                  Disconnect
+                </button>
+              </div>
+              <div
+                class="form-message"
+                id="slack-message"
+                role="status"
+                hidden
+              ></div>
+              <div
+                class="slack-disconnect-prompt"
+                id="slack-disconnect-prompt"
+                hidden
+              >
+                <p>
+                  Disconnect this workspace’s Slack notifications? Your projects
+                  and jobs will stay in place.
+                </p>
+                <div class="button-row">
+                  <button class="small-button" id="slack-keep" type="button">
+                    Keep connected</button
+                  ><button
+                    class="small-button danger-button"
+                    id="slack-confirm-disconnect"
+                    type="button"
+                  >
+                    Disconnect Slack
+                  </button>
+                </div>
+              </div>
+              <details class="slack-advanced">
+                <summary>Advanced: use an incoming webhook</summary>
+                <p>
+                  Use a Slack incoming webhook you already manage. This is saved
+                  on your server and never shown again.
+                </p>
+                <form id="slack-webhook-form">
+                  <fieldset id="slack-webhook-fields" disabled>
+                    <legend class="sr-only">Slack incoming webhook</legend>
+                    <div class="field">
+                      <label for="slack-webhook">Webhook URL</label
+                      ><input
+                        id="slack-webhook"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="https://hooks.slack.com/services/…"
+                        required
+                      />
+                    </div>
+                    <button
+                      class="small-button"
+                      id="save-slack-webhook"
+                      type="submit"
+                    >
+                      Save webhook
+                    </button>
+                  </fieldset>
+                </form>
+              </details>
+            </section>
           </section>
 
           <section class="panel" id="projects" aria-labelledby="projects-title">
@@ -324,8 +485,8 @@
                 <span class="eyebrow muted">02 / THE PLAYGROUND</span>
                 <h2 id="projects-title">Which app are we improving?</h2>
                 <p>
-                  Add a GitHub repository to create its local project
-                  configuration.
+                  Add a GitHub or GitLab app repository to create its local
+                  project configuration.
                 </p>
               </div>
               <span class="section-symbol" aria-hidden="true">▤</span>
@@ -338,9 +499,21 @@
             <form id="project-form">
               <fieldset id="project-fields" disabled>
                 <legend class="sr-only">New project</legend>
+                <div class="field provider-field">
+                  <label for="project-provider">Source provider</label
+                  ><select id="project-provider" name="provider">
+                    <option value="github">GitHub</option>
+                    <option value="gitlab">GitLab</option>
+                  </select>
+                  <p>
+                    Your code stays in your app repository. Workers run here in
+                    Docker.
+                  </p>
+                </div>
                 <div class="project-form-grid">
                   <div class="field">
-                    <label for="project-repo">GitHub repository</label
+                    <label for="project-repo" id="project-repo-label"
+                      >GitHub repository</label
                     ><input
                       id="project-repo"
                       name="repo"
@@ -374,26 +547,23 @@
                     </p>
                   </div>
                 </div>
-                <div class="advanced" id="hub-options" hidden>
-                  <p class="advanced-heading">One-time workspace setup</p>
+                <div class="advanced" id="gitlab-options" hidden>
+                  <p class="advanced-heading">Your GitLab server</p>
                   <div class="field">
-                    <label for="hub-repo">Automation repository</label
+                    <label for="gitlab-server">GitLab URL</label
                     ><input
-                      id="hub-repo"
-                      name="hubRepo"
-                      type="text"
+                      id="gitlab-server"
+                      name="serverUrl"
+                      type="url"
                       autocomplete="off"
                       spellcheck="false"
                       autocapitalize="none"
-                      placeholder="your-team/your-automation-hub"
-                      pattern="[^\/\s]+/[^\/\s]+"
-                      aria-describedby="hub-help"
+                      placeholder="https://gitlab.com"
+                      aria-describedby="gitlab-server-help"
                     />
-                    <p id="hub-help">
-                      Your ShipGremlins repository that stores PM configuration
-                      and runs GitHub Actions. Choose it once for this
-                      workspace; you won’t need to enter it for each app. Start
-                      from a fork or copy of the ShipGremlins repository.
+                    <p id="gitlab-server-help">
+                      Leave blank for gitlab.com, or enter your self-hosted
+                      HTTPS server address without a project path.
                     </p>
                   </div>
                 </div>
@@ -421,13 +591,336 @@
           </section>
 
           <section
+            class="panel runners-panel"
+            id="runners"
+            aria-labelledby="runners-title"
+          >
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow muted">03 / A PLACE TO WORK</span>
+                <h2 id="runners-title">Small crew. Real work.</h2>
+                <p>
+                  Local Docker workers run browsers and agents on your
+                  ShipGremlins server.
+                </p>
+              </div>
+              <span class="section-symbol" aria-hidden="true">◉</span>
+            </div>
+            <div class="machine-card">
+              <div>
+                <span class="eyebrow muted">THIS MACHINE</span>
+                <h3 id="machine-name">Checking your server…</h3>
+                <p id="machine-description">One job at a time per worker.</p>
+              </div>
+              <span class="runtime-badge" id="docker-state"
+                >Checking Docker</span
+              >
+            </div>
+            <p class="runner-guidance" id="docker-guidance">
+              This is the machine running your dashboard, even when you open
+              this page from another device.
+            </p>
+            <div class="runner-toolbar">
+              <p>
+                Creating a worker builds its image and verifies a real browser
+                job before it becomes ready.
+              </p>
+              <div class="button-row">
+                <button
+                  class="small-button"
+                  type="button"
+                  id="refresh-runners"
+                  disabled
+                >
+                  Refresh</button
+                ><button
+                  class="button button-dark"
+                  type="button"
+                  id="create-runner"
+                  disabled
+                >
+                  Create local worker <span aria-hidden="true">+</span>
+                </button>
+              </div>
+            </div>
+            <div
+              class="form-message"
+              id="runner-message"
+              role="status"
+              hidden
+            ></div>
+            <div
+              class="operation-notice"
+              id="runner-operation"
+              role="status"
+              hidden
+            ></div>
+            <div
+              class="worker-list"
+              id="runner-list"
+              aria-label="Local Docker workers"
+            ></div>
+            <div
+              class="discard-prompt worker-remove"
+              id="remove-runner-prompt"
+              hidden
+            >
+              <p id="remove-runner-description"></p>
+              <div class="button-row">
+                <button class="small-button" id="keep-runner" type="button">
+                  Keep worker</button
+                ><button
+                  class="small-button danger-button"
+                  id="confirm-remove-runner"
+                  type="button"
+                >
+                  Remove worker
+                </button>
+              </div>
+            </div>
+            <p class="runner-guidance" id="runner-credentials"></p>
+            <ul class="runner-limitations" id="runner-limitations" hidden></ul>
+            <div class="jobs-heading">
+              <div>
+                <span class="eyebrow muted">THE WORKBENCH</span>
+                <h3>Two crews. One better product.</h3>
+                <p>
+                  Choose an investigator or a builder, then give them a project.
+                </p>
+              </div>
+            </div>
+            <form id="job-form">
+              <fieldset id="job-fields" disabled>
+                <legend class="sr-only">Run a local job</legend>
+                <div
+                  class="crew-picker"
+                  role="group"
+                  aria-label="Choose a gremlin crew"
+                >
+                  <button
+                    class="crew-choice pm-choice"
+                    type="button"
+                    data-crew-type="pm"
+                    aria-pressed="true"
+                  >
+                    <span class="crew-choice-copy"
+                      ><span class="crew-role">THE INVESTIGATORS</span
+                      ><strong>PM Gremlins</strong
+                      ><span
+                        >Explore your app, investigate signals, and bring back
+                        gaps with evidence.</span
+                      ><span class="crew-choice-tag"
+                        >Mandate → findings</span
+                      ></span
+                    ><img
+                      src="/assets/gremlin-security.webp"
+                      width="512"
+                      height="576"
+                      alt=""
+                      loading="lazy"
+                    />
+                  </button>
+                  <button
+                    class="crew-choice coding-choice"
+                    type="button"
+                    data-crew-type="developer"
+                    aria-pressed="false"
+                  >
+                    <span class="crew-choice-copy"
+                      ><span class="crew-role">THE BUILDERS</span
+                      ><strong>Coding Gremlins</strong
+                      ><span
+                        >Implement approved tickets, run checks, and prepare a
+                        draft PR or MR.</span
+                      ><span class="crew-choice-tag"
+                        >Approved ticket → code</span
+                      ></span
+                    ><img
+                      src="/assets/gremlin-coding.webp"
+                      width="512"
+                      height="576"
+                      alt=""
+                      loading="lazy"
+                    />
+                  </button>
+                </div>
+                <div class="job-form-grid">
+                  <div class="field" hidden>
+                    <label for="job-type">Job type</label
+                    ><select id="job-type">
+                      <option value="pm">PM Gremlin</option>
+                      <option value="developer">Coding Gremlin</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="job-project">Project</label
+                    ><select id="job-project">
+                      <option value="">Add a project first</option>
+                    </select>
+                  </div>
+                  <div class="field" id="job-area-field">
+                    <label for="job-area">PM mandate</label
+                    ><select id="job-area">
+                      <option value="">Choose a project</option>
+                    </select>
+                  </div>
+                  <div class="field" id="job-ticket-field" hidden>
+                    <label for="job-ticket">Approved Linear ticket</label
+                    ><input
+                      id="job-ticket"
+                      type="text"
+                      placeholder="ENG-123"
+                      autocomplete="off"
+                      spellcheck="false"
+                      autocapitalize="characters"
+                      aria-describedby="job-ticket-help"
+                    />
+                    <p id="job-ticket-help">
+                      Use a ticket labeled pm-approved. Approval is checked
+                      before development begins.
+                    </p>
+                  </div>
+                </div>
+                <div class="form-bottom">
+                  <p id="job-guidance">
+                    Create a verified worker and configure a project to run your
+                    first job.
+                  </p>
+                  <button class="button button-dark" type="submit" id="run-job">
+                    Run PM Gremlin <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
+              </fieldset>
+              <div
+                class="form-message"
+                id="job-message"
+                role="status"
+                hidden
+              ></div>
+            </form>
+          </section>
+
+          <section
+            class="panel activity-panel"
+            id="activity"
+            aria-labelledby="activity-title"
+          >
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow muted">04 / FOLLOW THE WORK</span>
+                <h2 id="activity-title">See what your crew is up to.</h2>
+                <p>
+                  Visible tool calls, progress, checks, and evidence from
+                  running and past jobs.
+                </p>
+              </div>
+              <span class="runtime-badge" id="job-count">0 jobs</span>
+            </div>
+            <div class="activity-filters">
+              <div
+                class="segmented-control"
+                role="group"
+                aria-label="Activity status"
+              >
+                <button
+                  type="button"
+                  data-activity-filter="all"
+                  aria-pressed="true"
+                >
+                  All activity</button
+                ><button
+                  type="button"
+                  data-activity-filter="running"
+                  aria-pressed="false"
+                >
+                  Running</button
+                ><button
+                  type="button"
+                  data-activity-filter="past"
+                  aria-pressed="false"
+                >
+                  Past
+                </button>
+              </div>
+              <div class="field">
+                <label class="sr-only" for="activity-project"
+                  >Activity project</label
+                ><select id="activity-project">
+                  <option value="">All projects</option>
+                </select>
+              </div>
+            </div>
+            <div class="job-list" id="job-list" aria-label="Recent jobs"></div>
+            <div class="history-footer">
+              <p class="runner-guidance" id="history-message" role="status"></p>
+              <button
+                class="small-button"
+                id="load-history"
+                type="button"
+                hidden
+              >
+                Load earlier activity
+              </button>
+            </div>
+            <section
+              class="job-detail"
+              id="job-detail"
+              aria-labelledby="job-detail-title"
+              hidden
+            >
+              <div class="job-detail-heading">
+                <div>
+                  <span class="eyebrow muted">ACTIVITY</span>
+                  <h3 id="job-detail-title">Job activity</h3>
+                </div>
+                <button
+                  type="button"
+                  class="small-button"
+                  id="refresh-job-output"
+                >
+                  Refresh activity
+                </button>
+              </div>
+              <p class="runner-guidance" id="job-detail-description">
+                Visible actions and results from this run, with credentials
+                redacted.
+              </p>
+              <div class="activity-summary" id="activity-summary" hidden></div>
+              <div class="activity-checks" id="activity-checks" hidden></div>
+              <ol class="activity-timeline" id="activity-timeline"></ol>
+              <div
+                class="form-message"
+                id="activity-message"
+                role="status"
+                hidden
+              ></div>
+              <details class="raw-output">
+                <summary>Raw worker output</summary>
+                <pre
+                  class="job-log"
+                  id="job-log"
+                  tabindex="0"
+                  aria-label="Job output"
+                ></pre>
+              </details>
+              <div
+                class="form-message"
+                id="job-output-message"
+                role="status"
+                hidden
+              ></div>
+              <div class="artifact-list" id="job-artifacts"></div>
+            </section>
+          </section>
+
+          <section
             class="panel configuration-panel"
             id="configuration"
             aria-labelledby="configuration-title"
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">03 / YOUR WORKSPACE</span>
+                <span class="eyebrow muted">05 / YOUR WORKSPACE</span>
                 <h2 id="configuration-title">Make it your own.</h2>
                 <p>
                   Edit your crew’s configuration right here, even when your
@@ -540,8 +1033,8 @@
                 </div>
                 <div class="editor-actions">
                   <p>
-                    Saving updates configuration. Agents are not automatically
-                    enabled.
+                    Future jobs use saved settings. Review enabled mandates and
+                    schedules before saving.
                   </p>
                   <div class="editor-buttons">
                     <button
@@ -664,8 +1157,8 @@
               </div>
               <p class="update-assurance">
                 Updates preserve your projects, mandates, and saved credentials.
-                Running cloud jobs continue. Your dashboard uses the new runtime
-                after restarting.
+                Running jobs continue. Your dashboard uses the new runtime after
+                restarting.
               </p>
             </section>
           </section>
@@ -683,8 +1176,8 @@
               <h2 id="next-title">Ready is better than probably ready.</h2>
               <p>
                 After saving your connections and project, verify provider
-                access, configure your runner secrets, and finish the project
-                settings. Agents only run once you enable them.
+                access and finish the project settings. Create a local worker
+                above, then run a PM when its mandate is ready.
               </p>
               <div class="command-line">
                 <code id="doctor-command">gremlins doctor PROJECT</code

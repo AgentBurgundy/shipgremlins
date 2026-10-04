@@ -22,6 +22,9 @@ import {
   type DashboardOptions,
 } from "./dashboard.ts";
 import type { Updater, UpdateStatus } from "../update/index.ts";
+import type { LocalRunners } from "../localRunners/engine.ts";
+import type { DockerRunners } from "../localRunners/docker.ts";
+import type { createJobPreparation } from "../localRunners/jobs.ts";
 
 const session = "a".repeat(64);
 const directories: string[] = [];
@@ -88,6 +91,207 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it("authenticates Slack connection actions and accepts only the OAuth return document across sites", async () => {
+    const slack = {
+      status: vi.fn(async () => ({
+        available: true,
+        connected: false,
+        message: undefined,
+      })),
+      connect: vi.fn(async () => ({
+        url: "https://shipgremlins.ai/api/slack/authorize?request=opaque",
+      })),
+      complete: vi.fn(async () => ({
+        available: true,
+        connected: true,
+        message: undefined,
+      })),
+      webhook: vi.fn(async () => ({
+        available: true,
+        connected: true,
+        message: undefined,
+      })),
+      disconnect: vi.fn(async () => ({
+        available: true,
+        connected: false,
+        message: undefined,
+      })),
+    };
+    const { url } = await start(undefined, [], { slack });
+    expect((await fetch(`${url}/api/slack`)).status).toBe(401);
+    expect((await fetch(`${url}/api/slack`, { headers: auth })).status).toBe(
+      200,
+    );
+    expect((await post(`${url}/api/slack/connect`, {})).status).toBe(200);
+    expect(slack.connect).toHaveBeenCalledWith(`${url}/`);
+    expect(
+      (
+        await post(`${url}/api/slack/connect`, {
+          returnUrl: "https://evil.test",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await post(`${url}/api/slack/complete`, { envelope: "encrypted" }))
+        .status,
+    ).toBe(200);
+    expect(slack.complete).toHaveBeenCalledWith("encrypted");
+    expect(
+      (
+        await post(
+          `${url}/api/slack/webhook`,
+          { url: "test" },
+          { Origin: "https://evil.test" },
+        )
+      ).status,
+    ).toBe(403);
+    expect(slack.webhook).not.toHaveBeenCalled();
+    const navigationStatus = await new Promise<number | undefined>(
+      (done, reject) => {
+        const navigation = request(
+          `${url}/`,
+          {
+            headers: {
+              "Sec-Fetch-Site": "cross-site",
+              "Sec-Fetch-Mode": "navigate",
+            },
+          },
+          (response) => {
+            response.resume();
+            response.once("end", () => done(response.statusCode));
+          },
+        );
+        navigation.on("error", reject);
+        navigation.end();
+      },
+    );
+    expect(navigationStatus).toBe(200);
+    expect(
+      (
+        await fetch(`${url}/api/slack`, {
+          headers: {
+            ...auth,
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-Mode": "navigate",
+          },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await fetch(`${url}/api/slack`, {
+          method: "DELETE",
+          headers: { ...auth, "Content-Type": "application/json" },
+          body: "{}",
+        })
+      ).status,
+    ).toBe(200);
+  });
+  it("authenticates worker mutations, validates job inputs, and serves only authorized artifacts", async () => {
+    const create = vi.fn(async () => ({
+      id: "worker-demo",
+      status: "provisioning",
+    }));
+    const enqueue = vi.fn(async () => ({ id: "job-demo", status: "queued" }));
+    const runners = {
+      create,
+      enqueue,
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+      status: vi.fn(async () => ({
+        runners: [],
+        jobs: [],
+        operation: { phase: "idle", message: "Ready" },
+      })),
+      logs: vi.fn(async () => ["Browser ready"]),
+      artifacts: vi.fn(async () => [{ name: "screenshot.png", size: 8 }]),
+      readArtifact: vi.fn(async () =>
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      ),
+    } as unknown as LocalRunners;
+    const docker = {
+      preflight: vi.fn(async () => ({
+        available: true,
+        message: "Docker ready",
+      })),
+    } as unknown as DockerRunners;
+    const validate = vi.fn(async () => ({ area: { key: "core" } }));
+    const jobs = { validate } as unknown as ReturnType<
+      typeof createJobPreparation
+    >;
+    const { url } = await start(undefined, [], { runners, docker, jobs });
+    expect(
+      (
+        await fetch(`${url}/api/runners`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        })
+      ).status,
+    ).toBe(401);
+    expect(create).not.toHaveBeenCalled();
+    expect(
+      (await post(`${url}/api/runners`, { token: "must-not-be-accepted" }))
+        .status,
+    ).toBe(400);
+    expect((await post(`${url}/api/runners`, {})).status).toBe(202);
+    expect(create).toHaveBeenCalledOnce();
+    expect(
+      (
+        await post(`${url}/api/jobs`, {
+          type: "developer",
+          project: "app",
+          ticket: "APP-1",
+          prompt: "arbitrary",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(`${url}/api/jobs`, {
+          type: "developer",
+          project: "app",
+          ticket: "APP-1",
+        })
+      ).status,
+    ).toBe(202);
+    expect(validate).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect((await fetch(`${url}/api/jobs/job-demo/logs`)).status).toBe(401);
+    expect(
+      await (
+        await fetch(`${url}/api/jobs/job-demo/logs`, { headers: auth })
+      ).json(),
+    ).toEqual({ lines: ["Browser ready"] });
+    expect(
+      await (
+        await fetch(`${url}/api/jobs/job-demo/artifacts`, { headers: auth })
+      ).json(),
+    ).toMatchObject({
+      files: [
+        {
+          name: "screenshot.png",
+          url: "/api/jobs/job-demo/artifacts/screenshot.png",
+        },
+      ],
+    });
+    expect(
+      (
+        await fetch(`${url}/api/jobs/job-demo/artifacts/evil.html`, {
+          headers: auth,
+        })
+      ).status,
+    ).toBe(400);
+    const screenshot = await fetch(
+      `${url}/api/jobs/job-demo/artifacts/screenshot.png`,
+      { headers: auth },
+    );
+    expect(screenshot.headers.get("Content-Type")).toBe("image/png");
+    expect(screenshot.headers.get("Content-Security-Policy")).toContain(
+      "sandbox",
+    );
+    expect((await screenshot.arrayBuffer()).byteLength).toBe(8);
+  });
   it("keeps authentication and exact same-origin checks for explicitly allowed LAN hosts", async () => {
     const { url } = await start(undefined, ["192.168.1.20"]);
     const port = new URL(url).port;
@@ -157,7 +361,7 @@ describe("local dashboard HTTP boundary", () => {
       configDirectory: root,
       hubRepo: null,
       projects: [],
-      runtime: { dashboard: "local", agents: "github-actions" },
+      runtime: { dashboard: "local", agents: "local-docker" },
     });
     const saved = await post(
       `${url}/api/connections`,
@@ -360,18 +564,17 @@ describe("local dashboard HTTP boundary", () => {
     ).toBe(400);
   });
 
-  it("explains the one-time automation repository choice outside a configured checkout", async () => {
+  it("creates local configuration without an automation repository or fork", async () => {
     const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-    const { url } = await start(packageRoot);
+    const { url, root } = await start(packageRoot);
     const result = await post(`${url}/api/projects`, {
       project: "my-app",
       repo: "example/app",
     });
-    expect(result.status).toBe(400);
-    expect(await result.json()).toEqual({
-      error:
-        "Choose the repository that will store PM configuration and run GitHub Actions, or launch the dashboard from your configured hub checkout.",
-    });
+    expect(result.status).toBe(200);
+    expect(
+      JSON.parse(readFileSync(join(root, "hub.json"), "utf8")).runners.mode,
+    ).toBe("local");
   });
 
   it("reports invalid startup arguments without opening a browser", async () => {

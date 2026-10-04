@@ -1,0 +1,11 @@
+{
+  "name": "shipgremlins-local-job-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.289",
+    "@playwright/mcp": "0.0.83",
+    "playwright": "1.63.0"
+  }
+}

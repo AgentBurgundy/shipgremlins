@@ -187,6 +187,7 @@ jobs:
       - name: Read the project's config
         id: cfg
         run: |
+          npx tsx src/cli.ts validate
           f="projects/${PM_PROJECT}/project.json"
           test -f "$f" || { echo "unknown project ${PM_PROJECT}" >&2; exit 1; }
           node -e '
@@ -200,6 +201,11 @@ jobs:
               vercel_project: p.vercel.projectId, vercel_team: p.vercel.teamId ?? "",
               bypass_secret: p.vercel.bypassSecret, slack_secret: p.slackWebhookSecret,
               signin_secret: p.signIn?.databaseUrlSecret ?? "",
+              sentry_secret: p.telemetry?.sentry?.tokenSecret ?? "",
+              dd_api_secret: p.telemetry?.datadog?.apiKeySecret ?? "",
+              dd_app_secret: p.telemetry?.datadog?.appKeySecret ?? "",
+              mixpanel_username_secret: p.telemetry?.mixpanel?.usernameSecret ?? "",
+              mixpanel_password_secret: p.telemetry?.mixpanel?.passwordSecret ?? "",
               preview_migrate: p.previewMigrate ?? "",
             };
             for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
@@ -337,6 +343,17 @@ jobs:
       - name: PM run
         working-directory: target
         env:
+          # Resolve only this project's optional read credentials, only for the PM.
+          SENTRY_TOKEN_NAME: ${{ steps.cfg.outputs.sentry_secret }}
+          SENTRY_TOKEN_VALUE: ${{ secrets[steps.cfg.outputs.sentry_secret || 'PM_NO_TELEMETRY_SECRET'] }}
+          DD_API_NAME: ${{ steps.cfg.outputs.dd_api_secret }}
+          DD_API_VALUE: ${{ secrets[steps.cfg.outputs.dd_api_secret || 'PM_NO_TELEMETRY_SECRET'] }}
+          DD_APP_NAME: ${{ steps.cfg.outputs.dd_app_secret }}
+          DD_APP_VALUE: ${{ secrets[steps.cfg.outputs.dd_app_secret || 'PM_NO_TELEMETRY_SECRET'] }}
+          MIXPANEL_USERNAME_NAME: ${{ steps.cfg.outputs.mixpanel_username_secret }}
+          MIXPANEL_USERNAME_VALUE: ${{ secrets[steps.cfg.outputs.mixpanel_username_secret || 'PM_NO_TELEMETRY_SECRET'] }}
+          MIXPANEL_PASSWORD_NAME: ${{ steps.cfg.outputs.mixpanel_password_secret }}
+          MIXPANEL_PASSWORD_VALUE: ${{ secrets[steps.cfg.outputs.mixpanel_password_secret || 'PM_NO_TELEMETRY_SECRET'] }}
           GH_TOKEN: ${{ steps.app.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
           TARGET_REPO: ${{ steps.cfg.outputs.repo }}
@@ -348,6 +365,11 @@ jobs:
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "3600000"
         run: |
           set -o pipefail
+          if [ -n "$SENTRY_TOKEN_NAME" ]; then export "$SENTRY_TOKEN_NAME=$SENTRY_TOKEN_VALUE"; fi
+          if [ -n "$DD_API_NAME" ]; then export "$DD_API_NAME=$DD_API_VALUE"; fi
+          if [ -n "$DD_APP_NAME" ]; then export "$DD_APP_NAME=$DD_APP_VALUE"; fi
+          if [ -n "$MIXPANEL_USERNAME_NAME" ]; then export "$MIXPANEL_USERNAME_NAME=$MIXPANEL_USERNAME_VALUE"; fi
+          if [ -n "$MIXPANEL_PASSWORD_NAME" ]; then export "$MIXPANEL_PASSWORD_NAME=$MIXPANEL_PASSWORD_VALUE"; fi
           export RUN_DEADLINE
           RUN_DEADLINE=$(date -u -d "+$((RUN_BUDGET_MINUTES - 10)) minutes" +%Y-%m-%dT%H:%M:%SZ)
           claude -p "$(cat "$HUB_DIR/prompts/pm.md")" \

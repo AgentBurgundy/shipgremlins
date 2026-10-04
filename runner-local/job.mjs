@@ -1,0 +1,415 @@
+import { spawn } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  lstatSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { browserSmoke } from "./runner-smoke.mjs";
+import { chromium } from "playwright";
+import { createActivityWriter } from "./activity.mjs";
+import { runCheckedDelivery, validateDelivery } from "./delivery.mjs";
+import {
+  enforceDeadline,
+  jobEnvironments,
+  restoreGitConfig,
+} from "./runtime.mjs";
+
+let current;
+let stopping = false;
+const stop = () => {
+  stopping = true;
+  if (current?.pid) {
+    try {
+      process.kill(-current.pid, "SIGTERM");
+    } catch {
+      current.kill("SIGTERM");
+    }
+  }
+};
+process.once("SIGTERM", stop);
+process.once("SIGINT", stop);
+let timedOut = false;
+const clearDeadline = enforceDeadline(() => {
+  timedOut = true;
+  stop();
+});
+const allowedCredentials = new Set([
+  "GITHUB_TOKEN",
+  "GITLAB_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "LINEAR_API_KEY",
+  "VERCEL_TOKEN",
+  "GREMLINS_PREVIEW_BYPASS",
+  "GREMLINS_PREVIEW_DATABASE_URL",
+]);
+let secrets = [];
+let logSize = 0;
+function redact(value) {
+  let output = String(value);
+  for (const secret of secrets)
+    if (secret) output = output.split(secret).join("[REDACTED]");
+  return output.replace(
+    /(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|glrt-[A-Za-z0-9_-]+|sk-ant-[A-Za-z0-9_-]+)/g,
+    "[REDACTED]",
+  );
+}
+function log(value) {
+  const line = redact(value).replace(
+    /[\u001b\u009b][[\]()#;?]*(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*)?\u0007|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
+    "",
+  );
+  if (logSize > 5 * 1024 * 1024) return;
+  logSize += Buffer.byteLength(line);
+  appendFileSync("/output/job.log", line + "\n");
+  console.log(line);
+}
+const activity = createActivityWriter({
+  redact,
+  write: (line) => {
+    appendFileSync(
+      "/output/activity.jsonl",
+      line.slice("GREMLINS_ACTIVITY ".length) + "\n",
+    );
+    log(line);
+  },
+});
+async function run(command, args, options = {}) {
+  if (stopping) throw new Error("Job stopped.");
+  if (!options.model)
+    activity.emit(
+      "progress",
+      `Running ${command}`,
+      command === "/bin/bash" ? args[1] : args.join(" "),
+      "running",
+    );
+  return new Promise((done, reject) => {
+    current = spawn(command, args, {
+      cwd: options.cwd ?? "/work",
+      env: options.env ?? process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+    let modelError = false;
+    let captured = "";
+    current.stdout.on("data", (chunk) => {
+      captured = (captured + chunk.toString("utf8")).slice(-1024 * 1024);
+    });
+    const streams = [current.stdout, current.stderr];
+    for (const stream of streams) {
+      let pending = "";
+      let dropping = false;
+      stream.on("data", (chunk) => {
+        pending += chunk.toString("utf8");
+        let end;
+        while ((end = pending.indexOf("\n")) >= 0) {
+          const line = pending.slice(0, end);
+          pending = pending.slice(end + 1);
+          if (!dropping) {
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.type === "result" && parsed.is_error === true)
+                modelError = true;
+              if (options.model) {
+                activity.modelRecord(parsed);
+                continue;
+              }
+            } catch {}
+            // Streaming model envelopes can contain private thinking. Only the
+            // explicitly allowlisted public records above become logs/history.
+            if (!options.model) log(line);
+          }
+          dropping = false;
+        }
+        if (pending.length > 128 * 1024) {
+          pending = "";
+          dropping = true;
+          log("[Oversized subprocess output omitted]");
+        }
+      });
+      stream.on("end", () => {
+        if (pending && !dropping && !options.model) log(pending);
+      });
+    }
+    current.once("error", () =>
+      reject(new Error("A required job tool could not start.")),
+    );
+    current.once("close", (code) => {
+      current = undefined;
+      if (code === 0 && !modelError && !stopping) done(captured);
+      else
+        reject(
+          new Error("A job command failed. Inspect the redacted job log."),
+        );
+    });
+  });
+}
+let kind = "unknown";
+try {
+  mkdirSync("/output", { recursive: true });
+  const deadline = Date.now() + 60_000;
+  while (!existsSync("/work/job.ready") && !stopping) {
+    if (Date.now() > deadline)
+      throw new Error("The job payload did not arrive. Queue a new attempt.");
+    await new Promise((done) => setTimeout(done, 200));
+  }
+  if (stopping) process.exit(0);
+  const input = JSON.parse(readFileSync("/work/job.json", "utf8"));
+  unlinkSync("/work/job.json");
+  if (!input || !["verify", "pm", "developer"].includes(input.kind))
+    throw new Error("Unsupported job kind.");
+  kind = input.kind;
+  activity.emit("progress", "Job started", `Starting ${kind} work.`, "running");
+  if (kind === "developer") validateDelivery(input.delivery);
+  if (kind === "verify") {
+    await browserSmoke("/output", input.nonce);
+    activity.emit(
+      "check",
+      "Browser verification",
+      "Chromium rendered the page and saved a real PNG screenshot.",
+      "succeeded",
+    );
+    activity.emit(
+      "result",
+      "Worker verified",
+      "The local browser worker is ready.",
+      "succeeded",
+    );
+    log("Real Chromium screenshot created and verified.");
+  } else {
+    if (
+      typeof input.prompt !== "string" ||
+      !input.prompt.trim() ||
+      input.prompt.length > 200000
+    )
+      throw new Error("An agent prompt is required.");
+    const repo = new URL(input.repoUrl);
+    if (
+      repo.protocol !== "https:" ||
+      repo.username ||
+      repo.password ||
+      repo.search ||
+      repo.hash
+    )
+      throw new Error("Use a credential-free HTTPS repository URL.");
+    if (
+      typeof input.branch !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(input.branch) ||
+      input.branch.includes("..")
+    )
+      throw new Error("A valid project branch is required.");
+    const credentials = input.credentials ?? {};
+    if (
+      !credentials ||
+      typeof credentials !== "object" ||
+      Array.isArray(credentials)
+    )
+      throw new Error("Invalid job credentials.");
+    for (const [key, value] of Object.entries(credentials)) {
+      if (
+        !allowedCredentials.has(key) ||
+        typeof value !== "string" ||
+        value.length > 16384 ||
+        /[\r\n\0]/.test(value)
+      )
+        throw new Error("Unsupported job credential.");
+    }
+    secrets = Object.values(credentials)
+      .filter(Boolean)
+      .flatMap((value) => [
+        value,
+        JSON.stringify(value).slice(1, -1),
+        encodeURIComponent(value),
+      ])
+      .sort((a, b) => b.length - a.length);
+    const { execution: env, publication } = jobEnvironments(
+      credentials,
+      input.provider,
+    );
+    publication.GH_HOST = repo.hostname;
+    publication.GITLAB_HOST = repo.hostname;
+    await run(
+      "git",
+      [
+        "clone",
+        "--depth",
+        "50",
+        "--single-branch",
+        "--branch",
+        input.branch,
+        "--",
+        repo.href,
+        "/work/repo",
+      ],
+      { env: publication },
+    );
+    const baseSha = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: "/work/repo", env })
+    ).trim();
+    if (kind === "developer")
+      await run("git", ["checkout", "-b", input.delivery.branch], {
+        cwd: "/work/repo",
+        env,
+      });
+    mkdirSync("/work/memory", { recursive: true });
+    for (const [name, content] of Object.entries(input.memory ?? {})) {
+      if (
+        !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/.test(name) ||
+        typeof content !== "string" ||
+        content.length > 200000
+      )
+        throw new Error("Invalid memory snapshot.");
+      writeFileSync(join("/work/memory", name), content, { mode: 0o600 });
+    }
+    const commands = input.commands ?? {};
+    for (const [key, value] of Object.entries(commands))
+      if (
+        !["install", "test", "lint", "typecheck", "build"].includes(key) ||
+        (value !== null && typeof value !== "string") ||
+        (typeof value === "string" && value.length > 10000)
+      )
+        throw new Error("Invalid project command.");
+    if (commands.install)
+      await run("/bin/bash", ["-lc", commands.install], {
+        cwd: "/work/repo",
+        env,
+      });
+    writeFileSync(
+      "/work/mcp.json",
+      JSON.stringify({
+        mcpServers: {
+          playwright: {
+            command: "node",
+            args: [
+              "/opt/gremlins/node_modules/@playwright/mcp/cli.js",
+              "--headless",
+              "--executable-path",
+              chromium.executablePath(),
+              "--no-sandbox",
+              "--output-dir",
+              "/output/screenshots",
+            ],
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    writeFileSync("/work/prompt.md", input.prompt, { mode: 0o600 });
+    await run(
+      "claude",
+      [
+        "--dangerously-skip-permissions",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--max-turns",
+        "60",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "/work/mcp.json",
+        "-p",
+        input.prompt +
+          "\n\nUse the Playwright MCP browser for visual verification. Save screenshots under /output/screenshots. Your memory snapshot is in /work/memory. Never print credentials.",
+      ],
+      { cwd: "/work/repo", env, model: true },
+    );
+    const deliveryResult =
+      kind === "developer"
+        ? await runCheckedDelivery({
+            commands,
+            delivery: input.delivery,
+            baseSha,
+            repoUrl: repo.href,
+            provider: input.provider,
+            run: (command, args) =>
+              run(command, args, { cwd: "/work/repo", env }),
+            publish: (command, args) =>
+              run(command, args, { cwd: "/work/repo", env: publication }),
+            writeBody: (body) =>
+              writeFileSync("/work/pr-body.md", body, { mode: 0o600 }),
+            prepareRepository: () => restoreGitConfig("/work/repo", repo.href),
+            onCheck: (name, status) =>
+              activity.emit("check", name, undefined, status),
+          })
+        : { checks: [] };
+    writeFileSync(
+      "/output/result.json",
+      JSON.stringify(
+        {
+          ok: true,
+          kind,
+          ...deliveryResult,
+          ...(activity.summary() ? { summary: activity.summary() } : {}),
+          completedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
+    log("Job completed.");
+    activity.emit(
+      "result",
+      "Job completed",
+      deliveryResult.prUrl ??
+        (deliveryResult.noChanges
+          ? "Checks passed; no code changes were needed."
+          : "Work and verification completed."),
+      "succeeded",
+    );
+  }
+} catch (error) {
+  const message = redact(
+    timedOut
+      ? "Job exceeded the 45-minute time limit."
+      : error instanceof Error
+        ? error.message
+        : "Job failed.",
+  );
+  writeFileSync(
+    "/output/result.json",
+    JSON.stringify(
+      {
+        ok: false,
+        kind,
+        error: message,
+        completedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+  log(message);
+  activity.emit("result", "Job failed", message, "failed");
+  process.exitCode = timedOut ? 124 : stopping ? 130 : 1;
+} finally {
+  clearDeadline();
+  // Text artifacts can contain echoed environment values even when tool logs do not.
+  function clean(directory, depth = 0) {
+    if (depth > 3) return;
+    for (const item of readdirSync(directory, { withFileTypes: true })) {
+      const file = join(directory, item.name);
+      if (item.isSymbolicLink()) continue;
+      if (item.isDirectory()) clean(file, depth + 1);
+      else if (
+        item.isFile() &&
+        /\.(json|jsonl|md|txt|log|csv|html|ya?ml|[cm]?js|ts)$/i.test(
+          item.name,
+        ) &&
+        lstatSync(file).size <= 10 * 1024 * 1024
+      )
+        writeFileSync(file, redact(readFileSync(file, "utf8")));
+    }
+  }
+  try {
+    clean("/output");
+    writeFileSync("/output/.sanitized", "complete\n", { mode: 0o600 });
+  } catch {
+    process.exitCode = 1;
+  }
+}

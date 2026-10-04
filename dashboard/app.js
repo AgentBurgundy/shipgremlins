@@ -4,12 +4,15 @@
   const sessionKey = "shipgremlins.dashboard.session";
   const fragment = new URLSearchParams(window.location.hash.slice(1));
   let sessionToken = fragment.get("session") || "";
-  if (sessionToken) {
+  let slackEnvelope = fragment.get("slack") || "";
+  if (sessionToken || slackEnvelope) {
     history.replaceState(
       null,
       "",
       window.location.pathname + window.location.search,
     );
+  }
+  if (sessionToken) {
     try {
       sessionStorage.setItem(sessionKey, sessionToken);
     } catch {
@@ -36,6 +39,24 @@
   let updateRequestBusy = false;
   let restarting = false;
   let restartReloadApproved = false;
+  let runnerStatus = null;
+  let runnerPollTimer = null;
+  let runnerLoading = false;
+  let runnerRequestBusy = false;
+  let removeRunnerId = "";
+  let selectedJobId = "";
+  let outputLoading = false;
+  let outputRevision = 0;
+  let artifactSignature = "";
+  const artifactBlobs = new Set();
+  const projectChecks = new Map();
+  let activityFilter = "all";
+  let slackStatus = null;
+  let slackBusy = false;
+  let jobHistory = [];
+  let historyCursor = null;
+  let historyLoading = false;
+  let olderHistoryLoaded = false;
 
   function message(element, text, error = false) {
     element.replaceChildren();
@@ -50,6 +71,8 @@
     $("connections-fields").disabled = locked;
     $("project-fields").disabled = locked;
     updateEditorControls();
+    updateRunnerControls();
+    renderSlackControls();
   }
 
   function restoreButton(id, label, symbol) {
@@ -60,9 +83,14 @@
     button.replaceChildren(document.createTextNode(label + " "), icon);
   }
 
-  async function api(path, body, method = body ? "POST" : "GET") {
+  async function api(
+    path,
+    body,
+    method = body ? "POST" : "GET",
+    timeoutMs = 20000,
+  ) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(path, {
         method,
@@ -126,29 +154,25 @@
       ? status.connections
       : [];
     const projects = Array.isArray(status.projects) ? status.projects : [];
-    const requiredNames = ["GITHUB_TOKEN", "LINEAR_API_KEY", "VERCEL_TOKEN"];
-    const requiredSaved = requiredNames.filter((name) =>
-      connections.some(
-        (connection) => connection.name === name && connection.configured,
-      ),
-    ).length;
+    const sourceSaved = connections.some(
+      (connection) =>
+        ["GITHUB_TOKEN", "GITLAB_TOKEN"].includes(connection.name) &&
+        connection.configured,
+    );
     const savedCount = connections.filter(
       (connection) => connection.configured,
     ).length;
     $("connection-count").textContent = String(savedCount);
     $("project-count").textContent = String(projects.length);
     $("connections-summary").textContent =
-      `${requiredSaved} of 3 required tokens saved`;
+      `${savedCount} ${savedCount === 1 ? "connection" : "connections"} saved`;
     $("projects-summary").textContent = projects.length
       ? `${projects.length} ${projects.length === 1 ? "project" : "projects"} configured`
       : "No projects yet";
-    $("connection-step").classList.toggle(
-      "complete",
-      requiredSaved === requiredNames.length,
-    );
+    $("connection-step").classList.toggle("complete", sourceSaved);
     $("project-step").classList.toggle("complete", projects.length > 0);
     $("setup-title").textContent =
-      requiredSaved === 3 && projects.length
+      sourceSaved && projects.length
         ? "Your workspace is taking shape."
         : "Make yourself at home.";
     $("config-directory").textContent =
@@ -163,8 +187,48 @@
         ? `Some settings need attention. You can repair them in the editor below. ${warnings.join(" ")}`
         : "",
     );
-    $("hub-options").hidden = Boolean(status.hubRepo);
-    $("hub-repo").required = !status.hubRepo;
+    const telemetryFields = $("telemetry-connections");
+    const telemetryNames = new Set(
+      connections.map((connection) => connection.name),
+    );
+    for (const field of [...telemetryFields.children]) {
+      if (!telemetryNames.has(field.dataset.secret)) field.remove();
+    }
+    for (const connection of connections.filter((connection) =>
+      /^(SENTRY_AUTH_TOKEN|DD_API_KEY|DD_APP_KEY|MIXPANEL_USERNAME|MIXPANEL_PASSWORD)_/.test(
+        connection.name,
+      ),
+    )) {
+      if (document.getElementById(`telemetry-${connection.name}`)) continue;
+      const field = document.createElement("div");
+      field.className = "token-field";
+      field.dataset.secret = connection.name;
+      const heading = document.createElement("div");
+      heading.className = "field-heading";
+      const label = document.createElement("label");
+      label.htmlFor = `telemetry-${connection.name}`;
+      label.textContent = connection.label;
+      const badge = document.createElement("span");
+      badge.className = "saved-state";
+      badge.dataset.connection = connection.name;
+      const help = document.createElement("p");
+      help.id = `help-${connection.name}`;
+      help.textContent = connection.description;
+      const input = document.createElement("input");
+      input.id = label.htmlFor;
+      input.name = connection.name;
+      input.type = "password";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.placeholder = "Paste credential (optional)";
+      input.setAttribute("aria-describedby", help.id);
+      heading.append(label, badge);
+      const wrap = document.createElement("div");
+      wrap.className = "password-wrap";
+      wrap.append(input);
+      field.append(heading, help, wrap);
+      telemetryFields.append(field);
+    }
     for (const badge of document.querySelectorAll("[data-connection]")) {
       const configured = connections.some(
         (connection) =>
@@ -197,19 +261,57 @@
       name.textContent = project.name;
       const repo = document.createElement("span");
       repo.className = "project-row-repo";
-      repo.textContent = project.repo;
+      repo.textContent = `${project.provider === "gitlab" ? "GitLab" : "GitHub"} · ${project.repo}`;
       name.append(repo);
       const badge = document.createElement("span");
       badge.className = "project-row-badge";
       badge.textContent = "Configured on server";
-      row.append(name, badge);
-      list.append(row);
+      const actions = element("div", "project-actions");
+      const verify = element("button", "small-button", "Verify connections");
+      verify.type = "button";
+      verify.dataset.verifyProject = project.name;
+      const check = projectChecks.get(project.name);
+      verify.disabled = check?.busy === true;
+      if (check?.busy) verify.textContent = "Verifying…";
+      actions.append(badge, verify);
+      const launch = element("div", "button-row project-launch");
+      for (const [type, label] of [
+        ["pm", "Run PM"],
+        ["developer", "Run Coding"],
+      ]) {
+        const button = element("button", `small-button launch-${type}`, label);
+        button.type = "button";
+        button.dataset.launchProject = project.name;
+        button.dataset.launchCrew = type;
+        launch.append(button);
+      }
+      actions.append(launch);
+      row.append(name, actions);
+      const card = element("div", "project-card");
+      card.append(row);
+      if (check) {
+        const result = element("div", "project-checks");
+        result.setAttribute("role", check.error ? "alert" : "status");
+        result.classList.toggle("error", Boolean(check.error));
+        result.append(element("p", "", check.message));
+        for (const item of check.checks || [])
+          result.append(
+            element(
+              "p",
+              "",
+              `${item.ok ? "✓" : "!"} ${item.name}: ${item.detail}`,
+            ),
+          );
+        card.append(result);
+      }
+      list.append(card);
     }
     const exampleProject = projects.find((project) =>
       /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(project.name),
     );
     $("doctor-command").textContent =
       `gremlins doctor ${exampleProject ? exampleProject.name : "PROJECT"}`;
+    renderJobProjects();
   }
 
   async function refreshStatus() {
@@ -251,7 +353,11 @@
           true,
         );
       }
-      await initializeUpdates();
+      await Promise.allSettled([
+        initializeUpdates(),
+        refreshRunners(),
+        initializeSlack(),
+      ]);
     } catch (error) {
       message($("global-message"), error.message, true);
       $("connections-summary").textContent = "Unable to load";
@@ -328,6 +434,7 @@
       );
       try {
         await refreshStatus();
+        await refreshRunners();
       } catch {
         message(
           $("global-message"),
@@ -352,8 +459,7 @@
       $("project-name").value = $("project-repo")
         .value.trim()
         .split("/")
-        .slice(1)
-        .join("-")
+        .pop()
         .replace(/\.git$/i, "")
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
@@ -365,22 +471,45 @@
     const data = {
       project: $("project-name").value.trim(),
       repo: $("project-repo").value.trim(),
+      provider: $("project-provider").value,
     };
-    const hubRepo = $("hub-repo").value.trim();
-    if (!currentStatus?.hubRepo && hubRepo) data.hubRepo = hubRepo;
+    if (data.provider === "gitlab" && $("gitlab-server").value.trim()) {
+      try {
+        const server = new URL($("gitlab-server").value.trim());
+        if (
+          server.protocol !== "https:" ||
+          server.username ||
+          server.password ||
+          server.pathname !== "/" ||
+          server.search ||
+          server.hash
+        )
+          throw new Error();
+        data.serverUrl = server.origin;
+      } catch {
+        message(
+          $("project-message"),
+          "Enter an HTTPS GitLab server address without credentials, a project path, query, or fragment.",
+          true,
+        );
+        $("gitlab-server").focus();
+        return;
+      }
+    }
     lockForms(true);
     $("add-project").textContent = "Adding…";
     message($("project-message"), "");
     try {
       const result = await api("/api/projects", data);
       $("project-form").reset();
+      renderProjectProvider();
       projectNameEdited = false;
       const created = Array.isArray(result.result?.created)
         ? result.result.created.length
         : null;
       message(
         $("project-message"),
-        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} Complete the project settings in Configuration and run the verification command below before enabling agents.`,
+        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} Complete its settings in Configuration, then use Verify connections before running agents.`,
       );
       try {
         await refreshStatus();
@@ -397,6 +526,945 @@
     } finally {
       lockForms(!sessionToken);
       restoreButton("add-project", "Add project", "+");
+    }
+  });
+
+  function renderProjectProvider() {
+    const gitlab = $("project-provider").value === "gitlab";
+    $("gitlab-options").hidden = !gitlab;
+    $("gitlab-server").disabled = !gitlab;
+    $("project-repo-label").textContent =
+      `${gitlab ? "GitLab" : "GitHub"} repository`;
+    $("project-repo").pattern = gitlab
+      ? "[^/\\s]+(?:/[^/\\s]+)+"
+      : "[^/\\s]+/[^/\\s]+";
+    $("project-repo").placeholder = gitlab
+      ? "your-group/your-app"
+      : "your-team/your-app";
+    $("repo-help").textContent = gitlab
+      ? "Use group/project or group/subgroup/project."
+      : "Use the owner/repository format.";
+  }
+  $("project-provider").addEventListener("change", renderProjectProvider);
+  renderProjectProvider();
+  $("project-list").addEventListener("click", async (event) => {
+    const launch = event.target.closest("[data-launch-project]");
+    if (launch && !formsLocked) {
+      $("job-project").value = launch.dataset.launchProject;
+      $("job-type").value = launch.dataset.launchCrew;
+      renderJobAreas();
+      $("job-form").scrollIntoView({ behavior: "smooth", block: "center" });
+      (launch.dataset.launchCrew === "pm"
+        ? $("job-area")
+        : $("job-ticket")
+      ).focus({ preventScroll: true });
+      return;
+    }
+    const button = event.target.closest("[data-verify-project]");
+    if (!button || button.disabled || formsLocked || !sessionToken) return;
+    const name = button.dataset.verifyProject;
+    projectChecks.set(name, {
+      busy: true,
+      message: "Checking live provider access and project configuration…",
+    });
+    renderStatus(currentStatus);
+    try {
+      const result = await api(
+        `/api/projects/${encodeURIComponent(name)}/verify`,
+        {},
+        "POST",
+        90000,
+      );
+      projectChecks.set(name, {
+        message: result.ok
+          ? "Connections verified. Review the checks below before running your first PM."
+          : "Some checks need attention. Update the settings or credentials below, then verify again.",
+        error: !result.ok,
+        checks: result.checks || [],
+      });
+    } catch (error) {
+      projectChecks.set(name, { error: true, message: error.message });
+    } finally {
+      renderStatus(currentStatus);
+    }
+  });
+
+  function element(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function actionButton(label, action, id, disabled = false) {
+    const button = element("button", "small-button", label);
+    button.type = "button";
+    button.dataset.runnerAction = action;
+    button.dataset.runnerId = id;
+    button.disabled = disabled;
+    return button;
+  }
+  function timestamp(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+  }
+  function runnerOperationBusy() {
+    return runnerRequestBusy || runnerStatus?.operation?.phase === "working";
+  }
+  function updateRunnerControls() {
+    const locked = formsLocked || !sessionToken || restarting;
+    $("refresh-runners").disabled = locked || runnerLoading;
+    $("create-runner").disabled =
+      locked ||
+      !runnerStatus?.machine?.docker?.available ||
+      runnerLoading ||
+      runnerOperationBusy();
+    $("create-runner").textContent = runnerOperationBusy()
+      ? "Working…"
+      : "Create local worker +";
+    $("job-fields").disabled = locked || runnerRequestBusy;
+    const workersAvailable = runnerStatus?.runners?.some(
+      (runner) =>
+        runner.status === "ready" ||
+        (runner.status === "busy" && runner.verifiedAt),
+    );
+    const project = $("job-project").value;
+    const pm = $("job-type").value === "pm";
+    $("run-job").disabled =
+      !workersAvailable || !project || (pm && !$("job-area").value);
+    $("job-ticket").required = !pm;
+    $("job-ticket").disabled = pm;
+    $("job-area").disabled = !pm;
+    $("job-area-field").hidden = !pm;
+    $("job-ticket-field").hidden = pm;
+    $("run-job").textContent = pm ? "Run PM Gremlin ↗" : "Run Coding Gremlin ↗";
+    for (const button of document.querySelectorAll("[data-crew-type]"))
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.crewType === $("job-type").value),
+      );
+    $("job-guidance").textContent = !workersAvailable
+      ? "Create or resume a verified worker before queuing a job."
+      : !project
+        ? "Add a project above, then complete its settings in Configuration."
+        : pm && !$("job-area").value
+          ? "Enable a PM mandate in this project’s areas.json before running it."
+          : "Uses saved settings on this server. Unsaved configuration drafts are not included.";
+    for (const button of document.querySelectorAll("[data-runner-action]")) {
+      const runner = runnerStatus?.runners?.find(
+        (item) => item.id === button.dataset.runnerId,
+      );
+      button.disabled =
+        locked ||
+        runnerOperationBusy() ||
+        !runner ||
+        runner.busy ||
+        runner.status === "provisioning";
+    }
+    const remove = runnerStatus?.runners?.find(
+      (runner) => runner.id === removeRunnerId,
+    );
+    $("confirm-remove-runner").disabled =
+      locked || runnerOperationBusy() || !remove || remove.busy;
+  }
+  function renderJobProjects() {
+    const select = $("job-project");
+    const chosen = select.value;
+    const projects = currentStatus?.projects || [];
+    select.replaceChildren();
+    for (const project of projects)
+      select.append(new Option(project.name, project.name));
+    if (!projects.length) select.append(new Option("Add a project first", ""));
+    if (projects.some((project) => project.name === chosen))
+      select.value = chosen;
+    const activityProject = $("activity-project").value;
+    $("activity-project").replaceChildren(new Option("All projects", ""));
+    for (const project of projects)
+      $("activity-project").append(new Option(project.name, project.name));
+    if (projects.some((project) => project.name === activityProject))
+      $("activity-project").value = activityProject;
+    renderJobAreas();
+  }
+  function renderJobAreas() {
+    const select = $("job-area");
+    const chosen = select.value;
+    const project = currentStatus?.projects?.find(
+      (item) => item.name === $("job-project").value,
+    );
+    const areas = (project?.areas || []).filter((area) => area.enabled);
+    select.replaceChildren();
+    for (const area of areas)
+      select.append(new Option(area.name || area.key, area.key));
+    if (!areas.length) select.append(new Option("No enabled PM mandates", ""));
+    if (areas.some((area) => area.key === chosen)) select.value = chosen;
+    updateRunnerControls();
+  }
+
+  function renderRunners(status) {
+    runnerStatus = status;
+    const runners = Array.isArray(status.runners) ? status.runners : [];
+    const jobs = Array.isArray(status.jobs) ? status.jobs : [];
+    const docker = status.machine?.docker;
+    $("machine-name").textContent =
+      status.machine?.name || "Your ShipGremlins server";
+    $("machine-description").textContent = [
+      status.machine?.platform,
+      docker?.architecture,
+      "1 job at a time per worker",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    $("docker-state").textContent = docker?.available
+      ? "Docker available"
+      : "Docker needs attention";
+    $("docker-state").classList.toggle("error", !docker?.available);
+    $("docker-guidance").textContent = docker?.available
+      ? "Workers run on this machine, even when you open the dashboard from another device. Credentials stay on your server and are passed to jobs when needed."
+      : `${docker?.message || "Docker could not be reached."} Install and start Docker with Linux containers on this machine, check docker info, then refresh.`;
+    const ready = runners.filter(
+      (runner) =>
+        runner.status === "ready" ||
+        (runner.status === "busy" && runner.verifiedAt),
+    );
+    $("runner-count").textContent = String(runners.length);
+    $("runners-summary").textContent = ready.length
+      ? `${ready.length} verified ${ready.length === 1 ? "worker" : "workers"}`
+      : runners.length
+        ? "Worker needs attention"
+        : "No workers yet";
+    $("runner-step").classList.toggle("complete", ready.length > 0);
+    message(
+      $("runner-operation"),
+      status.operation?.phase !== "idle"
+        ? status.operation?.message || "Working on your local worker…"
+        : "",
+      status.operation?.phase === "error",
+    );
+    $("runner-operation").classList.toggle(
+      "working",
+      status.operation?.phase === "working",
+    );
+    const missing = status.credentials?.missing || [];
+    $("runner-credentials").textContent = missing.length
+      ? `Some jobs need additional connections: ${missing.join(", ")}. Save the credentials for your project above before running it.`
+      : "Project credentials are loaded from this server for each job. Saving credentials does not start work.";
+    $("runner-limitations").replaceChildren(
+      ...(status.limitations || []).map((text) => element("li", "", text)),
+    );
+    $("runner-limitations").hidden = !status.limitations?.length;
+    const list = $("runner-list");
+    const signature = JSON.stringify(runners);
+    if (list.dataset.signature !== signature) {
+      const focused = document.activeElement?.dataset;
+      const focusId = focused?.runnerId;
+      const focusAction = focused?.runnerAction;
+      list.dataset.signature = signature;
+      list.replaceChildren();
+      if (!runners.length)
+        list.append(
+          element(
+            "p",
+            "worker-empty",
+            "No workers yet. A little Docker, a little gremlin, and a real browser check.",
+          ),
+        );
+      for (const runner of runners) {
+        const card = element("article", "worker-card");
+        const heading = element("div", "worker-heading");
+        const identity = element("div", "");
+        identity.append(
+          element("h3", "", runner.name),
+          element("p", "", "Local Docker worker · capacity 1"),
+        );
+        const state = runner.busy ? "busy" : runner.status;
+        heading.append(
+          identity,
+          element(
+            "span",
+            `runtime-badge state-${state}`,
+            state.charAt(0).toUpperCase() + state.slice(1),
+          ),
+        );
+        card.append(heading);
+        if (runner.message)
+          card.append(element("p", "runner-guidance", runner.message));
+        if (runner.verifiedAt)
+          card.append(
+            element(
+              "p",
+              "verified-note",
+              `Browser verified ${timestamp(runner.verifiedAt)}`,
+            ),
+          );
+        const actions = element("div", "button-row worker-actions");
+        actions.append(
+          actionButton("Verify browser job", "verify", runner.id),
+          actionButton("Repair", "repair", runner.id),
+          actionButton(
+            runner.status === "paused" ? "Resume" : "Pause",
+            runner.status === "paused" ? "resume" : "pause",
+            runner.id,
+          ),
+          actionButton("Remove", "remove", runner.id),
+        );
+        card.append(actions);
+        if (runner.busy)
+          card.append(
+            element(
+              "p",
+              "runner-guidance",
+              "This worker is busy. Its current job must finish before it can be paused, repaired, or removed.",
+            ),
+          );
+        list.append(card);
+      }
+      if (focusId)
+        [...list.querySelectorAll("button")]
+          .find(
+            (button) =>
+              button.dataset.runnerId === focusId &&
+              button.dataset.runnerAction === focusAction,
+          )
+          ?.focus({ preventScroll: true });
+    }
+    if (
+      removeRunnerId &&
+      !runners.some((runner) => runner.id === removeRunnerId)
+    ) {
+      removeRunnerId = "";
+      $("remove-runner-prompt").hidden = true;
+    }
+    renderJobs(jobs);
+    updateRunnerControls();
+  }
+  function mergedJobs(jobs = runnerStatus?.jobs || []) {
+    return [
+      ...new Map([...jobHistory, ...jobs].map((job) => [job.id, job])).values(),
+    ].sort((a, b) => a.runId - b.runId);
+  }
+  async function refreshHistory(earlier = false) {
+    if (historyLoading || !sessionToken) return;
+    historyLoading = true;
+    $("load-history").disabled = true;
+    try {
+      const result = await api(
+        `/api/jobs?limit=100${earlier && historyCursor ? `&beforeRunId=${historyCursor}` : ""}`,
+      );
+      jobHistory = [
+        ...new Map(
+          [...jobHistory, ...(result.jobs || [])].map((job) => [job.id, job]),
+        ).values(),
+      ];
+      if (earlier) olderHistoryLoaded = true;
+      if (earlier || !olderHistoryLoaded)
+        historyCursor = result.nextBeforeRunId;
+      $("load-history").hidden = !historyCursor;
+      $("history-message").textContent =
+        result.historyAvailable === false
+          ? "Saved history is unavailable. Recent worker activity is still shown; check your server’s history service."
+          : "Activity includes saved runs and current worker jobs.";
+      renderJobs(runnerStatus?.jobs || []);
+    } catch (error) {
+      $("history-message").textContent =
+        `Saved history could not load. ${error.message}`;
+    } finally {
+      historyLoading = false;
+      $("load-history").disabled = !sessionToken;
+    }
+  }
+  $("load-history").addEventListener("click", () => refreshHistory(true));
+  function renderJobs(jobs) {
+    jobs = mergedJobs(jobs);
+    $("job-count").textContent =
+      `${jobs.length} ${jobs.length === 1 ? "job" : "jobs"}`;
+    const list = $("job-list");
+    const signature = JSON.stringify([
+      jobs,
+      selectedJobId,
+      activityFilter,
+      $("activity-project").value,
+    ]);
+    if (list.dataset.signature === signature) return;
+    list.dataset.signature = signature;
+    list.replaceChildren();
+    const visible = jobs.filter((job) => {
+      const active = ["queued", "running"].includes(job.status);
+      return (
+        (activityFilter === "all" ||
+          (activityFilter === "running" ? active : !active)) &&
+        (!$("activity-project").value ||
+          job.project === $("activity-project").value)
+      );
+    });
+    if (!visible.length)
+      list.append(
+        element(
+          "p",
+          "worker-empty",
+          activityFilter === "running"
+            ? "Nothing running right now. Your crew’s next job will appear here."
+            : "No matching activity yet. Run a gremlin above to start its trail of actions and evidence.",
+        ),
+      );
+    for (const job of [...visible].reverse()) {
+      const row = element("article", "job-row");
+      const text = element("div", "job-row-copy");
+      text.append(
+        element(
+          "h4",
+          "",
+          `${job.type === "pm" ? "PM Gremlin" : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
+        ),
+      );
+      text.append(
+        element(
+          "p",
+          "",
+          [job.area || job.ticket, timestamp(job.createdAt), job.message]
+            .filter(Boolean)
+            .join(" · "),
+        ),
+      );
+      const action = element("div", "job-row-action");
+      const badge = element(
+        "span",
+        `runtime-badge state-${job.status}`,
+        job.status,
+      );
+      const button = element(
+        "button",
+        "small-button",
+        selectedJobId === job.id ? "Viewing activity" : "View activity",
+      );
+      button.type = "button";
+      button.dataset.jobId = job.id;
+      button.setAttribute("aria-pressed", String(selectedJobId === job.id));
+      action.append(badge, button);
+      if (["pm", "developer"].includes(job.type)) {
+        const avatar = element(
+          "img",
+          `activity-avatar ${job.type === "pm" ? "pm-avatar" : "coding-avatar"}`,
+        );
+        avatar.src =
+          job.type === "pm"
+            ? "/assets/gremlin-security.webp"
+            : "/assets/gremlin-coding.webp";
+        avatar.alt = "";
+        avatar.width = 44;
+        avatar.height = 44;
+        avatar.loading = "lazy";
+        row.append(avatar);
+      }
+      row.append(text, action);
+      list.append(row);
+    }
+  }
+  function scheduleRunnerPoll() {
+    clearTimeout(runnerPollTimer);
+    if (!sessionToken || restarting) return;
+    const active =
+      runnerStatus?.operation?.phase === "working" ||
+      runnerStatus?.jobs?.some((job) =>
+        ["queued", "running"].includes(job.status),
+      );
+    runnerPollTimer = setTimeout(
+      refreshRunners,
+      document.hidden ? 30000 : active ? 2000 : 10000,
+    );
+  }
+  async function refreshRunners() {
+    if (!sessionToken || runnerLoading || restarting) return;
+    runnerLoading = true;
+    updateRunnerControls();
+    try {
+      renderRunners(await api("/api/runners"));
+      await refreshHistory();
+      message($("runner-message"), "");
+      if (selectedJobId) await refreshJobOutput();
+    } catch (error) {
+      message(
+        $("runner-message"),
+        `${error.message} Your other dashboard settings are still available. Use Refresh to try again.`,
+        true,
+      );
+      // Do not silently retry forever if the worker service is unavailable.
+      clearTimeout(runnerPollTimer);
+      return;
+    } finally {
+      runnerLoading = false;
+      updateRunnerControls();
+    }
+    scheduleRunnerPoll();
+  }
+  async function runWorkerAction(action, id = "") {
+    if (!sessionToken || runnerOperationBusy() || formsLocked) return;
+    const runner = runnerStatus?.runners?.find((item) => item.id === id);
+    if (id && (!runner || runner.busy)) return;
+    runnerRequestBusy = true;
+    clearTimeout(runnerPollTimer);
+    updateRunnerControls();
+    message($("runner-message"), "");
+    try {
+      await api(
+        id
+          ? `/api/runners/${encodeURIComponent(id)}/${action}`
+          : "/api/runners",
+        {},
+      );
+      await refreshRunners();
+    } catch (error) {
+      message($("runner-message"), error.message, true);
+    } finally {
+      runnerRequestBusy = false;
+      updateRunnerControls();
+      scheduleRunnerPoll();
+    }
+  }
+  $("refresh-runners").addEventListener("click", refreshRunners);
+  $("create-runner").addEventListener("click", () => runWorkerAction("create"));
+  $("runner-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-runner-action]");
+    if (!button || button.disabled) return;
+    if (button.dataset.runnerAction === "remove") {
+      const runner = runnerStatus?.runners?.find(
+        (item) => item.id === button.dataset.runnerId,
+      );
+      if (!runner || runner.busy) return;
+      removeRunnerId = runner.id;
+      $("remove-runner-description").textContent =
+        `Remove ${runner.name}? This removes the local worker. Project configuration, saved credentials, and job history are kept. A busy worker cannot be removed.`;
+      $("remove-runner-prompt").hidden = false;
+      updateRunnerControls();
+      $("keep-runner").focus();
+    } else
+      runWorkerAction(button.dataset.runnerAction, button.dataset.runnerId);
+  });
+  $("keep-runner").addEventListener("click", () => {
+    removeRunnerId = "";
+    $("remove-runner-prompt").hidden = true;
+  });
+  $("confirm-remove-runner").addEventListener("click", async () => {
+    const id = removeRunnerId;
+    if (!id) return;
+    removeRunnerId = "";
+    $("remove-runner-prompt").hidden = true;
+    await runWorkerAction("remove", id);
+  });
+  $("job-project").addEventListener("change", renderJobAreas);
+  $("job-type").addEventListener("change", updateRunnerControls);
+  for (const button of document.querySelectorAll("[data-crew-type]"))
+    button.addEventListener("click", () => {
+      $("job-type").value = button.dataset.crewType;
+      updateRunnerControls();
+    });
+  for (const button of document.querySelectorAll("[data-activity-filter]"))
+    button.addEventListener("click", () => {
+      activityFilter = button.dataset.activityFilter;
+      for (const option of document.querySelectorAll("[data-activity-filter]"))
+        option.setAttribute("aria-pressed", String(option === button));
+      renderJobs(runnerStatus?.jobs || []);
+    });
+  $("activity-project").addEventListener("change", () =>
+    renderJobs(runnerStatus?.jobs || []),
+  );
+  $("job-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (formsLocked || runnerRequestBusy || !sessionToken) return;
+    const type = $("job-type").value;
+    const body = { type, project: $("job-project").value };
+    if (type === "pm") body.area = $("job-area").value;
+    else body.ticket = $("job-ticket").value.trim();
+    runnerRequestBusy = true;
+    updateRunnerControls();
+    message($("job-message"), "Queuing your job…");
+    try {
+      const result = await api("/api/jobs", body);
+      message(
+        $("job-message"),
+        "Job queued. Follow its output below; it will use the saved configuration on your server.",
+      );
+      if (type === "developer") $("job-ticket").value = "";
+      await refreshRunners();
+      if (result.job?.id) selectJob(result.job.id);
+    } catch (error) {
+      message($("job-message"), error.message, true);
+    } finally {
+      runnerRequestBusy = false;
+      updateRunnerControls();
+      scheduleRunnerPoll();
+    }
+  });
+
+  function clearArtifactBlobs() {
+    for (const url of artifactBlobs) URL.revokeObjectURL(url);
+    artifactBlobs.clear();
+  }
+  function artifactUrl(jobId, value) {
+    const url = new URL(value, window.location.origin);
+    const prefix = `/api/jobs/${encodeURIComponent(jobId)}/artifacts/`;
+    if (
+      url.origin !== window.location.origin ||
+      !url.pathname.startsWith(prefix) ||
+      url.username ||
+      url.password
+    )
+      throw new Error("The server returned an unsupported artifact address.");
+    return url;
+  }
+  async function fetchArtifact(jobId, file) {
+    const url = artifactUrl(jobId, file.url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (!response.ok)
+        throw new Error(
+          `Could not load ${file.name}. Refresh the job output to try again.`,
+        );
+      return await response.blob();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  async function renderArtifacts(jobId, files, revision) {
+    const signature = JSON.stringify([jobId, files]);
+    if (artifactSignature === signature) return;
+    clearArtifactBlobs();
+    $("job-artifacts").replaceChildren();
+    if (!files.length) return;
+    for (const file of files) {
+      if (revision !== outputRevision) return;
+      artifactUrl(jobId, file.url);
+      const card = element("article", "artifact-card");
+      card.append(element("h4", "", file.name));
+      if (/\.(png|jpe?g|webp)$/i.test(file.name)) {
+        const blob = await fetchArtifact(jobId, file);
+        if (revision !== outputRevision) return;
+        if (["image/png", "image/jpeg", "image/webp"].includes(blob.type)) {
+          const url = URL.createObjectURL(blob);
+          artifactBlobs.add(url);
+          const preview = element("img", "artifact-preview");
+          preview.src = url;
+          preview.alt = `Browser evidence: ${file.name}`;
+          preview.loading = "lazy";
+          card.append(preview);
+        }
+      }
+      const download = element("button", "small-button", "Download artifact");
+      download.type = "button";
+      download.addEventListener("click", async () => {
+        download.disabled = true;
+        try {
+          const blob = await fetchArtifact(jobId, file);
+          const url = URL.createObjectURL(blob);
+          artifactBlobs.add(url);
+          const link = element("a", "");
+          link.href = url;
+          link.download = file.name;
+          link.click();
+        } catch (error) {
+          message($("job-output-message"), error.message, true);
+        } finally {
+          download.disabled = false;
+        }
+      });
+      card.append(download);
+      $("job-artifacts").append(card);
+    }
+    artifactSignature = signature;
+  }
+  function renderActivity(activity) {
+    $("activity-summary").textContent =
+      typeof activity.summary === "string" ? activity.summary : "";
+    $("activity-summary").hidden = !$("activity-summary").textContent;
+    const checks = Array.isArray(activity.checks) ? activity.checks : [];
+    $("activity-checks").replaceChildren();
+    for (const check of checks) {
+      const card = element("div", `activity-check check-${check.status}`);
+      card.append(
+        element(
+          "strong",
+          "",
+          `${check.status === "succeeded" ? "✓" : check.status === "failed" ? "!" : "◌"} ${check.name}`,
+        ),
+      );
+      if (check.detail) card.append(element("p", "", check.detail));
+      $("activity-checks").append(card);
+    }
+    $("activity-checks").hidden = !checks.length;
+    $("activity-timeline").replaceChildren();
+    for (const event of activity.events || []) {
+      const row = element("li", `activity-event event-${event.type}`);
+      const kind = element(
+        "span",
+        "activity-event-kind",
+        event.type === "tool" ? "Tool call" : event.type,
+      );
+      const heading = element("div", "activity-event-heading");
+      heading.append(kind, element("time", "", timestamp(event.timestamp)));
+      row.append(heading, element("h4", "", event.title));
+      if (event.detail) row.append(element("p", "", event.detail));
+      if (event.status)
+        row.append(
+          element("span", `runtime-badge state-${event.status}`, event.status),
+        );
+      $("activity-timeline").append(row);
+    }
+    if (!activity.events?.length)
+      $("activity-timeline").append(
+        element(
+          "li",
+          "activity-empty",
+          "No structured activity yet. Actions appear here as the worker reports them.",
+        ),
+      );
+  }
+  async function refreshJobOutput() {
+    if (!selectedJobId || outputLoading || !sessionToken) return;
+    const id = selectedJobId;
+    const revision = outputRevision;
+    outputLoading = true;
+    $("refresh-job-output").disabled = true;
+    try {
+      const [logs, artifacts, activity] = await Promise.all([
+        api(`/api/jobs/${encodeURIComponent(id)}/logs`),
+        api(`/api/jobs/${encodeURIComponent(id)}/artifacts`),
+        api(`/api/jobs/${encodeURIComponent(id)}/activity`).then(
+          (value) => ({ value }),
+          (error) => ({ error }),
+        ),
+      ]);
+      if (revision !== outputRevision) return;
+      const log = $("job-log");
+      const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+      log.textContent = logs.lines?.length
+        ? logs.lines.join("\n")
+        : "No output yet. Logs will appear when the worker starts.";
+      if (atEnd) log.scrollTop = log.scrollHeight;
+      if (activity.error)
+        message(
+          $("activity-message"),
+          `Structured activity is unavailable. ${activity.error.message} Raw output and artifacts are still shown below.`,
+          true,
+        );
+      else {
+        renderActivity(activity.value);
+        message($("activity-message"), "");
+      }
+      await renderArtifacts(id, artifacts.files || [], revision);
+      if (revision === outputRevision) message($("job-output-message"), "");
+    } catch (error) {
+      if (revision === outputRevision)
+        message($("job-output-message"), error.message, true);
+    } finally {
+      outputLoading = false;
+      $("refresh-job-output").disabled = !sessionToken;
+      if (revision !== outputRevision && selectedJobId) refreshJobOutput();
+    }
+  }
+  function selectJob(id) {
+    selectedJobId = id;
+    outputRevision += 1;
+    artifactSignature = "";
+    clearArtifactBlobs();
+    $("job-artifacts").replaceChildren();
+    $("activity-timeline").replaceChildren();
+    $("activity-summary").hidden = true;
+    $("activity-checks").hidden = true;
+    message($("activity-message"), "Loading visible activity…");
+    $("job-detail").hidden = false;
+    const job = mergedJobs().find((item) => item.id === selectedJobId);
+    $("job-detail-title").textContent =
+      `${job?.project || "Browser verification"}${job?.runId ? ` · run ${job.runId}` : ""}`;
+    $("job-log").textContent = "Loading job output…";
+    renderJobs(runnerStatus?.jobs || []);
+    refreshJobOutput();
+  }
+  $("job-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-job-id]");
+    if (!button) return;
+    selectJob(button.dataset.jobId);
+    $("job-detail").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  $("refresh-job-output").addEventListener("click", refreshJobOutput);
+
+  function renderSlackControls() {
+    const locked = formsLocked || !sessionToken || slackBusy || restarting;
+    const connected = slackStatus?.connected || slackStatus?.webhookConfigured;
+    $("slack-connect").disabled = locked || !slackStatus?.available;
+    $("slack-connect").textContent = slackBusy
+      ? "Connecting…"
+      : connected
+        ? "Change Slack connection ↗"
+        : "Add to Slack ↗";
+    $("slack-refresh").disabled = locked;
+    $("slack-webhook-fields").disabled = locked;
+    $("slack-disconnect").hidden = !connected;
+    $("slack-disconnect").disabled = locked;
+    $("slack-confirm-disconnect").disabled = locked;
+    if (!slackStatus) return;
+    $("slack-state").textContent = connected
+      ? slackStatus.webhookConfigured && !slackStatus.workspace
+        ? "Webhook saved"
+        : "Connected"
+      : slackStatus.available
+        ? "Not connected"
+        : "Setup unavailable";
+    const workspace =
+      typeof slackStatus.workspace === "string"
+        ? slackStatus.workspace
+        : slackStatus.workspace?.name;
+    const channel =
+      typeof slackStatus.channel === "string"
+        ? slackStatus.channel
+        : slackStatus.channel?.name;
+    $("slack-workspace").textContent =
+      [workspace, channel ? `#${channel.replace(/^#/, "")}` : ""]
+        .filter(Boolean)
+        .join(" · ") ||
+      (connected
+        ? "Notifications use your saved incoming webhook."
+        : "No Slack workspace connected yet.");
+    $("slack-guidance").textContent =
+      slackStatus.message ||
+      (slackStatus.available
+        ? "Choose a workspace and channel on Slack’s installation screen. ShipGremlins posts updates; it does not request channel history access."
+        : "One-click Slack installation is not available for this instance yet. You can still connect an incoming webhook below.");
+  }
+  async function refreshSlack() {
+    if (!sessionToken || slackBusy) return;
+    slackBusy = true;
+    renderSlackControls();
+    try {
+      slackStatus = await api("/api/slack");
+      message($("slack-message"), "");
+    } catch (error) {
+      message($("slack-message"), error.message, true);
+      $("slack-state").textContent = "Unable to check";
+      $("slack-workspace").textContent = "Use Refresh status to try again.";
+    } finally {
+      slackBusy = false;
+      renderSlackControls();
+    }
+  }
+  async function initializeSlack() {
+    if (!sessionToken) return;
+    if (slackEnvelope) {
+      slackBusy = true;
+      renderSlackControls();
+      const envelope = slackEnvelope;
+      slackEnvelope = "";
+      try {
+        await api("/api/slack/complete", { envelope });
+        slackStatus = await api("/api/slack");
+        message(
+          $("slack-message"),
+          "Slack connected. Your crew’s updates will go to the selected channel.",
+        );
+      } catch (error) {
+        message(
+          $("slack-message"),
+          `${error.message} Your saved projects and credentials are unchanged. Refresh status, then reconnect if needed.`,
+          true,
+        );
+      } finally {
+        slackBusy = false;
+        renderSlackControls();
+      }
+    } else await refreshSlack();
+  }
+  $("slack-refresh").addEventListener("click", refreshSlack);
+  $("slack-connect").addEventListener("click", async () => {
+    if (slackBusy || !sessionToken || !slackStatus?.available) return;
+    if (hasUnsavedInputs()) {
+      message(
+        $("slack-message"),
+        "Save or clear your unsaved configuration and form entries before opening Slack. Connecting leaves this page and returns to the same dashboard tab.",
+        true,
+      );
+      return;
+    }
+    try {
+      sessionStorage.setItem(sessionKey, sessionToken);
+    } catch {
+      message(
+        $("slack-message"),
+        "This browser cannot retain your dashboard session during Slack authorization. Allow session storage for this dashboard or use the webhook option below.",
+        true,
+      );
+      return;
+    }
+    slackBusy = true;
+    renderSlackControls();
+    try {
+      const result = await api("/api/slack/connect", {});
+      const url = new URL(result.url);
+      if (
+        url.origin !== "https://shipgremlins.ai" ||
+        url.pathname !== "/api/slack/authorize" ||
+        url.username ||
+        url.password
+      )
+        throw new Error(
+          "The server returned an unexpected Slack authorization address.",
+        );
+      window.location.assign(url.href);
+    } catch (error) {
+      slackBusy = false;
+      renderSlackControls();
+      message($("slack-message"), error.message, true);
+    }
+  });
+  $("slack-disconnect").addEventListener("click", () => {
+    $("slack-disconnect-prompt").hidden = false;
+    $("slack-keep").focus();
+  });
+  $("slack-keep").addEventListener("click", () => {
+    $("slack-disconnect-prompt").hidden = true;
+  });
+  $("slack-confirm-disconnect").addEventListener("click", async () => {
+    if (slackBusy || !sessionToken) return;
+    slackBusy = true;
+    renderSlackControls();
+    try {
+      slackStatus = await api("/api/slack", {}, "DELETE");
+      $("slack-disconnect-prompt").hidden = true;
+      message(
+        $("slack-message"),
+        "Slack disconnected. Your projects and jobs are unchanged.",
+      );
+    } catch (error) {
+      message($("slack-message"), error.message, true);
+    } finally {
+      slackBusy = false;
+      renderSlackControls();
+    }
+  });
+  $("slack-webhook-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (slackBusy || !sessionToken) return;
+    const url = $("slack-webhook").value.trim();
+    if (!url) return;
+    slackBusy = true;
+    renderSlackControls();
+    try {
+      slackStatus = await api("/api/slack/webhook", { url });
+      $("slack-webhook").value = "";
+      message(
+        $("slack-message"),
+        "Incoming webhook saved on your server. Its value is not stored in this browser.",
+      );
+    } catch (error) {
+      message($("slack-message"), error.message, true);
+    } finally {
+      slackBusy = false;
+      renderSlackControls();
     }
   });
 
@@ -709,7 +1777,7 @@
       clearDiscardPrompt();
       message(
         $("config-message"),
-        `${editor.path} saved on your server. Saving configuration does not automatically enable agents.`,
+        `${editor.path} saved on your server. Future jobs use these settings; enabled mandates follow their configured schedules while the controller is running.`,
       );
       try {
         await refreshStatus();
@@ -770,7 +1838,7 @@
       status.latestSha,
     );
     $("update-message").textContent = restarting
-      ? "Restarting your dashboard. This tab will reconnect automatically; running cloud jobs continue."
+      ? "Restarting your dashboard. This tab will reconnect automatically; running jobs continue."
       : status.message || "Check for the latest ShipGremlins release.";
     $("update-message").classList.toggle(
       "error",
@@ -868,7 +1936,13 @@
       [...document.querySelectorAll(".password-wrap input")].some(
         (input) => input.value,
       ) ||
-      ["project-repo", "project-name", "hub-repo"].some((id) => $(id).value)
+      [
+        "project-repo",
+        "project-name",
+        "gitlab-server",
+        "job-ticket",
+        "slack-webhook",
+      ].some((id) => $(id).value)
     );
   }
 
@@ -891,6 +1965,7 @@
     }
     restarting = true;
     clearTimeout(updatePollTimer);
+    clearTimeout(runnerPollTimer);
     lockForms(true);
     renderUpdates(updateStatus);
     try {
@@ -939,6 +2014,9 @@
 
   window.addEventListener("pagehide", () => {
     clearTimeout(updatePollTimer);
+    clearTimeout(runnerPollTimer);
+    clearArtifactBlobs();
+    $("slack-webhook").value = "";
     for (const input of document.querySelectorAll(".password-wrap input"))
       input.value = "";
   });

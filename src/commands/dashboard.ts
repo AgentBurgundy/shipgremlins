@@ -1,6 +1,13 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import {
   createServer,
@@ -9,16 +16,27 @@ import {
   type ServerResponse,
 } from "node:http";
 import { isIPv4, type AddressInfo } from "node:net";
-import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
+import {
+  hostname,
+  networkInterfaces,
+  type NetworkInterfaceInfo,
+} from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { listProjectNames, loadHub, loadProject } from "../config.ts";
+import {
+  listProjectNames,
+  loadHub,
+  loadProject,
+  validSourceRepository,
+  validSourceServer,
+} from "../config.ts";
+import { telemetrySecrets } from "../telemetry/config.ts";
 import {
   CONNECTIONS,
   readConnections,
   saveConnections,
+  projectConnections as projectConnectionDefinitions,
 } from "../setup/connections.ts";
 import { assertNoSymlinks } from "../setup/files.ts";
-import { detectHubRepository } from "../setup/location.ts";
 import {
   ConfigEditorError,
   listEditableConfigs,
@@ -29,6 +47,24 @@ import { canOpenFolders, openDashboardFolder } from "../setup/openFolder.ts";
 import { parseFlags, type Io } from "./crons.ts";
 import { runSetup } from "./setup.ts";
 import { createUpdater, type Updater } from "../update/index.ts";
+import {
+  createLocalRunners,
+  LocalRunnerError,
+  type LocalRunners,
+} from "../localRunners/engine.ts";
+import {
+  createDockerRunners,
+  type DockerRunners,
+} from "../localRunners/docker.ts";
+import { createJobPreparation } from "../localRunners/jobs.ts";
+import type { LocalJobInput, WorkerAction } from "../localRunners/types.ts";
+import { doctorChecks, stampVerified } from "./doctor.ts";
+import { createSlackConnect } from "../slack/connection.ts";
+import {
+  createActivityStore,
+  parseActivityLogs,
+  type ActivityStore,
+} from "../storage/activity.ts";
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -139,6 +175,13 @@ async function body(
 export interface DashboardOptions {
   updater?: Updater;
   restart?: () => void;
+  runners?: LocalRunners;
+  docker?: DockerRunners;
+  jobs?: ReturnType<typeof createJobPreparation>;
+  shutdown?: () => void;
+  background?: boolean;
+  slack?: ReturnType<typeof createSlackConnect>;
+  activityStore?: ActivityStore;
 }
 
 export function createDashboardServer(
@@ -159,6 +202,73 @@ export function createDashboardServer(
     (updater ??= createUpdater({ configurationRoot: root, packageRoot }));
   let updateRunning = false;
   let updateFailure = "";
+  const docker = options.docker ?? createDockerRunners({ packageRoot });
+  const preparation = options.jobs ?? createJobPreparation({ root });
+  const slack = options.slack ?? createSlackConnect({ root, session });
+  const activityStore = options.activityStore ?? createActivityStore({ root });
+  let manager: LocalRunners | undefined = options.runners;
+  const runners = () =>
+    (manager ??= createLocalRunners({
+      root,
+      packageRoot,
+      docker,
+      activityStore,
+      ...preparation,
+      beforeLaunch: () => activityStore.ensure(),
+    }));
+  let dockerState: Awaited<ReturnType<DockerRunners["preflight"]>> | undefined;
+  let dockerCheckedAt = 0;
+  async function runnerStatus() {
+    if (!dockerState || Date.now() - dockerCheckedAt > 15_000) {
+      dockerState = await docker.preflight();
+      dockerCheckedAt = Date.now();
+    }
+    const saved = readConnections(root);
+    const required = new Set([
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "LINEAR_API_KEY",
+      "VERCEL_TOKEN",
+    ]);
+    for (const name of listProjectNames(root)) {
+      try {
+        required.add(
+          loadProject(root, name).config.provider === "gitlab"
+            ? "GITLAB_TOKEN"
+            : "GITHUB_TOKEN",
+        );
+      } catch {
+        /* Status reports broken project config separately. */
+      }
+    }
+    return {
+      ...(await runners().status()),
+      machine: {
+        name: hostname(),
+        platform: process.platform,
+        docker: dockerState,
+      },
+      storage: await activityStore.status().catch(() => ({
+        configured: false,
+        ready: false,
+        mode: "unconfigured",
+        message:
+          "Run history is unavailable. Check the local PostgreSQL service.",
+      })),
+      credentials: {
+        missing: [...required].filter(
+          (name) => !(saved[name] || process.env[name]),
+        ),
+        configured: [...required].filter((name) =>
+          Boolean(saved[name] || process.env[name]),
+        ),
+      },
+      limitations: [
+        "Local workers use Claude Code. Each worker runs one job at a time.",
+        "Jobs create draft integration PRs/MRs; staging promotion and production merges still need review.",
+        "Closing the browser is safe. Keep the controller running for schedules and queued jobs.",
+      ],
+    };
+  }
   const updateStatus = () => ({
     ...updates().status(),
     ...(updateFailure
@@ -173,7 +283,7 @@ export function createDashboardServer(
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      "default-src 'self'; connect-src 'self'; img-src 'self' blob:; style-src 'self'; font-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     );
     try {
       const address = server.address() as AddressInfo | null;
@@ -182,7 +292,12 @@ export function createDashboardServer(
       if (
         ![...hosts].some((allowed) => host === `${allowed}:${address?.port}`) ||
         (req.headers.origin !== undefined && req.headers.origin !== origin) ||
-        req.headers["sec-fetch-site"] === "cross-site"
+        (req.headers["sec-fetch-site"] === "cross-site" &&
+          !(
+            req.method === "GET" &&
+            req.url === "/" &&
+            req.headers["sec-fetch-mode"] === "navigate"
+          ))
       )
         throw new RequestError(
           403,
@@ -202,6 +317,268 @@ export function createDashboardServer(
             401,
             "Open the dashboard link printed by your CLI.",
           );
+        if (
+          url.pathname === "/api/slack" ||
+          url.pathname.startsWith("/api/slack/")
+        ) {
+          try {
+            if (url.pathname === "/api/slack" && req.method === "GET") {
+              json(res, 200, await slack.status());
+            } else if (
+              url.pathname === "/api/slack" &&
+              req.method === "DELETE"
+            ) {
+              if (Object.keys(await body(req)).length)
+                throw new RequestError(
+                  400,
+                  "Disconnect takes an empty JSON object.",
+                );
+              json(res, 200, await slack.disconnect());
+            } else if (
+              req.method === "POST" &&
+              url.pathname === "/api/slack/connect"
+            ) {
+              if (Object.keys(await body(req)).length)
+                throw new RequestError(
+                  400,
+                  "Slack setup takes an empty JSON object.",
+                );
+              json(res, 200, await slack.connect(`${origin}/`));
+            } else if (
+              req.method === "POST" &&
+              url.pathname === "/api/slack/complete"
+            ) {
+              const value = await body(req);
+              if (
+                Object.keys(value).length !== 1 ||
+                typeof value.envelope !== "string"
+              )
+                throw new RequestError(
+                  400,
+                  "Provide the Slack setup envelope.",
+                );
+              json(res, 200, await slack.complete(value.envelope));
+            } else if (
+              req.method === "POST" &&
+              url.pathname === "/api/slack/webhook"
+            ) {
+              const value = await body(req);
+              if (
+                Object.keys(value).length !== 1 ||
+                typeof value.url !== "string"
+              )
+                throw new RequestError(400, "Provide a Slack webhook URL.");
+              json(res, 200, await slack.webhook(value.url));
+            } else throw new RequestError(405, "Unsupported Slack action.");
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            throw new RequestError(
+              400,
+              error instanceof Error ? error.message : "Slack setup failed.",
+            );
+          }
+          return;
+        }
+        if (url.pathname === "/api/controller" && req.method === "GET") {
+          json(res, 200, { background: options.background === true });
+          return;
+        }
+        if (url.pathname === "/api/controller/stop") {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to stop the controller.");
+          if (!options.background || !options.shutdown)
+            throw new RequestError(
+              400,
+              "Stop this foreground dashboard with Ctrl+C.",
+            );
+          if (Object.keys(await body(req)).length)
+            throw new RequestError(400, "Stop takes an empty object.");
+          res.once("finish", options.shutdown);
+          json(res, 202, { ok: true });
+          return;
+        }
+        if (url.pathname === "/api/runners") {
+          if (req.method === "GET") json(res, 200, await runnerStatus());
+          else if (req.method === "POST") {
+            if (Object.keys(await body(req)).length)
+              throw new RequestError(
+                400,
+                "Worker creation takes an empty JSON object.",
+              );
+            const runner = await runners().create();
+            runners().start();
+            json(res, 202, { runner });
+          } else throw new RequestError(405, "Use GET or POST for workers.");
+          return;
+        }
+        const workerAction =
+          /^\/api\/runners\/([a-z0-9-]+)\/(verify|pause|resume|repair|remove)$/.exec(
+            url.pathname,
+          );
+        if (workerAction) {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST for worker actions.");
+          if (Object.keys(await body(req)).length)
+            throw new RequestError(
+              400,
+              "Worker actions take an empty JSON object.",
+            );
+          const runner = await runners().action(
+            workerAction[1]!,
+            workerAction[2] as WorkerAction,
+          );
+          runners().start();
+          json(res, 202, { ok: true, runner });
+          return;
+        }
+        if (url.pathname === "/api/jobs") {
+          if (req.method === "GET") {
+            const limit = Math.min(
+              100,
+              Math.max(1, Number(url.searchParams.get("limit") ?? 100)),
+            );
+            const before = url.searchParams.get("beforeRunId");
+            if (
+              !Number.isSafeInteger(limit) ||
+              (before !== null && !/^\d{1,16}$/.test(before))
+            )
+              throw new RequestError(400, "Invalid history pagination.");
+            let historyAvailable = true;
+            const history = await activityStore
+              .listRuns({
+                limit,
+                ...(before ? { beforeRunId: Number(before) } : {}),
+              })
+              .catch(() => {
+                historyAvailable = false;
+                return [];
+              });
+            const live = (await runners().jobs()).filter(
+              (job) => !before || job.runId < Number(before),
+            );
+            const all = new Map(
+              [...history, ...live].map((job) => [job.id, job]),
+            );
+            const jobs = [...all.values()]
+              .sort((a, b) => b.runId - a.runId)
+              .slice(0, limit);
+            json(res, 200, {
+              jobs,
+              historyAvailable,
+              nextBeforeRunId:
+                jobs.length === limit ? jobs.at(-1)!.runId : null,
+            });
+            return;
+          }
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to queue a job.");
+          const input = await body(req);
+          if (
+            Object.keys(input).some(
+              (key) => !["type", "project", "area", "ticket"].includes(key),
+            ) ||
+            !["pm", "developer"].includes(String(input.type)) ||
+            typeof input.project !== "string" ||
+            (input.area !== undefined && typeof input.area !== "string") ||
+            (input.ticket !== undefined && typeof input.ticket !== "string")
+          )
+            throw new RequestError(
+              400,
+              "Choose a project and PM area or approved Linear ticket.",
+            );
+          const jobInput = input as unknown as LocalJobInput;
+          let validated: Awaited<ReturnType<typeof preparation.validate>>;
+          try {
+            validated = await preparation.validate(jobInput);
+          } catch {
+            throw new RequestError(
+              400,
+              "This job is not ready. Check doctor verification, the enabled PM area, credentials and the ticket's approval/project labels.",
+            );
+          }
+          if (validated.ticket) {
+            jobInput.area = validated.area.key;
+            jobInput.ticket = validated.ticket.identifier;
+            const previous = (await runners().jobs()).filter(
+              (job) =>
+                job.type === "developer" &&
+                job.project === jobInput.project &&
+                job.ticket === jobInput.ticket,
+            );
+            if (
+              previous.some((job) =>
+                ["queued", "running", "succeeded"].includes(job.status),
+              )
+            )
+              throw new RequestError(
+                409,
+                "This ticket already has active or completed work. Review its job and draft PR/MR before requesting another implementation.",
+              );
+            jobInput.idempotencyKey = `developer:${jobInput.project}:${validated.ticket.id}${previous.length ? `:retry:${randomBytes(8).toString("hex")}` : ""}`;
+          }
+          const job = await runners().enqueue(jobInput);
+          runners().start();
+          json(res, 202, { job });
+          return;
+        }
+        const jobOutput =
+          /^\/api\/jobs\/([a-z0-9-]+)\/(logs|artifacts|activity)(?:\/(.+))?$/.exec(
+            url.pathname,
+          );
+        if (jobOutput) {
+          if (req.method !== "GET")
+            throw new RequestError(405, "Use GET for job output.");
+          const id = jobOutput[1]!;
+          if (jobOutput[2] === "activity" && !jobOutput[3]) {
+            if (!(await runners().job(id)))
+              throw new RequestError(404, "Unknown gremlin run.");
+            const persisted = await activityStore
+              .activity(id)
+              .catch(() => ({ events: [], checks: [] }));
+            const live = parseActivityLogs(
+              await runners()
+                .logs(id)
+                .catch(() => []),
+            );
+            const events = [
+              ...new Map(
+                [...persisted.events, ...live].map((event) => [
+                  event.id,
+                  event,
+                ]),
+              ).values(),
+            ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+            json(res, 200, { ...persisted, events });
+          } else if (jobOutput[2] === "logs" && !jobOutput[3])
+            json(res, 200, { lines: await runners().logs(id) });
+          else if (!jobOutput[3]) {
+            const files = await runners().artifacts(id);
+            json(res, 200, {
+              files: files.map((file) => ({
+                ...file,
+                url: `/api/jobs/${id}/artifacts/${encodeURIComponent(file.name)}`,
+              })),
+            });
+          } else if (jobOutput[2] === "artifacts") {
+            let name: string;
+            try {
+              name = decodeURIComponent(jobOutput[3]);
+            } catch {
+              throw new RequestError(400, "Invalid artifact name.");
+            }
+            if (!/\.(png|webp|jpg|jpeg|json|txt|md|log|csv)$/i.test(name))
+              throw new RequestError(400, "Unsupported artifact type.");
+            const content = await runners().readArtifact(id, name);
+            res.writeHead(200, {
+              "Content-Type":
+                TYPES[extname(name)] ?? "text/plain; charset=utf-8",
+              "Content-Length": content.length,
+              "Content-Security-Policy": "default-src 'none'; sandbox",
+            });
+            res.end(content);
+          } else throw new RequestError(404, "Unknown job output.");
+          return;
+        }
         if (url.pathname === "/api/updates") {
           if (req.method !== "GET")
             throw new RequestError(405, "Use GET for update status.");
@@ -262,10 +639,16 @@ export function createDashboardServer(
           assertNoSymlinks(join(root, "hub.json"));
           const saved = readConnections(root);
           const configWarnings: string[] = [];
+          const projectConnections: {
+            name: string;
+            label: string;
+            description: string;
+          }[] = [];
           let hubRepo: string | null = null;
           if (existsSync(join(root, "hub.json"))) {
             try {
-              hubRepo = loadHub(root).hubRepo;
+              const hub = loadHub(root);
+              hubRepo = hub.runners.mode === "local" ? null : hub.hubRepo;
             } catch {
               configWarnings.push(
                 "hub.json needs repair. Open it in Configuration.",
@@ -278,7 +661,28 @@ export function createDashboardServer(
             for (const file of ["project.json", "areas.json", "tiers.json"])
               assertNoSymlinks(join(root, "projects", name, file));
             try {
-              return { name, repo: loadProject(root, name).config.repo };
+              const project = loadProject(root, name);
+              projectConnections.push(
+                ...telemetrySecrets(project.config.telemetry).map(
+                  (connection) => ({
+                    ...connection,
+                    label: `${name} · ${connection.label}`,
+                  }),
+                ),
+              );
+              return {
+                name,
+                repo: project.config.repo,
+                provider: project.config.provider ?? "github",
+                serverUrl: project.config.serverUrl,
+                areas: project.areas.map(
+                  ({ key, name: areaName, enabled }) => ({
+                    key,
+                    name: areaName,
+                    enabled,
+                  }),
+                ),
+              };
             } catch {
               configWarnings.push(
                 `Project ${name} needs repair. Open its files in Configuration.`,
@@ -292,12 +696,20 @@ export function createDashboardServer(
             hubRepo,
             configWarnings,
             projects,
-            connections: CONNECTIONS.map((connection) => ({
+            connections: [
+              ...new Map(
+                [
+                  ...CONNECTIONS,
+                  ...projectConnections,
+                  ...projectConnectionDefinitions(root),
+                ].map((connection) => [connection.name, connection]),
+              ).values(),
+            ].map((connection) => ({
               ...connection,
               configured: Boolean(saved[connection.name]),
             })),
             runtime: {
-              agents: "github-actions",
+              agents: hubRepo ? "github-actions" : "local-docker",
               dashboard: "local",
               access: networkHosts.length ? "lan" : "loopback",
               canOpenFolders: canOpenFolders(networkHosts.length > 0),
@@ -402,34 +814,41 @@ export function createDashboardServer(
           const input = await body(req);
           if (
             Object.keys(input).some(
-              (key) => !["project", "repo", "hubRepo"].includes(key),
+              (key) =>
+                ![
+                  "project",
+                  "repo",
+                  "hubRepo",
+                  "provider",
+                  "serverUrl",
+                ].includes(key),
             ) ||
             typeof input.project !== "string" ||
             typeof input.repo !== "string" ||
-            (input.hubRepo !== undefined && typeof input.hubRepo !== "string")
+            (input.hubRepo !== undefined &&
+              typeof input.hubRepo !== "string") ||
+            (input.provider !== undefined &&
+              !["github", "gitlab"].includes(String(input.provider))) ||
+            (input.serverUrl !== undefined &&
+              (input.provider !== "gitlab" ||
+                !validSourceServer(input.serverUrl)))
           )
             throw new RequestError(
               400,
-              "Expected a project name, repository, and optional automation repository.",
+              "Expected a project name, source repository, and optional source provider.",
             );
           if (
             !/^[a-z][a-z0-9-]{0,62}$/.test(input.project) ||
-            !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.repo) ||
+            !validSourceRepository(
+              input.repo,
+              typeof input.provider === "string" ? input.provider : "github",
+            ) ||
             (typeof input.hubRepo === "string" &&
               !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.hubRepo))
           )
             throw new RequestError(
               400,
               "Use a lowercase project ID and owner/repository names.",
-            );
-          if (
-            input.hubRepo === undefined &&
-            !existsSync(join(root, "hub.json")) &&
-            !detectHubRepository(root)
-          )
-            throw new RequestError(
-              400,
-              "Choose the repository that will store PM configuration and run GitHub Actions, or launch the dashboard from your configured hub checkout.",
             );
           const args = [
             "init",
@@ -441,6 +860,10 @@ export function createDashboardServer(
           ];
           if (typeof input.hubRepo === "string")
             args.push("--hub-repo", input.hubRepo);
+          if (typeof input.provider === "string")
+            args.push("--provider", input.provider);
+          if (typeof input.serverUrl === "string")
+            args.push("--server-url", input.serverUrl);
           const output: string[] = [];
           const code = await runSetup(
             root,
@@ -451,9 +874,33 @@ export function createDashboardServer(
           if (code !== 0)
             throw new RequestError(
               400,
-              "Project setup could not finish. Check the project ID, automation repository, and existing configuration with gremlins setup init --help.",
+              "Project setup could not finish. Check the project ID, source repository, and existing configuration with gremlins setup init --help.",
             );
           json(res, 200, { ok: true, result: JSON.parse(output.join("\n")) });
+          return;
+        }
+        const verifyProject =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/verify$/.exec(
+            url.pathname,
+          );
+        if (verifyProject) {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to verify a project.");
+          if (Object.keys(await body(req)).length)
+            throw new RequestError(
+              400,
+              "Project verification takes an empty object.",
+            );
+          const project = loadProject(root, verifyProject[1]!);
+          const checks = await doctorChecks(project, {
+            env: { ...readConnections(root), ...process.env },
+            fetch,
+            today: () => new Date().toISOString().slice(0, 10),
+          });
+          const ok = checks.every((check) => check.ok);
+          if (ok)
+            stampVerified(project.dir, new Date().toISOString().slice(0, 10));
+          json(res, 200, { ok, checks });
           return;
         }
         throw new RequestError(404, "Unknown dashboard endpoint.");
@@ -487,9 +934,12 @@ export function createDashboardServer(
         throw new RequestError(404, "Not found.");
       }
     } catch (error) {
-      const status = error instanceof RequestError ? error.status : 500;
+      const status =
+        error instanceof RequestError || error instanceof LocalRunnerError
+          ? error.status
+          : 500;
       const message =
-        error instanceof RequestError
+        error instanceof RequestError || error instanceof LocalRunnerError
           ? error.message
           : "Dashboard request failed. Check your local configuration files and permissions.";
       if (!res.headersSent) json(res, status, { error: message });
@@ -498,6 +948,16 @@ export function createDashboardServer(
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
+  server.once("listening", () => {
+    if (
+      options.runners ||
+      existsSync(join(root, ".run", "local-runners", "state.json"))
+    )
+      runners().start();
+  });
+  server.once("close", () => {
+    void Promise.resolve(manager?.stop()).finally(() => activityStore.close());
+  });
   return server;
 }
 
@@ -587,8 +1047,13 @@ export async function runDashboard(
       ? restoredSession
       : randomBytes(32).toString("hex");
   let restartDashboard: (() => void) | undefined;
+  let stopDashboard: (() => void) | undefined;
+  const background = process.env.SHIPGREMLINS_CONTROLLER_BACKGROUND === "1";
+  const controllerFile = join(root, ".run", "controller.json");
   const server = createDashboardServer(root, packageRoot, session, addresses, {
     ...(supervised ? { restart: () => restartDashboard?.() } : {}),
+    background,
+    shutdown: () => stopDashboard?.(),
   });
   return new Promise<number>((done) => {
     restartDashboard = () => {
@@ -619,9 +1084,20 @@ export async function runDashboard(
       // An unfinished browser request must not keep Ctrl+C waiting for its body.
       server.closeAllConnections();
     };
+    stopDashboard = stop;
     const cleanup = () => {
       process.removeListener("SIGINT", stop);
       process.removeListener("SIGTERM", stop);
+      if (background && existsSync(controllerFile)) {
+        try {
+          if (
+            JSON.parse(readFileSync(controllerFile, "utf8")).session === session
+          )
+            unlinkSync(controllerFile);
+        } catch {
+          /* Leave an unreadable state for explicit repair. */
+        }
+      }
     };
     server.once("error", () => {
       cleanup();
@@ -633,6 +1109,23 @@ export async function runDashboard(
     server.once("close", cleanup);
     server.listen(port, lan ? "0.0.0.0" : "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
+      if (background) {
+        try {
+          assertNoSymlinks(controllerFile);
+          mkdirSync(join(root, ".run"), { recursive: true, mode: 0o700 });
+          const temporary = `${controllerFile}.${randomBytes(8).toString("hex")}.tmp`;
+          writeFileSync(
+            temporary,
+            JSON.stringify({ port: address.port, session, lan, addresses }),
+            { flag: "wx", mode: 0o600 },
+          );
+          renameSync(temporary, controllerFile);
+        } catch {
+          io.error("Could not save controller state.");
+          stop();
+          return;
+        }
+      }
       const url = `http://127.0.0.1:${address.port}/#session=${session}`;
       if (lan) {
         io.log("Open a LAN link on another device:");

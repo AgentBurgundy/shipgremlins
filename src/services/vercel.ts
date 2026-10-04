@@ -16,7 +16,12 @@ interface ListedDeployment {
   readyState?: string;
   created?: number;
   createdAt?: number;
-  meta?: { githubCommitRef?: string; githubCommitSha?: string };
+  meta?: {
+    githubCommitRef?: string;
+    githubCommitSha?: string;
+    gitlabCommitRef?: string;
+    gitlabCommitSha?: string;
+  };
 }
 
 /** Vercel's branch alias slug: `<project>-git-<branch>-<team>` with non-alphanumerics folded to `-` */
@@ -68,14 +73,16 @@ export class VercelApi implements VercelClient {
     const createdMs = (d: ListedDeployment): number =>
       d.created ?? d.createdAt ?? 0;
     const match = res.deployments
-      .filter((d) => d.meta?.githubCommitRef === branch)
+      .filter(
+        (d) => (d.meta?.githubCommitRef ?? d.meta?.gitlabCommitRef) === branch,
+      )
       .sort((a, b) => createdMs(b) - createdMs(a))[0];
     if (!match) return null;
     return {
       id: match.uid,
       state: match.state ?? match.readyState ?? "",
       url: match.url,
-      sha: match.meta?.githubCommitSha ?? "",
+      sha: match.meta?.githubCommitSha ?? match.meta?.gitlabCommitSha ?? "",
       branch,
       createdAt: new Date(createdMs(match)).toISOString(),
     };

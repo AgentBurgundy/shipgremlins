@@ -1,6 +1,6 @@
 {
   "name": "shipgremlins",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
   "files": [
     "bin/shipgremlins.mjs",
@@ -12,6 +12,7 @@
     "projects/_templates/",
     "prompts/",
     "dashboard/",
+    "runner-local/",
     "site/dist/index.html",
     "site/dist/operator.css",
     "LICENSE"
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@types/node": "^22.10.0",
+    "@types/pg": "8.23.1",
     "eslint": "^9.17.0",
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
@@ -50,6 +52,8 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
+    "cron-parser": "5.10.1",
+    "pg": "8.23.1",
     "tsx": "^4.19.2"
   }
 }

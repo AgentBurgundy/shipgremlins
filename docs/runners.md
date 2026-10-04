@@ -1,4 +1,56 @@
-# Runners — self-hosted now, GCE one setting away
+# Local workers and advanced CI runners
+
+The default worker is local Docker capacity on the machine running the dashboard.
+No GitHub Actions or GitLab CI registration, fork, or automation repository is
+required. GitHub/GitLab are the app's source providers; the local controller owns
+the queue and starts isolated job containers itself.
+
+## Local Docker workers
+
+Install Docker Desktop/Engine with Linux containers, open `gremlins setup`
+(`gremlins setup --lan` on a homelab), and choose **Create runner on this machine**.
+One click creates one slot. Each slot executes one job at a time; the local pool
+is limited to four. PM count and worker count are separate: many PM mandates can
+share one worker.
+
+Creation queues a real browser check. Ready requires a successful container exit,
+matching proof for that job, and verified PNG screenshot bytes. A registration
+record or Docker image alone does not make a worker Ready. Doctor additionally
+validates project/provider settings before agent work can run.
+
+Worker actions are Verify, Pause, Resume, Repair, and Remove. Pause drains the
+current job and stops accepting more. Repair queues a fresh browser check. Remove
+refuses busy capacity and preserves completed job containers/output volumes.
+Inspect job logs and artifacts from the dashboard.
+
+`gremlins start --lan` starts a background dashboard/controller; `gremlins status`
+prints its link and `gremlins stop` stops scheduling without killing running jobs.
+The queue is stored in `.run/local-runners/` under the selected configuration root.
+When the controller returns, it inspects containers before taking further action.
+Only a failure before launch gets one infrastructure retry; an agent's failed
+exit or disappeared, previously confirmed container does not trigger duplicate
+work. Old completed metadata is archived and remains available.
+
+Jobs receive scoped credentials at launch through stdin. Credentials stay out of
+queue records and process arguments; logs redact known token values. The Docker
+socket and the operator's home/configuration directories are not mounted inside
+job containers. After configured checks pass, the worker publishes the developer's
+unique branch as a draft integration PR/MR; the model does not publish directly.
+Jobs have a 45-minute execution limit. Human review and merges remain required. This local path does not yet
+provide the legacy promotion/reconciliation loop automatically.
+
+For server boot persistence and migration from CI schedules, use the
+[setup guide](SETUP.md). Docker Desktop on Windows/macOS runs the Linux worker
+environment. Full cross-platform Docker/provider certification and cloud-fleet
+management remain separate from the CLI/helper unit tests.
+
+## Advanced GitHub Actions and GCE reference
+
+The remainder documents the optional original CI execution path. It requires an
+operational automation repository and provider CI secrets. Keep its schedules
+disabled for projects scheduled by the local controller. The pinned runner
+version and cloud examples below are historical references to review before
+use; they are not the local install procedure or a live GCE certification.
 
 Every hub workflow (`pm-agent`, `pm-dispatch`, `developer`) is three jobs:
 `launch` → `run` → `teardown`. `launch` runs
@@ -7,7 +59,7 @@ Every hub workflow (`pm-agent`, `pm-dispatch`, `developer`) is three jobs:
 
 | `hub.json` → `runners.mode` | `launch` / `teardown`                                                             | `run` targets                                                                                        |
 | --------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `self-hosted` (v1 default)  | no-ops on `ubuntu-latest` (`echo skipped`)                                        | `["self-hosted", <hub.runners.label>]`, or `["self-hosted", <project.runnerLabel>]` when that is set |
+| `self-hosted` (legacy CI)   | no-ops on `ubuntu-latest` (`echo skipped`)                                        | `["self-hosted", <hub.runners.label>]`, or `["self-hosted", <project.runnerLabel>]` when that is set |
 | `gce`                       | creates / deletes an ephemeral VM carrying a JIT runner registration for this run | `["pm-<run id>"]` — the label only that VM carries                                                   |
 
 `pm-agent.yml` fans out over a matrix of `(project, area)` pairs, so its

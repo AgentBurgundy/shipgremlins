@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!package.json
+!package-lock.json
+!*.mjs
+!git-askpass.sh

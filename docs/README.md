@@ -1,4 +1,13 @@
-# ShipGremlins — original runtime guide
+# ShipGremlins — advanced legacy CI runtime guide
+
+**For the default local Docker workers, start with [Setup](SETUP.md) and
+[Local workers](runners.md).** Local execution needs no fork, automation
+repository, GitHub Actions, or GitLab CI. This document preserves the original
+CI dispatcher/release architecture as an advanced reference; its CI enrollment,
+secret provisioning, and workflow scheduling are not default setup requirements.
+
+For current PM log and analytics access, see [project telemetry](TELEMETRY.md):
+Sentry logs/errors, Datadog logs, and per-area Mixpanel Insights reports.
 
 This guide describes the original PM Hub runtime. The current
 [implementation status](IMPLEMENTATION_STATUS.md), [setup guide](SETUP.md),

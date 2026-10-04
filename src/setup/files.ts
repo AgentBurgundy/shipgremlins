@@ -7,12 +7,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
-import { loadHub, loadProject, type HubConfig } from "../config.ts";
+import {
+  loadHub,
+  loadProject,
+  validSourceRepository,
+  validSourceServer,
+  type HubConfig,
+} from "../config.ts";
 import { fillTemplate, templateVars } from "../commands/addProject.ts";
 
 const PORTABLE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const RESERVED_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
-const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export function validateName(value: string, kind: string): void {
   if (!PORTABLE_NAME.test(value) || RESERVED_NAME.test(value)) {
@@ -49,9 +54,12 @@ export function isExampleHub(root: string): boolean {
   }
 }
 
-export function validateRepo(value: string): void {
+export function validateRepo(
+  value: string,
+  provider: "github" | "gitlab" = "github",
+): void {
   if (
-    !REPO.test(value) ||
+    !validSourceRepository(value, provider) ||
     value.split("/").some((part) => part === "." || part === "..")
   ) {
     throw new Error(
@@ -85,6 +93,7 @@ export function assertNoSymlinks(target: string): void {
 
 export const COMMON_SECRETS = [
   "GITHUB_TOKEN",
+  "GITLAB_TOKEN",
   "APP_ID",
   "APP_PRIVATE_KEY",
   "LINEAR_API_KEY",
@@ -106,7 +115,8 @@ export function environmentTemplate(names: string[]): string {
     "# ShipGremlins connection names only. No credentials are generated or copied.",
     "# Copy to .env locally; keep values in your secret manager or CI settings.",
     "# Dashboard connection keys load automatically. For other settings use gremlins --env-file .env.",
-    "# GITHUB_TOKEN is needed locally; CI creates a short-lived token from APP_ID/APP_PRIVATE_KEY.",
+    "# Local jobs use GITHUB_TOKEN or GITLAB_TOKEN for the selected source provider.",
+    "# APP_ID/APP_PRIVATE_KEY are only for the optional legacy GitHub Actions integration.",
     "# ATTESTATION_KEY belongs only in the trusted signing job. The dispatcher uses ATTESTATION_PUBLIC_KEY.",
     ...unique.map((name) => `${name}=`),
     "",
@@ -117,8 +127,10 @@ export interface InitInput {
   hubRepo?: string;
   project: string;
   repo: string;
+  provider?: "github" | "gitlab";
+  serverUrl?: string;
   area?: string;
-  runner?: "self-hosted" | "gce";
+  runner?: "local" | "self-hosted" | "gce";
   runnerLabel?: string;
   today?: string;
 }
@@ -139,7 +151,14 @@ export function initializeSetup(
 ): InitResult {
   validateName(input.project, "project");
   validateName(input.area ?? "core", "area");
-  validateRepo(input.repo);
+  validateRepo(input.repo, input.provider);
+  if (
+    input.serverUrl !== undefined &&
+    (input.provider !== "gitlab" || !validSourceServer(input.serverUrl))
+  )
+    throw new Error(
+      "--server-url must be an HTTPS GitLab origin without credentials or a path",
+    );
   if (input.hubRepo !== undefined) validateRepo(input.hubRepo);
   if (input.runnerLabel !== undefined)
     validateName(input.runnerLabel, "runner label");
@@ -186,14 +205,15 @@ export function initializeSetup(
     }
     preserved.push("hub.json");
   } else {
-    if (!input.hubRepo)
+    const mode = input.runner ?? (input.hubRepo ? "self-hosted" : "local");
+    if (mode !== "local" && !input.hubRepo)
       throw new Error(
         "No automation repository could be detected. Run setup in your ShipGremlins hub checkout, or use --hub-repo owner/name once for a fresh configuration. This is the repository that stores PM configuration and runs GitHub Actions.",
       );
     const hub: HubConfig = {
-      hubRepo: input.hubRepo,
+      hubRepo: input.hubRepo ?? "local/shipgremlins",
       runners: {
-        mode: input.runner ?? "self-hosted",
+        mode,
         label: input.runnerLabel ?? "pm",
       },
       gce: {
@@ -204,7 +224,14 @@ export function initializeSetup(
         spot: false,
       },
     };
-    plan("hub.json", JSON.stringify(hub, null, 2) + "\n");
+    plan(
+      "hub.json",
+      JSON.stringify(
+        { ...hub, ...(mode === "local" ? { hubRepo: undefined } : {}) },
+        null,
+        2,
+      ) + "\n",
+    );
   }
 
   const projectPath = join("projects", input.project);
@@ -222,6 +249,10 @@ export function initializeSetup(
     }
     if (
       project.config.repo !== input.repo ||
+      (input.provider !== undefined &&
+        (project.config.provider ?? "github") !== input.provider) ||
+      (input.serverUrl !== undefined &&
+        project.config.serverUrl !== input.serverUrl) ||
       !project.areas.some((item) => item.key === area)
     ) {
       throw new Error(
@@ -257,6 +288,12 @@ export function initializeSetup(
           `Bundled template ${filename} is missing. Reinstall ShipGremlins; no files changed.`,
         );
       let content = fillTemplate(readFileSync(template, "utf8"), vars);
+      if (filename === "project.json") {
+        const config = JSON.parse(content) as Record<string, unknown>;
+        config.provider = input.provider ?? "github";
+        if (input.serverUrl) config.serverUrl = input.serverUrl;
+        content = JSON.stringify(config, null, 2) + "\n";
+      }
       if (filename === "areas.json") {
         const config = JSON.parse(content) as {
           areas: Record<string, { enabled: boolean }>;
@@ -303,11 +340,11 @@ export function initializeSetup(
       `Edit projects/${input.project}/project.json: Vercel IDs, branch names, database recipe, and commands for your app.`,
       `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
       `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
-      `Use gremlins setup to save supported local connections. Configure GitHub Actions secrets separately. The full variable-name template is projects/${input.project}/.env.example; preserve existing .env values when adding missing names. Use --env-file for additional settings.`,
+      `Use gremlins setup to save connections and create a Docker worker on this machine. Use gremlins setup --lan for a server accessed from other devices.`,
       `Run gremlins setup --check --project ${input.project}. If using a local .env, create/fill it first, then use gremlins --env-file .env setup --check --project ${input.project}.`,
       `For live provider checks run gremlins --env-file .env doctor ${input.project} (or gremlins doctor ${input.project} when credentials are already exported).`,
-      "After reviewing the mandate, set its area enabled=true, run gremlins crons write in the hub checkout, and review the generated schedule before committing.",
-      "GitHub Actions executes the agents. The local site container is an operator guide, not a background scheduler.",
+      "After reviewing the mandate, set its area enabled=true. Local workers follow its UTC schedule while the controller is running; existing CI installations still use gremlins crons write.",
+      "The default local Docker mode needs no fork, automation repository, GitHub Actions, or GitLab CI. Existing CI runner settings are preserved.",
     ],
   };
 }

@@ -19,27 +19,44 @@
         changes, and track delivery through production.
       </p>
       <p>
-        This page serves documentation only. Agent jobs execute through GitHub
-        Actions. It does not store credentials, start a scheduler, or provide an
-        administrative dashboard.
+        This page is a static reference. Open the management dashboard with
+        <code>gremlins setup</code> to connect tools, add an app, and create a
+        local Docker worker. No fork, automation repository, or CI runner is
+        required.
       </p>
       <section aria-labelledby="start-title">
-        <h2 id="start-title">Start with a local check</h2>
-        <pre><code>npm run hub -- setup --check
-npm run hub -- setup --help</code></pre>
+        <h2 id="start-title">Give your gremlins a home</h2>
+        <pre><code>npm install -g git+https://github.com/AgentBurgundy/shipgremlins.git
+gremlins setup
+
+# Homelab: open the printed private link on another device
+gremlins setup --lan
+
+# Keep the controller running after closing the terminal
+gremlins start --lan --port 4311
+gremlins status
+gremlins stop</code></pre>
         <p>
-          The implemented stack is GitHub, GitHub Actions, Vercel, Linear, and
-          Claude Code. GitLab, Railway, other models, and a management dashboard
-          are planned.
+          Local workers use Claude Code and Playwright MCP with GitHub or GitLab
+          source repositories, Linear tickets, and Vercel previews. A worker
+          becomes Ready after a real Chromium screenshot check. Railway
+          deployment checks, other AI runtimes, and automatic local production
+          promotion remain planned. Existing GitHub Actions and GCE setups
+          remain advanced options.
         </p>
       </section>
       <section aria-labelledby="production-title">
         <h2 id="production-title">Done means merged into production</h2>
-        <pre><code>npm run hub -- tickets audit --project my-app --json</code></pre>
+        <pre><code>gremlins tickets audit --project my-app --json</code></pre>
         <p>
           Audit is read-only. Completion requires a reviewed finite deliverable
           manifest and explicit apply. Staging and verification alone do not
           close a ticket.
+        </p>
+        <p>
+          Local developers run configured checks before opening draft
+          integration PRs or merge requests. They never mark tickets Done or
+          merge into production.
         </p>
       </section>
       <nav aria-label="Documentation">

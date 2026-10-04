@@ -21,19 +21,20 @@ const USAGE = `ShipGremlins setup
   gremlins setup                                      open the local setup dashboard
   gremlins setup --lan                                open it to other devices on your private network
   gremlins setup status [--check] [--json] [--verbose] [--dir PATH] [--project my-app]
-  gremlins setup init --project my-app --repo owner/app [--hub-repo owner/hub]
-                 [--dir PATH] [--area core] [--runner self-hosted|gce]
+  gremlins setup init --project my-app --repo owner/app [--provider github|gitlab]
+                 [--server-url https://gitlab.example.com]
+                 [--dir PATH] [--area core] [--runner local|self-hosted|gce]
                  [--runner-label pm] [--json]
 
 Status is read-only. --check exits 1 when local preflight fails.
 Init creates missing files, preserves valid existing settings, and starts PMs disabled.
 Works from any directory after the global install. Use --home PATH to select a configuration.
---project is a lowercase local ID; --repo is the app. The automation repository is reused
-from hub.json or detected from Git origin. --hub-repo is an optional explicit selection.
+--project is a lowercase local ID; --repo is the app. Local Docker workers are the default.
+No fork or automation repository is required. --hub-repo is only for optional CI runners.
 No secret values are accepted, printed, or copied. Provider checks use gremlins doctor my-app.
 Load local credentials with: gremlins --env-file .env setup --check
 Dashboard connections are stored locally and loaded by subsequent CLI commands.
-GitLab/Railway integration is planned.`;
+GitHub and GitLab repositories can run locally. Railway deployment checks are planned.`;
 
 export async function runSetup(
   root: string,
@@ -59,6 +60,8 @@ export async function runSetup(
       "area",
       "runner",
       "runner-label",
+      "provider",
+      "server-url",
     ]);
     if (Object.keys(values).some((name) => !allowed.has(name)))
       throw new Error(
@@ -77,6 +80,8 @@ export async function runSetup(
       "area",
       "runner",
       "runner-label",
+      "provider",
+      "server-url",
     ])
       if (
         values[key] !== undefined &&
@@ -97,30 +102,46 @@ export async function runSetup(
       const repo = string("repo");
       if (!project || !repo)
         throw new Error(
-          "Run gremlins setup init --project my-app --repo owner/app --hub-repo owner/your-hub. --project is a lowercase local ID, not a domain.",
+          "Run gremlins setup init --project my-app --repo owner/app. --project is a lowercase local ID, not a domain.",
         );
       const runner = string("runner");
-      if (runner !== undefined && runner !== "self-hosted" && runner !== "gce")
-        throw new Error("--runner must be self-hosted or gce");
+      if (
+        runner !== undefined &&
+        runner !== "local" &&
+        runner !== "self-hosted" &&
+        runner !== "gce"
+      )
+        throw new Error("--runner must be local, self-hosted or gce");
+      const provider = string("provider");
+      if (
+        provider !== undefined &&
+        provider !== "github" &&
+        provider !== "gitlab"
+      )
+        throw new Error("--provider must be github or gitlab");
       let hubRepo = string("hub-repo");
       if (!hubRepo) {
         if (existsSync(join(directory, "hub.json"))) {
-          const saved = loadHub(directory).hubRepo;
-          const detected = isExampleHub(directory)
-            ? (deps.detectHubRepo ?? detectHubRepository)(directory)
-            : undefined;
+          const configured = loadHub(directory);
+          const saved = configured.hubRepo;
+          const detected =
+            configured.runners.mode !== "local" && isExampleHub(directory)
+              ? (deps.detectHubRepo ?? detectHubRepository)(directory)
+              : undefined;
           if (detected && detected !== saved)
             throw new Error(
               "The sample hub.json names a different repository than this checkout. Set hubRepo in hub.json to your fork's owner/name, then rerun setup. Existing files were preserved.",
             );
           hubRepo = saved;
-        } else {
+        } else if (runner && runner !== "local") {
           hubRepo = (deps.detectHubRepo ?? detectHubRepository)(directory);
         }
       }
       const result = initializeSetup(directory, deps.templatesRoot ?? root, {
         project,
         repo,
+        provider,
+        serverUrl: string("server-url"),
         hubRepo,
         area: string("area"),
         runner,
@@ -129,7 +150,11 @@ export async function runSetup(
       if (values.json) io.log(JSON.stringify(result, null, 2));
       else {
         io.log(`ShipGremlins configuration: ${result.directory}`);
-        io.log(`Automation repository: ${loadHub(directory).hubRepo}`);
+        io.log(
+          loadHub(directory).runners.mode === "local"
+            ? "Workers: local Docker (no automation repository required)"
+            : `Automation repository: ${loadHub(directory).hubRepo}`,
+        );
         io.log(
           `${result.created.length} file(s) created; ${result.preserved.length} existing path(s) preserved.`,
         );
@@ -146,9 +171,15 @@ export async function runSetup(
       return 0;
     }
     if (
-      ["repo", "hub-repo", "area", "runner", "runner-label"].some(
-        (key) => values[key] !== undefined,
-      )
+      [
+        "repo",
+        "hub-repo",
+        "area",
+        "runner",
+        "runner-label",
+        "provider",
+        "server-url",
+      ].some((key) => values[key] !== undefined)
     )
       throw new Error(
         "Configuration options require setup init; status does not change files",

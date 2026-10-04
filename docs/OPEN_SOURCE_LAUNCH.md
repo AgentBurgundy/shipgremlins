@@ -32,12 +32,12 @@ The important distinction is durable product ownership plus an evidence-backed d
 
 Current alpha claims must stay narrower than the overall vision:
 
-- GitHub, GitHub Actions, Vercel, Linear, and Claude Code are implemented. GitLab/GitLab CI/Railway and other model providers remain planned.
-- Setup scaffolding and a local preflight are implemented. They do not provision provider accounts, host a controller, or start agents as a local daemon.
-- Self-hosted Linux runners and GCE tooling exist. A fresh cloud install still needs operator configuration and validation.
+- The default local Docker path connects GitHub/GitLab app repositories, Vercel, Linear, and Claude Code without a fork or provider CI setup. Complete live certification of both source stacks remains pending; Railway and other model runtimes remain planned.
+- Global CLI, LAN dashboard, editable configuration, background controller, durable queue, worker controls, and browser verification are implemented. Provider accounts/test environments still need operator configuration; reboot services are manual.
+- Original GitHub Actions runners and GCE tooling remain advanced options, separate from local workers. GCE is not live-certified.
 - Production completion has a read-only audit and explicit `--apply` reconciler with reviewed scope manifests. It is not yet a scheduled webhook service and conservatively flags complex historical mappings.
 - Promotion gates and bounded recovery have automated scenario tests. A public real-environment demonstration should identify its exact revision, evidence, and remaining limits.
-- The landing page is a marketing site. The CLI opens a separate local dashboard for supported connection tokens and project setup. Agent administration and run history remain planned.
+- The landing page is a marketing site. The CLI opens a separate local dashboard with connection setup, local worker lifecycle, job logs, and artifacts. Local jobs stop at draft integration PRs/MRs; automatic promotion and production lifecycle parity remain open.
 
 Make broader claims only after the corresponding certification:
 

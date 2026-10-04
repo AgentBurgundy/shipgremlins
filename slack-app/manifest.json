@@ -1,0 +1,20 @@
+{
+  "display_information": {
+    "name": "ShipGremlins",
+    "description": "PM Gremlins find the gaps. Coding Gremlins fix them. Evidence, blockers, and review-ready work delivered to Slack.",
+    "background_color": "#151b16",
+    "long_description": "Your app's tiny, tireless crew. PM Gremlins explore your app in a real browser and report findings. Coding Gremlins pick up approved tickets, run checks, and prepare draft pull requests. Connect your self-hosted ShipGremlins instance, choose a channel, and receive clear updates when work starts, needs attention, or is ready for review. The app only posts updates to the channel you choose. It does not read your messages. A draft pull request is not Done: tickets remain open until the production merge is verified."
+  },
+  "features": {
+    "bot_user": { "display_name": "ShipGremlins", "always_online": false }
+  },
+  "oauth_config": {
+    "redirect_urls": ["https://shipgremlins.ai/api/slack/callback"],
+    "scopes": { "bot": ["incoming-webhook"] }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

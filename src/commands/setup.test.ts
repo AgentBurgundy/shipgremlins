@@ -46,7 +46,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("setup initialization", () => {
-  it("detects a fresh hub's Git origin without requiring --hub-repo", async () => {
+  it("defaults to local Docker even inside a Git checkout", async () => {
     expect(
       await runSetup(
         root,
@@ -58,9 +58,10 @@ describe("setup initialization", () => {
         },
       ),
     ).toBe(0);
-    expect(loadHub(root).hubRepo).toBe("example/operations");
+    expect(loadHub(root).runners.mode).toBe("local");
+    expect(loadHub(root).hubRepo).toBe("local/shipgremlins");
     expect(output.join("\n")).toContain(
-      "Automation repository: example/operations",
+      "Workers: local Docker (no automation repository required)",
     );
   });
 
@@ -334,7 +335,7 @@ describe("setup status and CLI", () => {
     const result = initializeSetup(root, templatesRoot, input);
     const guidance = [...output, ...result.next].join("\n");
     expect(guidance).toContain("gremlins setup init --project my-app");
-    expect(guidance).toContain("--hub-repo is an optional explicit selection");
+    expect(guidance).toContain("No fork or automation repository is required");
     expect(guidance).not.toContain("npm run hub");
     expect(guidance).toContain("gremlins doctor demo-app");
     expect(guidance).not.toMatch(/(?:^|\s)hub (?:setup|doctor|crons)\b/m);
@@ -408,7 +409,7 @@ describe("setup status and CLI", () => {
     const report = inspectSetup(root, deps);
     expect(
       report.capabilities.find((capability) =>
-        capability.name.includes("GitLab"),
+        capability.name.includes("Railway"),
       )?.status,
     ).toBe("planned");
     expect(
@@ -424,11 +425,11 @@ describe("setup status and CLI", () => {
       nodeVersion: "20.10.0",
       probe: () => ({ available: false }),
     });
-    for (const tool of ["node", "git", "npm"])
+    for (const tool of ["node", "git", "npm", "docker"])
       expect(report.checks.find((check) => check.id === tool)?.status).toBe(
         "fail",
       );
-    for (const tool of ["docker", "claude"])
+    for (const tool of ["claude"])
       expect(report.checks.find((check) => check.id === tool)?.status).toBe(
         "warn",
       );

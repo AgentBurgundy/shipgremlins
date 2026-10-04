@@ -114,7 +114,9 @@ describe("loadHub", () => {
       JSON.stringify({ ...HUB, runners: { mode: "aws", label: "pm" } }),
     );
     const err = errorOf(() => loadHub(root));
-    expect(err.message).toContain('"mode" must be "self-hosted" or "gce"');
+    expect(err.message).toContain(
+      '"mode" must be "local", "self-hosted" or "gce"',
+    );
   });
 });
 

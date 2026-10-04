@@ -31,10 +31,17 @@ describe("SlackWebhook", () => {
     expect(new Headers(init.headers).get("content-type")).toBe(
       "application/json",
     );
-    expect(JSON.parse(init.body as string)).toEqual({ text: "hi", blocks });
+    expect(JSON.parse(init.body as string)).toEqual({
+      text: "hi",
+      blocks,
+      unfurl_links: false,
+      unfurl_media: false,
+    });
+    expect(init.redirect).toBe("error");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("throws on a non-2xx with the status and Slack's reply, never the webhook path", async () => {
+  it("hides Slack response text and the private webhook path", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("invalid_blocks", { status: 400 })),
@@ -47,8 +54,8 @@ describe("SlackWebhook", () => {
       );
     expect(err).toBeInstanceOf(Error);
     const message = (err as Error).message;
-    expect(message).toContain("400");
-    expect(message).toContain("invalid_blocks");
+    expect(message).toContain("could not be delivered");
+    expect(message).not.toContain("invalid_blocks");
     expect(message).not.toContain("secret");
   });
 
@@ -58,9 +65,37 @@ describe("SlackWebhook", () => {
     );
     vi.stubGlobal("fetch", fetch);
     await expect(
-      new SlackWebhook().post("https://hooks.slack.com/x", [], "x"),
-    ).rejects.toThrow("503");
+      new SlackWebhook().post(
+        "https://hooks.slack.com/services/T/B/x",
+        [],
+        "x",
+      ),
+    ).rejects.toThrow("could not be delivered");
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "https://attacker.example/services/a/b/c",
+    "http://hooks.slack.com/services/a/b/c",
+    "https://user:token@hooks.slack.com/services/a/b/c",
+  ])("refuses unsafe webhook %s without making a request", async (url) => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(
+      new SlackWebhook({ fetch: fetcher }).post(url, [], "Report"),
+    ).rejects.toThrow("valid Slack incoming webhook");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("bounds a hung fetch even when its adapter ignores abort", async () => {
+    const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
+    await expect(
+      new SlackWebhook({ fetch: fetcher, timeoutMs: 5 }).post(
+        "https://hooks.slack.com/services/T/B/x",
+        [],
+        "Report",
+      ),
+    ).rejects.toThrow("could not be delivered");
+    expect(fetcher.mock.calls[0]![1]!.signal?.aborted).toBe(true);
   });
 });
 

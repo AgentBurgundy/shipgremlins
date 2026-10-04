@@ -128,26 +128,20 @@ const args = [
   "smoke-app",
   "--repo",
   "example/app",
-  "--hub-repo",
-  "example/hub",
   "--json",
 ];
 const created = JSON.parse(cli(args));
+assert.equal(
+  JSON.parse(readFileSync(join(config, "hub.json"), "utf8")).runners.mode,
+  "local",
+);
 assert.equal(resolve(created.directory), resolve(config));
 assert.equal(created.created.length, 11);
 writeFileSync(
   join(config, "projects", "smoke-app", "core", "mandate.md"),
   "Keep this custom mandate.\n",
 );
-const again = JSON.parse(
-  cli(
-    args.filter(
-      (arg, i) =>
-        i !== args.indexOf("--hub-repo") &&
-        i !== args.indexOf("--hub-repo") + 1,
-    ),
-  ),
-);
+const again = JSON.parse(cli(args));
 assert.equal(again.created.length, 0);
 assert.equal(
   readFileSync(
@@ -206,6 +200,35 @@ const installedPackage =
   process.platform === "win32"
     ? join(prefix, "node_modules", "shipgremlins")
     : join(prefix, "lib", "node_modules", "shipgremlins");
+assert(
+  existsSync(join(installedPackage, "runner-local", "Dockerfile")),
+  "Local worker image source is packaged",
+);
+// Exercise detached startup/reattach/authenticated stop through the real OS shim.
+try {
+  const started = cli(["--home", config, "start", "--no-open"]);
+  assert.match(started, /running in the background/);
+  const info = JSON.parse(
+    readFileSync(join(config, ".run", "controller.json"), "utf8"),
+  );
+  assert.match(info.session, /^[a-f0-9]{64}$/);
+  const attached = cli(["--home", config, "start", "--no-open"]);
+  assert(
+    attached.includes(`:${info.port}/`),
+    "Start reuses the same controller",
+  );
+  const response = await fetch(`http://127.0.0.1:${info.port}/api/status`, {
+    headers: { authorization: `Bearer ${info.session}` },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).runtime.agents, "local-docker");
+  assert.match(cli(["--home", config, "status"]), /running in the background/);
+} finally {
+  assert.match(
+    cli(["--home", config, "stop"]),
+    /Controller stopped|not running/,
+  );
+}
 const updateProof = run(
   process.execPath,
   [

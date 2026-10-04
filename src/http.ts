@@ -25,6 +25,8 @@ export class HttpError extends Error {
 }
 
 export interface RetryOptions {
+  /** Injectable transport for provider contract tests. */
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   /** retries AFTER the first attempt (default 3) */
   retries?: number;
   /** base backoff, doubled per attempt (default 500ms); Retry-After wins when present */
@@ -43,7 +45,7 @@ function retryDelay(
 ): number {
   const header = res?.headers.get("retry-after");
   if (header !== null && header !== undefined && /^\d+$/.test(header)) {
-    return Number(header) * 1000;
+    return Math.min(Number(header) * 1000, 30_000);
   }
   return backoffMs * 2 ** attempt;
 }
@@ -59,7 +61,10 @@ export async function fetchWithRetry(
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
-      res = await fetch(url, init);
+      res = await (opts.fetch ?? fetch)(url, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(30_000),
+      });
     } catch (err) {
       if (attempt >= retries) throw err;
       await sleep(retryDelay(null, attempt, backoffMs));

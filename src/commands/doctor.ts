@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { loadProject, type Project } from "../config.ts";
 import type { Io } from "./crons.ts";
 import type { FetchLike } from "./metric.ts";
+import { readLogs, readMixpanel } from "../telemetry/read.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -30,7 +31,11 @@ async function probe(
   init: RequestInit,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
   try {
-    const res = await fetchImpl(url, init);
+    const res = await fetchImpl(url, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(10_000),
+      redirect: "error",
+    });
     let body: unknown = null;
     try {
       body = await res.json();
@@ -72,14 +77,19 @@ export async function doctorChecks(
       : `still the template value: ${placeholders.map(([k]) => k).join(", ")}`,
   );
 
-  const gh = deps.env.GITHUB_TOKEN;
+  const gitlab = config.provider === "gitlab";
+  const tokenName = gitlab ? "GITLAB_TOKEN" : "GITHUB_TOKEN";
+  const gh = deps.env[tokenName];
+  const repoApi = gitlab
+    ? `${(config.serverUrl ?? "https://gitlab.com").replace(/\/$/, "")}/api/v4/projects/${encodeURIComponent(config.repo)}`
+    : `${GITHUB}/repos/${config.repo}`;
   add(
-    "GITHUB_TOKEN",
+    tokenName,
     !!gh,
     gh ? "set" : "not set — export a token that can read the target repo",
   );
   if (gh) {
-    const repo = await probe(deps.fetch, `${GITHUB}/repos/${config.repo}`, {
+    const repo = await probe(deps.fetch, repoApi, {
       headers: bearer(gh),
     });
     add(
@@ -90,7 +100,7 @@ export async function doctorChecks(
     for (const [role, branch] of Object.entries(config.branches)) {
       const r = await probe(
         deps.fetch,
-        `${GITHUB}/repos/${config.repo}/branches/${branch}`,
+        `${repoApi}/${gitlab ? "repository/" : ""}branches/${encodeURIComponent(branch)}`,
         {
           headers: bearer(gh),
         },
@@ -143,7 +153,9 @@ export async function doctorChecks(
     )?.deployments;
     const hit = Array.isArray(list)
       ? list.some(
-          (d) => d.meta?.githubCommitRef === config.branches.integration,
+          (d) =>
+            (gitlab ? d.meta?.gitlabCommitRef : d.meta?.githubCommitRef) ===
+            config.branches.integration,
         )
       : false;
     add(
@@ -180,18 +192,42 @@ export async function doctorChecks(
     }
   }
 
-  for (const secret of [
-    config.slackWebhookSecret,
-    config.vercel.bypassSecret,
-  ]) {
+  for (const secret of [config.vercel.bypassSecret]) {
     const set = !!deps.env[secret];
     add(
       `secret ${secret}`,
       set,
       set
         ? "set"
-        : "not set in this environment — add it to the hub's Actions secrets",
+        : "not set in this environment — configure this project's connection on the controller",
     );
+  }
+  const signals = await readLogs(config, deps, { limit: 1, hours: 1 });
+  for (const signal of signals.filter(
+    (signal) => signal.status !== "not-configured",
+  ))
+    add(
+      `${signal.provider} ${signal.kind}`,
+      signal.status === "ok",
+      signal.detail ??
+        "Project-scoped read succeeded (an empty result is valid).",
+    );
+  if (config.telemetry?.mixpanel) {
+    const reports = areas.filter((area) => area.mixpanelReportId);
+    if (!reports.length)
+      add(
+        "Mixpanel reports",
+        false,
+        "Set mixpanelReportId on at least one area.",
+      );
+    for (const area of reports) {
+      const signal = await readMixpanel(config, area, deps);
+      add(
+        `Mixpanel (${area.key})`,
+        signal.status === "ok",
+        signal.detail ?? "Configured Insights report is readable.",
+      );
+    }
   }
   return checks;
 }
@@ -244,7 +280,7 @@ export async function runDoctor(
     `all checks passed — projects/${name}/project.json now has "verified": "${date}"`,
   );
   io.log(
-    "Run `npx tsx src/cli.ts crons write` and commit to enable this project's PM schedules.",
+    "Review and enable the PM area, then create a Docker worker in gremlins setup. Existing CI workspaces use gremlins crons write.",
   );
   return 0;
 }

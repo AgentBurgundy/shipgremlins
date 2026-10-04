@@ -46,6 +46,19 @@ afterEach(() => {
 });
 
 describe("latestDeployment", () => {
+  it("recognizes GitLab branch and commit metadata", async () => {
+    stubVercel([
+      dep({
+        meta: {
+          gitlabCommitRef: "pm-staging",
+          gitlabCommitSha: "e".repeat(40),
+        },
+      }),
+    ]);
+    await expect(
+      client().latestDeployment("prj_1", null, "pm-staging"),
+    ).resolves.toMatchObject({ branch: "pm-staging", sha: "e".repeat(40) });
+  });
   it("lists v6 preview deployments for the project+team and picks the newest for the branch", async () => {
     const calls = stubVercel([
       dep({

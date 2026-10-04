@@ -1,5 +1,34 @@
 # Adding a project
 
+## Default local Docker setup
+
+Open `gremlins setup` (or `gremlins setup --lan` on your server), save the source,
+Linear, Vercel, and Claude Code connections, and add your app repository. A fork
+or separate automation repository is not required. Terminal initialization is:
+
+```sh
+gremlins setup init --project my-app --repo your-org/my-app
+```
+
+Review the generated branches, provider IDs, test commands, area and mandate.
+Use Configuration to edit JSON and File locations to find the mandate/memory
+files. Create a Docker worker in the dashboard and wait for its browser screenshot
+verification. Choose **Verify connections** or run `gremlins doctor my-app`, then enable reviewed areas. The local
+controller reads their schedules in UTC; there is no `crons write` or commit/push
+step for local scheduling. Inspect a supervised PM run before relying on it.
+
+Developer jobs require an open `pm-approved` ticket in the area's Linear project
+with its `pm:AREA` label. Approval is rechecked at launch; the worker publishes a draft
+integration PR/MR only after configured checks pass. The model does not publish
+directly, and jobs cannot merge or mark the ticket Done.
+See [the setup guide](SETUP.md) for background operation and current limits.
+
+## Advanced legacy CI enrollment
+
+The following checklist is for an existing GitHub Actions automation hub.
+Its GitHub App, hub secrets, generated workflows and commit steps apply only to
+that optional execution path. Do not enable both schedulers for one project.
+
 One command seeds the config, one command checks it against the live APIs,
 and the PM crons appear only once the check passes. Everything in between is
 the owner's: installing the app, creating branches, creating Linear projects,
@@ -47,6 +76,10 @@ overwrite an existing project, and prints this checklist.
    behind, quotas. A PM with a small mandate files small tickets.
 
 ## Check it
+
+Optionally connect [Sentry, Datadog and Mixpanel](TELEMETRY.md) before running
+doctor. Each project declares its own scope and credential names; areas can
+select a saved Mixpanel Insights report. PMs use these signals during observation.
 
 ```bash
 GITHUB_TOKEN=… LINEAR_API_KEY=… VERCEL_TOKEN=… \

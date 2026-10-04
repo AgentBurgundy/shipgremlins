@@ -11,12 +11,20 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { assertNoSymlinks } from "./files.ts";
+import { TELEMETRY_SECRET_RE } from "../telemetry/config.ts";
+import { listProjectNames, loadProject } from "../config.ts";
 
 export const CONNECTIONS = [
   {
+    name: "GITLAB_TOKEN",
+    label: "GitLab",
+    description:
+      "Source repositories and merge requests for local Docker jobs.",
+  },
+  {
     name: "GITHUB_TOKEN",
     label: "GitHub",
-    description: "Repository access and GitHub Actions.",
+    description: "Source repositories and pull requests for local Docker jobs.",
   },
   {
     name: "LINEAR_API_KEY",
@@ -32,11 +40,54 @@ export const CONNECTIONS = [
     name: "CLAUDE_CODE_OAUTH_TOKEN",
     label: "Claude Code",
     description:
-      "Claude agent credentials; configure Actions secrets separately.",
+      "Claude agent credentials, passed privately to each local job.",
   },
 ] as const;
 
 const allowed = new Set<string>(CONNECTIONS.map(({ name }) => name));
+export function projectConnections(
+  root: string,
+): { name: string; label: string; description: string }[] {
+  return listProjectNames(root).flatMap((name) => {
+    try {
+      const { config } = loadProject(root, name);
+      return [
+        {
+          name: config.vercel.bypassSecret,
+          label: `${name} · Preview access`,
+          description: "Bypass token for this app's test preview.",
+        },
+        ...(config.signIn
+          ? [
+              {
+                name: config.signIn.databaseUrlSecret,
+                label: `${name} · Test sign-in`,
+                description:
+                  "Preview database connection for the configured test account.",
+              },
+            ]
+          : []),
+        {
+          name: config.slackWebhookSecret,
+          label: `${name} · Slack (optional)`,
+          description: "Optional report webhook.",
+        },
+      ].filter(
+        (entry) =>
+          /^[A-Z][A-Z0-9_]*$/.test(entry.name) &&
+          !/^(SHIPGREMLINS_|NODE_|LD_|DYLD_|PATH$|HOME$|APP_PRIVATE_KEY$)/.test(
+            entry.name,
+          ),
+      );
+    } catch {
+      return [];
+    }
+  });
+}
+const isAllowed = (name: string, root: string): boolean =>
+  allowed.has(name) ||
+  TELEMETRY_SECRET_RE.test(name) ||
+  projectConnections(root).some((entry) => entry.name === name);
 const MAX_ENV_BYTES = 512 * 1024;
 
 function assertConnectionPath(file: string): void {
@@ -69,7 +120,7 @@ export function readConnections(root: string): Record<string, string> {
     return Object.fromEntries(
       Object.entries(parsed).filter(
         (entry): entry is [string, string] =>
-          allowed.has(entry[0]) &&
+          isAllowed(entry[0], root) &&
           typeof entry[1] === "string" &&
           entry[1].length > 0,
       ),
@@ -139,7 +190,7 @@ export function saveConnections(root: string, input: unknown): void {
     throw new Error("Expected a connection values object.");
   const updates: Record<string, string> = {};
   for (const [name, raw] of Object.entries(input)) {
-    if (!allowed.has(name)) throw new Error("Unsupported connection name.");
+    if (!isAllowed(name, root)) throw new Error("Unsupported connection name.");
     if (typeof raw !== "string")
       throw new Error("Connection values must be text.");
     const value = raw.trim();

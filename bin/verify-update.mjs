@@ -24,6 +24,17 @@ writeFileSync(
   join(configurationRoot, ".env"),
   "GITHUB_TOKEN=do-not-overwrite-this-fixture-token\n",
 );
+mkdirSync(join(configurationRoot, ".run", "local-runners"), {
+  recursive: true,
+});
+writeFileSync(
+  join(configurationRoot, ".run", "local-runners", "preserve-this-queue.json"),
+  JSON.stringify({
+    job: "in-progress",
+    worker: "existing-worker",
+    artifact: "retained-evidence",
+  }),
+);
 
 function snapshot(directory) {
   return readdirSync(directory, { withFileTypes: true })
@@ -39,6 +50,31 @@ function snapshot(directory) {
             ],
           ];
     });
+}
+for (const [directory, filename, content] of [
+  [
+    "storage",
+    "postgres.json",
+    {
+      mode: "managed",
+      id: "preserve-db-volume",
+      password: "fixture-private-db-password",
+    },
+  ],
+  [
+    "slack",
+    "connection.json",
+    {
+      webhookUrl: "https://hooks.slack.com/services/fixture/fixture/preserve",
+      teamName: "fixture",
+    },
+  ],
+]) {
+  mkdirSync(join(configurationRoot, ".run", directory), { recursive: true });
+  writeFileSync(
+    join(configurationRoot, ".run", directory, filename),
+    JSON.stringify(content),
+  );
 }
 const originalConfiguration = snapshot(configurationRoot);
 const sha = "d".repeat(40);
@@ -115,5 +151,5 @@ assert.equal(resolveRuntime(bootstrap, home), bootstrap);
 assert.equal(selectedVersion(), `ShipGremlins ${previousVersion}`);
 assert.deepEqual(snapshot(configurationRoot), originalConfiguration);
 console.log(
-  "PASS real staged update: isolated npm install, candidate startup/config checks, activation, bootstrap rollback, unchanged PM files and credentials.",
+  "PASS real staged update: isolated npm install, candidate startup/config checks, activation, bootstrap rollback, unchanged PM files, credentials and local queue storage.",
 );

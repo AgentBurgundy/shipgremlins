@@ -29,6 +29,7 @@ import { runAddProject } from "./commands/addProject.ts";
 import { parseFlags, runCrons, type Io } from "./commands/crons.ts";
 import { runDoctor } from "./commands/doctor.ts";
 import { runMetric } from "./commands/metric.ts";
+import { runLogs } from "./commands/logs.ts";
 import { runTicket } from "./commands/ticket.ts";
 import { runSetup } from "./commands/setup.ts";
 import { configurationRoot } from "./setup/location.ts";
@@ -144,6 +145,12 @@ export function buildCheck(
 // ── commands ─────────────────────────────────────────────────────────────────
 
 async function dispatch(args: string[]): Promise<number> {
+  if (loadHub(ROOT).runners.mode === "local") {
+    io.error(
+      "This workspace uses local Docker workers. Run gremlins start to schedule PMs and approved tickets, or queue a job in the dashboard.",
+    );
+    return 1;
+  }
   const { values } = parseFlags(args);
   const dryRun = values["dry-run"] === true;
   const targetDir =
@@ -314,7 +321,7 @@ function validate(): number {
     const hub = loadHub(ROOT);
     const projects = loadAllProjects(ROOT);
     console.log(
-      `ok — hub ${hub.hubRepo} (${hub.runners.mode}), ${projects.length} project(s): ${projects.map((p) => `${p.config.name}${p.config.verified ? "" : " (unverified)"}`).join(", ") || "none"}`,
+      `ok — ${hub.runners.mode === "local" ? "local Docker workspace" : `hub ${hub.hubRepo} (${hub.runners.mode})`}, ${projects.length} project(s): ${projects.map((p) => `${p.config.name}${p.config.verified ? "" : " (unverified)"}`).join(", ") || "none"}`,
     );
     return 0;
   } catch (err) {
@@ -337,6 +344,9 @@ Saved dashboard connections are loaded automatically; exported variables take pr
   setup status [--check] [--json] [--dir PATH]              inspect local prerequisites without changing files
   setup init --project NAME --repo owner/app [--dir PATH] initialize configuration; use --help for all options
   dashboard [--lan] [--no-open] [--port PORT]              open setup here or on your private network
+  start [--lan] [--port PORT] [--no-open]                  run the controller in the background
+  status                                                show the background dashboard link
+  stop                                                  stop scheduling; keep running Docker jobs
   update [--check | --rollback] [--json]                   safely update the runtime; keep your gremlins
   serve [--host 127.0.0.1] [--port 4310]                    serve the local ShipGremlins site
   dispatch [--project <name>] [--dry-run] [--target target]   sync → line → heal → repair → merge → dispatch → promote
@@ -346,7 +356,8 @@ Saved dashboard connections are loaded automatically; exported variables take pr
   tickets audit|reconcile --project NAME [--manifest FILE] [--json] [--apply]  production completion audit; writes need --apply
   evidence <command>                                        inspect and attest trusted verification evidence
   fixture csv|png --output PATH                             create deterministic upload-test files; see --help
-  metric --project <name> --area <key>                        7/28-day Vercel Analytics counts, or "unavailable"
+  logs --project <name> [--provider all|sentry|datadog]        read bounded project logs and Sentry errors; see --help
+  metric --project <name> --area <key>                        Mixpanel saved report or 7/28-day Vercel Analytics counts
   crons [--json | --check | write]                            the pm-agent.yml schedule block
   add-project <name> --repo owner/name [--area core]          seed projects/<name>/ from the templates
   doctor <name>                                               check the checklist live; stamps "verified"
@@ -408,6 +419,12 @@ export async function main(argv: string[]): Promise<number> {
       if (process.env[name] === undefined) process.env[name] = value;
   }
   switch (command) {
+    case "start":
+    case "stop":
+    case "status": {
+      const { runController } = await import("./commands/controller.ts");
+      return runController(ROOT, PACKAGE_ROOT, command, args, io);
+    }
     case "update": {
       const { runUpdate } = await import("./commands/update.ts");
       return runUpdate(ROOT, PACKAGE_ROOT, args, io);
@@ -441,6 +458,8 @@ export async function main(argv: string[]): Promise<number> {
       return tickets(args);
     case "metric":
       return runMetric(ROOT, args, io);
+    case "logs":
+      return runLogs(ROOT, args, io);
     case "crons":
       return runCrons(ROOT, args, io);
     case "add-project":

@@ -73,16 +73,18 @@ describe("buildReport", () => {
   it("renders header, counts, every section in order, the promotion last and the note at the end", () => {
     const { text, blocks } = buildReport(full);
     const lines = text.split("\n");
-    expect(lines[0]).toBe("game · Core · 2026-10-02 — tested 0123456789ab");
+    expect(lines[0]).toBe(
+      "{g} 🔎 PM Gremlin · game · Core · 2026-10-02 — tested 0123456789ab",
+    );
     expect(lines[1]).toBe("Filed 2 · Verified 1 · Failed 1 · Needs you 2");
     expect(text).toBe(
       [
-        "game · Core · 2026-10-02 — tested 0123456789ab",
+        "{g} 🔎 PM Gremlin · game · Core · 2026-10-02 — tested 0123456789ab",
         "Filed 2 · Verified 1 · Failed 1 · Needs you 2",
         "",
         "Filed",
         "- GAME-12 Start button does nothing on mobile (tier A)",
-        "- GAME-13 Add a <share> link (tier C)",
+        "- GAME-13 Add a &lt;share&gt; link (tier C)",
         "",
         "Verified",
         "- #10 Faster start — loads in under a second",
@@ -92,7 +94,7 @@ describe("buildReport", () => {
         "",
         "Needs you",
         "1. Merge the sync PR — it conflicts with staging (https://github.com/owner/game/pull/5)",
-        "2. Billing & tax prefix touched in #10",
+        "2. Billing &amp; tax prefix touched in #10",
         "",
         "Ready for staging: PR #20 (https://github.com/owner/game/pull/20)",
         "- Faster start",
@@ -107,7 +109,7 @@ describe("buildReport", () => {
       type: "header",
       text: {
         type: "plain_text",
-        text: "game · Core · 2026-10-02 — tested 0123456789ab",
+        text: "{g} 🔎 PM Gremlin · game · Core · 2026-10-02 — tested 0123456789ab",
       },
     });
     expect(typed[1]!.type).toBe("context");
@@ -123,12 +125,13 @@ describe("buildReport", () => {
       "*Failed*",
       "*Needs you*",
       "*Ready for staging* — <https://github.com/owner/game/pull/20|PR #20>",
+      "*Changes*",
     ]);
     expect(sections[0]).toContain(
       "<https://linear.app/x/issue/GAME-13|GAME-13> Add a &lt;share&gt; link · tier C",
     );
     expect(sections[3]).toContain("2. Billing &amp; tax prefix touched in #10");
-    expect(sections[4]).toContain("• Faster start\n• Clearer error page");
+    expect(sections[5]).toContain("• Faster start\n• Clearer error page");
     const last = typed[typed.length - 1]!;
     expect(last.type).toBe("context");
     expect(last.elements![0]!.text).toBe("Quiet week; the metric is flat.");
@@ -138,12 +141,12 @@ describe("buildReport", () => {
     const { text, blocks } = buildReport({ ...base, filed: full.filed });
     expect(text).toBe(
       [
-        "game · Core · 2026-10-02 — tested 0123456789ab",
+        "{g} 🔎 PM Gremlin · game · Core · 2026-10-02 — tested 0123456789ab",
         "Filed 2 · Verified 0 · Failed 0 · Needs you 0",
         "",
         "Filed",
         "- GAME-12 Start button does nothing on mobile (tier A)",
-        "- GAME-13 Add a <share> link (tier C)",
+        "- GAME-13 Add a &lt;share&gt; link (tier C)",
       ].join("\n"),
     );
     const typed = blocks as Block[];
@@ -155,17 +158,19 @@ describe("buildReport", () => {
     const { text, blocks } = buildReport({ ...base, testedSha: null });
     expect(text).toBe(
       [
-        "game · Core · 2026-10-02",
+        "{g} 🔎 PM Gremlin · game · Core · 2026-10-02",
         "Filed 0 · Verified 0 · Failed 0 · Needs you 0",
         "",
         "Nothing new this run.",
       ].join("\n"),
     );
     const typed = blocks as Block[];
-    expect(typed[0]!.text!.text).toBe("game · Core · 2026-10-02");
+    expect(typed[0]!.text!.text).toBe(
+      "{g} 🔎 PM Gremlin · game · Core · 2026-10-02",
+    );
     expect(typed[2]).toEqual({
       type: "section",
-      text: { type: "mrkdwn", text: "Nothing new this run." },
+      text: { type: "mrkdwn", text: "Nothing new this run.", verbatim: true },
     });
   });
 
@@ -180,6 +185,45 @@ describe("buildReport", () => {
     expect(text).toContain("- GAME-11 Thing 11 (tier B)");
     expect(text).not.toContain("- GAME-12 Thing 12");
     expect(text).toContain("…and 3 more");
+  });
+
+  it("bounds hostile titles, long lists and notes without unsafe links or mentions", () => {
+    const payload = buildReport({
+      ...full,
+      project: "<!everyone>".repeat(100),
+      area: "<@U1>".repeat(100),
+      note: "&".repeat(10000),
+      filed: Array.from({ length: 100 }, () => ({
+        identifier: "<@U1>",
+        title: "&".repeat(10000),
+        url: "javascript:alert(1)",
+        tier: "A" as const,
+      })),
+      promotion: {
+        pr: 3,
+        url: "https://secret:token@example.com/a",
+        changes: Array.from({ length: 100 }, () => "<&>".repeat(500)),
+      },
+      needsYou: [
+        { text: "<!here>", url: "https://example.com/?session=private" },
+      ],
+    });
+    expect(payload.text.length).toBeLessThanOrEqual(4000);
+    expect(payload.text).not.toContain("<!everyone>");
+    const encoded = JSON.stringify(payload);
+    expect(encoded).not.toContain("javascript:");
+    expect(encoded).not.toContain("secret:token");
+    expect(encoded).not.toContain("session=private");
+    expect(payload.blocks.length).toBeLessThanOrEqual(50);
+    for (const block of payload.blocks as Block[]) {
+      if (block.type === "header")
+        expect(block.text!.text.length).toBeLessThanOrEqual(150);
+      if (block.type === "section")
+        expect(block.text!.text.length).toBeLessThanOrEqual(3000);
+      if (block.type === "context")
+        for (const entry of block.elements!)
+          expect(entry.text.length).toBeLessThanOrEqual(2000);
+    }
   });
 });
 

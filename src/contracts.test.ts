@@ -46,7 +46,7 @@ describe("hub.json", () => {
   it("loads", () => {
     const hub = loadHub(ROOT);
     expect(hub.hubRepo).toMatch(/^[\w.-]+\/[\w.-]+$/);
-    expect(["self-hosted", "gce"]).toContain(hub.runners.mode);
+    expect(["local", "self-hosted", "gce"]).toContain(hub.runners.mode);
   });
 });
 
@@ -78,14 +78,7 @@ describe("prompts quote notes.ts verbatim", () => {
   when(PM && DEVELOPER)(
     "the prompts carry no GitLab or Railway vocabulary",
     () => {
-      for (const word of [
-        "GitLab",
-        "Railway",
-        "Mixpanel",
-        "Sentry",
-        "glab ",
-        "merge request",
-      ])
+      for (const word of ["GitLab", "Railway", "glab ", "merge request"])
         expect(both, word).not.toContain(word);
     },
   );

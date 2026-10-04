@@ -83,7 +83,7 @@ export function preflightSummary(
           : check.id === "connections"
             ? "Connect your accounts in the dashboard."
             : check.id === "hub"
-              ? "Choose your automation repository."
+              ? "Add your app in the setup dashboard."
               : check.id.startsWith("connections:")
                 ? `Finish provider settings for ${check.id.slice(12)}.`
                 : check.detail;

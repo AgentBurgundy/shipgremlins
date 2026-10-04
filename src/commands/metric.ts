@@ -1,11 +1,10 @@
-// `gremlins metric --project <p> --area <a>` — the area's Vercel Analytics number
-// for the PM prompt: 7-day and 28-day counts, or the single word
-// `unavailable`. The stats endpoint is not public, so every failure mode
-// (no token, no team, non-2xx, unparseable body) prints `unavailable` and
-// exits 0: the PM says so in its report instead of inventing a trend.
+// `gremlins metric --project <p> --area <a>` — a configured Mixpanel Insights
+// report, or the area's existing Vercel 7/28-day counts. Optional failures
+// produce an unavailable result and exit 0 so the PM reports missing evidence.
 
 import { loadProject, type AreaConfig, type ProjectConfig } from "../config.ts";
 import { parseFlags, type Io } from "./crons.ts";
+import { readMixpanel } from "../telemetry/read.ts";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -97,6 +96,12 @@ export async function runMetric(
   if (!area) {
     io.error(`project ${projectName} has no area "${areaKey}"`);
     return 1;
+  }
+  if (area.mixpanelReportId) {
+    io.log(
+      JSON.stringify(await readMixpanel(project.config, area, deps), null, 2),
+    );
+    return 0;
   }
   const counts = await readMetric(project.config, area, deps);
   io.log(
