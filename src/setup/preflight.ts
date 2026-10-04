@@ -131,7 +131,7 @@ export function inspectSetup(
     add(
       "hub",
       "fail",
-      "hub.json is missing or invalid. Run shipgremlins setup init --project my-app --repo your-org/my-app, or repair the existing file.",
+      "hub.json is missing or invalid. Run gremlins setup init --project my-app --repo your-org/my-app, or repair the existing file.",
     );
   }
   const projectsDir = join(root, "projects");
@@ -147,7 +147,7 @@ export function inspectSetup(
     add(
       "projects",
       "fail",
-      "No projects configured. Run shipgremlins setup init --project my-app --repo your-org/my-app. Use a lowercase project ID such as my-app, not a domain. Setup reuses the saved automation repository.",
+      "No projects configured. Run gremlins setup init --project my-app --repo your-org/my-app. Use a lowercase project ID such as my-app, not a domain. Setup reuses the saved automation repository.",
     );
   for (const name of names) {
     try {
@@ -166,20 +166,20 @@ export function inspectSetup(
         placeholders ? "fail" : "pass",
         placeholders
           ? "Replace Vercel/Linear placeholders in project.json and areas.json."
-          : `Provider IDs configured; run shipgremlins doctor ${name} for live validation.`,
+          : `Provider IDs configured; run gremlins doctor ${name} for live validation.`,
       );
       add(
         `verified:${name}`,
         project.config.verified ? "pass" : "warn",
         project.config.verified
           ? "Project previously passed doctor; rerun after connection or branch changes."
-          : `Run shipgremlins doctor ${name} after configuring provider credentials and branches.`,
+          : `Run gremlins doctor ${name} after configuring provider credentials and branches.`,
       );
       add(
         `agents:${name}`,
         project.areas.some((area) => area.enabled) ? "pass" : "warn",
         project.areas.some((area) => area.enabled)
-          ? "At least one PM is enabled; manage workflow schedules with shipgremlins crons."
+          ? "At least one PM is enabled; manage workflow schedules with gremlins crons."
           : "PMs are disabled until you review their mandates and enable their areas.",
       );
     } catch {
@@ -213,7 +213,7 @@ export function inspectSetup(
     add(
       "env-loading",
       "warn",
-      "Save supported tokens through shipgremlins setup. For additional settings or another environment file, run shipgremlins --env-file .env setup --check. Existing exported environment variables take precedence.",
+      "Save supported tokens through gremlins setup. For additional settings or another environment file, run gremlins --env-file .env setup --check. Existing exported environment variables take precedence.",
     );
   const ai = Boolean(deps.env.CLAUDE_CODE_OAUTH_TOKEN?.trim());
   add(

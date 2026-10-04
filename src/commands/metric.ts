@@ -1,4 +1,4 @@
-// `hub metric --project <p> --area <a>` — the area's Vercel Analytics number
+// `gremlins metric --project <p> --area <a>` — the area's Vercel Analytics number
 // for the PM prompt: 7-day and 28-day counts, or the single word
 // `unavailable`. The stats endpoint is not public, so every failure mode
 // (no token, no team, non-2xx, unparseable body) prints `unavailable` and
@@ -89,7 +89,7 @@ export async function runMetric(
   const projectName = values.project;
   const areaKey = values.area;
   if (typeof projectName !== "string" || typeof areaKey !== "string") {
-    io.error("usage: hub metric --project <name> --area <key>");
+    io.error("usage: gremlins metric --project <name> --area <key>");
     return 1;
   }
   const project = loadProject(root, projectName);

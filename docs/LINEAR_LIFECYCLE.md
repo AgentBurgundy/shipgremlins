@@ -9,10 +9,10 @@ A developer finishing code, a successful test, or a merge into `pm-staging` must
 `hub tickets audit` and `hub tickets reconcile` operate on tickets carrying a configured area's label inside that area's Linear project. They do not enroll every issue in the workspace. Audit is always read-only. Reconcile is also read-only unless the operator supplies `--apply`; combining `--apply` with `--dry-run` is rejected.
 
 ```bash
-npm run hub -- tickets audit --project my-app --json
-npm run hub -- tickets audit --project my-app --manifest /secure/release-scope.json --json
-npm run hub -- tickets reconcile --project my-app --manifest /secure/release-scope.json --dry-run
-npm run hub -- tickets reconcile --project my-app --manifest /secure/release-scope.json --apply
+gremlins tickets audit --project my-app --json
+gremlins tickets audit --project my-app --manifest /secure/release-scope.json --json
+gremlins tickets reconcile --project my-app --manifest /secure/release-scope.json --dry-run
+gremlins tickets reconcile --project my-app --manifest /secure/release-scope.json --apply
 ```
 
 Use an absolute path appropriate to your OS for the manifest. The commands use the configured GitHub and Linear credentials. They do not change native Linear workflow rules, enable schedules, or deploy an application. Exact verification-receipt commands and the promotion gate are documented separately in [VERIFICATION.md](VERIFICATION.md).

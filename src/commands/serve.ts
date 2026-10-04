@@ -89,7 +89,7 @@ export async function runServe(
     !host ||
     /[\s/]/.test(host)
   ) {
-    io.error("usage: hub serve [--host 127.0.0.1] [--port 4310]");
+    io.error("usage: gremlins serve [--host 127.0.0.1] [--port 4310]");
     return 1;
   }
   const server = createStaticServer(join(packageRoot, "site", "dist"));

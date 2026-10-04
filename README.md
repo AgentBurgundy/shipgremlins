@@ -75,16 +75,20 @@ You need Git and **Node.js 22.12+**. Install the global CLI once, then open your
 
 ```bash
 npm install -g git+https://github.com/AgentBurgundy/shipgremlins.git
-shipgremlins setup
+gremlins setup
 ```
 
-The dashboard opens in your browser with gremlins, project setup, and local connection-token entry. The CLI works from any directory; `hub` is also available as a short alias. Everyday commands do not need a source checkout or an `npm run` wrapper.
+The dashboard opens in your browser with gremlins, project setup, and local connection-token entry. The `gremlins` CLI works from any directory; `shipgremlins` and `hub` remain compatibility aliases. Everyday commands do not need a source checkout or an `npm run` wrapper.
+
+On a homelab server, run `gremlins setup --lan` and open the printed private-network link from your laptop or phone. Edit configuration in the dashboard and find both installation and settings folders under File locations. LAN mode uses HTTP on your trusted network; see the [server guide](docs/SETUP.md#server-use) for firewall and encrypted SSH-tunnel access.
+
+Install future updates from the dashboard's **Updates** panel or with `gremlins update`. New code is staged and checked before activation; your existing projects, PM mandates, and credentials stay in place. The previous runtime remains available for rollback.
 
 ```bash
-shipgremlins --help
+gremlins --help
 ```
 
-Configuration lives in the nearest hub checkout, or `~/.shipgremlins` outside one. Use `shipgremlins --home PATH setup` to choose another location. Setup reuses the saved automation repository or detects its Git origin. `--hub-repo` is available for an explicit selection.
+Configuration lives in the nearest hub checkout, or `~/.shipgremlins` outside one. Use `gremlins --home PATH setup` to choose another location. Setup reuses the saved automation repository or detects its Git origin. `--hub-repo` is available for an explicit selection.
 
 New PMs start disabled. Dashboard connections are saved locally; configure the runner's GitHub Actions secrets separately before enabling jobs. Follow the [setup guide](docs/SETUP.md) for provider connections, runner configuration, and the first agent run.
 
@@ -94,8 +98,8 @@ New PMs start disabled. Dashboard connections are saved locally; configure the r
 Save supported connection tokens through the dashboard. The CLI loads those keys from the configuration's local `.env`; exported variables take precedence. To load a different credentials file explicitly:
 
 ```bash
-shipgremlins --env-file .env setup --check --project my-app
-shipgremlins --env-file .env doctor my-app
+gremlins --env-file .env setup --check --project my-app
+gremlins --env-file .env doctor my-app
 ```
 
 `setup --check` is local and read-only. `doctor` contacts providers and stamps the project's local verification date on success. Use isolated staging accounts and synthetic test data.
@@ -111,7 +115,7 @@ Verification is a milestone. Staging is a milestone. **Done means every approved
 Start with a read-only audit:
 
 ```bash
-shipgremlins tickets audit --project my-app --json
+gremlins tickets audit --project my-app --json
 ```
 
 <details>
@@ -120,8 +124,8 @@ shipgremlins tickets audit --project my-app --json
 The audit reports tracked tickets, scope hashes, and actual team workflow IDs. Reconciliation requires an operator-reviewed manifest listing the complete deliverable set and corresponding production PRs:
 
 ```bash
-shipgremlins tickets reconcile --project my-app --manifest /secure/release-scope.json
-shipgremlins tickets reconcile --project my-app --manifest /secure/release-scope.json --apply
+gremlins tickets reconcile --project my-app --manifest /secure/release-scope.json
+gremlins tickets reconcile --project my-app --manifest /secure/release-scope.json --apply
 ```
 
 The first command is a dry run. Only `--apply` enables status writes. The reconciler reads actual merged PRs and Git trees; a comment, label, or deployment alone cannot close a ticket. Canceled tickets remain canceled. Ambiguous history, edited ports, and later changes to the same files remain flagged for review.
@@ -182,10 +186,10 @@ This distribution contains generic configuration and no enrolled projects. Sched
 PM and dispatcher workflows are gated by the repository variable
 `SHIPGREMLINS_ENABLE_SCHEDULES=true`. Leave it unset until your private hub repository,
 credentials, runner, test accounts, and enabled PM mandates have been reviewed.
-Manual workflow dispatch remains available. Run `shipgremlins crons write` in your operational
+Manual workflow dispatch remains available. Run `gremlins crons write` in your operational
 hub after enabling areas; the public snapshot starts with an inert placeholder cron.
 
-`shipgremlins setup` opens the local connection and project dashboard. The older
+`gremlins setup` opens the local connection and project dashboard. The older
 `npm start` command and Docker image serve an operator-help page. The public
 marketing site is maintained separately.
 

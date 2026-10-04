@@ -21,7 +21,7 @@ export async function runTickets(
     (values.apply && values["dry-run"])
   ) {
     io.error(
-      "usage: hub tickets audit|reconcile --project <name> [--manifest <reviewed.json>] [--json] [--dry-run | --apply]",
+      "usage: gremlins tickets audit|reconcile --project <name> [--manifest <reviewed.json>] [--json] [--dry-run | --apply]",
     );
     return 1;
   }

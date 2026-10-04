@@ -73,8 +73,8 @@ commit, PR and comment, so the owner's review is always a human one.
 | File                                 | What                                                                                                                                                                                                      |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hub.json`                           | Hub-wide settings: `hubRepo`, the runner mode switch (`runners.mode`: `self-hosted` or `gce`), GCE project/zone/image. See `runners.md`.                                                                  |
-| `projects/<name>/project.json`       | The target: repo, the three branches, Vercel project id, the NAMES of its two hub secrets, merge method, the commands the developer runs, and `verified` (written by `hub doctor`).                       |
-| `projects/<name>/areas.json`         | Ownership map — one entry per area: paths, shared touchpoints, Linear project, label `pm:<area>`, WIP limit, the one metric, the cron. Validated on every hub CI run (`hub validate`).                    |
+| `projects/<name>/project.json`       | The target: repo, the three branches, Vercel project id, the NAMES of its two hub secrets, merge method, the commands the developer runs, and `verified` (written by `gremlins doctor`).                  |
+| `projects/<name>/areas.json`         | Ownership map — one entry per area: paths, shared touchpoints, Linear project, label `pm:<area>`, WIP limit, the one metric, the cron. Validated on every hub CI run (`gremlins validate`).               |
 | `projects/<name>/tiers.json`         | `ownerOnlyPrefixes` (listed under `## Look closely` on the promotion PR), `hubOwnerOnly` (never merged by the dispatcher), `alwaysFree`, `guardTests` (the developer may not edit one to get green).      |
 | `projects/<name>/<area>/mandate.md`  | Ambition, goal, the metric, the roadmap the owner expects, guardrails, tiers, quotas. A human writes this; it is always read from `main`. **This is the steering wheel.**                                 |
 | `projects/<name>/<area>/features.md` | Feature inventory. Seeded by `add-project`, maintained by the PM (refreshed on every full sweep).                                                                                                         |
@@ -83,13 +83,13 @@ commit, PR and comment, so the owner's review is always a human one.
 | `projects/_templates/`               | Seeds for the seven files above; `hub add-project` fills their `{{placeholders}}`.                                                                                                                        |
 | `prompts/pm.md`                      | The prompt every PM runs. Project-agnostic. The copy on `main` is what executes.                                                                                                                          |
 | `prompts/developer.md`               | The developer. Builds one ticket, resolves a conflict (`kind: rc`) or fixes red CI (`kind: ci`).                                                                                                          |
-| `src/cli.ts`                         | `npx tsx src/cli.ts <command>` — `dispatch`, `promote`, `slack`, `ticket`, `metric`, `crons`, `add-project`, `doctor`, `validate`. The only code that reads `process.env`.                                |
+| `src/cli.ts`                         | `gremlins <command>` — `dispatch`, `promote`, `slack`, `ticket`, `metric`, `crons`, `add-project`, `doctor`, `validate`. The only code that reads `process.env`.                                          |
 | `src/dispatcher/`                    | One module per rule (`sync`, `stopTheLine`, `heal`, `repair`, `merge`, `dispatch`, `promote`), each a pure function of `Ctx` with scenario tests against the fakes. `notes.ts` owns every comment string. |
 | `src/forge/`, `src/services/`        | The GitHub forge and the Linear, Vercel and Slack clients — `fetch` only — plus in-memory fakes.                                                                                                          |
-| `.github/workflows/pm-agent.yml`     | The PM job. One generated cron per (project, area) between the `# generated-crons-*` markers (`hub crons write`); the dispatcher runs as its last step.                                                   |
+| `.github/workflows/pm-agent.yml`     | The PM job. One generated cron per (project, area) between the `# generated-crons-*` markers (`gremlins crons write`); the dispatcher runs as its last step.                                              |
 | `.github/workflows/pm-dispatch.yml`  | The dispatcher on its own hourly schedule, every project, no Claude.                                                                                                                                      |
 | `.github/workflows/developer.yml`    | One ticket → one draft PR. Inputs `project`, `ticket`, `attempt`, `kind`, `branch`, `pr`, `marker`.                                                                                                       |
-| `.github/workflows/hub-ci.yml`       | The hub's own gates: format, typecheck, tests, `hub validate`, `hub crons --check`.                                                                                                                       |
+| `.github/workflows/hub-ci.yml`       | The hub's own gates: format, typecheck, tests, `gremlins validate`, `gremlins crons --check`.                                                                                                             |
 
 ## The daily run
 
@@ -119,7 +119,7 @@ commit, PR and comment, so the owner's review is always a human one.
    `🧪 Verified on pm-staging` + `pm-verified`. Fail → `🧪 Failed on
 pm-staging` + `pm-test-failed` with evidence; the dispatcher re-dispatches
    once; a second failure → `pm-needs-human`. The PM never reverts.
-4. **Promote** — the PM runs `npx tsx src/cli.ts promote --project <p> --area
+4. **Promote** — the PM runs `gremlins promote --project <p> --area
 <a>`. It builds `pm-release/<area>/<YYYYMMDD>` **from `staging`** and
    cherry-picks (`-x`) only this area's `pm-staging` merges whose latest `🧪`
    comment is verified, then opens or updates ONE PR to `staging` titled
@@ -135,7 +135,7 @@ list.`; then **Tests changed or removed** (every `guardTests` file the
    (never force-pushes). Nobody but the owner merges it.
 5. **Learn** — memory entry, `queue.md` (and `features.md` after a sweep)
    committed to `pm/<project>/<area>` on the hub; then one Slack message,
-   built by writing a JSON report and running `npx tsx src/cli.ts slack
+   built by writing a JSON report and running `gremlins slack
 <report.json>`: filed tickets, verified/failed PRs, owner actions needed
    and — only when PROMOTE opened or updated the PR this run — the promotion
    in plain language. A run with nothing filed and nothing tested still sends
@@ -164,7 +164,7 @@ closely` section, not per ticket or per merge.
 
 ## The dispatcher
 
-`npx tsx src/cli.ts dispatch [--project <name>] [--dry-run]` — reads every
+`gremlins dispatch [--project <name>] [--dry-run]` — reads every
 `projects/*`, needs `GITHUB_TOKEN` (the app installation token), `LINEAR_API_KEY`
 and `VERCEL_TOKEN`; `BOT_LOGIN` names the app's bot login (default
 `pm-hub[bot]`). Per project, in this order; every rule is one module under
@@ -238,7 +238,7 @@ so an owner edit lands on the next run, and a mandate change that contradicts
 a remembered decision wins.
 
 Secrets live only in the hub repo's Actions secrets; config names them
-(`SLACK_WEBHOOK_<NAME>`, `VERCEL_BYPASS_<NAME>`) and `hub validate` refuses a
+(`SLACK_WEBHOOK_<NAME>`, `VERCEL_BYPASS_<NAME>`) and `gremlins validate` refuses a
 value where a name belongs.
 
 ## Steering a PM
@@ -259,15 +259,15 @@ while it is unanswered the dispatcher will not merge that PR.
 Almost everything heals itself within an hour. The run's Slack message's
 **Needs you** list is the only thing that asks for you. Start there.
 
-| You see                                              | What already happens                                                  | What you do, only if it's in Needs you                                                                    |
-| ---------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| A run claimed a ticket but produced no PR            | Re-fired once; a second empty run labels the ticket `pm-needs-human`. | In Linear, remove `pm-dispatched` and `pm-needs-human`. The next hourly run builds it again.              |
-| An urgent ticket waiting because the area is full    | Nothing — the WIP limit holds it.                                     | Raise `wipLimit` or close a less important in-flight ticket.                                              |
-| `pm-staging` red                                     | Retried, then a fix is dispatched; merges pause until green.          | After two failed fixes: open the red run, read the failing test, fix or ask Claude to.                    |
-| A PR noted `🚫 needs owner: hub config`              | Held on purpose — it edits the hub's workflows or prompts.            | Review and merge it yourself.                                                                             |
-| A PR noted `🚫 needs owner: merge failed at <sha>`   | Held at that commit only.                                             | Read the reason (usually branch protection); a new push retries by itself.                                |
-| "The dispatcher could not run" / a red `pm-dispatch` | Nothing was dispatched or merged.                                     | The job log names the cause — a rejected `GITHUB_TOKEN`, `LINEAR_API_KEY` or `VERCEL_TOKEN`.              |
-| Nothing happening at all                             | —                                                                     | Actions → pm-dispatch → Run workflow. Still nothing: `hub doctor <name>` and check the area is `enabled`. |
+| You see                                              | What already happens                                                  | What you do, only if it's in Needs you                                                                         |
+| ---------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| A run claimed a ticket but produced no PR            | Re-fired once; a second empty run labels the ticket `pm-needs-human`. | In Linear, remove `pm-dispatched` and `pm-needs-human`. The next hourly run builds it again.                   |
+| An urgent ticket waiting because the area is full    | Nothing — the WIP limit holds it.                                     | Raise `wipLimit` or close a less important in-flight ticket.                                                   |
+| `pm-staging` red                                     | Retried, then a fix is dispatched; merges pause until green.          | After two failed fixes: open the red run, read the failing test, fix or ask Claude to.                         |
+| A PR noted `🚫 needs owner: hub config`              | Held on purpose — it edits the hub's workflows or prompts.            | Review and merge it yourself.                                                                                  |
+| A PR noted `🚫 needs owner: merge failed at <sha>`   | Held at that commit only.                                             | Read the reason (usually branch protection); a new push retries by itself.                                     |
+| "The dispatcher could not run" / a red `pm-dispatch` | Nothing was dispatched or merged.                                     | The job log names the cause — a rejected `GITHUB_TOKEN`, `LINEAR_API_KEY` or `VERCEL_TOKEN`.                   |
+| Nothing happening at all                             | —                                                                     | Actions → pm-dispatch → Run workflow. Still nothing: `gremlins doctor <name>` and check the area is `enabled`. |
 
 ## See also
 

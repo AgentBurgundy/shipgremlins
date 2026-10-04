@@ -182,7 +182,7 @@ describe("setup initialization", () => {
     ).toBe(1);
     expect(errors.join("\n")).toContain("--project example-com");
     expect(errors.join("\n")).toContain("not a domain or URL");
-    expect(errors.join("\n")).toContain("shipgremlins setup --help");
+    expect(errors.join("\n")).toContain("gremlins setup --help");
     expect(readdirSync(root)).toEqual([]);
   });
   it("creates a valid fresh config with disabled PMs and only empty secret names", () => {
@@ -333,10 +333,10 @@ describe("setup status and CLI", () => {
     await runSetup(root, [], io, deps);
     const result = initializeSetup(root, templatesRoot, input);
     const guidance = [...output, ...result.next].join("\n");
-    expect(guidance).toContain("shipgremlins setup init --project my-app");
+    expect(guidance).toContain("gremlins setup init --project my-app");
     expect(guidance).toContain("--hub-repo is an optional explicit selection");
     expect(guidance).not.toContain("npm run hub");
-    expect(guidance).toContain("shipgremlins doctor demo-app");
+    expect(guidance).toContain("gremlins doctor demo-app");
     expect(guidance).not.toMatch(/(?:^|\s)hub (?:setup|doctor|crons)\b/m);
   });
 
@@ -351,7 +351,7 @@ describe("setup status and CLI", () => {
     ).toBe(false);
     expect(
       report.checks.find((check) => check.id === "env-loading")?.detail,
-    ).toContain("shipgremlins --env-file .env setup --check");
+    ).toContain("gremlins --env-file .env setup --check");
     expect(JSON.stringify(report)).not.toContain("do-not-load-or-print-this");
   });
   it.each([

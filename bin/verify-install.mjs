@@ -1,6 +1,7 @@
 // Exercise the actual distributable and npm-generated global shims outside the source checkout.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   existsSync,
   mkdirSync,
@@ -11,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const source = fileURLToPath(new URL("..", import.meta.url));
 const scratch = realpathSync(
@@ -79,7 +80,7 @@ env.PATH = `${bin}${delimiter}${env.PATH ?? env.Path ?? ""}`;
 if (process.platform === "win32")
   for (const key of Object.keys(env))
     if (key !== "PATH" && key.toLowerCase() === "path") delete env[key];
-function cli(args, alias = "shipgremlins") {
+function cli(args, alias = "gremlins") {
   if (process.platform === "win32") {
     assert(
       args.every((arg) => !/["%\r\n]/.test(arg)),
@@ -99,8 +100,11 @@ function cli(args, alias = "shipgremlins") {
   return run(join(bin, alias), args, { cwd: working });
 }
 assert.match(cli(["--help"]), /SHIPGREMLINS/);
+assert.match(cli(["dashboard", "--help"]), /--lan/);
+assert.match(cli(["update", "--help"]), /--rollback/);
 assert.match(cli(["--version"]), /ShipGremlins \d/);
 assert.match(cli(["--version"], "hub"), /ShipGremlins \d/);
+assert.match(cli(["--version"], "shipgremlins"), /ShipGremlins \d/);
 if (process.platform === "win32") {
   const shellVersion = run(
     "pwsh",
@@ -108,7 +112,7 @@ if (process.platform === "win32") {
       "-NoProfile",
       "-NonInteractive",
       "-File",
-      join(bin, "shipgremlins.ps1"),
+      join(bin, "gremlins.ps1"),
       "--version",
     ],
     { cwd: working },
@@ -177,7 +181,7 @@ if (process.platform === "win32") {
       "-NoProfile",
       "-NonInteractive",
       "-File",
-      join(bin, "shipgremlins.ps1"),
+      join(bin, "gremlins.ps1"),
       "--home",
       config,
       "setup",
@@ -198,6 +202,24 @@ cli([
 ]);
 assert(existsSync(join(config, "projects", "second-app", "project.json")));
 assert(!existsSync(join(prefix, "node_modules", "shipgremlins", "hub.json")));
+const installedPackage =
+  process.platform === "win32"
+    ? join(prefix, "node_modules", "shipgremlins")
+    : join(prefix, "lib", "node_modules", "shipgremlins");
+const updateProof = run(
+  process.execPath,
+  [
+    "--import",
+    pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href,
+    join(source, "bin", "verify-update.mjs"),
+    installedPackage,
+    config,
+    scratch,
+    join(scratch, packed.filename),
+  ],
+  { cwd: working },
+);
+console.log(updateProof.trim());
 console.log(
   "PASS packaged global CLI: real shims, help/version, isolated setup, repeat setup, credentials, bundled templates, clean JSON.",
 );

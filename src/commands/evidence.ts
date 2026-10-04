@@ -25,7 +25,7 @@ export function runEvidence(
     Object.keys(values).some((key) => !["input", "output"].includes(key))
   ) {
     io.error(
-      "usage: hub evidence comment --input browser.json | hub evidence sign --input report.json --output signed.json",
+      "usage: gremlins evidence comment --input browser.json | gremlins evidence sign --input report.json --output signed.json",
     );
     return 1;
   }

@@ -172,7 +172,7 @@ describe("runAddProject (CLI)", () => {
     expect(text).toContain(CHECKLIST);
     expect(text).toContain("SLACK_WEBHOOK_GAME");
     expect(text).toContain("VERCEL_BYPASS_GAME");
-    expect(text).toContain("shipgremlins doctor game");
+    expect(text).toContain("gremlins doctor game");
   });
 
   it("exits 1 without --repo", async () => {

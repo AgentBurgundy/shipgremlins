@@ -34,7 +34,7 @@ differ, confirm the tested revision includes the change before issuing the recor
 These are placeholders, not evidence. Save your real record as `browser.json`:
 
 ```sh
-npm run hub -- evidence comment --input /absolute/path/browser.json
+gremlins evidence comment --input /absolute/path/browser.json
 ```
 
 Append the emitted HTML marker to the PR's human-readable test report, then post
@@ -45,7 +45,7 @@ source-level author check is not an independent browser oracle.
 
 ## Candidate verification
 
-1. Run `npm run hub -- promote --project my-app --area core`. The dispatcher checks current
+1. Run `gremlins promote --project my-app --area core`. The dispatcher checks current
    integration health and source evidence, assembles a candidate from staging,
    runs configured install/lint/typecheck/test/build commands, and pushes a
    deployable branch. For an initial promotion with no open PR, that branch is
@@ -76,7 +76,7 @@ source-level author check is not an independent browser oracle.
 Capture one area's preparation record without reconstructing its fields manually:
 
 ```sh
-npm run hub -- promote --project my-app --area core | tee promotion.log
+gremlins promote --project my-app --area core | tee promotion.log
 node --input-type=module -e '
 import { readFileSync, writeFileSync } from "node:fs";
 const prefix = "Candidate verification: ";
@@ -141,11 +141,11 @@ openssl pkey -in verifier-private.pem -pubout -out verifier-public.pem
 
 # Inject private PEM as SHIPGREMLINS_ATTESTATION_KEY only in the trusted signer.
 # Never print the private key, commit it, or pass it as a CLI argument.
-npm run hub -- evidence sign --input /evidence/draft.json --output /evidence/signed.json
+gremlins evidence sign --input /evidence/draft.json --output /evidence/signed.json
 
 # Give the dispatcher only SHIPGREMLINS_ATTESTATION_PUBLIC_KEY (the public PEM).
 # It can verify signatures but cannot issue new ones.
-SHIPGREMLINS_VERIFICATION_FILE=/evidence/signed.json npm run hub -- promote --project my-app --area core
+SHIPGREMLINS_VERIFICATION_FILE=/evidence/signed.json gremlins promote --project my-app --area core
 ```
 
 The signer computes local artifact SHA-256 digests and refuses overwrite. Records

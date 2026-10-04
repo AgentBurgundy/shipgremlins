@@ -10,8 +10,8 @@ const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_ROWS = 10_000;
 const MAX_COLUMNS = 256;
 const MAX_DIMENSION = 2048;
-const USAGE = `usage: hub fixture csv --input rows.json --output data.csv [--bom]
-       hub fixture png --output test.png [--width 640] [--height 480] [--seed 1]
+const USAGE = `usage: gremlins fixture csv --input rows.json --output data.csv [--bom]
+       gremlins fixture png --output test.png [--width 640] [--height 480] [--seed 1]
 
 Creates reproducible upload fixtures. Never overwrites files or prints their data.
 CSV accepts arrays of scalar arrays or objects. PNG is a deterministic test grid.

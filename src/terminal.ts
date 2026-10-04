@@ -1,11 +1,6 @@
 import type { SetupReport } from "./setup/preflight.ts";
 
-const GREMLIN = String.raw`   ,_       _,
-   |\\.-=-.//|
-   \ / o o \ /
-    (  .^.  )
-     \ \_/ /
-      '---'`;
+const GREMLIN = "<(o.o)>";
 
 function paint(text: string, code: number, color: boolean): string {
   return color ? `\u001b[${code}m${text}\u001b[0m` : text;
@@ -14,18 +9,9 @@ function paint(text: string, code: number, color: boolean): string {
 export function welcome(color = false, width = 80): string {
   const title = paint("SHIPGREMLINS", 1, color);
   const subtitle = paint("Your app. Our tiny obsession.", 2, color);
-  if (width < 60) return `\n${paint(GREMLIN, 92, color)}\n\n  ${title}\n`;
-  return (
-    "\n" +
-    GREMLIN.split("\n")
-      .map(
-        (line, index) =>
-          paint(line.padEnd(22), 92, color) +
-          (index === 1 ? title : index === 3 ? subtitle : ""),
-      )
-      .join("\n") +
-    "\n"
-  );
+  const mascot = paint(GREMLIN, 92, color);
+  if (width < 28) return `\n  ${mascot}\n  ${title}\n`;
+  return `\n  ${mascot}  ${title}\n${width >= 44 ? `           ${subtitle}\n` : ""}`;
 }
 
 function wrap(text: string, width: number, indent = "  "): string {
@@ -104,17 +90,17 @@ export function preflightSummary(
       lines.push(wrap(`${index + 1}. ${action}`, width));
     }
     if (failed.length)
-      lines.push("", paint("  Open setup  >  shipgremlins setup", 92, color));
+      lines.push("", paint("  Open setup  >  gremlins setup", 92, color));
     else
       lines.push(
         wrap(
-          "Run shipgremlins doctor PROJECT to verify provider connections.",
+          "Run gremlins doctor PROJECT to verify provider connections.",
           width,
         ),
       );
     lines.push(
       "",
-      paint("  Details     >  shipgremlins setup status --verbose", 2, color),
+      paint("  Details     >  gremlins setup status --verbose", 2, color),
     );
   }
   lines.push("", paint(wrap(`Config: ${report.directory}`, width), 2, color));

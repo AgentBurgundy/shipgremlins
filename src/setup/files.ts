@@ -105,7 +105,7 @@ export function environmentTemplate(names: string[]): string {
   return [
     "# ShipGremlins connection names only. No credentials are generated or copied.",
     "# Copy to .env locally; keep values in your secret manager or CI settings.",
-    "# Dashboard connection keys load automatically. For other settings use shipgremlins --env-file .env.",
+    "# Dashboard connection keys load automatically. For other settings use gremlins --env-file .env.",
     "# GITHUB_TOKEN is needed locally; CI creates a short-lived token from APP_ID/APP_PRIVATE_KEY.",
     "# ATTESTATION_KEY belongs only in the trusted signing job. The dispatcher uses ATTESTATION_PUBLIC_KEY.",
     ...unique.map((name) => `${name}=`),
@@ -303,10 +303,10 @@ export function initializeSetup(
       `Edit projects/${input.project}/project.json: Vercel IDs, branch names, database recipe, and commands for your app.`,
       `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
       `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
-      `Use shipgremlins setup to save supported local connections. Configure GitHub Actions secrets separately. The full variable-name template is projects/${input.project}/.env.example; preserve existing .env values when adding missing names. Use --env-file for additional settings.`,
-      `Run shipgremlins setup --check --project ${input.project}. If using a local .env, create/fill it first, then use shipgremlins --env-file .env setup --check --project ${input.project}.`,
-      `For live provider checks run shipgremlins --env-file .env doctor ${input.project} (or shipgremlins doctor ${input.project} when credentials are already exported).`,
-      "After reviewing the mandate, set its area enabled=true, run shipgremlins crons write in the hub checkout, and review the generated schedule before committing.",
+      `Use gremlins setup to save supported local connections. Configure GitHub Actions secrets separately. The full variable-name template is projects/${input.project}/.env.example; preserve existing .env values when adding missing names. Use --env-file for additional settings.`,
+      `Run gremlins setup --check --project ${input.project}. If using a local .env, create/fill it first, then use gremlins --env-file .env setup --check --project ${input.project}.`,
+      `For live provider checks run gremlins --env-file .env doctor ${input.project} (or gremlins doctor ${input.project} when credentials are already exported).`,
+      "After reviewing the mandate, set its area enabled=true, run gremlins crons write in the hub checkout, and review the generated schedule before committing.",
       "GitHub Actions executes the agents. The local site container is an operator guide, not a background scheduler.",
     ],
   };

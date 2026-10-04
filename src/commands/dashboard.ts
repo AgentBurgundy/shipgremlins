@@ -8,7 +8,8 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import type { AddressInfo } from "node:net";
+import { isIPv4, type AddressInfo } from "node:net";
+import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { listProjectNames, loadHub, loadProject } from "../config.ts";
 import {
@@ -18,8 +19,16 @@ import {
 } from "../setup/connections.ts";
 import { assertNoSymlinks } from "../setup/files.ts";
 import { detectHubRepository } from "../setup/location.ts";
+import {
+  ConfigEditorError,
+  listEditableConfigs,
+  readEditableConfig,
+  saveEditableConfig,
+} from "../setup/configEditor.ts";
+import { canOpenFolders, openDashboardFolder } from "../setup/openFolder.ts";
 import { parseFlags, type Io } from "./crons.ts";
 import { runSetup } from "./setup.ts";
+import { createUpdater, type Updater } from "../update/index.ts";
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -33,6 +42,36 @@ const TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 const MAX_BODY = 32 * 1024;
+
+/** Advertise private LAN/Tailscale IPv4 interfaces, never public or loopback addresses. */
+export function lanAddresses(
+  interfaces: Record<
+    string,
+    NetworkInterfaceInfo[] | undefined
+  > = networkInterfaces(),
+): string[] {
+  return [
+    ...new Set(
+      Object.values(interfaces)
+        .flatMap((entries) => entries ?? [])
+        .filter(
+          (entry) =>
+            !entry.internal && entry.family === "IPv4" && isIPv4(entry.address),
+        )
+        .map((entry) => entry.address)
+        .filter((address) => {
+          const [first, second] = address.split(".").map(Number);
+          return (
+            first === 10 ||
+            (first === 172 && second! >= 16 && second! <= 31) ||
+            (first === 192 && second === 168) ||
+            (first === 100 && second! >= 64 && second! <= 127)
+          );
+        }),
+    ),
+  ].sort();
+}
+
 class RequestError extends Error {
   constructor(
     readonly status: number,
@@ -48,14 +87,17 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function body(
+  req: IncomingMessage,
+  limit = MAX_BODY,
+): Promise<Record<string, unknown>> {
   if (
     !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(
       req.headers["content-type"] ?? "",
     )
   )
     throw new RequestError(415, "Use application/json.");
-  if (Number(req.headers["content-length"] ?? 0) > MAX_BODY)
+  if (Number(req.headers["content-length"] ?? 0) > limit)
     throw new RequestError(413, "Request is too large.");
   const chunks = await new Promise<Buffer[]>((accept, reject) => {
     const chunks: Buffer[] = [];
@@ -75,7 +117,7 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
     };
     const onData = (bytes: Buffer) => {
       size += bytes.length;
-      if (size > MAX_BODY) {
+      if (size > limit) {
         cleanup();
         req.resume();
         reject(new RequestError(413, "Request is too large."));
@@ -94,13 +136,36 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   }
 }
 
+export interface DashboardOptions {
+  updater?: Updater;
+  restart?: () => void;
+}
+
 export function createDashboardServer(
   root: string,
   packageRoot: string,
   session: string,
+  networkHosts: readonly string[] = [],
+  options: DashboardOptions = {},
 ): Server {
   if (!/^[a-f0-9]{64}$/.test(session))
     throw new Error("Invalid dashboard session.");
+  if (networkHosts.some((host) => !isIPv4(host)))
+    throw new Error("Dashboard network hosts must be IPv4 addresses.");
+  const hosts = new Set(["127.0.0.1", ...networkHosts]);
+  // Update checks are explicit; opening the static page never makes a network request.
+  let updater = options.updater;
+  const updates = () =>
+    (updater ??= createUpdater({ configurationRoot: root, packageRoot }));
+  let updateRunning = false;
+  let updateFailure = "";
+  const updateStatus = () => ({
+    ...updates().status(),
+    ...(updateFailure
+      ? { phase: "error" as const, message: updateFailure }
+      : {}),
+    canRestart: Boolean(options.restart),
+  });
   const server = createServer(async (req, res) => {
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -112,16 +177,16 @@ export function createDashboardServer(
     );
     try {
       const address = server.address() as AddressInfo | null;
-      const host = `127.0.0.1:${address?.port}`;
+      const host = req.headers.host ?? "";
       const origin = `http://${host}`;
       if (
-        req.headers.host !== host ||
+        ![...hosts].some((allowed) => host === `${allowed}:${address?.port}`) ||
         (req.headers.origin !== undefined && req.headers.origin !== origin) ||
         req.headers["sec-fetch-site"] === "cross-site"
       )
         throw new RequestError(
           403,
-          "Dashboard requests must come from this local session.",
+          "Use a dashboard address printed by the CLI and its matching browser session.",
         );
       const url = new URL(req.url ?? "/", origin);
       if (url.origin !== origin)
@@ -137,31 +202,178 @@ export function createDashboardServer(
             401,
             "Open the dashboard link printed by your CLI.",
           );
+        if (url.pathname === "/api/updates") {
+          if (req.method !== "GET")
+            throw new RequestError(405, "Use GET for update status.");
+          json(res, 200, updateStatus());
+          return;
+        }
+        if (url.pathname.startsWith("/api/updates/")) {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST for update actions.");
+          const action = url.pathname.slice("/api/updates/".length);
+          if (!["check", "apply", "rollback", "restart"].includes(action))
+            throw new RequestError(404, "Unknown update action.");
+          if (Object.keys(await body(req)).length)
+            throw new RequestError(
+              400,
+              "Update actions take an empty JSON object.",
+            );
+          if (updateRunning)
+            throw new RequestError(
+              409,
+              "Another update is running. Wait for it to finish.",
+            );
+          if (action === "restart") {
+            if (!options.restart)
+              throw new RequestError(
+                400,
+                "Stop this dashboard and start it with gremlins setup to use the new runtime.",
+              );
+            if (!updates().status().restartRequired)
+              throw new RequestError(
+                409,
+                "The dashboard is already using the selected runtime.",
+              );
+            updateRunning = true;
+            res.once("finish", options.restart);
+            json(res, 202, { ok: true, restarting: true });
+            return;
+          }
+          updateFailure = "";
+          updateRunning = true;
+          // Installation can take minutes. Keep the dashboard and its status polling responsive.
+          const operation = updates()[action as "check" | "apply" | "rollback"];
+          void operation()
+            .catch(() => {
+              updateFailure =
+                "Another update may be running. Wait for it to finish, then check again.";
+            })
+            .finally(() => {
+              updateRunning = false;
+            });
+          json(res, 202, updateStatus());
+          return;
+        }
         if (url.pathname === "/api/status") {
           if (req.method !== "GET")
             throw new RequestError(405, "Use GET for status.");
           assertNoSymlinks(root);
           assertNoSymlinks(join(root, "hub.json"));
           const saved = readConnections(root);
-          const hubRepo = existsSync(join(root, "hub.json"))
-            ? loadHub(root).hubRepo
-            : null;
+          const configWarnings: string[] = [];
+          let hubRepo: string | null = null;
+          if (existsSync(join(root, "hub.json"))) {
+            try {
+              hubRepo = loadHub(root).hubRepo;
+            } catch {
+              configWarnings.push(
+                "hub.json needs repair. Open it in Configuration.",
+              );
+            }
+          }
+          assertNoSymlinks(join(root, "projects"));
           const projects = listProjectNames(root).map((name) => {
             assertNoSymlinks(join(root, "projects", name));
             for (const file of ["project.json", "areas.json", "tiers.json"])
               assertNoSymlinks(join(root, "projects", name, file));
-            return { name, repo: loadProject(root, name).config.repo };
+            try {
+              return { name, repo: loadProject(root, name).config.repo };
+            } catch {
+              configWarnings.push(
+                `Project ${name} needs repair. Open its files in Configuration.`,
+              );
+              return { name, repo: "Configuration needs repair" };
+            }
           });
           json(res, 200, {
             configDirectory: resolve(root),
+            installationDirectory: resolve(packageRoot),
             hubRepo,
+            configWarnings,
             projects,
             connections: CONNECTIONS.map((connection) => ({
               ...connection,
               configured: Boolean(saved[connection.name]),
             })),
-            runtime: { agents: "github-actions", dashboard: "local" },
+            runtime: {
+              agents: "github-actions",
+              dashboard: "local",
+              access: networkHosts.length ? "lan" : "loopback",
+              canOpenFolders: canOpenFolders(networkHosts.length > 0),
+            },
           });
+          return;
+        }
+        if (url.pathname === "/api/config") {
+          try {
+            if (req.method === "GET") {
+              const path = url.searchParams.get("path");
+              json(
+                res,
+                200,
+                path === null
+                  ? { files: listEditableConfigs(root) }
+                  : readEditableConfig(root, path),
+              );
+            } else if (req.method === "PUT") {
+              const input = await body(req, 128 * 1024);
+              if (
+                Object.keys(input).some(
+                  (key) => !["path", "content", "revision"].includes(key),
+                ) ||
+                typeof input.path !== "string" ||
+                typeof input.content !== "string" ||
+                typeof input.revision !== "string"
+              )
+                throw new RequestError(
+                  400,
+                  "Expected a configuration path, JSON content, and revision.",
+                );
+              json(res, 200, {
+                ok: true,
+                ...saveEditableConfig(root, {
+                  path: input.path,
+                  content: input.content,
+                  revision: input.revision,
+                }),
+              });
+            } else
+              throw new RequestError(405, "Use GET or PUT for configuration.");
+          } catch (error) {
+            if (error instanceof ConfigEditorError)
+              throw new RequestError(error.status, error.message);
+            throw error;
+          }
+          return;
+        }
+        if (url.pathname === "/api/open-folder") {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to open a folder.");
+          const input = await body(req);
+          if (
+            Object.keys(input).length !== 1 ||
+            typeof input.target !== "string" ||
+            !["configuration", "installation"].includes(input.target)
+          )
+            throw new RequestError(
+              400,
+              "Choose the configuration or installation folder.",
+            );
+          if (!canOpenFolders(networkHosts.length > 0))
+            throw new RequestError(
+              400,
+              "This folder lives on the server. Copy its path or use the configuration editor in your browser.",
+            );
+          try {
+            await openDashboardFolder(root, packageRoot, input.target);
+          } catch {
+            throw new RequestError(
+              400,
+              "The server could not open its file manager. Copy the folder path instead.",
+            );
+          }
+          json(res, 200, { ok: true });
           return;
         }
         if (url.pathname === "/api/connections") {
@@ -239,7 +451,7 @@ export function createDashboardServer(
           if (code !== 0)
             throw new RequestError(
               400,
-              "Project setup could not finish. Check the project ID, automation repository, and existing configuration with shipgremlins setup init --help.",
+              "Project setup could not finish. Check the project ID, automation repository, and existing configuration with gremlins setup init --help.",
             );
           json(res, 200, { ok: true, result: JSON.parse(output.join("\n")) });
           return;
@@ -308,7 +520,7 @@ export function openDashboardBrowser(
     if (reported) return;
     reported = true;
     io.log(
-      "The browser could not open automatically. Open the dashboard link above in a browser on this computer.",
+      "No browser opened. On another device, restart with gremlins setup --lan, or use an SSH tunnel to the loopback address above.",
     );
   };
   try {
@@ -327,30 +539,81 @@ export function openDashboardBrowser(
   }
 }
 
-/** Run a browser dashboard accessible only on this computer. */
+/** Default to loopback; LAN access requires an explicit flag and keeps session authentication. */
 export async function runDashboard(
   root: string,
   packageRoot: string,
   args: string[],
   io: Io,
+  getLanAddresses: () => string[] = lanAddresses,
 ): Promise<number> {
   const { values, positionals } = parseFlags(args);
-  const port = values.port === undefined ? 0 : Number(values.port);
+  const usage =
+    "Usage: gremlins dashboard [--lan] [--no-open] [--port PORT]\n  --lan: open on your private IPv4 network (default port 4311); prints links for other devices.\n  Default: loopback only, with an available port and automatic browser opening.";
+  if (values.help === true || args.includes("-h")) {
+    io.log(usage);
+    return 0;
+  }
+  const lan = values.lan === true;
+  const port =
+    values.port === undefined ? (lan ? 4311 : 0) : Number(values.port);
   if (
     positionals.length ||
-    Object.keys(values).some((key) => !["no-open", "port"].includes(key)) ||
+    Object.keys(values).some(
+      (key) => !["no-open", "port", "lan"].includes(key),
+    ) ||
     (values["no-open"] !== undefined && values["no-open"] !== true) ||
+    (values.lan !== undefined && values.lan !== true) ||
     values.port === true ||
     !Number.isInteger(port) ||
     port < 0 ||
     port > 65535
   ) {
-    io.error("Usage: shipgremlins dashboard [--no-open] [--port 4311]");
+    io.error(usage);
     return 1;
   }
-  const session = randomBytes(32).toString("hex");
-  const server = createDashboardServer(root, packageRoot, session);
+  const addresses = lan ? getLanAddresses() : [];
+  if (lan && !addresses.length) {
+    io.error(
+      "No private LAN IPv4 address was found. Connect this server to your LAN, or use the default loopback dashboard through an SSH tunnel.",
+    );
+    return 1;
+  }
+  const supervised =
+    process.env.SHIPGREMLINS_MANAGED_LAUNCH === "1" && Boolean(process.send);
+  const restoredSession = process.env.SHIPGREMLINS_DASHBOARD_SESSION;
+  const session =
+    supervised && restoredSession && /^[a-f0-9]{64}$/.test(restoredSession)
+      ? restoredSession
+      : randomBytes(32).toString("hex");
+  let restartDashboard: (() => void) | undefined;
+  const server = createDashboardServer(root, packageRoot, session, addresses, {
+    ...(supervised ? { restart: () => restartDashboard?.() } : {}),
+  });
   return new Promise<number>((done) => {
+    restartDashboard = () => {
+      const address = server.address() as AddressInfo | null;
+      if (!address || !process.send) return;
+      process.send(
+        {
+          type: "shipgremlins:restart-dashboard",
+          port: address.port,
+          session,
+          configurationRoot: resolve(root),
+          lan,
+        },
+        (error) => {
+          if (error) {
+            io.error(
+              "Automatic restart failed. Stop the dashboard and run gremlins setup again.",
+            );
+            return;
+          }
+          server.close(() => done(75));
+          server.closeAllConnections();
+        },
+      );
+    };
     const stop = () => {
       server.close(() => done(0));
       // An unfinished browser request must not keep Ctrl+C waiting for its body.
@@ -363,19 +626,26 @@ export async function runDashboard(
     server.once("error", () => {
       cleanup();
       io.error(
-        "Dashboard could not start. Choose another port with --port 4311, or omit --port for an available port.",
+        "Dashboard could not start. Choose another port with --port 4312, or use --port 0 for an available port.",
       );
       done(1);
     });
     server.once("close", cleanup);
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, lan ? "0.0.0.0" : "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
       const url = `http://127.0.0.1:${address.port}/#session=${session}`;
-      io.log(`Your gremlins are waiting: ${url}`);
+      if (lan) {
+        io.log("Open a LAN link on another device:");
+        for (const host of addresses)
+          io.log(`  http://${host}:${address.port}/#session=${session}`);
+        io.log(
+          `LAN mode uses HTTP. Use a trusted network; allow TCP ${address.port} through your server firewall only for that network.`,
+        );
+      } else io.log(`Your gremlins are waiting: ${url}`);
       io.log(
-        `Connections stay on this computer in ${join(resolve(root), ".env")}. Keep this session link private. Press Ctrl+C to stop.`,
+        `Connections stay on this server in ${join(resolve(root), ".env")}. Keep the session link private. Press Ctrl+C to stop.`,
       );
-      if (!values["no-open"]) openDashboardBrowser(url, io);
+      if (!lan && !values["no-open"]) openDashboardBrowser(url, io);
     });
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);

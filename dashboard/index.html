@@ -35,10 +35,13 @@
             ><span aria-hidden="true">▤</span> Projects
             <span class="nav-count" id="project-count">—</span></a
           >
+          <a class="nav-item" href="#configuration"
+            ><span aria-hidden="true">⚙</span> Configuration</a
+          >
         </nav>
         <div class="sidebar-bottom">
           <div class="local-indicator">
-            <span aria-hidden="true"></span> Running on your machine
+            <span aria-hidden="true"></span> Self-hosted, by you
           </div>
           <a
             href="https://github.com/AgentBurgundy/shipgremlins/blob/main/docs/SETUP.md"
@@ -56,7 +59,7 @@
             >Mission control <span class="topbar-separator">/</span>
             <strong>Your crew</strong></span
           ><span class="local-pill"
-            ><span aria-hidden="true"></span> LOCAL</span
+            ><span aria-hidden="true"></span> SELF-HOSTED</span
           >
         </header>
         <main id="main" tabindex="-1">
@@ -307,8 +310,8 @@
             <div class="privacy-note">
               <span class="privacy-icon" aria-hidden="true">⌑</span>
               <p>
-                <strong>Your machine. Your credentials.</strong> Tokens are
-                stored in your local .env file, outside browser storage. Saved
+                <strong>Your server. Your credentials.</strong> Tokens are
+                stored in the server's .env file, outside browser storage. Saved
                 values are never sent back to the dashboard. “Saved” means
                 configured; live access still needs verification.
               </p>
@@ -417,6 +420,256 @@
             </form>
           </section>
 
+          <section
+            class="panel configuration-panel"
+            id="configuration"
+            aria-labelledby="configuration-title"
+          >
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow muted">03 / YOUR WORKSPACE</span>
+                <h2 id="configuration-title">Make it your own.</h2>
+                <p>
+                  Edit your crew’s configuration right here, even when your
+                  server is across the room.
+                </p>
+              </div>
+              <span class="section-symbol code-symbol" aria-hidden="true"
+                >{}</span
+              >
+            </div>
+
+            <div class="folder-grid">
+              <div class="folder-card">
+                <span class="folder-label">Configuration folder</span>
+                <code id="configuration-path">Loading…</code>
+                <p>Your hub settings, projects, and saved connections.</p>
+                <div class="folder-actions">
+                  <button
+                    type="button"
+                    class="small-button"
+                    data-copy-path="configuration"
+                    disabled
+                  >
+                    Copy path
+                  </button>
+                  <button
+                    type="button"
+                    class="small-button"
+                    data-open-folder="configuration"
+                    hidden
+                  >
+                    Open folder <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
+              </div>
+              <div class="folder-card">
+                <span class="folder-label">Installation folder</span>
+                <code id="installation-path">Loading…</code>
+                <p>The ShipGremlins CLI, dashboard, and bundled templates.</p>
+                <div class="folder-actions">
+                  <button
+                    type="button"
+                    class="small-button"
+                    data-copy-path="installation"
+                    disabled
+                  >
+                    Copy path
+                  </button>
+                  <button
+                    type="button"
+                    class="small-button"
+                    data-open-folder="installation"
+                    hidden
+                  >
+                    Open folder <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="folder-guidance" id="folder-guidance">
+              These paths belong to the machine running ShipGremlins.
+            </p>
+            <div
+              class="form-message"
+              id="folder-message"
+              role="status"
+              hidden
+            ></div>
+
+            <div class="notice" id="config-warnings" role="status" hidden></div>
+            <form id="config-form">
+              <fieldset id="config-fields" disabled>
+                <legend class="sr-only">Configuration editor</legend>
+                <div class="editor-toolbar">
+                  <div class="field editor-file-field">
+                    <label for="config-file">Configuration file</label>
+                    <select id="config-file" aria-describedby="editor-help">
+                      <option value="">Loading files…</option>
+                    </select>
+                  </div>
+                  <span class="editor-state" id="editor-state" role="status"
+                    >No file loaded</span
+                  >
+                </div>
+                <p id="editor-help" class="editor-help">
+                  Choose a JSON file to edit. Changes are validated before
+                  saving.
+                </p>
+                <div class="editor-frame">
+                  <div class="editor-caption">
+                    <label for="config-content" id="editor-file-label"
+                      >File contents</label
+                    ><span aria-hidden="true">JSON</span>
+                  </div>
+                  <textarea
+                    id="config-content"
+                    rows="16"
+                    wrap="off"
+                    autocomplete="off"
+                    autocapitalize="none"
+                    spellcheck="false"
+                    aria-describedby="editor-help"
+                    placeholder="Your configuration will appear here."
+                    disabled
+                  ></textarea>
+                  <div class="editor-foot">
+                    <span id="editor-lines">0 lines</span
+                    ><span>Saved on your server</span>
+                  </div>
+                </div>
+                <div class="editor-actions">
+                  <p>
+                    Saving updates configuration. Agents are not automatically
+                    enabled.
+                  </p>
+                  <div class="editor-buttons">
+                    <button
+                      class="button button-quiet"
+                      type="button"
+                      id="config-reload"
+                    >
+                      Reload
+                    </button>
+                    <button
+                      class="button button-dark"
+                      type="submit"
+                      id="config-save"
+                      disabled
+                    >
+                      Save changes <span aria-hidden="true">↗</span>
+                    </button>
+                  </div>
+                </div>
+              </fieldset>
+            </form>
+            <div class="discard-prompt" id="discard-prompt" role="alert" hidden>
+              <div>
+                <strong>Keep your changes?</strong>
+                <p id="discard-description"></p>
+              </div>
+              <div class="discard-actions">
+                <button class="small-button" type="button" id="keep-editing">
+                  Keep editing</button
+                ><button
+                  class="small-button discard-button"
+                  type="button"
+                  id="discard-changes"
+                >
+                  Discard changes
+                </button>
+              </div>
+            </div>
+            <div
+              class="form-message"
+              id="config-message"
+              role="status"
+              hidden
+            ></div>
+            <div class="editor-draft-tools">
+              <span
+                >Connection secrets are managed in
+                <a href="#connections">Connections</a>.</span
+              ><button
+                type="button"
+                class="text-button"
+                id="copy-draft"
+                disabled
+              >
+                Copy draft
+              </button>
+            </div>
+            <span id="config-copy-status" class="sr-only" role="status"></span>
+            <section
+              class="updates-card"
+              id="updates"
+              aria-labelledby="updates-title"
+            >
+              <div class="updates-heading">
+                <div>
+                  <span class="eyebrow muted">SHIPGREMLINS UPDATES</span>
+                  <h3 id="updates-title">Keep your crew current.</h3>
+                </div>
+                <span class="update-phase" id="update-phase"
+                  >Waiting for session</span
+                >
+              </div>
+              <div class="update-versions">
+                <div>
+                  <span>Running</span><code id="running-version">—</code>
+                </div>
+                <div>
+                  <span>Latest</span
+                  ><code id="latest-version">Not checked</code>
+                </div>
+              </div>
+              <p class="update-message" id="update-message" role="status">
+                Connect to your dashboard to check for updates.
+              </p>
+              <p
+                class="update-restart-note"
+                id="update-restart-note"
+                hidden
+              ></p>
+              <div class="update-buttons">
+                <button
+                  type="button"
+                  class="small-button"
+                  id="update-check"
+                  disabled
+                >
+                  Check for updates</button
+                ><button
+                  type="button"
+                  class="button button-dark"
+                  id="update-apply"
+                  hidden
+                >
+                  Install update <span aria-hidden="true">↓</span></button
+                ><button
+                  type="button"
+                  class="small-button"
+                  id="update-rollback"
+                  hidden
+                >
+                  Roll back</button
+                ><button
+                  type="button"
+                  class="button button-dark"
+                  id="update-restart"
+                  hidden
+                >
+                  Restart dashboard <span aria-hidden="true">↻</span>
+                </button>
+              </div>
+              <p class="update-assurance">
+                Updates preserve your projects, mandates, and saved credentials.
+                Running cloud jobs continue. Your dashboard uses the new runtime
+                after restarting.
+              </p>
+            </section>
+          </section>
+
           <section class="next-card" aria-labelledby="next-title">
             <img
               src="/assets/gremlin-security.webp"
@@ -434,7 +687,7 @@
                 settings. Agents only run once you enable them.
               </p>
               <div class="command-line">
-                <code id="doctor-command">shipgremlins doctor PROJECT</code
+                <code id="doctor-command">gremlins doctor PROJECT</code
                 ><button
                   type="button"
                   id="copy-command"

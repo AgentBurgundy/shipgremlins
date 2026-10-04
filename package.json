@@ -1,9 +1,11 @@
 {
   "name": "shipgremlins",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "files": [
     "bin/shipgremlins.mjs",
+    "bin/runtime.mjs",
+    "bin/runtime.d.mts",
     "src/**/*.ts",
     "!src/**/*.test.ts",
     "!src/**/*test-support.ts",
@@ -21,6 +23,7 @@
     "node": ">=22.12.0"
   },
   "bin": {
+    "gremlins": "./bin/shipgremlins.mjs",
     "hub": "./bin/shipgremlins.mjs",
     "shipgremlins": "./bin/shipgremlins.mjs"
   },

@@ -18,7 +18,10 @@ import {
   createDashboardServer,
   runDashboard,
   openDashboardBrowser,
+  lanAddresses,
+  type DashboardOptions,
 } from "./dashboard.ts";
+import type { Updater, UpdateStatus } from "../update/index.ts";
 
 const session = "a".repeat(64);
 const directories: string[] = [];
@@ -31,7 +34,11 @@ function temporary(): string {
   directories.push(directory);
   return directory;
 }
-async function start(packageRoot?: string) {
+async function start(
+  packageRoot?: string,
+  networkHosts: string[] = [],
+  options: DashboardOptions = {},
+) {
   const root = temporary();
   const installation = packageRoot ?? temporary();
   if (!packageRoot) {
@@ -46,7 +53,13 @@ async function start(packageRoot?: string) {
       '{"token":"never-public"}',
     );
   }
-  const server = createDashboardServer(root, installation, session);
+  const server = createDashboardServer(
+    root,
+    installation,
+    session,
+    networkHosts,
+    options,
+  );
   servers.push(server);
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   return {
@@ -75,6 +88,29 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it("keeps authentication and exact same-origin checks for explicitly allowed LAN hosts", async () => {
+    const { url } = await start(undefined, ["192.168.1.20"]);
+    const port = new URL(url).port;
+    const host = `192.168.1.20:${port}`;
+    const call = (headers: Record<string, string>) =>
+      new Promise<number>((done, reject) => {
+        const req = request(`${url}/api/status`, { headers }, (res) => {
+          res.resume();
+          res.once("end", () => done(res.statusCode!));
+        });
+        req.once("error", reject);
+        req.end();
+      });
+    expect(await call({ Host: host })).toBe(401);
+    expect(await call({ ...auth, Host: host, Origin: `http://${host}` })).toBe(
+      200,
+    );
+    expect(await call({ ...auth, Host: host, Origin: url })).toBe(403);
+    expect(await call({ ...auth, Host: `192.168.1.99:${port}` })).toBe(403);
+    expect(await call({ ...auth, Host: `evil.example:${port}` })).toBe(403);
+    expect(await call({ ...auth, Host: "192.168.1.20:1" })).toBe(403);
+  });
+
   it("keeps secrets out of the unauthenticated page and rejects preflight requests", async () => {
     const { root, url } = await start();
     writeFileSync(join(root, ".env"), "GITHUB_TOKEN=private-credential\n");
@@ -345,6 +381,7 @@ describe("local dashboard HTTP boundary", () => {
       ["--port", "-1"],
       ["--port"],
       ["--no-open=false"],
+      ["--lan=false"],
     ])
       expect(
         await runDashboard("unused", "unused", args, {
@@ -352,7 +389,106 @@ describe("local dashboard HTTP boundary", () => {
           error: (message) => errors.push(message),
         }),
       ).toBe(1);
-    expect(errors).toHaveLength(4);
+    expect(errors).toHaveLength(5);
+  });
+
+  it("edits validated configuration through authenticated requests and rejects stale saves", async () => {
+    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const { root, url } = await start(packageRoot);
+    await post(`${url}/api/projects`, {
+      project: "demo",
+      repo: "example/app",
+      hubRepo: "example/hub",
+    });
+    writeFileSync(
+      join(root, ".env"),
+      "GITHUB_TOKEN=not-config-editor-content\n",
+    );
+    const listing = await (
+      await fetch(`${url}/api/config`, { headers: auth })
+    ).json();
+    expect(listing).toMatchObject({
+      files: expect.arrayContaining([
+        { path: "hub.json", label: expect.any(String) },
+      ]),
+    });
+    expect(JSON.stringify(listing)).not.toContain(".env");
+    const document = (await (
+      await fetch(`${url}/api/config?path=hub.json`, { headers: auth })
+    ).json()) as { path: string; content: string; revision: string };
+    const settings = JSON.parse(document.content);
+    settings.runners.label = "reviewed-runner";
+    const update = {
+      ...document,
+      content: JSON.stringify(settings, null, 2) + "\n",
+    };
+    const put = (payload: unknown, headers: Record<string, string> = auth) =>
+      fetch(`${url}/api/config`, {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    expect((await put(update, {})).status).toBe(401);
+    expect((await put({ ...update, content: "{}" })).status).toBe(400);
+    expect(readFileSync(join(root, "hub.json"), "utf8")).toBe(document.content);
+    const saved = await put(update);
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({
+      ok: true,
+      revision: expect.any(String),
+    });
+    expect(
+      JSON.parse(readFileSync(join(root, "hub.json"), "utf8")).runners.label,
+    ).toBe("reviewed-runner");
+    expect((await put(update)).status).toBe(409);
+    for (const path of [
+      ".env",
+      "../package.json",
+      "projects/_templates/project.json",
+    ])
+      expect([400, 404]).toContain(
+        (
+          await fetch(`${url}/api/config?path=${encodeURIComponent(path)}`, {
+            headers: auth,
+          })
+        ).status,
+      );
+    expect((await post(`${url}/api/config`, update)).status).toBe(405);
+  });
+
+  it("reports broken config without hiding its editor, and never opens folders from LAN requests", async () => {
+    const { root, url } = await start(undefined, ["192.168.1.20"]);
+    writeFileSync(join(root, "hub.json"), "broken json");
+    const response = await fetch(`${url}/api/status`, { headers: auth });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      hubRepo: null,
+      configWarnings: [expect.stringContaining("hub.json")],
+      runtime: { canOpenFolders: false },
+    });
+    const document = await fetch(`${url}/api/config?path=hub.json`, {
+      headers: auth,
+    });
+    expect(document.status).toBe(200);
+    expect(
+      (await post(`${url}/api/open-folder`, { target: "configuration" }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await post(`${url}/api/open-folder`, { target: "C:/Windows" })).status,
+    ).toBe(400);
+    expect(
+      (await fetch(`${url}/api/open-folder`, { headers: auth })).status,
+    ).toBe(405);
+    expect(
+      (
+        await fetch(`${url}/api/open-folder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: '{"target":"installation"}',
+        })
+      ).status,
+    ).toBe(401);
   });
 
   it("stops promptly with an unfinished request and removes signal handlers", async () => {
@@ -454,8 +590,218 @@ describe("dashboard browser launch", () => {
       }
       if (failure === "headless") child.emit("exit", 3, null);
       expect(logs).toEqual([
-        "The browser could not open automatically. Open the dashboard link above in a browser on this computer.",
+        "No browser opened. On another device, restart with gremlins setup --lan, or use an SSH tunnel to the loopback address above.",
       ]);
     },
   );
+});
+
+describe("homelab network discovery", () => {
+  it("lists private IPv4 interfaces once, excluding loopback and public addresses", () => {
+    const addresses = [
+      "192.168.1.20",
+      "10.0.0.2",
+      "172.16.0.4",
+      "100.64.0.5",
+      "127.0.0.1",
+      "8.8.8.8",
+      "172.32.0.1",
+      "100.128.0.1",
+      "192.168.1.20",
+    ];
+    expect(
+      lanAddresses({
+        ethernet: addresses.map((address) => ({
+          address,
+          family: "IPv4",
+          internal: address === "127.0.0.1",
+          netmask: "255.255.255.0",
+          mac: "00:00:00:00:00:00",
+          cidr: null,
+        })),
+      }),
+    ).toEqual(["10.0.0.2", "100.64.0.5", "172.16.0.4", "192.168.1.20"]);
+  });
+
+  it("does not start a network listener when no private address exists", async () => {
+    const errors: string[] = [];
+    expect(
+      await runDashboard(
+        "unused",
+        "unused",
+        ["--lan"],
+        { log: () => {}, error: (line) => errors.push(line) },
+        () => [],
+      ),
+    ).toBe(1);
+    expect(errors.join("\n")).toContain("No private LAN IPv4");
+  });
+
+  it("starts explicit LAN mode, prints reachable links, and shuts down", async () => {
+    const root = temporary();
+    const before = process.listeners("SIGINT");
+    const logs: string[] = [];
+    let ready!: (url: string) => void;
+    const started = new Promise<string>((done) => {
+      ready = done;
+    });
+    const running = runDashboard(
+      root,
+      root,
+      ["--lan", "--port", "0"],
+      {
+        log: (line) => {
+          logs.push(line);
+          if (line.includes("/#session=")) ready(line.trim());
+        },
+        error: () => {},
+      },
+      () => ["192.168.1.20"],
+    );
+    const url = new URL(await started);
+    const stop = process
+      .listeners("SIGINT")
+      .find((listener) => !before.includes(listener))!;
+    try {
+      expect(url.hostname).toBe("192.168.1.20");
+      expect(url.port).not.toBe("0");
+      const response = await fetch(`http://127.0.0.1:${url.port}/api/status`, {
+        headers: {
+          Authorization: `Bearer ${url.hash.slice("#session=".length)}`,
+        },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        runtime: { access: "lan", canOpenFolders: false },
+      });
+      expect(logs.join("\n")).not.toContain("0.0.0.0");
+      expect(logs.join("\n")).toContain("LAN mode uses HTTP");
+    } finally {
+      stop("SIGINT");
+      await running;
+    }
+  });
+});
+
+function fakeUpdater(): Updater & { state: UpdateStatus } {
+  const updater = {
+    state: {
+      phase: "idle" as const,
+      currentVersion: "0.2.2",
+      installedVersion: "0.2.2",
+      message: "Ready to check.",
+      restartRequired: false,
+      canRollback: false,
+    } as UpdateStatus,
+    status() {
+      return { ...this.state };
+    },
+    check: vi.fn(async () => updater.status()),
+    apply: vi.fn(async () => updater.status()),
+    rollback: vi.fn(async () => updater.status()),
+  };
+  return updater;
+}
+
+describe("dashboard runtime updates", () => {
+  it("requires session authentication, same origin, supported actions, and an empty body", async () => {
+    const updater = fakeUpdater();
+    const { url } = await start(undefined, [], { updater });
+    expect((await fetch(`${url}/api/updates`)).status).toBe(401);
+    expect(
+      (await post(`${url}/api/updates/apply`, {}, { Authorization: "" }))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await post(
+          `${url}/api/updates/apply`,
+          {},
+          { Origin: "https://evil.example" },
+        )
+      ).status,
+    ).toBe(403);
+    expect((await post(`${url}/api/updates`, {})).status).toBe(405);
+    expect(
+      (await fetch(`${url}/api/updates/apply`, { headers: auth })).status,
+    ).toBe(405);
+    expect((await post(`${url}/api/updates/delete`, {})).status).toBe(404);
+    expect(
+      (await post(`${url}/api/updates/apply`, { repository: "someone/else" }))
+        .status,
+    ).toBe(400);
+    expect(updater.apply).not.toHaveBeenCalled();
+    expect((await fetch(`${url}/api/updates`, { headers: auth })).status).toBe(
+      200,
+    );
+    expect(updater.check).not.toHaveBeenCalled();
+  });
+
+  it("keeps the dashboard responsive during installation and prevents overlapping operations", async () => {
+    const updater = fakeUpdater();
+    let finish!: () => void;
+    const installing = new Promise<void>((done) => {
+      finish = done;
+    });
+    updater.apply = vi.fn(async () => {
+      updater.state.phase = "installing";
+      await installing;
+      updater.state = {
+        ...updater.state,
+        phase: "ready",
+        restartRequired: true,
+        canRollback: true,
+      };
+      return updater.status();
+    });
+    const { url } = await start(undefined, ["192.168.1.20"], { updater });
+    expect((await post(`${url}/api/updates/apply`, {})).status).toBe(202);
+    expect(
+      await (await fetch(`${url}/api/updates`, { headers: auth })).json(),
+    ).toMatchObject({ phase: "installing", canRestart: false });
+    expect((await fetch(`${url}/api/status`, { headers: auth })).status).toBe(
+      200,
+    );
+    for (const action of ["apply", "check", "rollback", "restart"])
+      expect((await post(`${url}/api/updates/${action}`, {})).status).toBe(409);
+    finish();
+    await vi.waitFor(async () => {
+      expect(
+        await (await fetch(`${url}/api/updates`, { headers: auth })).json(),
+      ).toMatchObject({ phase: "ready", restartRequired: true });
+    });
+    expect(updater.apply).toHaveBeenCalledOnce();
+  });
+
+  it("returns safe errors and keeps the rest of the dashboard usable after an update fails", async () => {
+    const updater = fakeUpdater();
+    updater.apply = vi.fn(async () => {
+      throw new Error("private-token-sensitive-output");
+    });
+    const { url } = await start(undefined, [], { updater });
+    expect((await post(`${url}/api/updates/apply`, {})).status).toBe(202);
+    const response = await fetch(`${url}/api/updates`, { headers: auth });
+    const text = await response.text();
+    expect(text).not.toContain("private-token");
+    expect(JSON.parse(text)).toMatchObject({ phase: "error" });
+    expect((await fetch(`${url}/api/status`, { headers: auth })).status).toBe(
+      200,
+    );
+  });
+
+  it("restarts only a supervised dashboard with a different selected runtime", async () => {
+    const updater = fakeUpdater();
+    const restart = vi.fn();
+    const { url } = await start(undefined, [], { updater, restart });
+    expect((await post(`${url}/api/updates/restart`, {})).status).toBe(409);
+    updater.state.restartRequired = true;
+    const response = await post(`${url}/api/updates/restart`, {});
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ ok: true, restarting: true });
+    await vi.waitFor(() => expect(restart).toHaveBeenCalledOnce());
+    const direct = await start(undefined, [], { updater });
+    expect((await post(`${direct.url}/api/updates/restart`, {})).status).toBe(
+      400,
+    );
+  });
 });

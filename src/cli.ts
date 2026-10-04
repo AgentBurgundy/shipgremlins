@@ -194,7 +194,7 @@ async function promote(args: string[]): Promise<number> {
   const { values } = parseFlags(args);
   if (typeof values.project !== "string" || typeof values.area !== "string") {
     io.error(
-      "usage: shipgremlins promote --project <name> --area <key> [--target target]",
+      "usage: gremlins promote --project <name> --area <key> [--target target]",
     );
     return 1;
   }
@@ -266,7 +266,7 @@ async function tickets(args: string[]): Promise<number> {
   const { values } = parseFlags(args);
   if (typeof values.project !== "string") {
     io.error(
-      "usage: shipgremlins tickets audit|reconcile --project NAME [--manifest reviewed.json] [--json] [--apply]",
+      "usage: gremlins tickets audit|reconcile --project NAME [--manifest reviewed.json] [--json] [--apply]",
     );
     return 1;
   }
@@ -326,9 +326,9 @@ function validate(): number {
   }
 }
 
-const USAGE = `usage: shipgremlins <command>
+const USAGE = `usage: gremlins <command>
 
-  shipgremlins setup                                       open your private setup dashboard
+  gremlins setup                                       open your private setup dashboard
 
 Global options: --home PATH selects configuration; --env-file PATH loads credentials.
 Configuration: SHIPGREMLINS_HOME, nearest hub.json from this directory, or ~/.shipgremlins.
@@ -336,7 +336,8 @@ Saved dashboard connections are loaded automatically; exported variables take pr
 
   setup status [--check] [--json] [--dir PATH]              inspect local prerequisites without changing files
   setup init --project NAME --repo owner/app [--dir PATH] initialize configuration; use --help for all options
-  dashboard [--no-open] [--port PORT]                     open the local setup and connections dashboard
+  dashboard [--lan] [--no-open] [--port PORT]              open setup here or on your private network
+  update [--check | --rollback] [--json]                   safely update the runtime; keep your gremlins
   serve [--host 127.0.0.1] [--port 4310]                    serve the local ShipGremlins site
   dispatch [--project <name>] [--dry-run] [--target target]   sync → line → heal → repair → merge → dispatch → promote
   promote --project <name> --area <key> [--target target]     cherry-pick verified merges into ONE PR to staging
@@ -362,10 +363,19 @@ export async function main(argv: string[]): Promise<number> {
     (command === "setup" &&
       (args.length === 0 ||
         args.includes("--no-open") ||
+        args.some((arg) => arg === "--lan" || arg.startsWith("--lan=")) ||
         args.some((arg) => arg === "--port" || arg.startsWith("--port="))));
   if (
     !args.includes("--json") &&
-    [undefined, "help", "--help", "-h", "setup", "dashboard"].includes(command)
+    [
+      undefined,
+      "help",
+      "--help",
+      "-h",
+      "setup",
+      "dashboard",
+      "update",
+    ].includes(command)
   )
     io.log(
       welcome(
@@ -388,6 +398,7 @@ export async function main(argv: string[]): Promise<number> {
       "validate",
       "crons",
       "add-project",
+      "update",
     ].includes(command) &&
     !args.includes("--help") &&
     !args.includes("-h")
@@ -397,6 +408,10 @@ export async function main(argv: string[]): Promise<number> {
       if (process.env[name] === undefined) process.env[name] = value;
   }
   switch (command) {
+    case "update": {
+      const { runUpdate } = await import("./commands/update.ts");
+      return runUpdate(ROOT, PACKAGE_ROOT, args, io);
+    }
     case "setup":
       return runSetup(ROOT, args, io, {
         templatesRoot: PACKAGE_ROOT,

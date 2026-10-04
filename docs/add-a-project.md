@@ -6,7 +6,7 @@ the owner's: installing the app, creating branches, creating Linear projects,
 pasting ids, writing the mandate.
 
 ```bash
-npx tsx src/cli.ts add-project <name> --repo owner/name [--area core]
+gremlins add-project <name> --repo owner/name [--area core]
 ```
 
 `<name>` is the project's key in the hub (lowercase kebab-case; it names the
@@ -40,7 +40,7 @@ overwrite an existing project, and prints this checklist.
    project's channel) and `VERCEL_BYPASS_<NAME>`. The hub-wide secrets
    `APP_ID`, `APP_PRIVATE_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `LINEAR_API_KEY` and
    `VERCEL_TOKEN` are set once for every project. `project.json` holds only
-   the NAMES; `hub validate` refuses a value where a name belongs.
+   the NAMES; `gremlins validate` refuses a value where a name belongs.
 6. **Write the mandate(s)** — `projects/<name>/<area>/mandate.md`. This is
    the steering wheel: ambition in the owner's words, what the PM is expected
    to build, the one metric it ranks by, the feature flags it may ship
@@ -51,7 +51,7 @@ overwrite an existing project, and prints this checklist.
 ```bash
 GITHUB_TOKEN=… LINEAR_API_KEY=… VERCEL_TOKEN=… \
 SLACK_WEBHOOK_<NAME>=… VERCEL_BYPASS_<NAME>=… \
-npx tsx src/cli.ts doctor <name>
+gremlins doctor <name>
 ```
 
 `doctor` prints one PASS/FAIL line per step: no `PASTE_…` placeholder left,
@@ -63,8 +63,8 @@ When every line passes it writes `"verified": "<today>"` into `project.json`.
 Then generate the crons and commit:
 
 ```bash
-npx tsx src/cli.ts crons write      # updates the block in .github/workflows/pm-agent.yml
-npx tsx src/cli.ts validate
+gremlins crons write      # updates the block in .github/workflows/pm-agent.yml
+gremlins validate
 git add projects/<name> .github/workflows/pm-agent.yml && git commit -m "feat: add <name>"
 ```
 
@@ -88,7 +88,7 @@ on the old schedule.
 Add an entry to `areas.json` (key, `label: pm:<key>`, paths, Linear project,
 cron), copy the four markdown seeds from `projects/_templates/` into
 `projects/<name>/<key>/` (replace the `{{placeholders}}` by hand), then
-`hub validate`, `hub doctor <name>` and `hub crons write`.
+`gremlins validate`, `gremlins doctor <name>` and `gremlins crons write`.
 
 ## When the app needs a sign-in
 

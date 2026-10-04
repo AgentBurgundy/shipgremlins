@@ -1,4 +1,4 @@
-// `hub ticket <identifier>` — prints one Linear ticket as markdown. developer.yml
+// `gremlins ticket <identifier>` — prints one Linear ticket as markdown. developer.yml
 // redirects this into ticket.md, which is the developer prompt's whole input.
 
 import type {
@@ -43,7 +43,7 @@ export async function runTicket(
 ): Promise<number> {
   const identifier = args[0];
   if (!identifier || identifier.startsWith("-")) {
-    io.error("usage: hub ticket <identifier>");
+    io.error("usage: gremlins ticket <identifier>");
     return 1;
   }
   const ticket = await linear.getTicket(identifier);

@@ -16,7 +16,7 @@ Create a trusted JSON input containing an array of objects:
 ```
 
 ```sh
-npm run hub -- fixture csv --input /absolute/path/rows.json --output .run/fixtures/run-123/import.csv
+gremlins fixture csv --input /absolute/path/rows.json --output .run/fixtures/run-123/import.csv
 ```
 
 Object keys produce a header row in first-seen order. Missing keys and null values produce empty fields. Arrays of arrays are also accepted; include a header as the first array when the target application requires one. Array rows must have equal lengths. Values must be strings, finite numbers, booleans, or null. Nested objects and arrays are rejected.
@@ -28,7 +28,7 @@ Inputs are limited to 4 MiB, 10,000 rows, and 256 columns; generated CSVs are li
 ## PNG uploads
 
 ```sh
-npm run hub -- fixture png --output .run/fixtures/run-123/avatar.png --width 640 --height 480 --seed 1
+gremlins fixture png --output .run/fixtures/run-123/avatar.png --width 640 --height 480 --seed 1
 ```
 
 This produces a valid RGB PNG with a deterministic colored grid. The same dimensions and seed produce the same bytes; change the seed to create a different fixture. Dimensions must be integers from 1 to 2048 inclusive. The seed must be an integer from 0 to 4294967295. Defaults are 640 × 480 and seed 1.

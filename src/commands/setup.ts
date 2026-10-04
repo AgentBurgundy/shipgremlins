@@ -18,9 +18,10 @@ export interface SetupDeps extends PreflightDeps {
 
 const USAGE = `ShipGremlins setup
 
-  shipgremlins setup                                      open the local setup dashboard
-  shipgremlins setup status [--check] [--json] [--verbose] [--dir PATH] [--project my-app]
-  shipgremlins setup init --project my-app --repo owner/app [--hub-repo owner/hub]
+  gremlins setup                                      open the local setup dashboard
+  gremlins setup --lan                                open it to other devices on your private network
+  gremlins setup status [--check] [--json] [--verbose] [--dir PATH] [--project my-app]
+  gremlins setup init --project my-app --repo owner/app [--hub-repo owner/hub]
                  [--dir PATH] [--area core] [--runner self-hosted|gce]
                  [--runner-label pm] [--json]
 
@@ -29,8 +30,8 @@ Init creates missing files, preserves valid existing settings, and starts PMs di
 Works from any directory after the global install. Use --home PATH to select a configuration.
 --project is a lowercase local ID; --repo is the app. The automation repository is reused
 from hub.json or detected from Git origin. --hub-repo is an optional explicit selection.
-No secret values are accepted, printed, or copied. Provider checks use shipgremlins doctor my-app.
-Load local credentials with: shipgremlins --env-file .env setup --check
+No secret values are accepted, printed, or copied. Provider checks use gremlins doctor my-app.
+Load local credentials with: gremlins --env-file .env setup --check
 Dashboard connections are stored locally and loaded by subsequent CLI commands.
 GitLab/Railway integration is planned.`;
 
@@ -96,7 +97,7 @@ export async function runSetup(
       const repo = string("repo");
       if (!project || !repo)
         throw new Error(
-          "Run shipgremlins setup init --project my-app --repo owner/app --hub-repo owner/your-hub. --project is a lowercase local ID, not a domain.",
+          "Run gremlins setup init --project my-app --repo owner/app --hub-repo owner/your-hub. --project is a lowercase local ID, not a domain.",
         );
       const runner = string("runner");
       if (runner !== undefined && runner !== "self-hosted" && runner !== "gce")
@@ -169,7 +170,7 @@ export async function runSetup(
     if (values.json) io.error(JSON.stringify({ error: message }));
     else {
       io.error(message);
-      io.error("Run shipgremlins setup --help for usage.");
+      io.error("Run gremlins setup --help for usage.");
     }
     return 1;
   }

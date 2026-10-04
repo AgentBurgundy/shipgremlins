@@ -3,17 +3,18 @@
 Updated October 4, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
-| Capability    | Current state                                                                                                                                                                                          |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Scheduled PMs | Existing GitHub Actions / Claude Code jobs with per-area mandates, memory, Linear tickets and Playwright MCP                                                                                           |
-| Recovery      | Unknown or stale integration health pauses ordinary work; current-revision CI repairs get a bounded recovery lane; one merge per pass awaits fresh health                                              |
-| Promotion     | Local install/lint/typecheck/test/build gates; authenticated source evidence; Ed25519-signed browser evidence for the assembled candidate and base; missing evidence blocks staging PR creation/update |
-| Linear Done   | Read-only audit and explicit, dry-run-first reconciliation using an operator-reviewed complete deliverable manifest; merged production PR and Git-tree proof required                                  |
-| Test fixtures | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                 |
-| Setup         | Global `shipgremlins` / `hub` commands, ASCII gremlins, compact checks, and resumable initialization; local browser dashboard for project setup and supported connection tokens; PMs start disabled    |
-| Local hosting | Non-root Docker image and Compose with a read-only static operator-help site; CLI configuration stored separately                                                                                      |
-| Runners       | Existing self-hosted GitHub runners and GCE launch tooling; no claim of live GCP certification in this release                                                                                         |
-| Website       | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                |
+| Capability    | Current state                                                                                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scheduled PMs | Existing GitHub Actions / Claude Code jobs with per-area mandates, memory, Linear tickets and Playwright MCP                                                                                                                 |
+| Recovery      | Unknown or stale integration health pauses ordinary work; current-revision CI repairs get a bounded recovery lane; one merge per pass awaits fresh health                                                                    |
+| Promotion     | Local install/lint/typecheck/test/build gates; authenticated source evidence; Ed25519-signed browser evidence for the assembled candidate and base; missing evidence blocks staging PR creation/update                       |
+| Linear Done   | Read-only audit and explicit, dry-run-first reconciliation using an operator-reviewed complete deliverable manifest; merged production PR and Git-tree proof required                                                        |
+| Test fixtures | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                                       |
+| Setup         | Global `gremlins` command (`shipgremlins` / `hub` compatibility aliases), compact ASCII greeting, resumable initialization, LAN dashboard, validated config editor, file locations and connection tokens; PMs start disabled |
+| Updates       | CLI and dashboard checks/install/rollback; pinned official commit with successful CI, isolated runtime installation, startup/config validation, atomic selection and supervised dashboard restart                            |
+| Local hosting | Non-root Docker image and Compose with a read-only static operator-help site; CLI configuration stored separately                                                                                                            |
+| Runners       | Existing self-hosted GitHub runners and GCE launch tooling; dashboard installation, registration, secret provisioning and background lifecycle management are the next setup milestone; no claim of live GCP certification   |
+| Website       | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                                      |
 
 ## What still needs implementation
 
