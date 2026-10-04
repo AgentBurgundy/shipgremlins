@@ -1,0 +1,12 @@
+{
+  "$comment": "Generic public example. Set hubRepo to your own operational hub repository before setup. No projects are enrolled.",
+  "hubRepo": "AgentBurgundy/shipgremlins",
+  "runners": { "mode": "self-hosted", "label": "pm" },
+  "gce": {
+    "project": "",
+    "zone": "us-central1-a",
+    "image": "pm-runner",
+    "machineType": "e2-standard-4",
+    "spot": false
+  }
+}

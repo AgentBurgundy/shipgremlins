@@ -1,0 +1,21 @@
+node_modules/
+dist/
+!site/dist/
+!site/dist/**
+.env
+.env.*
+!.env.example
+.vercel/
+.sites-runtime/
+*.log
+target/
+.run/
+
+# Local export metadata and credentials
+/.shipgremlins-public-export.json
+.env.*
+!.env.example
+# Include only the public local operator page from the otherwise ignored build directory
+!site/dist/
+!site/dist/index.html
+!site/dist/operator.css

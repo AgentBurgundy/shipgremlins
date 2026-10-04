@@ -1,0 +1,16 @@
+{
+  "$comment": "Ownership map for {{name}}: one entry per product area an AI product manager owns. The key is the area; `label` must be `pm:<key>`; `paths` are prefixes inside the target repo; `metric` is a Vercel Analytics event name or a path; `schedule` is a 5-field cron in UTC (weekdays by convention). Paste the Linear project id after creating the project.",
+  "areas": {
+    "{{area}}": {
+      "name": "{{Area}}",
+      "paths": ["app/", "lib/", "components/"],
+      "sharedTouchpoints": ["package.json", "middleware.ts"],
+      "linearProjectId": "PASTE_LINEAR_PROJECT_ID",
+      "label": "pm:{{area}}",
+      "wipLimit": 3,
+      "metric": "/",
+      "schedule": "0 13 * * 1-5",
+      "enabled": true
+    }
+  }
+}

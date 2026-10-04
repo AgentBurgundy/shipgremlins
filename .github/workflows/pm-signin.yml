@@ -1,0 +1,88 @@
+# One-time set-up for a project whose PM signs in with a seeded one-time code
+# (project.json → signIn): signs the test account in on the integration
+# branch's preview so the account exists, and prints its OWNER HASH — the
+# non-secret value a target that gates test-mode features per owner needs in
+# its Preview environment (ExampleApp: STRIPE_TEST_OWNER). Safe to re-run.
+# GitHub-hosted, no agent.
+name: pm-signin
+run-name: pm-signin ${{ inputs.project }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "projects/<name>"
+        required: true
+        type: string
+      diagnose:
+        description: "print the SHAPE of recent verification rows instead of signing in"
+        required: false
+        type: boolean
+        default: false
+      auth_url:
+        description: "diagnosis only: post the code straight to this auth base URL instead of through the app"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Read the project's config
+        id: cfg
+        run: |
+          f="projects/${{ inputs.project }}/project.json"
+          test -f "$f" || { echo "unknown project ${{ inputs.project }}" >&2; exit 1; }
+          node -e '
+            const p = require("./" + process.argv[1]);
+            if (!p.signIn) { console.error("project.json has no signIn recipe"); process.exit(1); }
+            const out = {
+              signin_secret: p.signIn.databaseUrlSecret, bypass_secret: p.vercel.bypassSecret,
+              vercel_project: p.vercel.projectId, vercel_team: p.vercel.teamId ?? "",
+              integration: p.branches.integration,
+            };
+            for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
+          ' "$f" >> "$GITHUB_OUTPUT"
+      - name: Find the integration branch's preview URL
+        id: preview
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ steps.cfg.outputs.vercel_project }}
+          VERCEL_TEAM_ID: ${{ steps.cfg.outputs.vercel_team }}
+          INTEGRATION: ${{ steps.cfg.outputs.integration }}
+        run: |
+          q="projectId=${VERCEL_PROJECT_ID}&target=preview&limit=20"
+          [ -n "$VERCEL_TEAM_ID" ] && q="${q}&teamId=${VERCEL_TEAM_ID}"
+          url=$(curl -fsS -H "Authorization: Bearer ${VERCEL_TOKEN}" "https://api.vercel.com/v6/deployments?${q}" \
+            | node -e '
+              let s = ""; process.stdin.on("data", (c) => (s += c)).on("end", () => {
+                const d = (JSON.parse(s).deployments || []).filter((x) => x.meta?.githubCommitRef === process.argv[1] && x.state === "READY")
+                  .sort((a, b) => b.created - a.created)[0];
+                if (d) console.log("https://" + d.url);
+              });' "$INTEGRATION")
+          test -n "$url" || { echo "no READY preview deployment for ${INTEGRATION}" >&2; exit 1; }
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Sign the test account in and print its owner hash
+        env:
+          SIGNIN_VALUE: ${{ secrets[steps.cfg.outputs.signin_secret] }}
+          BYPASS_VALUE: ${{ secrets[steps.cfg.outputs.bypass_secret] }}
+        run: |
+          test -n "$SIGNIN_VALUE" || { echo "hub secret ${{ steps.cfg.outputs.signin_secret }} is not set" >&2; exit 1; }
+          export "${{ steps.cfg.outputs.signin_secret }}=$SIGNIN_VALUE"
+          export "${{ steps.cfg.outputs.bypass_secret }}=$BYPASS_VALUE"
+          if [ "${{ inputs.diagnose }}" = "true" ]; then
+            npx tsx src/cli.ts signin-code --project "${{ inputs.project }}" --diagnose
+          else
+            npx tsx src/cli.ts signin-code --project "${{ inputs.project }}" --bootstrap --preview-url "${{ steps.preview.outputs.url }}" ${{ inputs.auth_url && format('--auth-url "{0}"', inputs.auth_url) || '' }}
+          fi

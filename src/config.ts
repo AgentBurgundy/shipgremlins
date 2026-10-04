@@ -1,0 +1,417 @@
+// Loads hub.json and projects/<name>/{project,areas,tiers}.json and validates
+// them by hand (no schema library): every field the dispatcher or a workflow
+// reads is checked here, so a typo in config fails hub CI, not a 3am run.
+
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+export interface HubConfig {
+  runners: { mode: "self-hosted" | "gce"; label: string };
+  gce: {
+    project: string;
+    zone: string;
+    image: string;
+    machineType: string;
+    spot: boolean;
+  };
+  /** "owner/pm-hub" — where developer.yml is dispatched */
+  hubRepo: string;
+}
+
+export interface ProjectConfig {
+  name: string;
+  repo: string;
+  branches: { production: string; staging: string; integration: string };
+  vercel: { projectId: string; teamId: string | null; bypassSecret: string };
+  database: "neon-vercel-integration" | "none";
+  slackWebhookSecret: string;
+  runnerLabel: string | null;
+  mergeMethod: "merge" | "squash" | "rebase";
+  commands: {
+    install: string;
+    test: string;
+    lint: string | null;
+    typecheck: string | null;
+    /** Optional for compatibility; configure for applications with a build step. */
+    build?: string | null;
+  };
+  /** date `hub doctor` last passed; crons are only generated when set */
+  verified: string | null;
+  /** How the PM signs in on the preview, or null when the app needs no
+   *  sign-in. `neon-auth-otp`: `hub signin-code` seeds a one-time code for
+   *  `email` in the preview database's neon_auth.verification table (the
+   *  project's own test recipe) and the PM types it on `path`. The database
+   *  URL comes from the hub secret NAMED here — the preview branch, never
+   *  production. */
+  signIn: {
+    kind: "neon-auth-otp";
+    email: string;
+    path: string;
+    databaseUrlSecret: string;
+  } | null;
+}
+
+export interface AreaConfig {
+  key: string;
+  name: string;
+  /** prefixes inside the target repo this area owns */
+  paths: string[];
+  sharedTouchpoints: string[];
+  linearProjectId: string;
+  /** Linear label that marks this area's tickets, e.g. "pm:core" */
+  label: string;
+  wipLimit: number;
+  /** a Vercel Analytics event name or a path like "/play" */
+  metric: string;
+  /** 5-field cron in UTC; weekdays by convention */
+  schedule: string;
+  enabled: boolean;
+  memoryBranch: string;
+}
+
+export interface TiersConfig {
+  ownerOnlyPrefixes: string[];
+  hubOwnerOnly: string[];
+  alwaysFree: string[];
+  guardTests: string[];
+  testFileMarkers: string[];
+}
+
+export interface Project {
+  config: ProjectConfig;
+  areas: AreaConfig[];
+  tiers: TiersConfig;
+  dir: string;
+}
+
+export class ConfigError extends Error {
+  constructor(
+    public readonly file: string,
+    message: string,
+  ) {
+    super(`${file}: ${message}`);
+    this.name = "ConfigError";
+  }
+}
+
+function readJson(file: string): unknown {
+  if (!existsSync(file)) throw new ConfigError(file, "missing");
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new ConfigError(file, `invalid JSON — ${(err as Error).message}`);
+  }
+}
+
+function need<T>(
+  file: string,
+  obj: Record<string, unknown>,
+  key: string,
+  check: (v: unknown) => v is T,
+  what: string,
+): T {
+  const v = obj[key];
+  if (!check(v)) throw new ConfigError(file, `"${key}" must be ${what}`);
+  return v;
+}
+
+const isString = (v: unknown): v is string =>
+  typeof v === "string" && v.length > 0;
+const isStringOrNull = (v: unknown): v is string | null =>
+  v === null || isString(v);
+const isStringArray = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((s) => typeof s === "string");
+const isBool = (v: unknown): v is boolean => typeof v === "boolean";
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isPosInt = (v: unknown): v is number =>
+  Number.isInteger(v) && (v as number) > 0;
+const oneOf =
+  <T extends string>(...vals: T[]) =>
+  (v: unknown): v is T =>
+    typeof v === "string" && (vals as string[]).includes(v);
+
+const CRON_RE = /^(\S+\s+){4}\S+$/;
+const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+export function loadHub(root: string): HubConfig {
+  const file = join(root, "hub.json");
+  const raw = readJson(file);
+  if (!isObj(raw)) throw new ConfigError(file, "must be an object");
+  const runners = need(file, raw, "runners", isObj, "an object");
+  const gce = need(file, raw, "gce", isObj, "an object");
+  return {
+    hubRepo: need(
+      file,
+      raw,
+      "hubRepo",
+      (v): v is string => isString(v) && REPO_RE.test(v),
+      '"owner/name"',
+    ),
+    runners: {
+      mode: need(
+        file,
+        runners,
+        "mode",
+        oneOf("self-hosted", "gce"),
+        '"self-hosted" or "gce"',
+      ),
+      label: need(file, runners, "label", isString, "a label"),
+    },
+    gce: {
+      project: typeof gce.project === "string" ? gce.project : "",
+      zone: need(file, gce, "zone", isString, "a zone"),
+      image: need(file, gce, "image", isString, "an image name"),
+      machineType: need(file, gce, "machineType", isString, "a machine type"),
+      spot: need(file, gce, "spot", isBool, "true or false"),
+    },
+  };
+}
+
+const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+
+function parseSignIn(pf: string, raw: unknown): ProjectConfig["signIn"] {
+  if (raw === undefined || raw === null) return null;
+  if (!isObj(raw))
+    throw new ConfigError(pf, '"signIn" must be an object or null');
+  const kind = need(
+    pf,
+    raw,
+    "kind",
+    oneOf("neon-auth-otp"),
+    '"neon-auth-otp" (the only sign-in recipe so far)',
+  );
+  const email = need(
+    pf,
+    raw,
+    "email",
+    (v): v is string => isString(v) && /^[^@\s]+@[^@\s]+$/.test(v),
+    "the test account's email",
+  );
+  const path = need(
+    pf,
+    raw,
+    "path",
+    (v): v is string => isString(v) && v.startsWith("/"),
+    'the sign-in route, e.g. "/sign-in"',
+  );
+  const databaseUrlSecret = need(
+    pf,
+    raw,
+    "databaseUrlSecret",
+    (v): v is string => isString(v) && SECRET_NAME_RE.test(v),
+    "the NAME of a hub secret holding the PREVIEW database URL, never a value",
+  );
+  return { kind, email, path, databaseUrlSecret };
+}
+
+export function loadProject(root: string, name: string): Project {
+  const dir = join(root, "projects", name);
+  const pf = join(dir, "project.json");
+  const raw = readJson(pf);
+  if (!isObj(raw)) throw new ConfigError(pf, "must be an object");
+  const branches = need(pf, raw, "branches", isObj, "an object");
+  const vercel = need(pf, raw, "vercel", isObj, "an object");
+  const commands = need(pf, raw, "commands", isObj, "an object");
+  const config: ProjectConfig = {
+    name,
+    repo: need(
+      pf,
+      raw,
+      "repo",
+      (v): v is string => isString(v) && REPO_RE.test(v),
+      '"owner/name"',
+    ),
+    branches: {
+      production: need(pf, branches, "production", isString, "a branch"),
+      staging: need(pf, branches, "staging", isString, "a branch"),
+      integration: need(pf, branches, "integration", isString, "a branch"),
+    },
+    vercel: {
+      projectId: need(pf, vercel, "projectId", isString, "a Vercel project id"),
+      teamId: need(pf, vercel, "teamId", isStringOrNull, "a team id or null"),
+      bypassSecret: need(
+        pf,
+        vercel,
+        "bypassSecret",
+        isString,
+        "the NAME of a hub secret",
+      ),
+    },
+    database: need(
+      pf,
+      raw,
+      "database",
+      oneOf("neon-vercel-integration", "none"),
+      '"neon-vercel-integration" or "none"',
+    ),
+    slackWebhookSecret: need(
+      pf,
+      raw,
+      "slackWebhookSecret",
+      isString,
+      "the NAME of a hub secret",
+    ),
+    runnerLabel: need(
+      pf,
+      raw,
+      "runnerLabel",
+      isStringOrNull,
+      "a label or null",
+    ),
+    mergeMethod: need(
+      pf,
+      raw,
+      "mergeMethod",
+      oneOf("merge", "squash", "rebase"),
+      '"merge", "squash" or "rebase"',
+    ),
+    commands: {
+      install: need(pf, commands, "install", isString, "a command"),
+      test: need(pf, commands, "test", isString, "a command"),
+      lint: need(pf, commands, "lint", isStringOrNull, "a command or null"),
+      typecheck: need(
+        pf,
+        commands,
+        "typecheck",
+        isStringOrNull,
+        "a command or null",
+      ),
+      build:
+        commands.build === undefined
+          ? null
+          : need(pf, commands, "build", isStringOrNull, "a command or null"),
+    },
+    verified: need(pf, raw, "verified", isStringOrNull, "a date or null"),
+    signIn: parseSignIn(pf, raw.signIn),
+  };
+  const set = new Set(Object.values(config.branches));
+  if (set.size !== 3)
+    throw new ConfigError(
+      pf,
+      "production, staging and integration branches must differ",
+    );
+  for (const k of ["bypassSecret", "slackWebhookSecret"] as const) {
+    const v =
+      k === "bypassSecret"
+        ? config.vercel.bypassSecret
+        : config.slackWebhookSecret;
+    if (!/^[A-Z][A-Z0-9_]*$/.test(v))
+      throw new ConfigError(
+        pf,
+        `"${k}" must be a SECRET NAME like SLACK_WEBHOOK_${name.toUpperCase()}, never a value`,
+      );
+  }
+
+  const af = join(dir, "areas.json");
+  const rawAreas = readJson(af);
+  if (!isObj(rawAreas) || !isObj(rawAreas.areas))
+    throw new ConfigError(af, 'must be { "areas": { <key>: {...} } }');
+  const areas: AreaConfig[] = [];
+  for (const [key, a] of Object.entries(rawAreas.areas)) {
+    if (!isObj(a)) throw new ConfigError(af, `area "${key}" must be an object`);
+    if (!/^[a-z][a-z0-9-]*$/.test(key))
+      throw new ConfigError(
+        af,
+        `area key "${key}" must be lowercase kebab-case`,
+      );
+    const label = need(af, a, "label", isString, "a Linear label");
+    if (label !== `pm:${key}`)
+      throw new ConfigError(af, `area "${key}" label must be "pm:${key}"`);
+    areas.push({
+      key,
+      name: need(af, a, "name", isString, "a name"),
+      paths: need(af, a, "paths", isStringArray, "an array of path prefixes"),
+      sharedTouchpoints: need(
+        af,
+        a,
+        "sharedTouchpoints",
+        isStringArray,
+        "an array",
+      ),
+      linearProjectId: need(
+        af,
+        a,
+        "linearProjectId",
+        isString,
+        "a Linear project id",
+      ),
+      label,
+      wipLimit: need(af, a, "wipLimit", isPosInt, "a positive integer"),
+      metric: need(
+        af,
+        a,
+        "metric",
+        isString,
+        "a Vercel Analytics event or path",
+      ),
+      schedule: need(
+        af,
+        a,
+        "schedule",
+        (v): v is string => isString(v) && CRON_RE.test(v),
+        "a 5-field cron",
+      ),
+      enabled: need(af, a, "enabled", isBool, "true or false"),
+      memoryBranch: `pm/${name}/${key}`,
+    });
+  }
+  if (areas.length === 0)
+    throw new ConfigError(af, "at least one area is required");
+
+  const tf = join(dir, "tiers.json");
+  const rawTiers = readJson(tf);
+  if (!isObj(rawTiers)) throw new ConfigError(tf, "must be an object");
+  const tiers: TiersConfig = {
+    ownerOnlyPrefixes: need(
+      tf,
+      rawTiers,
+      "ownerOnlyPrefixes",
+      isStringArray,
+      "an array",
+    ),
+    hubOwnerOnly: need(tf, rawTiers, "hubOwnerOnly", isStringArray, "an array"),
+    alwaysFree: need(tf, rawTiers, "alwaysFree", isStringArray, "an array"),
+    guardTests: need(tf, rawTiers, "guardTests", isStringArray, "an array"),
+    testFileMarkers: need(
+      tf,
+      rawTiers,
+      "testFileMarkers",
+      isStringArray,
+      "an array",
+    ),
+  };
+
+  return { config, areas, tiers, dir };
+}
+
+/** every directory under projects/ except _templates */
+export function listProjectNames(root: string): string[] {
+  const dir = join(root, "projects");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !d.name.startsWith("_"))
+    .map((d) => d.name)
+    .sort();
+}
+
+export function loadAllProjects(root: string): Project[] {
+  return listProjectNames(root).map((n) => loadProject(root, n));
+}
+
+/** true when `path` starts with any prefix; a prefix containing "*" matches as a glob fragment */
+export function matchesPrefix(path: string, prefixes: string[]): boolean {
+  return prefixes.some((p) => {
+    if (p.includes("*")) {
+      const re = new RegExp(
+        "^" +
+          p
+            .split("*")
+            .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+            .join(".*"),
+      );
+      return re.test(path);
+    }
+    return path.startsWith(p);
+  });
+}

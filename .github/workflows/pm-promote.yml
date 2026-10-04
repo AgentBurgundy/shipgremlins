@@ -1,0 +1,84 @@
+# Rebuild one area's promotion PR (verified changes → staging) without a PM
+# run. The PM does this at the end of every run; this is the manual lever for
+# when a promotion needs redoing now — for example it went red because a
+# change in it needs work that is not promoted yet. `promote` build-checks the
+# batch (install, typecheck, tests) and holds whatever cannot stand on staging.
+#
+# No agent runs here, so it uses a GitHub-hosted runner and never waits behind
+# the developers on the self-hosted ones.
+name: pm-promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "projects/<name>"
+        required: true
+        type: string
+      area:
+        description: "area key from the project's areas.json"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: pm-promote-${{ inputs.project }}-${{ inputs.area }}
+      cancel-in-progress: false
+    env:
+      PM_PROJECT: ${{ inputs.project }}
+      PM_AREA: ${{ inputs.area }}
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      BOT_LOGIN: ${{ vars.BOT_LOGIN || 'pm-hub[bot]' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Read the project's config
+        id: cfg
+        run: |
+          f="projects/${PM_PROJECT}/project.json"
+          test -f "$f" || { echo "unknown project ${PM_PROJECT}" >&2; exit 1; }
+          node -e '
+            const p = require("./" + process.argv[1]);
+            console.log(`repo=${p.repo}`);
+            console.log(`name=${p.repo.split("/")[1]}`);
+            console.log(`integration=${p.branches.integration}`);
+          ' "$f" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # the target (branches, PRs) AND the hub: promotion fires
+          # developer.yml here when a verified change needs porting
+          repositories: ${{ github.event.repository.name }},${{ steps.cfg.outputs.name }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.cfg.outputs.repo }}
+          ref: ${{ steps.cfg.outputs.integration }}
+          token: ${{ steps.app.outputs.token }}
+          path: target
+          fetch-depth: 0
+      - name: Git identity
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          login_path=$(printf '%s' "$BOT_LOGIN" | sed 's/\[/%5B/g; s/\]/%5D/g')
+          bot_id=$(gh api "users/${login_path}" --jq .id 2>/dev/null || echo 0)
+          git -C target config user.name "${BOT_LOGIN}"
+          git -C target config user.email "${bot_id}+${BOT_LOGIN}@users.noreply.github.com"
+      - name: Promote
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+        run: npx tsx src/cli.ts promote --project "$PM_PROJECT" --area "$PM_AREA"

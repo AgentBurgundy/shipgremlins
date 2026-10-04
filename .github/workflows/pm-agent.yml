@@ -1,0 +1,399 @@
+# One AI product manager per (project, area). Each enabled area of each
+# verified project gets a cron (generated below); a run observes the area,
+# files Linear tickets, tests what merged into the integration branch on its
+# Vercel preview, promotes the verified batch (one PR to staging), posts one
+# Slack message, and finally runs the dispatcher for its project. The prompt
+# is prompts/pm.md. Setup: docs/README.md, docs/runners.md.
+#
+# Billing: Claude Code runs on the owner's subscription via
+# CLAUDE_CODE_OAUTH_TOKEN — never ANTHROPIC_API_KEY; the run fails loudly
+# without the token.
+name: pm-agent
+run-name: ${{ inputs.marker || github.run_id }}
+
+on:
+  schedule:
+    # generated-crons-start
+    # generated: do not edit — `npx tsx src/cli.ts crons write` rewrites this
+    # block from projects/*/areas.json; hub CI runs `crons --check` on drift.
+    - cron: "0 13 * * 1-5" # placeholder until the first project passes `hub doctor`
+    # generated-crons-end
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "projects/<name>"
+        required: true
+        type: string
+      area:
+        description: "area key in areas.json"
+        required: true
+        type: string
+      marker:
+        description: "echoed as run-name so the caller can find this run"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # Maps the fired cron (or the manual inputs) to [{ project, area }] and
+  # resolves where each one runs, so the matrix below carries everything the
+  # launch/run/teardown jobs need (matrix jobs cannot share outputs).
+  plan:
+    if: github.event_name != 'schedule' || vars.SHIPGREMLINS_ENABLE_SCHEDULES == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+      launch: ${{ steps.plan.outputs.launch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: The crons match areas.json
+        run: npx tsx src/cli.ts crons --check
+      - id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FIRED_CRON: ${{ github.event.schedule }}
+          IN_PROJECT: ${{ inputs.project }}
+          IN_AREA: ${{ inputs.area }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            entries=$(node -e 'console.log(JSON.stringify([{ project: process.argv[1], area: process.argv[2] }]))' "$IN_PROJECT" "$IN_AREA")
+          else
+            entries=$(npx tsx src/cli.ts crons --json | node -e '
+              let d = ""; process.stdin.on("data", (c) => d += c).on("end", () => {
+                const rows = JSON.parse(d).filter((r) => r.cron === process.argv[1]);
+                console.log(JSON.stringify(rows.map((r) => ({ project: r.project, area: r.area }))));
+              })' "$FIRED_CRON")
+          fi
+          include="[]"
+          launch=false
+          for row in $(printf '%s' "$entries" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{for(const r of JSON.parse(d))console.log(r.project+":"+r.area)})'); do
+            project="${row%%:*}"; area="${row##*:}"
+            label="pm-${RUN_ID}-${project}-${area}"
+            resolved=$(npx tsx src/runners.ts resolve --project "$project" --run-label "$label")
+            runsOn=$(printf '%s\n' "$resolved" | sed -n 's/^runsOn=//p')
+            launch=$(printf '%s\n' "$resolved" | sed -n 's/^launch=//p')
+            include=$(node -e '
+              const [inc, p, a, l, r] = process.argv.slice(1);
+              const arr = JSON.parse(inc); arr.push({ project: p, area: a, runLabel: l, runsOn: r });
+              console.log(JSON.stringify(arr));' "$include" "$project" "$area" "$label" "$runsOn")
+          done
+          count=$(node -e 'console.log(JSON.parse(process.argv[1]).length)' "$include")
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "launch=$launch" >> "$GITHUB_OUTPUT"
+          echo "planned $count run(s) for ${FIRED_CRON:-manual}: $include"
+
+  launch:
+    needs: plan
+    if: ${{ fromJSON(needs.plan.outputs.count) > 0 }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix || '{"include":[]}') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Skipped (self-hosted mode)
+        if: ${{ !fromJSON(needs.plan.outputs.launch) }}
+        run: echo skipped
+      - uses: google-github-actions/auth@v2
+        if: ${{ fromJSON(needs.plan.outputs.launch) }}
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+        if: ${{ fromJSON(needs.plan.outputs.launch) }}
+      - uses: actions/create-github-app-token@v1
+        if: ${{ fromJSON(needs.plan.outputs.launch) }}
+        id: hub-admin
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: write
+      - name: Mint a JIT runner registration
+        if: ${{ fromJSON(needs.plan.outputs.launch) }}
+        id: jit
+        env:
+          GH_TOKEN: ${{ steps.hub-admin.outputs.token }}
+        run: |
+          jit=$(gh api -X POST "repos/${{ github.repository }}/actions/runners/generate-jitconfig" \
+            -f name="${{ matrix.runLabel }}" -F runner_group_id=1 \
+            -f "labels[]=${{ matrix.runLabel }}" -f work_folder=_work \
+            --jq .encoded_jit_config)
+          echo "::add-mask::$jit"
+          printf 'jitconfig=%s\n' "$jit" >> "$GITHUB_OUTPUT"
+      - name: Create the runner VM
+        if: ${{ fromJSON(needs.plan.outputs.launch) }}
+        run: |
+          read -r gcpProject zone image machineType spot < <(node -e '
+            const h = require("./hub.json").gce;
+            console.log([h.project, h.zone, h.image, h.machineType, h.spot].join(" "));')
+          spot_flag=""
+          if [ "$spot" = "true" ]; then spot_flag="--provisioning-model=SPOT --instance-termination-action=DELETE"; fi
+          printf '%s' "${{ steps.jit.outputs.jitconfig }}" > /tmp/jitconfig
+          # shellcheck disable=SC2086
+          gcloud compute instances create "${{ matrix.runLabel }}" \
+            --project "$gcpProject" --zone "$zone" --image "$image" --machine-type "$machineType" \
+            --scopes compute-rw \
+            --metadata self-destruct-minutes=315 \
+            --metadata-from-file jitconfig=/tmp/jitconfig,startup-script=runner-image/startup.sh \
+            $spot_flag
+
+  run:
+    needs: [plan, launch]
+    if: ${{ fromJSON(needs.plan.outputs.count) > 0 }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix || '{"include":[]}') }}
+    runs-on: ${{ fromJSON(matrix.runsOn) }}
+    timeout-minutes: 300
+    concurrency:
+      group: ${{ matrix.project }}-${{ matrix.area }}-pm-agent
+      cancel-in-progress: false
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      PM_PROJECT: ${{ matrix.project }}
+      PM_AREA: ${{ matrix.area }}
+      HUB_DIR: ${{ github.workspace }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RUN_BUDGET_MINUTES: "300"
+      BOT_LOGIN: ${{ vars.BOT_LOGIN || 'pm-hub[bot]' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Read the project's config
+        id: cfg
+        run: |
+          f="projects/${PM_PROJECT}/project.json"
+          test -f "$f" || { echo "unknown project ${PM_PROJECT}" >&2; exit 1; }
+          node -e '
+            const p = require("./" + process.argv[1]);
+            const areas = require("./" + process.argv[2]).areas;
+            if (!areas[process.argv[3]]) { console.error(`area ${process.argv[3]} is not in areas.json (have: ${Object.keys(areas).join(", ")})`); process.exit(1); }
+            const [owner, name] = p.repo.split("/");
+            const out = {
+              repo: p.repo, owner, name,
+              integration: p.branches.integration, staging: p.branches.staging,
+              vercel_project: p.vercel.projectId, vercel_team: p.vercel.teamId ?? "",
+              bypass_secret: p.vercel.bypassSecret, slack_secret: p.slackWebhookSecret,
+              signin_secret: p.signIn?.databaseUrlSecret ?? "",
+              preview_migrate: p.previewMigrate ?? "",
+            };
+            for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
+          ' "$f" "projects/${PM_PROJECT}/areas.json" "$PM_AREA" >> "$GITHUB_OUTPUT"
+      # One installation token for the target (PRs, comments) AND the hub (the
+      # dispatcher at the end fires developer.yml here). Requires the PM Hub app
+      # installed on the hub repo and on the target under the same owner.
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }},${{ steps.cfg.outputs.name }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.cfg.outputs.repo }}
+          ref: ${{ steps.cfg.outputs.integration }}
+          token: ${{ steps.app.outputs.token }}
+          path: target
+          fetch-depth: 0
+      - name: Git identity (hub memory branch + target reads)
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          login_path=$(printf '%s' "$BOT_LOGIN" | sed 's/\[/%5B/g; s/\]/%5D/g')
+          bot_id=$(gh api "users/${login_path}" --jq .id 2>/dev/null || echo 0)
+          for d in . target; do
+            git -C "$d" config user.name "${BOT_LOGIN}"
+            git -C "$d" config user.email "${bot_id}+${BOT_LOGIN}@users.noreply.github.com"
+          done
+      - name: Per-project secrets into the environment
+        env:
+          BYPASS_VALUE: ${{ secrets[steps.cfg.outputs.bypass_secret] }}
+          SLACK_VALUE: ${{ secrets[steps.cfg.outputs.slack_secret] }}
+          # the preview database URL the sign-in recipe seeds a one-time code
+          # into (project.json → signIn); empty when the project has no recipe
+          SIGNIN_VALUE: ${{ secrets[steps.cfg.outputs.signin_secret || 'PM_NO_SIGNIN_SECRET'] }}
+        run: |
+          [ -n "$BYPASS_VALUE" ] || echo "WARNING: hub secret ${{ steps.cfg.outputs.bypass_secret }} is empty — the preview will refuse the PM's browser." >&2
+          [ -n "$SLACK_VALUE" ] || echo "WARNING: hub secret ${{ steps.cfg.outputs.slack_secret }} is empty — the report will only reach this log." >&2
+          echo "VERCEL_BYPASS=$BYPASS_VALUE" >> "$GITHUB_ENV"
+          echo "${{ steps.cfg.outputs.bypass_secret }}=$BYPASS_VALUE" >> "$GITHUB_ENV"
+          echo "${{ steps.cfg.outputs.slack_secret }}=$SLACK_VALUE" >> "$GITHUB_ENV"
+          if [ -n "${{ steps.cfg.outputs.signin_secret }}" ]; then
+            [ -n "$SIGNIN_VALUE" ] || echo "WARNING: hub secret ${{ steps.cfg.outputs.signin_secret }} is empty — the PM cannot sign in on the preview." >&2
+            echo "${{ steps.cfg.outputs.signin_secret }}=$SIGNIN_VALUE" >> "$GITHUB_ENV"
+          fi
+      # The preview has its own database branch, and nobody runs migrations on
+      # it: a merged change that adds a table then fails its test for a reason
+      # that has nothing to do with the change. project.json → previewMigrate
+      # names the target's (additive, re-runnable) migration command; it runs
+      # against the preview database before the PM tests anything. A failure
+      # here is a warning, never the end of the run.
+      - name: Migrate the preview database
+        if: ${{ steps.cfg.outputs.preview_migrate != '' && steps.cfg.outputs.signin_secret != '' }}
+        continue-on-error: true
+        working-directory: target
+        env:
+          RAW_DATABASE_URL: ${{ secrets[steps.cfg.outputs.signin_secret || 'PM_NO_SIGNIN_SECRET'] }}
+          MIGRATE: ${{ steps.cfg.outputs.preview_migrate }}
+        run: |
+          url=$(printf '%s' "$RAW_DATABASE_URL" | grep -oE 'postgres(ql)?://[^[:space:]"'"'"']+' | head -1)
+          [ -n "$url" ] || { echo "WARNING: no database URL in the hub secret — preview database not migrated." >&2; exit 0; }
+          echo "::add-mask::$url"
+          npm ci --no-audit --no-fund >/dev/null
+          DATABASE_URL="$url" sh -c "$MIGRATE"
+          git checkout -- . 2>/dev/null || true
+
+      - name: Find the integration branch's preview URL
+        id: preview
+        env:
+          VERCEL_PROJECT_ID: ${{ steps.cfg.outputs.vercel_project }}
+          VERCEL_TEAM_ID: ${{ steps.cfg.outputs.vercel_team }}
+          INTEGRATION: ${{ steps.cfg.outputs.integration }}
+        run: |
+          q="projectId=${VERCEL_PROJECT_ID}&target=preview&limit=20"
+          [ -n "$VERCEL_TEAM_ID" ] && q="$q&teamId=$VERCEL_TEAM_ID"
+          json=$(curl -fsS -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v6/deployments?$q" || echo '{"deployments":[]}')
+          url=$(printf '%s' "$json" | node -e '
+            let d = ""; process.stdin.on("data", (c) => d += c).on("end", () => {
+              const br = process.argv[1];
+              const list = (JSON.parse(d).deployments || []).filter((x) => x.meta && x.meta.githubCommitRef === br);
+              list.sort((a, b) => b.created - a.created);
+              const dep = list.find((x) => x.state === "READY") || list[0];
+              if (!dep) { console.log(""); return; }
+              const alias = (dep.alias || []).find((a) => a.includes(`-git-${br}-`));
+              console.log("https://" + (alias || dep.url));
+            })' "$INTEGRATION")
+          [ -n "$url" ] || echo "WARNING: no Vercel deployment found for ${INTEGRATION} — PREVIEW_URL is empty; the PM will say so in its report." >&2
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Install Claude Code
+        run: |
+          command -v claude >/dev/null 2>&1 || npm i -g @anthropic-ai/claude-code
+          claude --version
+      - name: Subscription billing, enforced
+        run: |
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "ANTHROPIC_API_KEY is set — the PM runs on the subscription token only. Remove it." >&2
+            exit 1
+          fi
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "CLAUDE_CODE_OAUTH_TOKEN is not set. Mint one with 'claude setup-token' and add it as a hub secret." >&2
+            exit 1
+          fi
+      # The PM DRIVES a browser itself (Playwright MCP server → browser_*
+      # tools) rather than writing scripts. The MCP server is pinned and its own
+      # playwright installs the matching Chromium, so the two never disagree.
+      - name: Browser (Playwright MCP)
+        run: |
+          mkdir -p .run/browser
+          npm i --no-save --no-audit --no-fund @playwright/mcp@0.0.80
+          npx playwright install chromium
+          node -e '
+            const fs = require("fs");
+            const hub = process.env.HUB_DIR;
+            const cfg = { mcpServers: { playwright: { command: "node", args: [
+              hub + "/node_modules/@playwright/mcp/cli.js", "--headless", "--browser", "chromium",
+              "--no-sandbox", "--isolated", "--output-dir", hub + "/.run/browser",
+              "--viewport-size", "390, 844" ] } } };
+            fs.writeFileSync(".run/mcp.json", JSON.stringify(cfg, null, 2));
+          '
+      - name: Trust the workspaces
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = process.env.HOME + "/.claude.json";
+            let cfg = {};
+            try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
+            cfg.projects = cfg.projects || {};
+            for (const dir of [process.env.HUB_DIR, process.env.HUB_DIR + "/target"]) {
+              cfg.projects[dir] = { ...(cfg.projects[dir] || {}), hasTrustDialogAccepted: true };
+            }
+            fs.writeFileSync(path, JSON.stringify(cfg, null, 2));
+          '
+      - name: PM run
+        working-directory: target
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET_REPO: ${{ steps.cfg.outputs.repo }}
+          INTEGRATION_BRANCH: ${{ steps.cfg.outputs.integration }}
+          STAGING_BRANCH: ${{ steps.cfg.outputs.staging }}
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          VERCEL_PROJECT_ID: ${{ steps.cfg.outputs.vercel_project }}
+          VERCEL_TEAM_ID: ${{ steps.cfg.outputs.vercel_team }}
+          CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "3600000"
+        run: |
+          set -o pipefail
+          export RUN_DEADLINE
+          RUN_DEADLINE=$(date -u -d "+$((RUN_BUDGET_MINUTES - 10)) minutes" +%Y-%m-%dT%H:%M:%SZ)
+          claude -p "$(cat "$HUB_DIR/prompts/pm.md")" \
+            --model "${{ vars.PM_MODEL || 'claude-opus-5-5' }}" \
+            --output-format stream-json --verbose \
+            --max-turns 400 \
+            --permission-mode acceptEdits \
+            --mcp-config "$HUB_DIR/.run/mcp.json" --strict-mcp-config \
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep,Task,Skill,TodoWrite,WebFetch,WebSearch,mcp__playwright" \
+            | tee .pm-run.log
+      # Hand the PM's self-approved tickets to the developer the same morning
+      # and merge anything green — the hourly pm-dispatch run is the backstop.
+      - name: Dispatch
+        if: ${{ always() && steps.app.outcome == 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+        run: npx tsx src/cli.ts dispatch --project "$PM_PROJECT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pm-${{ matrix.project }}-${{ matrix.area }}-${{ github.run_id }}
+          path: |
+            target/.pm-run.log
+            .run/
+          if-no-files-found: ignore
+
+  teardown:
+    needs: [plan, launch, run]
+    if: ${{ always() && needs.plan.outputs.launch == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix || '{"include":[]}') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          read -r gcpProject zone < <(node -e 'const h = require("./hub.json").gce; console.log(h.project + " " + h.zone);')
+          gcloud compute instances delete "${{ matrix.runLabel }}" \
+            --project "$gcpProject" --zone "$zone" --quiet || echo "already gone"

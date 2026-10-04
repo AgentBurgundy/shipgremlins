@@ -1,0 +1,357 @@
+# The headless developer: builds ONE Linear ticket into a draft PR against the
+# project's integration branch (kind: build), or repairs an existing PR on its
+# own branch (kind: rc = resolve conflicts, ci = fix red checks). Fired only by
+# the dispatcher (src/dispatcher/dispatch.ts / repair.ts / heal.ts) through
+# workflow_dispatch; the prompt is prompts/developer.md.
+#
+# Billing: Claude Code runs on the owner's subscription via
+# CLAUDE_CODE_OAUTH_TOKEN — never ANTHROPIC_API_KEY. The run fails loudly when
+# the token is missing (a dead token must be a red run, not a developer that
+# quietly stops building).
+name: developer
+run-name: ${{ inputs.marker || github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "projects/<name>"
+        required: true
+        type: string
+      ticket:
+        description: "Linear identifier, e.g. GAME-12"
+        required: true
+        type: string
+      attempt:
+        description: "1 for the first build, 2 for the retry"
+        required: true
+        type: string
+      kind:
+        description: "build | rc | ci | sync | port"
+        required: true
+        type: choice
+        options: [build, rc, ci, sync, port]
+      branch:
+        description: "existing branch (rc / ci / port), or the branch to create (sync)"
+        required: false
+        type: string
+      pr:
+        description: "existing PR number (rc / ci only)"
+        required: false
+        type: string
+      marker:
+        description: "echoed as run-name so the dispatcher can find this run"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      runsOn: ${{ steps.cfg.outputs.runsOn }}
+      launch: ${{ steps.cfg.outputs.launch }}
+      vmName: ${{ steps.cfg.outputs.vmName }}
+      zone: ${{ steps.cfg.outputs.zone }}
+      gcpProject: ${{ steps.cfg.outputs.gcpProject }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: cfg
+        run: npx tsx src/runners.ts resolve --project "${{ inputs.project }}" --run-label "pm-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+      - name: Skipped (self-hosted mode)
+        if: ${{ !fromJSON(steps.cfg.outputs.launch) }}
+        run: echo skipped
+      - uses: google-github-actions/auth@v2
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+      - uses: actions/create-github-app-token@v1
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        id: hub-admin
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: write
+      - name: Mint a JIT runner registration
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        id: jit
+        env:
+          GH_TOKEN: ${{ steps.hub-admin.outputs.token }}
+        run: |
+          jit=$(gh api -X POST "repos/${{ github.repository }}/actions/runners/generate-jitconfig" \
+            -f name="${{ steps.cfg.outputs.runLabel }}" -F runner_group_id=1 \
+            -f "labels[]=${{ steps.cfg.outputs.runLabel }}" -f work_folder=_work \
+            --jq .encoded_jit_config)
+          echo "::add-mask::$jit"
+          printf 'jitconfig=%s\n' "$jit" >> "$GITHUB_OUTPUT"
+      - name: Create the runner VM
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        run: |
+          spot_flag=""
+          if [ "${{ steps.cfg.outputs.spot }}" = "true" ]; then spot_flag="--provisioning-model=SPOT --instance-termination-action=DELETE"; fi
+          printf '%s' "${{ steps.jit.outputs.jitconfig }}" > /tmp/jitconfig
+          # shellcheck disable=SC2086
+          gcloud compute instances create "${{ steps.cfg.outputs.vmName }}" \
+            --project "${{ steps.cfg.outputs.gcpProject }}" \
+            --zone "${{ steps.cfg.outputs.zone }}" \
+            --image "${{ steps.cfg.outputs.image }}" \
+            --machine-type "${{ steps.cfg.outputs.machineType }}" \
+            --scopes compute-rw \
+            --metadata self-destruct-minutes=315 \
+            --metadata-from-file jitconfig=/tmp/jitconfig,startup-script=runner-image/startup.sh \
+            $spot_flag
+
+  run:
+    needs: launch
+    runs-on: ${{ fromJSON(needs.launch.outputs.runsOn) }}
+    timeout-minutes: 300
+    # One group per (project, ticket): a heal re-fire of the same ticket waits
+    # for the first run instead of racing it; different tickets of one project
+    # build in parallel up to the area's wipLimit.
+    concurrency:
+      group: ${{ inputs.project }}-developer-${{ inputs.ticket }}
+      cancel-in-progress: false
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      PM_PROJECT: ${{ inputs.project }}
+      TICKET: ${{ inputs.ticket }}
+      TICKET_KIND: ${{ inputs.kind }}
+      TICKET_ATTEMPT: ${{ inputs.attempt }}
+      TICKET_BRANCH: ${{ inputs.branch }}
+      TICKET_PR: ${{ inputs.pr }}
+      HUB_DIR: ${{ github.workspace }}
+      TICKET_FILE: ${{ github.workspace }}/.run/ticket.md
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RUN_BUDGET_MINUTES: "300"
+      BOT_LOGIN: ${{ vars.BOT_LOGIN || 'pm-hub[bot]' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Read the project's config
+        id: cfg
+        run: |
+          f="projects/${PM_PROJECT}/project.json"
+          test -f "$f" || { echo "unknown project ${PM_PROJECT}" >&2; exit 1; }
+          node -e '
+            const p = require("./" + process.argv[1]);
+            const [owner, name] = p.repo.split("/");
+            const out = {
+              repo: p.repo, owner, name,
+              integration: p.branches.integration, staging: p.branches.staging,
+              install: p.commands.install, test: p.commands.test,
+              lint: p.commands.lint ?? "", typecheck: p.commands.typecheck ?? "",
+            };
+            for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
+          ' "$f" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ steps.cfg.outputs.owner }}
+          repositories: ${{ steps.cfg.outputs.name }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.cfg.outputs.repo }}
+          ref: ${{ steps.cfg.outputs.integration }}
+          token: ${{ steps.app.outputs.token }}
+          path: target
+          fetch-depth: 0
+      - name: Git identity (the app is the author of every commit)
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          login_path=$(printf '%s' "$BOT_LOGIN" | sed 's/\[/%5B/g; s/\]/%5D/g')
+          bot_id=$(gh api "users/${login_path}" --jq .id 2>/dev/null || echo 0)
+          git -C target config user.name "${BOT_LOGIN}"
+          git -C target config user.email "${bot_id}+${BOT_LOGIN}@users.noreply.github.com"
+      - name: Check out the ticket's branch
+        env:
+          INTEGRATION: ${{ steps.cfg.outputs.integration }}
+          STAGING: ${{ steps.cfg.outputs.staging }}
+        run: |
+          cd target
+          git fetch origin "$INTEGRATION"
+          case "$TICKET_KIND" in
+            sync)
+              # Resolve a staging → integration sync conflict: a fresh branch
+              # off the integration branch that the developer merges staging
+              # into. An earlier attempt's branch is continued, not discarded.
+              test -n "$TICKET_BRANCH" || { echo "kind=sync needs inputs.branch" >&2; exit 1; }
+              branch="$TICKET_BRANCH"
+              git fetch origin "$STAGING"
+              if git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null 2>&1; then
+                git fetch origin "$branch"
+                git checkout -B "$branch" "origin/$branch"
+              else
+                git checkout -B "$branch" "origin/$INTEGRATION"
+              fi
+              ;;
+            build)
+              branch="pm/$(echo "$TICKET" | tr '[:upper:]' '[:lower:]')"
+              # A branch left by an earlier run (heal re-fire, or a retry whose
+              # PR never merged) is built ON, never discarded; a retry after a
+              # merge starts fresh because merge deleted the old branch.
+              if git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null 2>&1; then
+                git fetch origin "$branch"
+                git checkout -B "$branch" "origin/$branch"
+              else
+                git checkout -B "$branch" "origin/$INTEGRATION"
+              fi
+              ;;
+            port)
+              # Port verified changes onto a promotion branch (pm-release/…),
+              # which promotion created from staging and pushed before it
+              # fired this run.
+              test -n "$TICKET_BRANCH" || { echo "kind=port needs inputs.branch" >&2; exit 1; }
+              branch="$TICKET_BRANCH"
+              git fetch origin "$STAGING" "$branch"
+              git checkout -B "$branch" "origin/$branch"
+              ;;
+            rc|ci)
+              test -n "$TICKET_BRANCH" || { echo "kind=$TICKET_KIND needs inputs.branch" >&2; exit 1; }
+              test -n "$TICKET_PR" || { echo "kind=$TICKET_KIND needs inputs.pr" >&2; exit 1; }
+              branch="$TICKET_BRANCH"
+              git fetch origin "$branch"
+              git checkout -B "$branch" "origin/$branch"
+              ;;
+            *) echo "unknown kind $TICKET_KIND" >&2; exit 1;;
+          esac
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+      - name: Fetch the ticket
+        run: |
+          mkdir -p .run
+          npx tsx src/cli.ts ticket "$TICKET" > .run/ticket.md
+          test -s .run/ticket.md
+      - name: Install the target's dependencies
+        working-directory: target
+        run: ${{ steps.cfg.outputs.install }}
+      - name: Install Claude Code
+        run: |
+          command -v claude >/dev/null 2>&1 || npm i -g @anthropic-ai/claude-code
+          claude --version
+      - name: Subscription billing, enforced
+        run: |
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "ANTHROPIC_API_KEY is set — the developer runs on the subscription token only. Remove it." >&2
+            exit 1
+          fi
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "CLAUDE_CODE_OAUTH_TOKEN is not set. Mint one with 'claude setup-token' and add it as a hub secret." >&2
+            exit 1
+          fi
+      - name: Trust the target workspace
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = process.env.HOME + "/.claude.json";
+            let cfg = {};
+            try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
+            cfg.projects = cfg.projects || {};
+            for (const dir of [process.env.HUB_DIR, process.env.HUB_DIR + "/target"]) {
+              cfg.projects[dir] = { ...(cfg.projects[dir] || {}), hasTrustDialogAccepted: true };
+            }
+            fs.writeFileSync(path, JSON.stringify(cfg, null, 2));
+          '
+      - name: Build
+        working-directory: target
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET_REPO: ${{ steps.cfg.outputs.repo }}
+          INTEGRATION_BRANCH: ${{ steps.cfg.outputs.integration }}
+          STAGING_BRANCH: ${{ steps.cfg.outputs.staging }}
+          CMD_INSTALL: ${{ steps.cfg.outputs.install }}
+          CMD_TEST: ${{ steps.cfg.outputs.test }}
+          CMD_LINT: ${{ steps.cfg.outputs.lint }}
+          CMD_TYPECHECK: ${{ steps.cfg.outputs.typecheck }}
+          CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "3600000"
+        run: |
+          set -o pipefail
+          export RUN_DEADLINE
+          RUN_DEADLINE=$(date -u -d "+$((RUN_BUDGET_MINUTES - 10)) minutes" +%Y-%m-%dT%H:%M:%SZ)
+          claude -p "$(cat "$HUB_DIR/prompts/developer.md")" \
+            --model "${{ vars.DEVELOPER_MODEL || 'claude-sonnet-5-5' }}" \
+            --output-format stream-json --verbose \
+            --max-turns 400 \
+            --permission-mode acceptEdits \
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep,Task,Skill,TodoWrite" \
+            | tee .pm-run.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: developer-${{ inputs.ticket }}-${{ github.run_id }}
+          path: |
+            target/.pm-run.log
+            .run/ticket.md
+          if-no-files-found: ignore
+
+  # The loop must not wait on the clock: whatever this run produced (a PR to
+  # merge, a repair to land, a slot freed for the next ticket) is the
+  # dispatcher's next move, so hand it the turn now. GitHub's cron fires the
+  # hourly dispatcher hours late on a quiet repo; this makes it a fallback.
+  # (GITHUB_TOKEN may start workflow_dispatch runs — the one event it can.)
+  chain:
+    needs: run
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Run the dispatcher for this project
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run pm-dispatch.yml --repo "${{ github.repository }}" --ref main \
+            -f project="${{ inputs.project }}"
+      # A port leaves commits on a promotion branch that has no PR yet (or a
+      # stale one): promotion opens or updates it. pm-release/<area>/<date>.
+      - name: Rebuild the promotion this port was for
+        if: ${{ inputs.kind == 'port' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          area=$(printf '%s' "$BRANCH" | cut -d/ -f2)
+          test -n "$area" || { echo "no area in $BRANCH" >&2; exit 0; }
+          gh workflow run pm-promote.yml --repo "${{ github.repository }}" --ref main \
+            -f project="${{ inputs.project }}" -f area="$area"
+
+  teardown:
+    needs: [launch, run]
+    if: ${{ always() && fromJSON(needs.launch.outputs.launch || 'false') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud compute instances delete "${{ needs.launch.outputs.vmName }}" \
+            --project "${{ needs.launch.outputs.gcpProject }}" \
+            --zone "${{ needs.launch.outputs.zone }}" --quiet || echo "already gone"

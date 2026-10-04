@@ -1,0 +1,15 @@
+.git
+node_modules
+.env
+.env.*
+!.env.example
+*.log
+.run
+target
+hub.json
+projects/*
+!projects/_templates
+!projects/_templates/**
+coverage
+dist
+.codex

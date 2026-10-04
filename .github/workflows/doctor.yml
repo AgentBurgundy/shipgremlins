@@ -1,0 +1,79 @@
+# `hub doctor <project>` with the hub's real secrets: checks the app install,
+# the three branches, the Vercel project + pm-staging preview, every area's
+# Linear project id and the two per-project secret NAMES. Prints the table;
+# the owner stamps `verified` in project.json by hand (or re-runs with
+# `stamp: true`, which commits it). Runs on GitHub-hosted Linux — no agent,
+# no runner needed.
+name: doctor
+run-name: doctor ${{ inputs.project }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "projects/<name>"
+        required: true
+        type: string
+      stamp:
+        description: "commit `verified` to project.json when every check passes"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Read the project's repo
+        id: cfg
+        run: |
+          f="projects/${{ inputs.project }}/project.json"
+          test -f "$f" || { echo "unknown project ${{ inputs.project }}" >&2; exit 1; }
+          node -e '
+            const p = require("./" + process.argv[1]);
+            const [owner, name] = p.repo.split("/");
+            console.log(`owner=${owner}`); console.log(`name=${name}`);
+            console.log(`bypass=${p.vercel.bypassSecret}`); console.log(`slack=${p.slackWebhookSecret}`);
+          ' "$f" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ steps.cfg.outputs.owner }}
+          repositories: ${{ steps.cfg.outputs.name }}
+      - name: Doctor
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          # the doctor checks these two by NAME (project.json names them); the
+          # values are looked up dynamically so any project's pair works
+          SECRET_BYPASS: ${{ secrets[steps.cfg.outputs.bypass] }}
+          SECRET_SLACK: ${{ secrets[steps.cfg.outputs.slack] }}
+        run: |
+          export "${{ steps.cfg.outputs.bypass }}=$SECRET_BYPASS"
+          export "${{ steps.cfg.outputs.slack }}=$SECRET_SLACK"
+          npx tsx src/cli.ts doctor "${{ inputs.project }}"
+      - name: Commit the verified stamp
+        if: ${{ inputs.stamp && success() }}
+        run: |
+          if git diff --quiet -- "projects/${{ inputs.project }}/project.json"; then
+            echo "nothing to stamp"; exit 0
+          fi
+          git config user.name "pm-hub[bot]"
+          git config user.email "pm-hub[bot]@users.noreply.github.com"
+          git add "projects/${{ inputs.project }}/project.json"
+          git commit -m "doctor: ${{ inputs.project }} verified"
+          git push origin HEAD:main

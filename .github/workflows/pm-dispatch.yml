@@ -1,0 +1,205 @@
+# The dispatcher on its own clock: hourly, every project, deterministic, no
+# Claude. Sync → stop-the-line → heal → repair → merge → dispatch
+# (src/dispatcher/index.ts). It fires developer.yml for approved tickets and
+# merges green agent PRs into each project's integration branch.
+#
+# Shape (shared by every hub workflow): launch → run → teardown. In
+# self-hosted mode launch/teardown are no-ops; in gce mode (hub.json →
+# runners.mode) launch creates an ephemeral VM carrying a JIT runner
+# registration and teardown deletes it. docs/runners.md.
+name: pm-dispatch
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Only this project (default: every project)"
+        required: false
+        type: string
+      dry_run:
+        description: "Log every write and skip it"
+        required: false
+        type: boolean
+        default: false
+      round:
+        description: "internal: how many times this pass has already come back for pending checks"
+        required: false
+        type: string
+        default: "0"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  launch:
+    if: github.event_name != 'schedule' || vars.SHIPGREMLINS_ENABLE_SCHEDULES == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      runsOn: ${{ steps.cfg.outputs.runsOn }}
+      launch: ${{ steps.cfg.outputs.launch }}
+      vmName: ${{ steps.cfg.outputs.vmName }}
+      zone: ${{ steps.cfg.outputs.zone }}
+      gcpProject: ${{ steps.cfg.outputs.gcpProject }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: cfg
+        run: npx tsx src/runners.ts resolve --run-label "pm-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+      - name: Skipped (self-hosted mode)
+        if: ${{ !fromJSON(steps.cfg.outputs.launch) }}
+        run: echo skipped
+      - uses: google-github-actions/auth@v2
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+      - uses: actions/create-github-app-token@v1
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        id: hub-admin
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: write
+      - name: Mint a JIT runner registration
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        id: jit
+        env:
+          GH_TOKEN: ${{ steps.hub-admin.outputs.token }}
+        run: |
+          jit=$(gh api -X POST "repos/${{ github.repository }}/actions/runners/generate-jitconfig" \
+            -f name="${{ steps.cfg.outputs.runLabel }}" -F runner_group_id=1 \
+            -f "labels[]=${{ steps.cfg.outputs.runLabel }}" -f work_folder=_work \
+            --jq .encoded_jit_config)
+          echo "::add-mask::$jit"
+          printf 'jitconfig=%s\n' "$jit" >> "$GITHUB_OUTPUT"
+      - name: Create the runner VM
+        if: ${{ fromJSON(steps.cfg.outputs.launch) }}
+        run: |
+          spot_flag=""
+          if [ "${{ steps.cfg.outputs.spot }}" = "true" ]; then spot_flag="--provisioning-model=SPOT --instance-termination-action=DELETE"; fi
+          printf '%s' "${{ steps.jit.outputs.jitconfig }}" > /tmp/jitconfig
+          # shellcheck disable=SC2086
+          gcloud compute instances create "${{ steps.cfg.outputs.vmName }}" \
+            --project "${{ steps.cfg.outputs.gcpProject }}" \
+            --zone "${{ steps.cfg.outputs.zone }}" \
+            --image "${{ steps.cfg.outputs.image }}" \
+            --machine-type "${{ steps.cfg.outputs.machineType }}" \
+            --scopes compute-rw \
+            --metadata self-destruct-minutes=35 \
+            --metadata-from-file jitconfig=/tmp/jitconfig,startup-script=runner-image/startup.sh \
+            $spot_flag
+
+  run:
+    needs: launch
+    runs-on: ${{ fromJSON(needs.launch.outputs.runsOn) }}
+    timeout-minutes: 20
+    outputs:
+      pending: ${{ steps.dispatch.outputs.pending }}
+    concurrency:
+      group: pm-dispatch
+      cancel-in-progress: false
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      BOT_LOGIN: ${{ vars.BOT_LOGIN || 'pm-hub[bot]' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Name every target repo the token must cover
+        id: targets
+        run: |
+          names=$(for f in projects/*/project.json; do
+            case "$f" in projects/_*) continue;; esac
+            node -e "console.log(require('./$f').repo.split('/')[1])"
+          done | paste -sd, -)
+          echo "repositories=${{ github.event.repository.name }},${names}" >> "$GITHUB_OUTPUT"
+      # One installation token for the hub (to dispatch developer.yml) and
+      # every target (PRs, comments, merges). Requires the PM Hub app to be
+      # installed on the hub repo and on each target under the same owner.
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: ${{ steps.targets.outputs.repositories }}
+      - name: Dispatch
+        id: dispatch
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          args=""
+          if [ -n "${{ inputs.project }}" ]; then args="$args --project ${{ inputs.project }}"; fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then args="$args --dry-run"; fi
+          # shellcheck disable=SC2086
+          npx tsx src/cli.ts dispatch $args
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dispatch-${{ github.run_id }}
+          path: .run/
+          if-no-files-found: ignore
+
+  # The dispatcher was early: a PR's checks were still running, or GitHub had
+  # not settled its mergeability. Come back in three minutes instead of at the
+  # next cron (which GitHub may fire hours late) — at most six times, so a
+  # check that never finishes cannot keep this going.
+  comeback:
+    needs: run
+    if: ${{ needs.run.outputs.pending == 'true' && inputs.dry_run != true && (inputs.round || '0') < '6' }}
+    runs-on: ubuntu-latest
+    # ONE comeback per project, ever: every developer that finishes starts its
+    # own dispatcher pass, and each pass that finds a pending check would
+    # otherwise start its own six-round chain. The newest pass has the freshest
+    # view, so it replaces whichever comeback is still sleeping.
+    concurrency:
+      group: pm-dispatch-comeback-${{ inputs.project || 'all' }}
+      cancel-in-progress: true
+    permissions:
+      actions: write
+    steps:
+      - name: Wait, then run the dispatcher again
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROUND: ${{ inputs.round || '0' }}
+        run: |
+          sleep 180
+          gh workflow run pm-dispatch.yml --repo "${{ github.repository }}" --ref main \
+            -f project="${{ inputs.project }}" -f round="$((ROUND + 1))"
+
+  teardown:
+    needs: [launch, run]
+    if: ${{ always() && fromJSON(needs.launch.outputs.launch || 'false') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud compute instances delete "${{ needs.launch.outputs.vmName }}" \
+            --project "${{ needs.launch.outputs.gcpProject }}" \
+            --zone "${{ needs.launch.outputs.zone }}" --quiet || echo "already gone"

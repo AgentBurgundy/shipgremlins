@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Local setup and operating commands for the ShipGremlins alpha."
+    />
+    <title>ShipGremlins · Local operator guide</title>
+    <link rel="stylesheet" href="/operator.css" />
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">ShipGremlins / early alpha</p>
+      <h1>Your local operator guide.</h1>
+      <p class="lead">
+        Give AI product managers a mandate. Review their findings, test their
+        changes, and track delivery through production.
+      </p>
+      <p>
+        This page serves documentation only. Agent jobs execute through GitHub
+        Actions. It does not store credentials, start a scheduler, or provide an
+        administrative dashboard.
+      </p>
+      <section aria-labelledby="start-title">
+        <h2 id="start-title">Start with a local check</h2>
+        <pre><code>npm run hub -- setup --check
+npm run hub -- setup --help</code></pre>
+        <p>
+          The implemented stack is GitHub, GitHub Actions, Vercel, Linear, and
+          Claude Code. GitLab, Railway, other models, and a management dashboard
+          are planned.
+        </p>
+      </section>
+      <section aria-labelledby="production-title">
+        <h2 id="production-title">Done means merged into production</h2>
+        <pre><code>npm run hub -- tickets audit --project my-app --json</code></pre>
+        <p>
+          Audit is read-only. Completion requires a reviewed finite deliverable
+          manifest and explicit apply. Staging and verification alone do not
+          close a ticket.
+        </p>
+      </section>
+      <nav aria-label="Documentation">
+        <a href="https://github.com/AgentBurgundy/shipgremlins#readme"
+          >Read the project guide</a
+        >
+        <a
+          href="https://github.com/AgentBurgundy/shipgremlins/blob/main/docs/SETUP.md"
+          >Setup instructions</a
+        >
+        <a
+          href="https://github.com/AgentBurgundy/shipgremlins/blob/main/docs/LINEAR_LIFECYCLE.md"
+          >Production lifecycle</a
+        >
+      </nav>
+      <footer>
+        Apache-2.0 · Local documentation · No credentials are displayed here.
+      </footer>
+    </main>
+  </body>
+</html>

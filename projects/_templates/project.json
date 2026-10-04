@@ -1,0 +1,25 @@
+{
+  "$comment": "Seeded by `npx tsx src/cli.ts add-project`. Paste the Vercel project id and (if the project is in a team) the team id; the two *Secret fields are the NAMES of hub Actions secrets, never values. `verified` is written by `hub doctor` and gates the PM crons.",
+  "repo": "{{repo}}",
+  "branches": {
+    "production": "main",
+    "staging": "staging",
+    "integration": "pm-staging"
+  },
+  "vercel": {
+    "projectId": "PASTE_VERCEL_PROJECT_ID",
+    "teamId": null,
+    "bypassSecret": "VERCEL_BYPASS_{{NAME}}"
+  },
+  "database": "neon-vercel-integration",
+  "slackWebhookSecret": "SLACK_WEBHOOK_{{NAME}}",
+  "runnerLabel": null,
+  "mergeMethod": "squash",
+  "commands": {
+    "install": "npm ci",
+    "test": "npm test",
+    "lint": "npm run lint",
+    "typecheck": "npx tsc --noEmit"
+  },
+  "verified": null
+}

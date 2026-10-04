@@ -1,0 +1,108 @@
+# Adding a project
+
+One command seeds the config, one command checks it against the live APIs,
+and the PM crons appear only once the check passes. Everything in between is
+the owner's: installing the app, creating branches, creating Linear projects,
+pasting ids, writing the mandate.
+
+```bash
+npx tsx src/cli.ts add-project <name> --repo owner/name [--area core]
+```
+
+`<name>` is the project's key in the hub (lowercase kebab-case; it names the
+secrets as `<NAME>` and the memory branches as `pm/<name>/<area>`). The
+command writes `projects/<name>/` from `projects/_templates/`, refuses to
+overwrite an existing project, and prints this checklist.
+
+## The checklist
+
+1. **Install the PM Hub GitHub App on the repo.** Permissions: contents
+   write, pull requests write, issues write, checks read, actions read,
+   metadata read. Every commit, PR and comment on the target is authored by
+   the app, so the owner's review is always a human one.
+2. **Branches.** Create `staging` and `pm-staging` from `main` if they do not
+   exist. Protect `pm-staging` so only the app and the owner push; the
+   dispatcher merges into it with the installation token. (`project.json` →
+   `branches` can rename all three; they must differ.)
+3. **Vercel.** The project builds every branch (Settings → Git → preview
+   deployments for all branches) with the Neon integration on, so
+   `pm-staging` gets a stable branch URL and a persistent database branch, and
+   every developer PR gets its own preview with a throwaway branch. Paste the
+   Vercel project id (and the team id when the project is in a team) into
+   `project.json` → `vercel`. Turn on deployment protection and create a
+   **protection bypass for automation** secret; that value becomes the hub
+   secret `VERCEL_BYPASS_<NAME>`.
+4. **Linear.** One project per area. Paste each project id into
+   `areas.json` → `linearProjectId`. Labels (`pm-tier-a` … `pm-needs-human`)
+   are created on first use.
+5. **Hub secrets** (the hub repo → Settings → Secrets and variables →
+   Actions): `SLACK_WEBHOOK_<NAME>` (a Slack incoming webhook URL for the
+   project's channel) and `VERCEL_BYPASS_<NAME>`. The hub-wide secrets
+   `APP_ID`, `APP_PRIVATE_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `LINEAR_API_KEY` and
+   `VERCEL_TOKEN` are set once for every project. `project.json` holds only
+   the NAMES; `hub validate` refuses a value where a name belongs.
+6. **Write the mandate(s)** — `projects/<name>/<area>/mandate.md`. This is
+   the steering wheel: ambition in the owner's words, what the PM is expected
+   to build, the one metric it ranks by, the feature flags it may ship
+   behind, quotas. A PM with a small mandate files small tickets.
+
+## Check it
+
+```bash
+GITHUB_TOKEN=… LINEAR_API_KEY=… VERCEL_TOKEN=… \
+SLACK_WEBHOOK_<NAME>=… VERCEL_BYPASS_<NAME>=… \
+npx tsx src/cli.ts doctor <name>
+```
+
+`doctor` prints one PASS/FAIL line per step: no `PASTE_…` placeholder left,
+the repo is readable with the token, the three branches exist, the Vercel
+project answers and has a preview deployment for `pm-staging`, every area's
+Linear project id resolves, and both secret names are set in the environment.
+When every line passes it writes `"verified": "<today>"` into `project.json`.
+
+Then generate the crons and commit:
+
+```bash
+npx tsx src/cli.ts crons write      # updates the block in .github/workflows/pm-agent.yml
+npx tsx src/cli.ts validate
+git add projects/<name> .github/workflows/pm-agent.yml && git commit -m "feat: add <name>"
+```
+
+Hub CI runs `crons --check` on every push, so a project whose `areas.json`
+changed without a `crons write` fails the build instead of silently running
+on the old schedule.
+
+## Try it once by hand
+
+- Actions → **pm-dispatch** → Run workflow: the dispatcher syncs `staging`
+  into `pm-staging` and reports what it sees. Nothing is dispatched until a
+  ticket carries `pm-approved`.
+- Actions → **pm-agent** → Run workflow with `project` and `area`: the first
+  PM run is a full sweep — it walks every surface, fills `features.md`, seeds
+  `queue.md`, files tickets, and sends one Slack message. Read that message
+  and tune the mandate until the tickets are ones you would approve; that
+  tuning is the real work.
+
+## Adding an area later
+
+Add an entry to `areas.json` (key, `label: pm:<key>`, paths, Linear project,
+cron), copy the four markdown seeds from `projects/_templates/` into
+`projects/<name>/<key>/` (replace the `{{placeholders}}` by hand), then
+`hub validate`, `hub doctor <name>` and `hub crons write`.
+
+## When the app needs a sign-in
+
+If the target signs users in with emailed one-time codes on Neon Auth, give
+the PM a test account instead of an inbox:
+
+1. Add to `project.json`:
+   `"signIn": { "kind": "neon-auth-otp", "email": "pm-agent@example.com", "path": "/sign-in", "databaseUrlSecret": "PM_DATABASE_URL_<NAME>" }`
+2. Add the hub secret it names — the **preview** database URL (the Neon
+   branch the integration branch's preview uses), never production:
+   `gh secret set PM_DATABASE_URL_<NAME> -R <owner>/pm-hub`
+3. Run the `pm-signin` workflow once for the project. It signs the test
+   account in on the preview and prints its owner hash, for targets that gate
+   test-mode features per owner.
+
+Each PM run then calls `signin-code --project <name>`, which seeds a fresh
+code in `neon_auth.verification` and prints `{email, code, path}`.

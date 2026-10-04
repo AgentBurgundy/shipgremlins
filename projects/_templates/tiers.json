@@ -1,0 +1,18 @@
+{
+  "$comment": "Read by the dispatcher and the promotion step. On `pm-staging` the dispatcher merges ANY green PR from the app except one touching hubOwnerOnly (the hub's own workflows and prompts), which waits for the owner. The owner reviews everything once, on the promotion PR into `staging`: every changed file under ownerOnlyPrefixes is listed at the top of that PR under `## Look closely`. guardTests are tests that encode an OWNER rule rather than a feature — the developer may not edit one to turn CI green, and every change or deletion is listed under `Tests changed or removed` in the promotion PR.",
+  "ownerOnlyPrefixes": [
+    "app/api/auth",
+    "middleware.ts",
+    "prisma/migrations",
+    "drizzle/",
+    "*billing*",
+    "*stripe*",
+    "package.json",
+    "package-lock.json",
+    "vercel.json"
+  ],
+  "hubOwnerOnly": [".github/", "prompts/"],
+  "alwaysFree": ["docs/", "README.md"],
+  "guardTests": [],
+  "testFileMarkers": ["/__tests__/", ".test.", ".spec.", "/tests/", "/e2e/"]
+}

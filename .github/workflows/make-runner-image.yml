@@ -1,0 +1,62 @@
+# Manual: build the GCE runner image (hub.json → gce.image) from
+# runner-image/packer.pkr.hcl. Only needed for runners.mode = "gce"; not
+# exercised in v1 (docs/runners.md). Re-run it to pick up a newer Node,
+# Chromium, Claude Code or actions runner.
+name: make-runner-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "image family/name to produce (default: hub.json → gce.image)"
+        required: false
+        type: string
+      runner_version:
+        description: "actions/runner version, without the v"
+        required: false
+        type: string
+        default: "2.321.0"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - id: cfg
+        run: |
+          node -e '
+            const h = require("./hub.json").gce;
+            console.log(`project=${h.project}`);
+            console.log(`zone=${h.zone}`);
+            console.log(`image=${process.argv[1] || h.image}`);
+          ' "${{ inputs.image_name }}" >> "$GITHUB_OUTPUT"
+      - name: hub.json names a GCP project
+        run: test -n "${{ steps.cfg.outputs.project }}" || { echo 'hub.json → gce.project is empty' >&2; exit 1; }
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: hashicorp/setup-packer@v3
+        with:
+          version: "1.11.2"
+      - name: Build
+        working-directory: runner-image
+        run: |
+          packer init packer.pkr.hcl
+          packer validate \
+            -var "project=${{ steps.cfg.outputs.project }}" \
+            -var "zone=${{ steps.cfg.outputs.zone }}" \
+            -var "image_name=${{ steps.cfg.outputs.image }}" \
+            -var "runner_version=${{ inputs.runner_version }}" \
+            packer.pkr.hcl
+          packer build \
+            -var "project=${{ steps.cfg.outputs.project }}" \
+            -var "zone=${{ steps.cfg.outputs.zone }}" \
+            -var "image_name=${{ steps.cfg.outputs.image }}" \
+            -var "runner_version=${{ inputs.runner_version }}" \
+            packer.pkr.hcl
