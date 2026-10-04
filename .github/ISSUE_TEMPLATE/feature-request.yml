@@ -1,0 +1,27 @@
+name: Give the crew a new job
+description: Suggest a useful capability or integration.
+title: "Idea: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us about the workflow you want to improve. Check the [roadmap](https://github.com/AgentBurgundy/shipgremlins/blob/main/docs/ROADMAP.md) for existing plans.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe a concrete use case and what makes it difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should ShipGremlins do?
+      description: Describe the desired behavior and how you would know it works.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Alternatives or context
+      description: Optional. Include relevant integrations, examples, or workarounds.

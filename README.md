@@ -1,75 +1,153 @@
-# ShipGremlins
+<p align="center">
+  <img src="docs/assets/shipgremlins-banner.webp" alt="ShipGremlins — AI product managers that actually use your app. Open source. Slightly feral." width="1280" />
+</p>
 
-**AI product managers that actually use your app.**
+<p align="center">
+  <a href="https://github.com/AgentBurgundy/shipgremlins/actions/workflows/hub-ci.yml"><img src="https://github.com/AgentBurgundy/shipgremlins/actions/workflows/hub-ci.yml/badge.svg" alt="Build and tests" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-c3f66b?style=flat&amp;labelColor=17231c" alt="License: Apache 2.0" /></a>
+  <a href="docs/IMPLEMENTATION_STATUS.md"><img src="https://img.shields.io/badge/status-early_alpha-c3f66b?style=flat&amp;labelColor=17231c" alt="Status: early alpha" /></a>
+</p>
 
-Give AI product managers a mandate. They explore your app in a real browser, collect screenshots, and turn findings into Linear tickets. Developer agents work on approved tickets while a deterministic dispatcher checks the work, retries bounded failures, and prepares changes for your review.
+<p align="center">
+  <a href="https://shipgremlins-site.vercel.app"><strong>Meet ShipGremlins</strong></a> ·
+  <a href="#get-started">Get started</a> ·
+  <a href="docs/SETUP.md">Docs</a> ·
+  <a href="docs/ROADMAP.md">Roadmap</a> ·
+  <a href="CONTRIBUTING.md">Join the crew</a>
+</p>
 
-ShipGremlins is an **early alpha**. The working integration is **GitHub + GitHub Actions + Vercel + Linear + Claude Code**. Self-hosted Linux runners and GCE runner tooling are included. GitLab, Railway, additional model providers, and a dashboard for connections, agents, and run history are planned. The landing page is a product introduction, not an agent dashboard.
+# Your app's new night shift.
 
-[Source](https://github.com/AgentBurgundy/shipgremlins) · [Roadmap](docs/ROADMAP.md) · [Setup guide](docs/SETUP.md) · [Contributing](CONTRIBUTING.md)
+You build the product. Give a few gremlins a mandate to explore it.
 
-## What it does today
+**ShipGremlins gives AI product managers a real browser, a job to do, and a memory.** They click through your app, capture screenshots, and turn findings into Linear tickets. Developer agents work on approved tickets. The dispatcher checks the work, retries bounded failures, and prepares changes for your review.
 
-- PMs keep a mandate, feature inventory, queue, and memory for each product area. Scheduled Claude Code runs can use Playwright MCP to inspect the app and capture screenshots.
-- The fixture CLI creates CSVs and reproducible PNG files for real browser uploads. See [upload fixtures](docs/FIXTURES.md).
-- Developers receive approved Linear tickets, work on isolated branches, and open implementation PRs against `pm-staging`.
-- The dispatcher monitors checks, repairs common failures with bounded retries, and leaves actionable blockers when recovery needs help.
-- Promotion gates check verification receipts and the candidate revision before preparing a PR into staging. The owner controls staging and production merges. See [verification and its trust boundary](docs/VERIFICATION.md).
-- A production audit and opt-in reconciler keep completion tied to **all approved deliverables merged into the configured production branch**. Verification and staging alone do not mean Done.
+Real browser evidence. Approved work. **Done means merged into production.**
 
-The automation still needs configured test environments, provider credentials, clear mandates, and owner review. It is not yet a general-purpose autonomous service or a one-command cloud deployment.
+> [!NOTE]
+> **Early alpha.** The current stack is GitHub, GitHub Actions, Vercel, Linear, and Claude Code. You configure the test environment and credentials, and control staging and production merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md) before connecting a project.
 
-## Start locally
+## A particular set of nitpicks
 
-Install Git and Node.js 22.12 or newer, then clone the source:
+One PM per mandate. Different obsessions. The same app.
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="docs/assets/gremlin-security.webp" alt="Security gremlin with a magnifying glass and lock" width="150" /><br /><strong>Security PM</strong></td>
+    <td align="center" width="33%"><img src="docs/assets/gremlin-feature.webp" alt="Feature gremlin inspecting an oversized CSV" width="150" /><br /><strong>Feature PM</strong></td>
+    <td align="center" width="33%"><img src="docs/assets/gremlin-experience.webp" alt="Experience gremlin checking a phone" width="150" /><br /><strong>Experience PM</strong></td>
+  </tr>
+  <tr>
+    <td align="center">“Should this account be able to do that?”<br /><br />Roles, permissions, and access boundaries.</td>
+    <td align="center">“What if I upload this?”<br /><br />Imports, edge cases, and broken flows.</td>
+    <td align="center">“Try that on a phone.”<br /><br />Small screens, empty states, and awkward journeys.</td>
+  </tr>
+</table>
+
+These are example mandates, not fixed agent types. Each area has its own instructions, feature inventory, queue, and memory. Start with one; add another when a different part of your product needs attention. [Create a mandate →](docs/add-a-project.md)
+
+## From “that's weird” to shipped
+
+```mermaid
+flowchart LR
+    A[Explore the app] --> B[Findings + screenshots]
+    B --> C[Approve tickets]
+    C --> D[Build a fix]
+    D --> E[Verify the candidate]
+    E --> F[Review + merge]
+    F --> G[Production audit]
+```
+
+| Step        | What actually happens                                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Explore** | Scheduled PMs use Playwright MCP to inspect the app. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                |
+| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open implementation PRs against `pm-staging`.                                   |
+| **Recover** | The dispatcher monitors checks and retries recoverable failures within limits. When it cannot recover, it leaves an actionable blocker.                    |
+| **Verify**  | Promotion gates check trusted verification receipts and the candidate revision before preparing a staging PR. You supply the trusted verifier.             |
+| **Ship**    | You control staging and production merges. An explicit audit and reconciler tie completion to all approved deliverables merged into the production branch. |
+
+**“Trust me” isn't a test.** Missing or stale evidence blocks promotion. A staging merge does not close a ticket. [Read the verification model →](docs/VERIFICATION.md)
+
+## Get started
+
+You need Git and **Node.js 22.12+**. Run these commands from your terminal:
 
 ```bash
 git clone https://github.com/AgentBurgundy/shipgremlins.git
 cd shipgremlins
 npm ci
+npm run hub -- setup --check
+```
+
+On a fresh clone, **“needs setup” is expected**: no projects or provider credentials are configured yet. The check tells you what's missing. Use the [setup guide](docs/SETUP.md) to create your operational hub, add a project, connect providers, and configure a runner.
+
+```bash
 npm run hub -- setup --help
 ```
 
-Create your own hub repository for project configuration and workflow execution. Replace the example owner and repository names below with yours. If your checkout includes a sample `hub.json`, first set its `hubRepo` to your hub repository; initialization preserves existing settings and rejects conflicting repository identities.
+Use `npm run hub -- …` from the checkout. Cloning does **not** install a global `hub` command. New PMs start disabled, and scheduled agents run through GitHub Actions after you configure and enable them.
 
-```bash
-npm run hub -- setup init --project my-app --repo your-org/my-app --hub-repo your-org/your-hub
-npm run hub -- setup --check --project my-app
-```
+<details>
+<summary><strong>Local credentials and live connection checks</strong></summary>
 
-Initialization creates missing configuration and preserves existing settings. New PMs start disabled. The initial preflight is expected to report unfilled provider IDs and missing credentials; use that output as the setup checklist.
-
-Edit `projects/my-app/project.json`, `projects/my-app/areas.json`, and the area mandate. Configure isolated staging accounts and the connection variables listed in [.env.example](.env.example). The CLI does not automatically load `.env`; for local checks you can supply it explicitly:
+Configure the variables in [.env.example](.env.example). The CLI does not automatically load `.env`; pass it explicitly for local checks:
 
 ```bash
 node --env-file=.env bin/shipgremlins.mjs setup --check --project my-app
 node --env-file=.env bin/shipgremlins.mjs doctor my-app
 ```
 
-`setup --check` is local and read-only. `doctor` contacts providers and, on success, stamps the project's local verification date. Complete [setup](docs/SETUP.md) and [runner configuration](docs/runners.md), then explicitly enable the area and review the generated schedules. Agents execute through GitHub Actions; running the CLI or landing-page container does not start a background agent service.
+`setup --check` is local and read-only. `doctor` contacts providers and stamps the project's local verification date on success. Use isolated staging accounts and synthetic test data.
 
-The `hub` command remains supported. A `shipgremlins` launcher is included in `bin/`; there is no claim of a published npm package or global installer yet.
+Running the CLI or the local operator-help page does not start a background agent service. See [runner configuration](docs/runners.md).
 
-## Done means merged into production
+</details>
 
-Start with the read-only audit:
+## Production is Done
+
+Verification is a milestone. Staging is a milestone. **Done means every approved deliverable is merged into the configured production branch.**
+
+Start with a read-only audit:
 
 ```bash
 npm run hub -- tickets audit --project my-app --json
 ```
 
-It reports tracked tickets, scope hashes, and actual team workflow IDs. Reconciliation requires an operator-reviewed manifest listing the complete deliverable set and corresponding production PRs:
+<details>
+<summary><strong>Reconcile Linear status with production</strong></summary>
+
+The audit reports tracked tickets, scope hashes, and actual team workflow IDs. Reconciliation requires an operator-reviewed manifest listing the complete deliverable set and corresponding production PRs:
 
 ```bash
 npm run hub -- tickets reconcile --project my-app --manifest /secure/release-scope.json
 npm run hub -- tickets reconcile --project my-app --manifest /secure/release-scope.json --apply
 ```
 
-The first command performs a dry run. Only `--apply` enables status writes. The reconciler reads actual merged PRs and Git trees; a comment, label, or deployment alone cannot close a ticket. Canceled tickets remain canceled. Ambiguous history, edited ports, and later changes to the same files remain flagged for review.
+The first command is a dry run. Only `--apply` enables status writes. The reconciler reads actual merged PRs and Git trees; a comment, label, or deployment alone cannot close a ticket. Canceled tickets remain canceled. Ambiguous history, edited ports, and later changes to the same files remain flagged for review.
 
 Read the [manifest format and limitations](docs/LINEAR_LIFECYCLE.md) before enabling writes. This is an explicit command today, not an automatic webhook service. Disable conflicting native completion automations when using it as the lifecycle authority.
 
-## Development
+</details>
+
+## What works. What's next.
+
+| Available in the alpha                        | On the roadmap                                     |
+| --------------------------------------------- | -------------------------------------------------- |
+| GitHub + Actions + Vercel + Linear            | GitLab CI + Railway adapters                       |
+| Claude Code + Playwright MCP                  | Additional AI providers and connection management  |
+| Self-hosted Linux runner support; GCE tooling | Simpler cloud provisioning and runner management   |
+| Mandates, memory, CSV/PNG fixtures            | Richer generated fixtures and cleanup              |
+| Bounded recovery and verified promotion gates | Durable coordination and broader recovery coverage |
+| Production audit and explicit reconciliation  | Automatic production lifecycle hooks               |
+| CLI setup and local preflight                 | An agent dashboard and guided onboarding           |
+
+GCE tooling is included but has not been certified in a live environment. The landing page and local operator-help page are introductions and documentation; the management dashboard is planned.
+
+[Implementation status](docs/IMPLEMENTATION_STATUS.md) · [Roadmap](docs/ROADMAP.md) · [Master plan](docs/MASTER_PLAN.md)
+
+## Join the crew
+
+Found a bug? Have a particular set of nitpicks? [Open an issue](https://github.com/AgentBurgundy/shipgremlins/issues/new/choose) or help with a focused fix. Setup feedback, reproducible failures, and tested integrations are especially useful right now.
 
 ```bash
 npm test
@@ -77,32 +155,36 @@ npm run typecheck
 npm run lint
 ```
 
-The test suite uses fake providers and mocked HTTP responses. Normal unit tests do not require provider credentials. See [CONTRIBUTING.md](CONTRIBUTING.md) for focused checks and conventions.
+Tests use fake providers and mocked HTTP responses; normal unit tests need no provider credentials. Read [CONTRIBUTING.md](CONTRIBUTING.md) before a larger change. If you want to follow the project, a GitHub star helps other builders find it.
 
-## Documentation
+## Field guide
 
-- [Setup](docs/SETUP.md) and [runner setup](docs/runners.md)
-- [Verification receipts and promotion gates](docs/VERIFICATION.md)
-- [Linear lifecycle and production completion](docs/LINEAR_LIFECYCLE.md)
-- [Existing operating guide](docs/README.md) and [add a project](docs/add-a-project.md)
-- [Master plan](docs/MASTER_PLAN.md), [roadmap](docs/ROADMAP.md), and [launch plan](docs/OPEN_SOURCE_LAUNCH.md)
+| Start here                             | Go deeper                                                 |
+| -------------------------------------- | --------------------------------------------------------- |
+| [Setup](docs/SETUP.md)                 | [Verification and trust boundaries](docs/VERIFICATION.md) |
+| [Runners](docs/runners.md)             | [Linear lifecycle](docs/LINEAR_LIFECYCLE.md)              |
+| [Add a project](docs/add-a-project.md) | [CSV and image fixtures](docs/FIXTURES.md)                |
+| [Operating guide](docs/README.md)      | [Launch plan](docs/OPEN_SOURCE_LAUNCH.md)                 |
 
-Older operating documents use the original PM Hub name and describe the v1 workflow. The setup, verification, and lifecycle documents describe the current alpha changes; the master plan distinguishes the larger intended system.
+Older operating documents use the original PM Hub name and describe the v1 workflow. The setup, verification, and lifecycle guides describe the current alpha; the master plan distinguishes the larger intended system.
 
-## License and security
+---
 
-Copyright 2026 ShipGremlins contributors. Licensed under the [Apache License 2.0](LICENSE). Third-party dependencies retain their respective licenses.
+<p align="center"><strong>Little monsters. Better software.</strong></p>
 
-Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md). Keep provider credentials, authentication sessions, customer data, and private project configuration out of public issues and commits.
+Copyright 2026 ShipGremlins contributors. [Apache-2.0](LICENSE). Third-party dependencies retain their respective licenses. Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
 
-## Public source defaults
+<details>
+<summary><strong>Public snapshot defaults</strong></summary>
 
 This distribution contains generic configuration and no enrolled projects. Scheduled
 PM and dispatcher workflows are gated by the repository variable
 `SHIPGREMLINS_ENABLE_SCHEDULES=true`. Leave it unset until your private hub repository,
 credentials, runner, test accounts, and enabled PM mandates have been reviewed.
-Manual workflow dispatch remains available. Run `hub crons write` in your operational
+Manual workflow dispatch remains available. Run `npm run hub -- crons write` in your operational
 hub after enabling areas; the public snapshot starts with an inert placeholder cron.
 
 `npm start` and the Docker image serve a small local operator-help page. The full
 public marketing site is maintained separately; neither page is an agent dashboard.
+
+</details>

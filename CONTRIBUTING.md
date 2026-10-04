@@ -4,7 +4,7 @@ ShipGremlins is an early alpha. Useful contributions include reproducible bugs, 
 
 ## Work locally
 
-Use Git and Node.js 22 or newer:
+Use Git and Node.js 22.12 or newer:
 
 ```bash
 git clone https://github.com/AgentBurgundy/shipgremlins.git

@@ -1,0 +1,36 @@
+name: Report a gremlin
+description: Something broke. Help us reproduce it.
+title: "Bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve ShipGremlins. Use synthetic data and redact credentials, private repository names, and customer information.
+        For vulnerabilities, follow [the security policy](https://github.com/AgentBurgundy/shipgremlins/blob/main/SECURITY.md) instead of filing details here.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Include the command or workflow, steps, and a minimal example.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, ShipGremlins commit, and runner type if relevant.
+      placeholder: "Windows 11, Node 22.22.0, commit abc1234, local setup"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Optional. Share only redacted output; do not upload .env files or browser sessions.
