@@ -198,7 +198,11 @@
                       <div class="field-heading">
                         <label for="github-token"
                           ><span class="provider-icon" aria-hidden="true"
-                            >GH</span
+                            ><img
+                              src="/assets/brands/github.svg"
+                              width="18"
+                              height="18"
+                              alt="" /></span
                           >GitHub</label
                         ><span
                           class="saved-state"
@@ -236,7 +240,11 @@
                           ><span
                             class="provider-icon gitlab-icon"
                             aria-hidden="true"
-                            >GL</span
+                            ><img
+                              src="/assets/brands/gitlab.svg"
+                              width="18"
+                              height="18"
+                              alt="" /></span
                           >GitLab</label
                         ><span
                           class="saved-state"
@@ -309,89 +317,339 @@
               </div>
               <span class="section-symbol" aria-hidden="true">⌘</span>
             </div>
+            <div class="service-grid">
+              <section
+                class="service-card linear-card"
+                id="linear-connection"
+                aria-labelledby="linear-title"
+              >
+                <div class="service-heading">
+                  <span class="service-mark" aria-hidden="true"
+                    ><img
+                      src="/assets/brands/linear.svg"
+                      width="26"
+                      height="26"
+                      alt=""
+                  /></span>
+                  <div>
+                    <span class="eyebrow muted">A HOME FOR EVERY MANDATE</span>
+                    <h3 id="linear-title">Keep the work in Linear.</h3>
+                    <p>
+                      Connect your workspace. Apps get teams; PM Gremlins get
+                      projects for their proposals and approved work.
+                    </p>
+                  </div>
+                </div>
+                <div class="service-status-row">
+                  <span class="runtime-badge" id="linear-state"
+                    >Checking Linear…</span
+                  >
+                  <p id="linear-account">Loading connection status.</p>
+                </div>
+                <p class="runner-guidance" id="linear-guidance">
+                  Your credentials stay on the ShipGremlins server.
+                </p>
+                <div class="button-row service-actions">
+                  <button
+                    class="button button-dark"
+                    id="linear-connect"
+                    type="button"
+                    disabled
+                  >
+                    Connect Linear ↗</button
+                  ><button
+                    class="small-button"
+                    id="linear-refresh"
+                    type="button"
+                    disabled
+                  >
+                    Refresh status</button
+                  ><button
+                    class="small-button"
+                    id="linear-disconnect"
+                    type="button"
+                    hidden
+                  >
+                    Disconnect
+                  </button>
+                </div>
+                <div
+                  class="form-message"
+                  id="linear-message"
+                  role="status"
+                  hidden
+                ></div>
+                <div
+                  class="service-disconnect-prompt"
+                  id="linear-disconnect-prompt"
+                  hidden
+                >
+                  <p>
+                    Disconnect this instance’s Linear authorization? Existing
+                    configuration and work will be kept. New jobs may need you
+                    to reconnect.
+                  </p>
+                  <div class="button-row">
+                    <button class="small-button" id="linear-keep" type="button">
+                      Keep connected</button
+                    ><button
+                      class="small-button danger-button"
+                      id="linear-confirm-disconnect"
+                      type="button"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+                <details class="service-advanced">
+                  <summary>Advanced: use a personal Linear token</summary>
+                  <p class="runner-guidance">
+                    Use a token you manage when browser authorization is
+                    unavailable. Blank input keeps the current saved value.
+                  </p>
+                  <form id="linear-token-form">
+                    <fieldset id="linear-token-fields" disabled>
+                      <legend class="sr-only">Manual Linear credential</legend>
+                      <div class="token-grid">
+                        <div class="token-field">
+                          <div class="field-heading">
+                            <label for="linear-token"
+                              ><span
+                                class="provider-icon linear-icon"
+                                aria-hidden="true"
+                                ><img
+                                  src="/assets/brands/linear.svg"
+                                  width="18"
+                                  height="18"
+                                  alt="" /></span
+                              >Linear</label
+                            ><span
+                              class="saved-state"
+                              data-connection="LINEAR_API_KEY"
+                              >Checking…</span
+                            >
+                          </div>
+                          <p id="linear-help">
+                            Approved tickets and delivery status.
+                          </p>
+                          <div class="password-wrap">
+                            <input
+                              id="linear-token"
+                              name="LINEAR_API_KEY"
+                              type="password"
+                              autocomplete="off"
+                              spellcheck="false"
+                              autocapitalize="none"
+                              placeholder="Paste your Linear API key"
+                              aria-describedby="linear-help"
+                            /><button
+                              class="reveal-button"
+                              type="button"
+                              data-reveal="linear-token"
+                              aria-label="Show Linear API key"
+                              aria-pressed="false"
+                            >
+                              Show
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="form-bottom">
+                        <p>The token stays in your server’s .env file.</p>
+                        <button
+                          class="small-button"
+                          id="save-linear-token"
+                          type="submit"
+                        >
+                          Save Linear token
+                        </button>
+                      </div>
+                    </fieldset>
+                    <div
+                      class="form-message"
+                      id="linear-token-message"
+                      role="status"
+                      hidden
+                    ></div>
+                  </form>
+                </details>
+              </section>
+
+              <section
+                class="service-card vercel-card"
+                id="vercel-connection"
+                aria-labelledby="vercel-title"
+              >
+                <div class="service-heading">
+                  <span class="service-mark" aria-hidden="true"
+                    ><img
+                      src="/assets/brands/vercel.svg"
+                      width="26"
+                      height="26"
+                      alt=""
+                  /></span>
+                  <div>
+                    <span class="eyebrow muted">SEE WHAT ACTUALLY SHIPPED</span>
+                    <h3 id="vercel-title">Connect your deployments.</h3>
+                    <p>
+                      Authorize access to your Vercel projects and deployments
+                      so the crew can check previews and delivery.
+                    </p>
+                  </div>
+                </div>
+                <div class="service-status-row">
+                  <span class="runtime-badge" id="vercel-state"
+                    >Checking Vercel…</span
+                  >
+                  <p id="vercel-account">Loading connection status.</p>
+                </div>
+                <p class="runner-guidance" id="vercel-guidance">
+                  Your credentials stay on the ShipGremlins server.
+                </p>
+                <div class="button-row service-actions">
+                  <button
+                    class="button button-dark"
+                    id="vercel-connect"
+                    type="button"
+                    disabled
+                  >
+                    Connect Vercel ↗</button
+                  ><button
+                    class="small-button"
+                    id="vercel-refresh"
+                    type="button"
+                    disabled
+                  >
+                    Refresh status</button
+                  ><button
+                    class="small-button"
+                    id="vercel-disconnect"
+                    type="button"
+                    hidden
+                  >
+                    Disconnect
+                  </button>
+                </div>
+                <div
+                  class="form-message"
+                  id="vercel-message"
+                  role="status"
+                  hidden
+                ></div>
+                <div
+                  class="service-disconnect-prompt"
+                  id="vercel-disconnect-prompt"
+                  hidden
+                >
+                  <p>
+                    Disconnect this instance’s Vercel authorization? Existing
+                    configuration and work will be kept. New jobs may need you
+                    to reconnect.
+                  </p>
+                  <div class="button-row">
+                    <button class="small-button" id="vercel-keep" type="button">
+                      Keep connected</button
+                    ><button
+                      class="small-button danger-button"
+                      id="vercel-confirm-disconnect"
+                      type="button"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+                <details class="service-advanced">
+                  <summary>Advanced: use a personal Vercel token</summary>
+                  <p class="runner-guidance">
+                    Use a token you manage when browser authorization is
+                    unavailable. Blank input keeps the current saved value.
+                  </p>
+                  <form id="vercel-token-form">
+                    <fieldset id="vercel-token-fields" disabled>
+                      <legend class="sr-only">Manual Vercel credential</legend>
+                      <div class="token-grid">
+                        <div class="token-field">
+                          <div class="field-heading">
+                            <label for="vercel-token"
+                              ><span
+                                class="provider-icon vercel-icon"
+                                aria-hidden="true"
+                                ><img
+                                  src="/assets/brands/vercel.svg"
+                                  width="18"
+                                  height="18"
+                                  alt="" /></span
+                              >Vercel</label
+                            ><span
+                              class="saved-state"
+                              data-connection="VERCEL_TOKEN"
+                              >Checking…</span
+                            >
+                          </div>
+                          <p id="vercel-help">
+                            Deployment checks for your web app.
+                          </p>
+                          <div class="password-wrap">
+                            <input
+                              id="vercel-token"
+                              name="VERCEL_TOKEN"
+                              type="password"
+                              autocomplete="off"
+                              spellcheck="false"
+                              autocapitalize="none"
+                              placeholder="Paste your Vercel token"
+                              aria-describedby="vercel-help"
+                            /><button
+                              class="reveal-button"
+                              type="button"
+                              data-reveal="vercel-token"
+                              aria-label="Show Vercel token"
+                              aria-pressed="false"
+                            >
+                              Show
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="form-bottom">
+                        <p>The token stays in your server’s .env file.</p>
+                        <button
+                          class="small-button"
+                          id="save-vercel-token"
+                          type="submit"
+                        >
+                          Save Vercel token
+                        </button>
+                      </div>
+                    </fieldset>
+                    <div
+                      class="form-message"
+                      id="vercel-token-message"
+                      role="status"
+                      hidden
+                    ></div>
+                  </form>
+                </details>
+              </section>
+            </div>
             <form id="connections-form">
               <fieldset id="connections-fields" disabled>
-                <legend class="sr-only">Provider credentials</legend>
+                <legend class="sr-only">Model and telemetry credentials</legend>
+                <h3 class="connection-group-title">
+                  Model &amp; product signals
+                </h3>
                 <div class="token-grid">
-                  <div class="token-field">
-                    <div class="field-heading">
-                      <label for="linear-token"
-                        ><span
-                          class="provider-icon linear-icon"
-                          aria-hidden="true"
-                          >LI</span
-                        >Linear</label
-                      ><span
-                        class="saved-state"
-                        data-connection="LINEAR_API_KEY"
-                        >Checking…</span
-                      >
-                    </div>
-                    <p id="linear-help">
-                      Approved tickets and delivery status.
-                    </p>
-                    <div class="password-wrap">
-                      <input
-                        id="linear-token"
-                        name="LINEAR_API_KEY"
-                        type="password"
-                        autocomplete="off"
-                        spellcheck="false"
-                        autocapitalize="none"
-                        placeholder="Paste your Linear API key"
-                        aria-describedby="linear-help"
-                      /><button
-                        class="reveal-button"
-                        type="button"
-                        data-reveal="linear-token"
-                        aria-label="Show Linear API key"
-                        aria-pressed="false"
-                      >
-                        Show
-                      </button>
-                    </div>
-                  </div>
-                  <div class="token-field">
-                    <div class="field-heading">
-                      <label for="vercel-token"
-                        ><span
-                          class="provider-icon vercel-icon"
-                          aria-hidden="true"
-                          >▲</span
-                        >Vercel</label
-                      ><span class="saved-state" data-connection="VERCEL_TOKEN"
-                        >Checking…</span
-                      >
-                    </div>
-                    <p id="vercel-help">Deployment checks for your web app.</p>
-                    <div class="password-wrap">
-                      <input
-                        id="vercel-token"
-                        name="VERCEL_TOKEN"
-                        type="password"
-                        autocomplete="off"
-                        spellcheck="false"
-                        autocapitalize="none"
-                        placeholder="Paste your Vercel token"
-                        aria-describedby="vercel-help"
-                      /><button
-                        class="reveal-button"
-                        type="button"
-                        data-reveal="vercel-token"
-                        aria-label="Show Vercel token"
-                        aria-pressed="false"
-                      >
-                        Show
-                      </button>
-                    </div>
-                  </div>
                   <div class="token-field">
                     <div class="field-heading">
                       <label for="claude-token"
                         ><span
                           class="provider-icon claude-icon"
                           aria-hidden="true"
-                          >✳</span
+                          ><img
+                            src="/assets/brands/claude.svg"
+                            width="18"
+                            height="18"
+                            alt="" /></span
                         >Claude Code</label
                       ><span
                         class="saved-state"
@@ -454,15 +712,21 @@
             <div class="privacy-note">
               <span class="privacy-icon" aria-hidden="true">⌑</span>
               <p>
-                <strong>Your server. Your credentials.</strong> Tokens are
-                stored in the server's .env file, outside browser storage. Saved
-                values are never sent back to the dashboard. “Saved” means
-                configured; live access still needs verification.
+                <strong>Your server. Your credentials.</strong> Manual tokens
+                stay in the server’s .env file; OAuth credentials use encrypted
+                local files. Saved values are never sent back to the dashboard.
+                “Saved” means configured; live access still needs verification.
               </p>
             </div>
             <section class="slack-card" aria-labelledby="slack-title">
               <div class="slack-heading">
-                <span class="slack-mark" aria-hidden="true">#</span>
+                <span class="slack-mark" aria-hidden="true"
+                  ><img
+                    src="/assets/brands/slack.svg"
+                    width="26"
+                    height="26"
+                    alt=""
+                /></span>
                 <div>
                   <span class="eyebrow muted">KEEP THE CREW CLOSE</span>
                   <h3 id="slack-title">Meet them in Slack.</h3>
@@ -583,134 +847,340 @@
               class="project-list"
               aria-label="Configured projects"
             ></div>
-            <form id="project-form">
-              <fieldset id="project-fields" disabled>
-                <legend class="sr-only">New project</legend>
-                <div class="field provider-field">
-                  <label for="project-provider">Source provider</label
-                  ><select id="project-provider" name="provider">
-                    <option value="github">GitHub</option>
-                    <option value="gitlab">GitLab</option>
-                  </select>
-                  <p>
-                    Your code stays in your app repository. Workers run here in
-                    Docker.
-                  </p>
-                </div>
-                <div class="project-form-grid">
-                  <div class="field repository-picker" id="repository-picker">
-                    <label for="repository-select">Repository</label
-                    ><select
-                      id="repository-select"
-                      required
-                      aria-describedby="repository-status"
-                    >
-                      <option value="">Connect a source provider first</option>
+            <details class="setup-drawer" id="new-project-drawer" open>
+              <summary>Add an app</summary>
+              <form id="project-form">
+                <fieldset id="project-fields" disabled>
+                  <legend class="sr-only">New project</legend>
+                  <div class="field provider-field">
+                    <label for="project-provider">Source provider</label
+                    ><select id="project-provider" name="provider">
+                      <option value="github">GitHub</option>
+                      <option value="gitlab">GitLab</option>
                     </select>
-                    <p id="repository-status" role="status">
-                      Choose an available repository from your connection.
-                    </p>
-                    <p id="repository-detail" hidden></p>
-                  </div>
-                  <div class="field">
-                    <label for="project-name">Project name</label
-                    ><input
-                      id="project-name"
-                      name="project"
-                      type="text"
-                      required
-                      autocomplete="off"
-                      spellcheck="false"
-                      autocapitalize="none"
-                      placeholder="your-app"
-                      pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-                      aria-describedby="name-help"
-                    />
-                    <p id="name-help">
-                      Lowercase letters, numbers, and hyphens.
+                    <p>
+                      Your code stays in your app repository. Workers run here
+                      in Docker.
                     </p>
                   </div>
-                </div>
-                <div class="repository-tools">
-                  <div class="field">
-                    <label for="repository-search">Find a repository</label>
-                    <div class="repository-search-row">
-                      <input
-                        id="repository-search"
-                        type="search"
-                        autocomplete="off"
-                        placeholder="Search your repositories"
-                      /><button
-                        class="small-button"
-                        id="repository-refresh"
-                        type="button"
+                  <div class="project-form-grid">
+                    <div class="field repository-picker" id="repository-picker">
+                      <label for="repository-select">Repository</label
+                      ><select
+                        id="repository-select"
+                        required
+                        aria-describedby="repository-status"
                       >
-                        Search / refresh
-                      </button>
+                        <option value="">
+                          Connect a source provider first
+                        </option>
+                      </select>
+                      <p id="repository-status" role="status">
+                        Choose an available repository from your connection.
+                      </p>
+                      <p id="repository-detail" hidden></p>
+                    </div>
+                    <div class="field">
+                      <label for="project-name">Project name</label
+                      ><input
+                        id="project-name"
+                        name="project"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="your-app"
+                        pattern="[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
+                        aria-describedby="name-help"
+                      />
+                      <p id="name-help">
+                        Lowercase letters, numbers, and hyphens.
+                      </p>
                     </div>
                   </div>
-                  <label class="checkbox-label" for="manual-repository"
-                    ><input id="manual-repository" type="checkbox" /> Enter a
-                    repository manually</label
-                  >
-                </div>
-                <div class="field" id="manual-repository-field" hidden>
-                  <label for="project-repo" id="project-repo-label"
-                    >GitHub repository</label
-                  ><input
-                    id="project-repo"
-                    name="repo"
-                    type="text"
-                    autocomplete="off"
-                    spellcheck="false"
-                    autocapitalize="none"
-                    placeholder="your-team/your-app"
-                    pattern="[^\/\s]+/[^\/\s]+"
-                    aria-describedby="repo-help"
-                  />
-                  <p id="repo-help">Use the owner/repository format.</p>
-                </div>
-                <div class="advanced" id="gitlab-options" hidden>
-                  <p class="advanced-heading">Your GitLab server</p>
-                  <div class="field">
-                    <label for="gitlab-server">GitLab URL</label
+                  <div class="repository-tools">
+                    <div class="field">
+                      <label for="repository-search">Find a repository</label>
+                      <div class="repository-search-row">
+                        <input
+                          id="repository-search"
+                          type="search"
+                          autocomplete="off"
+                          placeholder="Search your repositories"
+                        /><button
+                          class="small-button"
+                          id="repository-refresh"
+                          type="button"
+                        >
+                          Search / refresh
+                        </button>
+                      </div>
+                    </div>
+                    <label class="checkbox-label" for="manual-repository"
+                      ><input id="manual-repository" type="checkbox" /> Enter a
+                      repository manually</label
+                    >
+                  </div>
+                  <div class="field" id="manual-repository-field" hidden>
+                    <label for="project-repo" id="project-repo-label"
+                      >GitHub repository</label
                     ><input
-                      id="gitlab-server"
-                      name="serverUrl"
-                      type="url"
+                      id="project-repo"
+                      name="repo"
+                      type="text"
                       autocomplete="off"
                       spellcheck="false"
                       autocapitalize="none"
-                      placeholder="https://gitlab.com"
-                      aria-describedby="gitlab-server-help"
+                      placeholder="your-team/your-app"
+                      pattern="[^\/\s]+/[^\/\s]+"
+                      aria-describedby="repo-help"
                     />
-                    <p id="gitlab-server-help">
-                      Leave blank for gitlab.com, or enter your self-hosted
-                      HTTPS server address without a project path.
+                    <p id="repo-help">Use the owner/repository format.</p>
+                  </div>
+                  <div class="advanced" id="gitlab-options" hidden>
+                    <p class="advanced-heading">Your GitLab server</p>
+                    <div class="field">
+                      <label for="gitlab-server">GitLab URL</label
+                      ><input
+                        id="gitlab-server"
+                        name="serverUrl"
+                        type="url"
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="none"
+                        placeholder="https://gitlab.com"
+                        aria-describedby="gitlab-server-help"
+                      />
+                      <p id="gitlab-server-help">
+                        Leave blank for gitlab.com, or enter your self-hosted
+                        HTTPS server address without a project path.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="project-linear-setup">
+                    <div class="field">
+                      <label for="project-linear-mode"
+                        >Linear team for this app</label
+                      ><select id="project-linear-mode">
+                        <option value="create">
+                          Create a new team for this app
+                        </option>
+                        <option value="reuse">Use an existing team</option>
+                        <option value="later" selected>
+                          Set up Linear later
+                        </option>
+                      </select>
+                      <p id="project-linear-help">
+                        Connect Linear to create or choose a team.
+                      </p>
+                    </div>
+                    <div class="field" id="project-linear-team-field" hidden>
+                      <label for="project-linear-team"
+                        >Existing Linear team</label
+                      ><select id="project-linear-team">
+                        <option value="">Load teams from Linear</option>
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      class="small-button"
+                      id="refresh-linear-resources"
+                    >
+                      Refresh teams &amp; projects
+                    </button>
+                    <div
+                      class="form-message"
+                      id="linear-resources-message"
+                      role="status"
+                      hidden
+                    ></div>
+                  </div>
+                  <div class="form-bottom">
+                    <p>
+                      Creates configuration, templates, and the selected Linear
+                      setup. It doesn’t start agents or change your app.
+                    </p>
+                    <button
+                      class="button button-dark"
+                      type="submit"
+                      id="add-project"
+                    >
+                      Add project <span aria-hidden="true">+</span>
+                    </button>
+                  </div>
+                </fieldset>
+                <div
+                  class="form-message"
+                  id="project-message"
+                  role="status"
+                  hidden
+                ></div>
+              </form>
+            </details>
+            <details
+              class="setup-drawer pm-create-drawer"
+              id="pm-create-drawer"
+            >
+              <summary>
+                Create a PM Gremlin
+                <span class="drawer-note"
+                  >One mandate. One Linear project.</span
+                >
+              </summary>
+              <p class="runner-guidance">
+                Give your PM a focused responsibility. It proposes work with
+                browser evidence; coding still needs your approval.
+              </p>
+              <form id="pm-create-form">
+                <fieldset id="pm-create-fields" disabled>
+                  <legend class="sr-only">New PM mandate</legend>
+                  <div class="project-form-grid">
+                    <div class="field">
+                      <label for="pm-project">App</label
+                      ><select id="pm-project" required>
+                        <option value="">Add an app first</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="pm-name">PM name</label
+                      ><input
+                        id="pm-name"
+                        type="text"
+                        required
+                        maxlength="100"
+                        placeholder="Checkout quality"
+                        autocomplete="off"
+                      />
+                    </div>
+                  </div>
+                  <div class="project-form-grid">
+                    <div class="field">
+                      <label for="pm-key">Mandate ID</label
+                      ><input
+                        id="pm-key"
+                        type="text"
+                        required
+                        pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+                        placeholder="checkout"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                      <p>
+                        Used for the area and its pm:checkout label. Lowercase
+                        letters, numbers, and hyphens.
+                      </p>
+                    </div>
+                    <div class="field">
+                      <label for="pm-linear-project">Linear project</label
+                      ><select id="pm-linear-project">
+                        <option value="">Create a project for this PM</option>
+                      </select>
+                      <p id="pm-linear-help">
+                        Your app needs a Linear team before its PM can get a
+                        project.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="pm-mandate"
+                      >What should this PM investigate?</label
+                    ><textarea
+                      id="pm-mandate"
+                      rows="6"
+                      required
+                      maxlength="12000"
+                      placeholder="Own the checkout journey from cart to confirmation. Test signed-in and guest flows, discounts, failures, and mobile layouts. Use test payments only. Propose improvements with screenshots and exact reproduction steps."
+                    ></textarea>
+                    <p>
+                      Define the goal, scope, test accounts, important flows,
+                      and boundaries.
                     </p>
                   </div>
-                </div>
-                <div class="form-bottom">
-                  <p>
-                    Creates configuration and templates. It doesn’t start agents
-                    or change your app.
-                  </p>
-                  <button
-                    class="button button-dark"
-                    type="submit"
-                    id="add-project"
-                  >
-                    Add project <span aria-hidden="true">+</span>
-                  </button>
-                </div>
-              </fieldset>
-              <div
-                class="form-message"
-                id="project-message"
-                role="status"
-                hidden
-              ></div>
-            </form>
+                  <details class="pm-advanced">
+                    <summary>Ownership, schedule &amp; work limits</summary>
+                    <div class="project-form-grid">
+                      <div class="field">
+                        <label for="pm-paths">Owned repository paths</label
+                        ><textarea
+                          id="pm-paths"
+                          rows="3"
+                          placeholder="app/checkout/&#10;components/cart/"
+                        ></textarea>
+                        <p>
+                          One path prefix per line. Add the paths this PM owns.
+                        </p>
+                      </div>
+                      <div class="field">
+                        <label for="pm-shared-paths">Shared touchpoints</label
+                        ><textarea
+                          id="pm-shared-paths"
+                          rows="3"
+                          placeholder="package.json&#10;middleware.ts"
+                        ></textarea>
+                        <p>
+                          Files this PM should coordinate on rather than assume
+                          sole ownership.
+                        </p>
+                      </div>
+                    </div>
+                    <div class="pm-settings-grid">
+                      <div class="field">
+                        <label for="pm-schedule">Schedule (UTC)</label
+                        ><input
+                          id="pm-schedule"
+                          value="0 13 * * 1-5"
+                          type="text"
+                          required
+                          autocomplete="off"
+                          spellcheck="false"
+                        />
+                        <p>Five-field cron. Default: weekdays at 13:00 UTC.</p>
+                      </div>
+                      <div class="field">
+                        <label for="pm-wip">Work-in-progress limit</label
+                        ><input
+                          id="pm-wip"
+                          type="number"
+                          min="1"
+                          max="20"
+                          value="3"
+                          required
+                        />
+                      </div>
+                      <div class="field">
+                        <label for="pm-metric">Metric or route</label
+                        ><input
+                          id="pm-metric"
+                          type="text"
+                          value="/"
+                          placeholder="/checkout"
+                        />
+                      </div>
+                    </div>
+                  </details>
+                  <div class="form-bottom">
+                    <p>
+                      Creates a disabled PM. Review its mandate and verify your
+                      app before enabling scheduled work.
+                    </p>
+                    <button
+                      class="button button-dark"
+                      id="create-pm"
+                      type="submit"
+                    >
+                      Create PM Gremlin +
+                    </button>
+                  </div>
+                </fieldset>
+                <div
+                  class="form-message"
+                  id="pm-create-message"
+                  role="status"
+                  hidden
+                ></div>
+              </form>
+            </details>
           </section>
 
           <section
@@ -989,6 +1459,7 @@
               class="job-detail"
               id="job-detail"
               aria-labelledby="job-detail-title"
+              tabindex="-1"
               hidden
             >
               <div class="job-detail-heading">
@@ -996,13 +1467,23 @@
                   <span class="eyebrow muted">ACTIVITY</span>
                   <h3 id="job-detail-title">Job activity</h3>
                 </div>
-                <button
-                  type="button"
-                  class="small-button"
-                  id="refresh-job-output"
-                >
-                  Refresh activity
-                </button>
+                <div class="button-row">
+                  <button
+                    type="button"
+                    class="small-button"
+                    id="refresh-job-output"
+                  >
+                    Refresh activity
+                  </button>
+                  <button
+                    type="button"
+                    class="small-button close-activity"
+                    id="close-job-output"
+                    aria-label="Close activity details"
+                  >
+                    Close <span aria-hidden="true">×</span>
+                  </button>
+                </div>
               </div>
               <p class="runner-guidance" id="job-detail-description">
                 Visible actions and results from this run, with credentials

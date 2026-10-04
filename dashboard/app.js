@@ -5,7 +5,16 @@
   const fragment = new URLSearchParams(window.location.hash.slice(1));
   let sessionToken = fragment.get("session") || "";
   let slackEnvelope = fragment.get("slack") || "";
-  if (sessionToken || slackEnvelope) {
+  const serviceEnvelopes = {
+    linear: fragment.get("linear") || "",
+    vercel: fragment.get("vercel") || "",
+  };
+  if (
+    sessionToken ||
+    slackEnvelope ||
+    serviceEnvelopes.linear ||
+    serviceEnvelopes.vercel
+  ) {
     history.replaceState(
       null,
       "",
@@ -45,6 +54,7 @@
   let runnerRequestBusy = false;
   let removeRunnerId = "";
   let selectedJobId = "";
+  let jobDetailTrigger = null;
   let outputLoading = false;
   let outputRevision = 0;
   let artifactSignature = "";
@@ -53,6 +63,21 @@
   let activityFilter = "all";
   let slackStatus = null;
   let slackBusy = false;
+  const serviceProviders = {
+    linear: { name: "Linear", token: "LINEAR_API_KEY" },
+    vercel: { name: "Vercel", token: "VERCEL_TOKEN" },
+  };
+  const serviceStatuses = new Map();
+  const serviceBusy = new Set();
+  let linearResources = { teams: [], projects: [] };
+  let linearResourcesLoading = false;
+  let linearModeEdited = false;
+  let pmKeyEdited = false;
+  let pmCreating = false;
+  let projectLayoutInitialized = false;
+  const mappingBusy = new Set();
+  const mappingTeamSelections = new Map();
+  const mappingMessages = new Map();
   let jobHistory = [];
   let historyCursor = null;
   let historyLoading = false;
@@ -88,6 +113,8 @@
     updateEditorControls();
     updateRunnerControls();
     renderSlackControls();
+    renderServiceControls();
+    renderLinearSetup();
     renderProjectProvider();
   }
 
@@ -164,6 +191,39 @@
     }
   }
 
+  function renderConnectionSummary() {
+    if (!currentStatus) return;
+    const configured = new Map(
+      (currentStatus.connections || []).map((item) => [
+        item.name,
+        item.configured,
+      ]),
+    );
+    for (const item of currentStatus.sourceConnections || sourceConnections) {
+      configured.set(
+        item.provider === "github" ? "GITHUB_TOKEN" : "GITLAB_TOKEN",
+        item.connected && !item.needsReconnect,
+      );
+    }
+    for (const [provider, config] of Object.entries(serviceProviders)) {
+      const item =
+        serviceStatuses.get(provider) ||
+        currentStatus.serviceConnections?.find(
+          (item) => item.provider === provider,
+        );
+      if (item)
+        configured.set(config.token, item.connected && !item.needsReconnect);
+    }
+    if (slackStatus)
+      configured.set(
+        "SLACK_WEBHOOK_URL",
+        Boolean(slackStatus.connected || slackStatus.webhookConfigured),
+      );
+    const count = [...configured.values()].filter(Boolean).length;
+    $("connection-count").textContent = String(count);
+    $("connections-summary").textContent =
+      `${count} ${count === 1 ? "connection" : "connections"} configured`;
+  }
   function renderStatus(status) {
     currentStatus = status;
     const connections = Array.isArray(status.connections)
@@ -179,13 +239,8 @@
           ["GITHUB_TOKEN", "GITLAB_TOKEN"].includes(connection.name) &&
           connection.configured,
       );
-    const savedCount = connections.filter(
-      (connection) => connection.configured,
-    ).length;
-    $("connection-count").textContent = String(savedCount);
+    renderConnectionSummary();
     $("project-count").textContent = String(projects.length);
-    $("connections-summary").textContent =
-      `${savedCount} ${savedCount === 1 ? "connection" : "connections"} saved`;
     $("projects-summary").textContent = projects.length
       ? `${projects.length} ${projects.length === 1 ? "project" : "projects"} configured`
       : "No projects yet";
@@ -330,6 +385,7 @@
       row.append(name, actions);
       const card = element("div", "project-card");
       card.append(row);
+      card.append(projectLinearDetails(project));
       if (check) {
         const result = element("div", "project-checks");
         result.setAttribute("role", check.error ? "alert" : "status");
@@ -353,6 +409,11 @@
     $("doctor-command").textContent =
       `gremlins doctor ${exampleProject ? exampleProject.name : "PROJECT"}`;
     renderJobProjects();
+    renderPmProjects();
+    if (!projectLayoutInitialized) {
+      $("new-project-drawer").open = projects.length === 0;
+      projectLayoutInitialized = true;
+    }
   }
 
   async function refreshStatus() {
@@ -398,6 +459,8 @@
         initializeUpdates(),
         refreshRunners(),
         initializeSlack(),
+        initializeService("linear"),
+        initializeService("vercel"),
         refreshSources(),
       ]);
     } catch (error) {
@@ -453,7 +516,7 @@
         "Paste at least one new token to save. Existing connections stay as they are.",
         true,
       );
-      $("linear-token").focus();
+      $("claude-token").focus();
       return;
     }
     lockForms(true);
@@ -529,7 +592,20 @@
       project: $("project-name").value.trim(),
       repo: $("project-repo").value.trim(),
       provider: $("project-provider").value,
+      linearMode: $("project-linear-mode").value,
     };
+    if (data.linearMode === "reuse") {
+      data.linearTeamId = $("project-linear-team").value;
+      if (!data.linearTeamId) {
+        message(
+          $("project-message"),
+          "Choose an existing Linear team, or create a new one for this app.",
+          true,
+        );
+        $("project-linear-team").focus();
+        return;
+      }
+    }
     if (data.provider === "gitlab" && $("gitlab-server").value.trim()) {
       try {
         const server = new URL($("gitlab-server").value.trim());
@@ -554,20 +630,28 @@
       }
     }
     lockForms(true);
-    $("add-project").textContent = "Adding…";
-    message($("project-message"), "");
+    $("add-project").textContent = "Setting up…";
+    message(
+      $("project-message"),
+      data.linearMode === "later"
+        ? "Saving your app configuration…"
+        : "Saving your app and setting up its Linear team and initial PM project…",
+    );
     try {
-      const result = await api("/api/projects", data);
+      const result = await api("/api/projects", data, "POST", 90000);
       $("project-form").reset();
       projectNameEdited = false;
+      linearModeEdited = false;
       renderProjectProvider();
+      renderLinearSetup();
       await refreshRepositories();
       const created = Array.isArray(result.result?.created)
         ? result.result.created.length
         : null;
       message(
         $("project-message"),
-        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} Complete its settings in Configuration, then use Verify connections before running agents.`,
+        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Complete its settings in Configuration, then verify connections before running agents.`,
+        result.linear?.status === "error",
       );
       try {
         await refreshStatus();
@@ -626,8 +710,14 @@
       const card = element("article", `source-card source-${provider}`);
       card.id = `source-${provider}`;
       const heading = element("div", "source-card-heading");
-      const mark = element("span", "source-provider-mark", config.icon);
+      const mark = element("span", "source-provider-mark");
       mark.setAttribute("aria-hidden", "true");
+      const logo = element("img", "");
+      logo.src = `/assets/brands/${provider}.svg`;
+      logo.width = 26;
+      logo.height = 26;
+      logo.alt = "";
+      mark.append(logo);
       const title = element("div", "");
       const h3 = element("h3", "", config.name);
       h3.id = `source-${provider}-title`;
@@ -757,6 +847,10 @@
       const flow = sourceFlows.get(provider);
       const busy = sourceBusy.has(provider);
       const connected = status?.connected && !status.needsReconnect;
+      $(`source-${provider}`).classList.toggle(
+        "is-connected",
+        Boolean(connected && !flow),
+      );
       if (connected) connectedCount += 1;
       const badge = $(`${provider}-source-state`);
       badge.textContent = !sessionToken
@@ -1973,6 +2067,7 @@
     $("activity-checks").hidden = true;
     message($("activity-message"), "Loading visible activity…");
     $("job-detail").hidden = false;
+    $("job-detail").focus({ preventScroll: true });
     const job = mergedJobs().find((item) => item.id === selectedJobId);
     $("job-detail-title").textContent =
       `${job?.project || "Browser verification"}${job?.runId ? ` · run ${job.runId}` : ""}`;
@@ -1983,12 +2078,639 @@
   $("job-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-job-id]");
     if (!button) return;
+    jobDetailTrigger = button;
     selectJob(button.dataset.jobId);
     $("job-detail").scrollIntoView({ behavior: "smooth", block: "start" });
   });
   $("refresh-job-output").addEventListener("click", refreshJobOutput);
+  function closeJobDetail() {
+    selectedJobId = "";
+    outputRevision += 1;
+    artifactSignature = "";
+    clearArtifactBlobs();
+    $("job-detail").hidden = true;
+    $("job-artifacts").replaceChildren();
+    renderJobs(runnerStatus?.jobs || []);
+    const trigger = jobDetailTrigger?.dataset?.jobId;
+    const button = [...$("job-list").querySelectorAll("[data-job-id]")].find(
+      (item) => item.dataset.jobId === trigger,
+    );
+    (button || $("refresh-runners")).focus({ preventScroll: true });
+    jobDetailTrigger = null;
+  }
+  $("close-job-output").addEventListener("click", closeJobDetail);
+  $("job-detail").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeJobDetail();
+    }
+  });
+
+  function linearConnected() {
+    const status = serviceStatuses.get("linear");
+    return Boolean(status?.connected && !status.needsReconnect);
+  }
+  function linearResultMessage(result) {
+    if (!result) return "";
+    if (result.message) return result.message;
+    if (result.status === "ready")
+      return `Linear is ready${result.teamName ? ` in ${result.teamName}` : ""}.`;
+    if (result.status === "skipped")
+      return "Linear setup can be completed later.";
+    if (result.status === "needs-connection")
+      return "Connect Linear, then use Set up Linear beside the app.";
+    return "Your local configuration was saved. Use Retry Linear setup beside the app to finish the missing mappings.";
+  }
+  function projectLinearDetails(project) {
+    const areaList = Array.isArray(project.areas) ? project.areas : [];
+    const linear = project.linear || { status: "needs-connection" };
+    const container = element("div", "project-linear-details");
+    const heading = element("div", "project-mapping-heading");
+    const label = element(
+      "span",
+      "mapping-label",
+      linear.teamName ||
+        (linear.teamId ? "Linear team connected" : "Linear team not set up"),
+    );
+    const logo = element("img", "mapping-logo");
+    logo.src = "/assets/brands/linear.svg";
+    logo.width = 14;
+    logo.height = 14;
+    logo.alt = "";
+    label.prepend(logo);
+    const create = element("button", "small-button launch-pm", "+ Create PM");
+    create.type = "button";
+    create.dataset.createPmProject = project.name;
+    heading.append(label, create);
+    container.append(heading);
+    if (linear.teamId)
+      container.append(element("p", "mapping-id", `Team ${linear.teamId}`));
+    const missing =
+      linear.status !== "ready" ||
+      areaList.some(
+        (area) => !/^[a-f0-9-]{36}$/i.test(area.linearProjectId || ""),
+      );
+    if (missing) {
+      const controls = element("div", "mapping-actions");
+      if (!linear.teamId) {
+        const label = element(
+          "label",
+          "sr-only",
+          `Linear team for ${project.name}`,
+        );
+        const select = element("select", "mapping-team");
+        select.id = `mapping-team-${project.name}`;
+        label.htmlFor = select.id;
+        select.dataset.mappingProject = project.name;
+        select.append(new Option("Create a team for this app", ""));
+        for (const team of linearResources.teams)
+          select.append(new Option(`${team.name} (${team.key})`, team.id));
+        select.value = mappingTeamSelections.get(project.name) || "";
+        select.disabled =
+          !linearConnected() || mappingBusy.has(project.name) || formsLocked;
+        controls.append(label, select);
+      }
+      const retry = element(
+        "button",
+        "small-button",
+        mappingBusy.has(project.name)
+          ? "Setting up Linear…"
+          : linear.status === "error"
+            ? "Retry Linear setup"
+            : "Set up Linear",
+      );
+      retry.type = "button";
+      retry.dataset.setupLinearProject = project.name;
+      retry.disabled =
+        !linearConnected() || mappingBusy.has(project.name) || formsLocked;
+      controls.append(retry);
+      container.append(controls);
+      const feedback = mappingMessages.get(project.name);
+      const help = element(
+        "p",
+        "runner-guidance",
+        feedback?.text ||
+          (linear.status === "error" ? linear.message : "") ||
+          (linearConnected()
+            ? "Creates only missing team and PM project mappings. Existing IDs are kept."
+            : "Connect Linear above, then finish this app’s team and PM project setup."),
+      );
+      help.classList.toggle(
+        "error",
+        Boolean(feedback?.error || linear.status === "error"),
+      );
+      help.setAttribute("role", feedback?.error ? "alert" : "status");
+      container.append(help);
+    }
+    if (areaList.length) {
+      const details = element("details", "project-pms");
+      details.append(
+        element(
+          "summary",
+          "",
+          `${areaList.length} PM ${areaList.length === 1 ? "mandate" : "mandates"}`,
+        ),
+      );
+      const list = element("ul", "pm-mapping-list");
+      for (const area of areaList) {
+        const row = element("li", "");
+        row.append(element("strong", "", area.name || area.key));
+        row.append(
+          element(
+            "span",
+            "",
+            `${area.enabled ? "Enabled" : "Disabled"} · pm:${area.key}`,
+          ),
+        );
+        row.append(
+          element(
+            "small",
+            "",
+            /^[a-f0-9-]{36}$/i.test(area.linearProjectId || "")
+              ? `Linear project ${area.linearProjectId}`
+              : "Linear project not mapped yet",
+          ),
+        );
+        list.append(row);
+      }
+      details.append(list);
+      container.append(details);
+    }
+    return container;
+  }
+  function renderPmProjects() {
+    const select = $("pm-project");
+    const previous = select.value;
+    select.replaceChildren();
+    for (const project of currentStatus?.projects || [])
+      select.append(new Option(project.name, project.name));
+    if (!select.options.length)
+      select.append(new Option("Add an app first", ""));
+    else if ([...select.options].some((option) => option.value === previous))
+      select.value = previous;
+    renderLinearSetup();
+  }
+  function renderLinearSetup() {
+    const connected = linearConnected();
+    const mode = $("project-linear-mode");
+    if (!linearModeEdited) mode.value = connected ? "create" : "later";
+    for (const option of mode.options)
+      option.disabled = option.value !== "later" && !connected;
+    $("project-linear-team-field").hidden = mode.value !== "reuse";
+    $("project-linear-team").required = mode.value === "reuse";
+    $("project-linear-team").disabled =
+      mode.value !== "reuse" || formsLocked || linearResourcesLoading;
+    $("refresh-linear-resources").disabled =
+      !connected || formsLocked || linearResourcesLoading;
+    $("project-linear-help").textContent = connected
+      ? "New apps get their own team by default. Existing teams are available if you prefer."
+      : "Connect Linear above to create a team. You can save the app now and finish the mapping later.";
+    const teamSelect = $("project-linear-team");
+    const previousTeam = teamSelect.value;
+    teamSelect.replaceChildren(
+      new Option(
+        linearResourcesLoading ? "Loading teams…" : "Choose a Linear team",
+        "",
+      ),
+    );
+    for (const team of linearResources.teams)
+      teamSelect.append(new Option(`${team.name} (${team.key})`, team.id));
+    if ([...teamSelect.options].some((option) => option.value === previousTeam))
+      teamSelect.value = previousTeam;
+    $("pm-create-fields").disabled =
+      formsLocked || pmCreating || !(currentStatus?.projects || []).length;
+    const project = (currentStatus?.projects || []).find(
+      (item) => item.name === $("pm-project").value,
+    );
+    const projectSelect = $("pm-linear-project");
+    const previousProject = projectSelect.value;
+    projectSelect.replaceChildren(
+      new Option("Create a project for this PM", ""),
+    );
+    for (const item of linearResources.projects.filter((item) =>
+      item.teamIds?.includes(project?.linear?.teamId),
+    ))
+      projectSelect.append(new Option(item.name, item.id));
+    if (
+      [...projectSelect.options].some(
+        (option) => option.value === previousProject,
+      )
+    )
+      projectSelect.value = previousProject;
+    projectSelect.disabled =
+      !project?.linear?.teamId || !connected || linearResourcesLoading;
+    $("pm-linear-help").textContent =
+      connected && project?.linear?.teamId
+        ? "Creates a Linear project in this app’s team, or uses the project you select."
+        : "The PM is saved locally first. Connect Linear and use Set up Linear beside the app to create its missing project.";
+  }
+  async function refreshLinearResources() {
+    if (!sessionToken || !linearConnected() || linearResourcesLoading) {
+      renderLinearSetup();
+      return;
+    }
+    linearResourcesLoading = true;
+    renderLinearSetup();
+    message(
+      $("linear-resources-message"),
+      "Loading your Linear teams and projects…",
+    );
+    try {
+      const result = await api("/api/linear/resources");
+      linearResources = {
+        teams: Array.isArray(result.teams) ? result.teams : [],
+        projects: Array.isArray(result.projects) ? result.projects : [],
+      };
+      message(
+        $("linear-resources-message"),
+        linearResources.teams.length
+          ? `${linearResources.teams.length} teams available.`
+          : "No teams available. Create a new team or check your Linear workspace permissions.",
+      );
+      if (currentStatus) renderStatus(currentStatus);
+    } catch (error) {
+      message($("linear-resources-message"), error.message, true);
+    } finally {
+      linearResourcesLoading = false;
+      renderLinearSetup();
+    }
+  }
+  $("project-linear-mode").addEventListener("change", () => {
+    linearModeEdited = true;
+    renderLinearSetup();
+  });
+  $("refresh-linear-resources").addEventListener(
+    "click",
+    refreshLinearResources,
+  );
+  $("pm-project").addEventListener("change", renderLinearSetup);
+  $("pm-key").addEventListener("input", () => {
+    pmKeyEdited = Boolean($("pm-key").value);
+  });
+  $("pm-name").addEventListener("input", () => {
+    if (!pmKeyEdited)
+      $("pm-key").value = $("pm-name")
+        .value.toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+  });
+  $("project-list").addEventListener("change", (event) => {
+    if (event.target.dataset.mappingProject)
+      mappingTeamSelections.set(
+        event.target.dataset.mappingProject,
+        event.target.value,
+      );
+  });
+  $("project-list").addEventListener("click", async (event) => {
+    const create = event.target.closest("[data-create-pm-project]");
+    if (create) {
+      $("pm-project").value = create.dataset.createPmProject;
+      $("pm-create-drawer").open = true;
+      renderLinearSetup();
+      $("pm-name").focus();
+      return;
+    }
+    const button = event.target.closest("[data-setup-linear-project]");
+    if (!button || button.disabled || formsLocked) return;
+    const name = button.dataset.setupLinearProject;
+    mappingBusy.add(name);
+    mappingMessages.set(name, {
+      text: "Finishing this app’s Linear team and missing PM projects…",
+    });
+    renderStatus(currentStatus);
+    try {
+      const teamId = mappingTeamSelections.get(name);
+      const result = await api(
+        `/api/projects/${encodeURIComponent(name)}/linear`,
+        teamId ? { teamId } : {},
+        "POST",
+        90000,
+      );
+      mappingMessages.set(name, {
+        text: linearResultMessage(result.linear),
+        error: result.linear?.status === "error",
+      });
+      await refreshStatus();
+      await refreshConfigFiles();
+      await refreshLinearResources();
+    } catch (error) {
+      mappingMessages.set(name, { text: error.message, error: true });
+    } finally {
+      mappingBusy.delete(name);
+      renderStatus(currentStatus);
+    }
+  });
+  $("pm-create-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (pmCreating || formsLocked) return;
+    const project = $("pm-project").value;
+    const input = {
+      key: $("pm-key").value.trim(),
+      name: $("pm-name").value.trim(),
+      mandate: $("pm-mandate").value.trim(),
+      schedule: $("pm-schedule").value.trim(),
+      wipLimit: Number($("pm-wip").value),
+      metric: $("pm-metric").value.trim() || "/",
+    };
+    if (!input.name || !input.mandate) {
+      message(
+        $("pm-create-message"),
+        "Give your PM a name and a mandate before creating it.",
+        true,
+      );
+      return;
+    }
+    if (input.schedule.split(/\s+/).length !== 5) {
+      message(
+        $("pm-create-message"),
+        "Use a five-field UTC cron schedule, such as 0 13 * * 1-5.",
+        true,
+      );
+      return;
+    }
+    for (const [id, key] of [
+      ["pm-paths", "paths"],
+      ["pm-shared-paths", "sharedTouchpoints"],
+    ]) {
+      const paths = $(id)
+        .value.split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (paths.length) input[key] = paths;
+    }
+    if ($("pm-linear-project").value)
+      input.linearProjectId = $("pm-linear-project").value;
+    pmCreating = true;
+    renderLinearSetup();
+    $("create-pm").textContent = "Creating PM…";
+    message(
+      $("pm-create-message"),
+      "Saving the mandate and setting up its Linear project when available…",
+    );
+    try {
+      const result = await api(
+        `/api/projects/${encodeURIComponent(project)}/areas`,
+        input,
+        "POST",
+        90000,
+      );
+      $("pm-create-form").reset();
+      pmKeyEdited = false;
+      $("pm-project").value = project;
+      message(
+        $("pm-create-message"),
+        `${input.name} is saved and disabled. ${linearResultMessage(result.linear)} Review its settings and verify the app before enabling it.`,
+        result.linear?.status === "error",
+      );
+      await refreshStatus();
+      await refreshConfigFiles();
+      await refreshLinearResources();
+    } catch (error) {
+      message(
+        $("pm-create-message"),
+        `${error.message} Your draft is still here.`,
+        true,
+      );
+    } finally {
+      pmCreating = false;
+      renderLinearSetup();
+      $("create-pm").textContent = "Create PM Gremlin +";
+    }
+  });
+
+  function renderServiceControls() {
+    renderConnectionSummary();
+    for (const [provider, config] of Object.entries(serviceProviders)) {
+      const status = serviceStatuses.get(provider);
+      const busy = serviceBusy.has(provider);
+      const locked = formsLocked || !sessionToken || busy || restarting;
+      const connected = status?.connected && !status.needsReconnect;
+      $(`${provider}-connect`).disabled = locked || !status?.available;
+      $(`${provider}-connect`).textContent = busy
+        ? "Working…"
+        : status?.needsReconnect
+          ? `Reconnect ${config.name} ↗`
+          : connected && status.method === "oauth"
+            ? `Change ${config.name} connection ↗`
+            : `Connect ${config.name} ↗`;
+      $(`${provider}-refresh`).disabled = locked;
+      $(`${provider}-token-fields`).disabled = locked;
+      $(`${provider}-disconnect`).hidden = status?.method !== "oauth";
+      $(`${provider}-disconnect`).disabled = locked;
+      $(`${provider}-confirm-disconnect`).disabled = locked;
+      $(`${provider}-keep`).disabled = locked;
+      if (!status) continue;
+      const badge = $(`${provider}-state`);
+      badge.textContent = status.needsReconnect
+        ? "Reconnect needed"
+        : connected
+          ? status.method === "token"
+            ? "Manual token saved"
+            : "Connected"
+          : status.available
+            ? "Not connected"
+            : "Browser setup unavailable";
+      badge.classList.toggle("ready", Boolean(connected));
+      const workspace =
+        typeof status.workspace === "string"
+          ? status.workspace
+          : status.workspace?.name;
+      const account =
+        typeof status.account === "string"
+          ? status.account
+          : status.account?.name;
+      $(`${provider}-account`).textContent =
+        [...new Set([workspace, account].filter(Boolean))].join(" · ") ||
+        (connected
+          ? `Using your saved ${config.name} connection.`
+          : `No ${config.name} account connected yet.`);
+      $(`${provider}-guidance`).textContent =
+        status.message ||
+        (status.needsReconnect
+          ? "Reconnect before requesting new work. Existing project settings are kept."
+          : provider === "linear"
+            ? "Authorize workspace access to create app teams, PM projects, and work with approved tickets. Creating teams may require workspace admin access."
+            : "Authorize the Vercel integration for the projects the crew needs. Preview protection and app-specific deployment settings still need verification.");
+    }
+    renderLinearSetup();
+  }
+  async function refreshService(provider) {
+    if (!sessionToken || serviceBusy.has(provider)) return;
+    serviceBusy.add(provider);
+    renderServiceControls();
+    try {
+      serviceStatuses.set(provider, await api(`/api/${provider}`));
+      message($(`${provider}-message`), "");
+    } catch (error) {
+      message($(`${provider}-message`), error.message, true);
+      $(`${provider}-state`).textContent = "Unable to check";
+      $(`${provider}-account`).textContent = "Use Refresh status to try again.";
+    } finally {
+      serviceBusy.delete(provider);
+      renderServiceControls();
+    }
+    if (provider === "linear") await refreshLinearResources();
+  }
+  async function initializeService(provider) {
+    if (!sessionToken) return;
+    const envelope = serviceEnvelopes[provider];
+    if (!envelope) {
+      await refreshService(provider);
+      return;
+    }
+    serviceEnvelopes[provider] = "";
+    serviceBusy.add(provider);
+    renderServiceControls();
+    try {
+      await api(`/api/${provider}/complete`, { envelope });
+      serviceStatuses.set(provider, await api(`/api/${provider}`));
+      message(
+        $(`${provider}-message`),
+        `${serviceProviders[provider].name} connected. Review the available account and project settings before running your crew.`,
+      );
+    } catch (error) {
+      message(
+        $(`${provider}-message`),
+        `${error.message} Refresh status, then start authorization again if needed.`,
+        true,
+      );
+    } finally {
+      serviceBusy.delete(provider);
+      renderServiceControls();
+    }
+    if (provider === "linear") await refreshLinearResources();
+  }
+  for (const [provider, config] of Object.entries(serviceProviders)) {
+    $(`${provider}-refresh`).addEventListener("click", () =>
+      refreshService(provider),
+    );
+    $(`${provider}-connect`).addEventListener("click", async () => {
+      if (
+        serviceBusy.has(provider) ||
+        !sessionToken ||
+        !serviceStatuses.get(provider)?.available
+      )
+        return;
+      if (hasUnsavedInputs()) {
+        message(
+          $(`${provider}-message`),
+          `Save or clear unsaved configuration and form entries before opening ${config.name}. Authorization leaves this page and returns to the same dashboard tab.`,
+          true,
+        );
+        return;
+      }
+      try {
+        sessionStorage.setItem(sessionKey, sessionToken);
+      } catch {
+        message(
+          $(`${provider}-message`),
+          "This browser cannot retain the dashboard session during authorization. Allow session storage or use the manual-token fallback.",
+          true,
+        );
+        return;
+      }
+      serviceBusy.add(provider);
+      renderServiceControls();
+      message($(`${provider}-message`), "");
+      try {
+        const result = await api(`/api/${provider}/connect`, {});
+        const url = new URL(result.url);
+        if (
+          url.origin !== "https://shipgremlins.ai" ||
+          url.pathname !== `/api/${provider}/authorize` ||
+          url.username ||
+          url.password ||
+          url.hash
+        )
+          throw new Error(
+            `The server returned an unexpected ${config.name} authorization address.`,
+          );
+        window.location.assign(url.href);
+      } catch (error) {
+        serviceBusy.delete(provider);
+        renderServiceControls();
+        message($(`${provider}-message`), error.message, true);
+      }
+    });
+    $(`${provider}-disconnect`).addEventListener("click", () => {
+      $(`${provider}-disconnect-prompt`).hidden = false;
+      $(`${provider}-keep`).focus();
+    });
+    $(`${provider}-keep`).addEventListener("click", () => {
+      $(`${provider}-disconnect-prompt`).hidden = true;
+    });
+    $(`${provider}-confirm-disconnect`).addEventListener("click", async () => {
+      if (serviceBusy.has(provider) || !sessionToken) return;
+      serviceBusy.add(provider);
+      renderServiceControls();
+      try {
+        serviceStatuses.set(
+          provider,
+          await api(`/api/${provider}`, {}, "DELETE"),
+        );
+        if (provider === "linear")
+          linearResources = { teams: [], projects: [] };
+        $(`${provider}-disconnect-prompt`).hidden = true;
+        message(
+          $(`${provider}-message`),
+          `${config.name} browser authorization removed. Existing configuration and any separately saved token are kept.`,
+        );
+        await refreshStatus();
+        await refreshRunners();
+      } catch (error) {
+        message($(`${provider}-message`), error.message, true);
+      } finally {
+        serviceBusy.delete(provider);
+        renderServiceControls();
+      }
+    });
+    $(`${provider}-token-form`).addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = $(`${provider}-token`);
+      const value = input.value.trim();
+      if (!value) {
+        message(
+          $(`${provider}-token-message`),
+          "Paste a new token to save. Blank fields keep your existing value.",
+          true,
+        );
+        input.focus();
+        return;
+      }
+      serviceBusy.add(provider);
+      renderServiceControls();
+      try {
+        await api("/api/connections", { values: { [config.token]: value } });
+        input.value = "";
+        input.type = "password";
+        const reveal = document.querySelector(
+          `[data-reveal="${provider}-token"]`,
+        );
+        reveal.textContent = "Show";
+        reveal.setAttribute("aria-pressed", "false");
+        reveal.setAttribute(
+          "aria-label",
+          reveal.getAttribute("aria-label").replace(/^Hide/, "Show"),
+        );
+        message(
+          $(`${provider}-token-message`),
+          `${config.name} token saved on this server. Use Verify connections on your app to check live access.`,
+        );
+        serviceStatuses.set(provider, await api(`/api/${provider}`));
+        await refreshStatus();
+        await refreshRunners();
+        if (provider === "linear") await refreshLinearResources();
+      } catch (error) {
+        message($(`${provider}-token-message`), error.message, true);
+      } finally {
+        serviceBusy.delete(provider);
+        renderServiceControls();
+      }
+    });
+  }
 
   function renderSlackControls() {
+    renderConnectionSummary();
     const locked = formsLocked || !sessionToken || slackBusy || restarting;
     const connected = slackStatus?.connected || slackStatus?.webhookConfigured;
     $("slack-connect").disabled = locked || !slackStatus?.available;
@@ -2636,6 +3358,11 @@
         "gitlab-server",
         "job-ticket",
         "slack-webhook",
+        "pm-name",
+        "pm-key",
+        "pm-mandate",
+        "pm-paths",
+        "pm-shared-paths",
       ].some((id) => $(id).value)
     );
   }

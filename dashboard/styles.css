@@ -3086,3 +3086,472 @@ main {
     min-height: 38px;
   }
 }
+/* Compact integration and project setup surfaces. */
+.source-grid {
+  align-items: start;
+}
+.source-card {
+  padding: 18px;
+  background: #fafbf8;
+}
+.source-gitlab {
+  background: #fafbf8;
+  border-color: var(--line);
+}
+.source-card-heading {
+  gap: 11px;
+  margin-bottom: 13px;
+}
+.source-card h3 {
+  font-size: 19px;
+}
+.source-card-heading p {
+  margin-top: 3px;
+}
+.source-provider-mark,
+.source-gitlab .source-provider-mark {
+  width: 36px;
+  height: 36px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.source-provider-mark img {
+  width: 23px;
+  height: 23px;
+}
+.source-account {
+  font-size: 12px;
+  margin: 10px 0 4px;
+}
+.source-actions {
+  margin-top: 12px;
+  gap: 8px;
+}
+.source-actions .button {
+  min-height: 36px;
+  padding: 9px 12px;
+}
+.source-card.is-connected > .runner-guidance {
+  display: none;
+}
+.source-card.is-connected .source-actions .button {
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.source-footer {
+  margin-top: 14px;
+}
+.source-advanced {
+  margin-top: 18px;
+  padding-top: 16px;
+}
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 25px;
+}
+.service-card {
+  min-width: 0;
+  padding: 20px;
+  background: #fafafc;
+  border: 1px solid #e2e2e9;
+  border-radius: 11px;
+}
+.vercel-card {
+  background: #fafbf9;
+  border-color: var(--line);
+}
+.service-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.service-mark {
+  width: 37px;
+  height: 37px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e4e3eb;
+  border-radius: 9px;
+}
+.service-mark img {
+  width: 23px;
+  height: 23px;
+}
+.service-heading .eyebrow {
+  font-size: 7px;
+  letter-spacing: 1px;
+}
+.service-heading h3 {
+  font-size: 18px;
+  line-height: 1.25;
+  letter-spacing: -0.4px;
+  margin: 6px 0;
+}
+.service-heading p {
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.service-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.service-status-row p {
+  font-size: 11px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.service-card > .runner-guidance {
+  font-size: 10px;
+  line-height: 1.75;
+}
+.service-actions {
+  gap: 8px;
+  margin-top: 13px;
+}
+.service-actions .button {
+  min-height: 36px;
+  font-size: 11px;
+  padding: 9px 13px;
+}
+.service-advanced {
+  border-top: 1px solid #e4e4eb;
+  margin-top: 17px;
+  padding-top: 14px;
+}
+.service-advanced summary {
+  font-size: 11px;
+  color: #777688;
+  cursor: pointer;
+}
+.service-advanced .token-grid {
+  grid-template-columns: 1fr;
+  margin-top: 17px;
+}
+.service-advanced .token-field {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.service-advanced .form-bottom {
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.service-disconnect-prompt {
+  margin-top: 15px;
+  padding: 13px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.service-disconnect-prompt p {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.connection-group-title {
+  font-size: 15px;
+  margin-bottom: 17px;
+  letter-spacing: -0.2px;
+}
+.field-help {
+  margin: 14px 0;
+  font-size: 11px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+.provider-icon img {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+}
+.slack-mark img {
+  width: 25px;
+  height: 25px;
+}
+.slack-card {
+  margin-top: 22px;
+  padding: 20px;
+}
+.slack-heading h3 {
+  font-size: 19px;
+}
+.setup-drawer {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.setup-drawer > summary {
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+}
+.setup-drawer[open] > summary {
+  margin-bottom: 21px;
+}
+.drawer-note {
+  display: inline-block;
+  font-weight: 400;
+  font-size: 10px;
+  color: #839071;
+  margin-left: 8px;
+}
+.project-linear-setup {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 16px;
+  padding: 18px;
+  margin-top: 22px;
+  border: 1px solid #e2dfed;
+  border-radius: 9px;
+  background: #faf9fd;
+}
+.project-linear-setup > .small-button {
+  justify-self: start;
+}
+.project-linear-setup .form-message {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+.project-linear-details {
+  border-top: 1px solid #e6eade;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+.project-mapping-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.mapping-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 650;
+  color: #666674;
+}
+.mapping-logo {
+  flex-shrink: 0;
+}
+.mapping-id {
+  font-size: 9px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: #929889;
+  overflow-wrap: anywhere;
+  margin-top: 7px;
+}
+.mapping-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.mapping-team {
+  min-width: 0;
+  max-width: 320px;
+  flex: 1 1 180px;
+  padding: 9px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.project-pms {
+  margin-top: 14px;
+}
+.project-pms summary {
+  cursor: pointer;
+  color: #718263;
+  font-size: 11px;
+}
+.pm-mapping-list {
+  list-style: none;
+  padding: 0;
+  margin: 13px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.pm-mapping-list li {
+  padding: 11px;
+  border: 1px solid #e3e9da;
+  border-radius: 7px;
+  background: #fafcf6;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.pm-mapping-list strong {
+  font-size: 11px;
+}
+.pm-mapping-list span {
+  font-size: 10px;
+  color: #7b8970;
+}
+.pm-mapping-list small {
+  font-size: 9px;
+  color: #949e8b;
+  overflow-wrap: anywhere;
+}
+.pm-create-drawer > .runner-guidance {
+  margin: 0 0 18px;
+}
+#pm-create-form .project-form-grid {
+  margin-bottom: 18px;
+}
+.field textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid #d8dfd3;
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.pm-advanced {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbf8;
+}
+.pm-advanced summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6c7c60;
+}
+.pm-advanced[open] summary {
+  margin-bottom: 18px;
+}
+.pm-settings-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr;
+  gap: 14px;
+}
+.close-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  background: #fff;
+  border-color: #a4b58e;
+  font-weight: 650;
+}
+.close-activity span {
+  font-size: 20px;
+  line-height: 1;
+}
+#job-detail:focus {
+  outline: none;
+}
+#job-detail:focus-visible {
+  outline: 3px solid #aac27f;
+  outline-offset: 3px;
+}
+@media (max-width: 1100px) {
+  .service-grid {
+    grid-template-columns: 1fr;
+  }
+  .source-actions .button {
+    width: auto;
+  }
+}
+@media (max-width: 700px) {
+  .source-card {
+    padding: 15px;
+  }
+  .source-card-heading {
+    margin-bottom: 11px;
+  }
+  .source-actions .button {
+    width: auto;
+    flex: 1 1 auto;
+  }
+  .source-card .source-actions {
+    align-items: center;
+  }
+  .source-provider-mark,
+  .source-gitlab .source-provider-mark {
+    width: 32px;
+    height: 32px;
+  }
+  .source-provider-mark img {
+    width: 21px;
+    height: 21px;
+  }
+  .service-card {
+    padding: 16px 14px;
+  }
+  .service-heading {
+    gap: 10px;
+  }
+  .service-heading h3 {
+    font-size: 18px;
+  }
+  .service-mark {
+    width: 30px;
+    height: 30px;
+  }
+  .service-mark img {
+    width: 20px;
+    height: 20px;
+  }
+  .service-actions .button {
+    width: 100%;
+    justify-content: center;
+  }
+  .project-linear-setup {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+  .pm-settings-grid,
+  .pm-mapping-list {
+    grid-template-columns: 1fr;
+  }
+  .mapping-actions {
+    align-items: stretch;
+  }
+  .mapping-team {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+  .drawer-note {
+    display: block;
+    margin: 7px 0 0 16px;
+    line-height: 1.5;
+  }
+  .job-detail-heading .button-row {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .close-activity {
+    min-height: 44px;
+  }
+  .slack-card {
+    padding: 16px 14px;
+  }
+}

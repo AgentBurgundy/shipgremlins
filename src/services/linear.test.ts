@@ -60,6 +60,92 @@ afterEach(() => {
 });
 
 describe("LinearApi transport", () => {
+  it("preserves OAuth authorization and sends persisted IDs for team/project creation", async () => {
+    const teamId = "a77c99b2-e7b2-4497-83f4-eac96c4d4e01";
+    const projectId = "531672da-9386-476d-832d-2cb9e74ac3ab";
+    const calls = stubLinear((op, vars) => {
+      if (op === "GremlinsCreateTeam")
+        return {
+          teamCreate: {
+            success: true,
+            team: { id: teamId, name: "Demo", key: "DEMO" },
+          },
+        };
+      if (op === "CreateProject")
+        return {
+          projectCreate: {
+            success: true,
+            project: {
+              id: projectId,
+              url: "https://linear.app/test/project/demo",
+            },
+          },
+        };
+      throw new Error(`Unexpected operation ${op}: ${Object.keys(vars)}`);
+    });
+    const api = new LinearApi({ apiKey: "Bearer oauth-access" });
+    await api.createTeam({
+      id: teamId,
+      name: "Demo",
+      key: "DEMO",
+      description: "App team",
+    });
+    await api.createProject({
+      id: projectId,
+      teamId,
+      name: "Core",
+      description: "Core PM",
+      content: "Test core flows",
+    });
+    expect(
+      calls.every(
+        (call) => call.headers.get("authorization") === "Bearer oauth-access",
+      ),
+    ).toBe(true);
+    expect(calls[0]!.variables.input).toMatchObject({ id: teamId });
+    expect(calls[1]!.variables.input).toMatchObject({
+      id: projectId,
+      teamIds: [teamId],
+    });
+  });
+  it("paginates resource selections and retains each project's team IDs", async () => {
+    let teams = 0;
+    const calls = stubLinear((_op, vars) => {
+      if (teams < 2) {
+        teams++;
+        return {
+          teams: {
+            nodes: [
+              { id: `team-${teams}`, key: `T${teams}`, name: `Team ${teams}` },
+            ],
+            pageInfo: {
+              hasNextPage: teams === 1,
+              endCursor: teams === 1 ? "next" : null,
+            },
+          },
+        };
+      }
+      expect(vars.after).toBeNull();
+      return {
+        projects: {
+          nodes: [
+            {
+              id: "project",
+              name: "Core",
+              url: "https://linear.app/test/project",
+              teams: { nodes: [{ id: "team-2" }] },
+            },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      };
+    });
+    expect(await client().resources()).toMatchObject({
+      teams: [{ id: "team-1" }, { id: "team-2" }],
+      projects: [{ id: "project", teamIds: ["team-2"] }],
+    });
+    expect(calls[1]!.variables.after).toBe("next");
+  });
   it("POSTs to api.linear.app with the raw key as Authorization", async () => {
     const calls = stubLinear(() => ({ issue: issueNode() }));
     await client().getTicket("GAME-12");

@@ -25,6 +25,15 @@ import {
   type SourceControl,
 } from "../sourceControl/types.ts";
 import { LocalJobDeferredError } from "./engine.ts";
+import {
+  createLinearConnection,
+  type LinearConnection,
+} from "../linearConnection/index.ts";
+import {
+  createVercelConnection,
+  type VercelConnection,
+} from "../vercelConnection/index.ts";
+import { OAuthConnectionError } from "../oauthConnection/types.ts";
 
 export interface JobPreparationOptions {
   telemetryFetch?: TelemetryDeps["fetch"];
@@ -33,7 +42,13 @@ export interface JobPreparationOptions {
   linear?: (key: string) => Pick<LinearClient, "getTicket" | "listTickets">;
   preview?: (project: Project, token: string) => Promise<string | null>;
   now?: () => Date;
-  sourceControl?: Pick<SourceControl, "acquireLease">;
+  sourceControl?: Pick<SourceControl, "acquireLease"> &
+    Partial<Pick<SourceControl, "releaseLease">>;
+  linearConnection?: Pick<
+    LinearConnection,
+    "resolveCredential" | "acquireLease" | "releaseLease"
+  >;
+  vercelConnection?: Pick<VercelConnection, "resolveCredential">;
 }
 
 export function approvedForArea(
@@ -120,6 +135,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
   const env = options.env ?? process.env;
   const sourceControl =
     options.sourceControl ?? createSourceControl({ root, env });
+  const linearConnection =
+    options.linearConnection ?? createLinearConnection({ root, env });
+  const vercelConnection =
+    options.vercelConnection ?? createVercelConnection({ root, env });
   const connections = () => ({
     ...readConnections(root),
     ...Object.fromEntries(
@@ -166,9 +185,12 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new Error(
         "Choose a PM area or an approved Linear ticket identifier.",
       );
-    const key = connections().LINEAR_API_KEY;
-    if (!key) throw new Error("Save the Linear connection first.");
-    const ticket = await linear(key).getTicket(input.ticket);
+    const credential = await linearConnection.resolveCredential({
+      minValidityMs: 5 * 60_000,
+    });
+    const ticket = await linear(credential.authorization).getTicket(
+      input.ticket,
+    );
     const area =
       ticket &&
       project.areas.find(
@@ -181,18 +203,14 @@ export function createJobPreparation(options: JobPreparationOptions) {
     return { project, area, ticket };
   }
 
-  async function prepareJob(job: LocalJob): Promise<DockerJobPayload> {
+  async function prepare(job: LocalJob): Promise<DockerJobPayload> {
     if (job.type === "verify") return { kind: "verify", nonce: job.id };
     // Recheck approval immediately before the worker starts, including queued jobs.
     const { project, area, ticket } = await validate(job);
     const saved = connections();
     const provider = project.config.provider ?? "github";
     const sourceKey = provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN";
-    const required = [
-      "CLAUDE_CODE_OAUTH_TOKEN",
-      "LINEAR_API_KEY",
-      "VERCEL_TOKEN",
-    ];
+    const required = ["CLAUDE_CODE_OAUTH_TOKEN"];
     const missing = required.filter((name) => !saved[name]);
     if (missing.length)
       throw new Error(
@@ -202,14 +220,19 @@ export function createJobPreparation(options: JobPreparationOptions) {
       required.map((name) => [name, saved[name]!]),
     );
     Object.assign(credentials, projectSecrets(root, project, env));
+    const vercelCredential = await vercelConnection.resolveCredential({
+      projectId: project.config.vercel.projectId,
+      teamId: project.config.vercel.teamId,
+      minValidityMs: 5 * 60_000,
+    });
     const preview = options.preview
-      ? await options.preview(project, saved.VERCEL_TOKEN!)
+      ? await options.preview(project, vercelCredential.token)
       : await (async () => {
           const deployment = await new VercelApi({
-            token: saved.VERCEL_TOKEN!,
+            token: vercelCredential.token,
           }).latestDeployment(
             project.config.vercel.projectId,
-            project.config.vercel.teamId,
+            project.config.vercel.teamId ?? vercelCredential.teamId ?? null,
             project.config.branches.integration,
           );
           return deployment?.state === "READY"
@@ -260,12 +283,22 @@ export function createJobPreparation(options: JobPreparationOptions) {
             `Read the supplied mandate and memory. Thoroughly test ${area.name} on the integration preview. Do not change app code or open PRs.`,
             `Search existing Linear issues first. Propose specific, reproducible gaps in Linear project ${area.linearProjectId} with labels ${LABELS.proposal} and ${area.label}, screenshots and expected/actual behavior. Never self-approve tickets.`,
           ].join("\n"),
-      `Mandate and memory:\n${JSON.stringify(memory)}`,
+      `Mandate and memory:\n${JSON.stringify({ ...memory, ...(area.mandate ? { "dashboard-mandate.md": area.mandate } : {}) })}`,
       ...(telemetry ? [telemetry] : []),
     ];
     // Reserve the credential only after slow project/provider preparation. Refresh
     // invalidates old OAuth access tokens, so the reservation covers publication.
     try {
+      const linearCredential = await linearConnection.acquireLease({
+        jobId: job.id,
+        minutes: 50,
+      });
+      credentials.LINEAR_API_KEY = linearCredential.token;
+      instructions.push(
+        linearCredential.method === "oauth"
+          ? "For Linear GraphQL use Authorization: Bearer followed by the LINEAR_API_KEY environment value. Never print the header or token."
+          : "For Linear GraphQL use the LINEAR_API_KEY environment value as the Authorization header. Never print the header or token.",
+      );
       const credential = await sourceControl.acquireLease({
         jobId: job.id,
         provider,
@@ -277,7 +310,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
       credentials[sourceKey] = credential.token;
     } catch (error) {
       if (
-        error instanceof SourceControlError &&
+        (error instanceof SourceControlError ||
+          error instanceof OAuthConnectionError) &&
         ["refresh_blocked", "busy"].includes(error.code)
       )
         throw new LocalJobDeferredError();
@@ -307,6 +341,31 @@ export function createJobPreparation(options: JobPreparationOptions) {
     };
   }
 
+  async function releaseJobResources(id: string): Promise<void> {
+    const outcomes = await Promise.allSettled([
+      sourceControl.releaseLease?.(id),
+      linearConnection.releaseLease(id),
+    ]);
+    if (outcomes.some((outcome) => outcome.status === "rejected"))
+      throw new Error(
+        "A job credential reservation could not be released; it remains bounded by its expiry.",
+      );
+  }
+  async function prepareJob(job: LocalJob): Promise<DockerJobPayload> {
+    try {
+      return await prepare(job);
+    } catch (error) {
+      await releaseJobResources(job.id);
+      if (
+        (error instanceof SourceControlError ||
+          error instanceof OAuthConnectionError) &&
+        ["refresh_blocked", "busy"].includes(error.code)
+      )
+        throw new LocalJobDeferredError();
+      throw error;
+    }
+  }
+
   async function scheduledJobs(): Promise<LocalJobInput[]> {
     if (
       !existsSync(join(root, "hub.json")) ||
@@ -316,7 +375,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const now = options.now?.() ?? new Date();
     const minute = now.toISOString().slice(0, 16);
     const jobs: LocalJobInput[] = [];
-    const key = connections().LINEAR_API_KEY;
+    const linearCredential = await linearConnection
+      .resolveCredential({ minValidityMs: 5 * 60_000 })
+      .catch(() => null);
     for (const name of listProjectNames(root)) {
       const project = loadProject(root, name);
       if (!project.config.verified) continue;
@@ -328,11 +389,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
             area: area.key,
             idempotencyKey: `pm:${name}:${area.key}:${minute}`,
           });
-        if (!key) continue;
-        const tickets = await linear(key).listTickets(area.linearProjectId, [
-          area.label,
-          LABELS.approved,
-        ]);
+        if (!linearCredential) continue;
+        const tickets = await linear(
+          linearCredential.authorization,
+        ).listTickets(area.linearProjectId, [area.label, LABELS.approved]);
         for (const ticket of tickets
           .filter((item) => approvedForArea(item, area))
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -348,5 +408,5 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
     return jobs;
   }
-  return { validate, prepareJob, scheduledJobs };
+  return { validate, prepareJob, scheduledJobs, releaseJobResources };
 }

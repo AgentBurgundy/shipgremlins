@@ -16,6 +16,12 @@ running job's token. Existing PATs remain supported, with manual repository setu
 for self-hosted GitLab. See [source control](SOURCE_CONTROL.md). Provider access
 still needs verification for each user's repositories.
 
+Linear and Vercel browser connections now feed local job preparation and provider
+checks. Explicit dashboard app/PM setup provisions one Linear team per app and one
+project per mandate, with persisted creation IDs and retry recovery. Existing
+mappings are preserved. PMs remain disabled until reviewed; connection/provisioning
+tests use fake provider responses. See [connections and mapping](LINEAR_VERCEL.md).
+
 | Capability       | Current state                                                                                                                                                                                                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createUpdater } from "../src/update/index.ts";
 import { resolveRuntime } from "./runtime.mjs";
 import { createSourceStore } from "../src/sourceControl/store.ts";
+import { createOAuthStore } from "../src/oauthConnection/storage.ts";
 
 const [bootstrap, configurationRoot, scratch, tarball] = process.argv.slice(2);
 assert(bootstrap && configurationRoot && scratch && tarball);
@@ -80,6 +81,59 @@ for (const [directory, filename, content] of [
 await createSourceStore(configurationRoot).locked(async (state, save) => {
   await save(state);
 });
+for (const provider of ["linear", "vercel"]) {
+  await createOAuthStore(configurationRoot, provider).locked(
+    async (state, save) => {
+      state.connection = {
+        accessToken: `fixture-${provider}-access-preserve`,
+        ...(provider === "linear"
+          ? { refreshToken: "fixture-linear-refresh-preserve" }
+          : {}),
+        expiresAt: Date.now() + 24 * 60 * 60_000,
+        workspace: {
+          id: "c9d8b18e-179c-4d2e-9897-20a38dadfd67",
+          name: "Fixture workspace",
+        },
+        account: { id: "fixture-account", name: "Fixture operator" },
+        leases: [
+          { jobId: "job-in-progress", expiresAt: Date.now() + 50 * 60_000 },
+        ],
+      };
+      await save(state);
+    },
+  );
+  const encrypted = readFileSync(
+    join(configurationRoot, ".run", "oauth", provider, "connection.enc"),
+  );
+  assert.equal(
+    encrypted.includes(Buffer.from(`fixture-${provider}-access-preserve`)),
+    false,
+  );
+}
+const provisioningDirectory = join(
+  configurationRoot,
+  ".run",
+  "linear",
+  "provisioning",
+);
+mkdirSync(provisioningDirectory, { recursive: true });
+writeFileSync(
+  join(provisioningDirectory, "fixture.json"),
+  JSON.stringify({
+    schema: 1,
+    workspaceId: "c9d8b18e-179c-4d2e-9897-20a38dadfd67",
+    team: {
+      id: "9816d1df-61b3-43ca-9a93-5b2c8eb2c75a",
+      name: "Fixture",
+      key: "FIXTURE",
+      created: true,
+      reuse: false,
+    },
+    areas: {
+      core: { id: "5565a8b8-357d-4e97-9f1f-4cdd0f66d091", created: false },
+    },
+  }),
+);
 const originalConfiguration = snapshot(configurationRoot);
 const sha = "d".repeat(40);
 const env = { ...process.env, HOME: home, USERPROFILE: home };
@@ -154,6 +208,14 @@ assert.equal(rolledBack.phase, "ready", rolledBack.message);
 assert.equal(resolveRuntime(bootstrap, home), bootstrap);
 assert.equal(selectedVersion(), `ShipGremlins ${previousVersion}`);
 assert.deepEqual(snapshot(configurationRoot), originalConfiguration);
+for (const provider of ["linear", "vercel"]) {
+  const preserved = await createOAuthStore(configurationRoot, provider).read();
+  assert.equal(
+    preserved.connection?.accessToken,
+    `fixture-${provider}-access-preserve`,
+  );
+  assert.equal(preserved.connection?.leases[0]?.jobId, "job-in-progress");
+}
 console.log(
-  "PASS real staged update: isolated npm install, candidate startup/config checks, activation, bootstrap rollback, unchanged PM files, credentials and local queue storage.",
+  "PASS real staged update: isolated npm install, candidate startup/config checks, activation, bootstrap rollback, unchanged PM files, encrypted OAuth keys/connections, Linear provisioning journal, credentials and local queue storage.",
 );

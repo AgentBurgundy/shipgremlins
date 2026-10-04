@@ -62,6 +62,21 @@ import { doctorChecks, stampVerified } from "./doctor.ts";
 import { createSlackConnect } from "../slack/connection.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
 import {
+  createLinearConnection,
+  type LinearConnection,
+} from "../linearConnection/index.ts";
+import {
+  createVercelConnection,
+  type VercelConnection,
+} from "../vercelConnection/index.ts";
+import { OAuthConnectionError } from "../oauthConnection/types.ts";
+import { LinearApi } from "../services/linear.ts";
+import {
+  createLinearProvisioning,
+  LinearProvisioningError,
+  type LinearMappingStatus,
+} from "../setup/linearProvisioning.ts";
+import {
   SourceControlError,
   type SourceControl,
   type SourceStatus,
@@ -189,6 +204,9 @@ export interface DashboardOptions {
   slack?: ReturnType<typeof createSlackConnect>;
   activityStore?: ActivityStore;
   sourceControl?: SourceControl;
+  linearConnection?: LinearConnection;
+  vercelConnection?: VercelConnection;
+  linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
 }
 
 export function createDashboardServer(
@@ -212,8 +230,56 @@ export function createDashboardServer(
   const docker = options.docker ?? createDockerRunners({ packageRoot });
   const sourceControl =
     options.sourceControl ?? createSourceControl({ root, session });
+  const linearConnection =
+    options.linearConnection ?? createLinearConnection({ root, session });
+  const vercelConnection =
+    options.vercelConnection ?? createVercelConnection({ root, session });
+  const linearProvisioning =
+    options.linearProvisioning ??
+    createLinearProvisioning({
+      root,
+      client: async () =>
+        new LinearApi({
+          apiKey: (
+            await linearConnection.resolveCredential({
+              minValidityMs: 5 * 60_000,
+            })
+          ).authorization,
+        }),
+    });
+  async function provisionLinear(
+    project: string,
+    teamId?: string,
+  ): Promise<LinearMappingStatus> {
+    try {
+      const status = await linearConnection.status({
+        checkAvailability: false,
+      });
+      if (!status.connected)
+        return {
+          status: "needs-connection",
+          message:
+            "App and PM settings are saved. Connect Linear, then retry Linear setup.",
+        };
+      return await linearProvisioning.provision(project, { teamId });
+    } catch (error) {
+      return {
+        status: "error",
+        message:
+          error instanceof LinearProvisioningError
+            ? error.message
+            : "Linear setup did not finish. Saved settings were preserved; reconnect Linear and retry.",
+      };
+    }
+  }
   const preparation =
-    options.jobs ?? createJobPreparation({ root, sourceControl });
+    options.jobs ??
+    createJobPreparation({
+      root,
+      sourceControl,
+      linearConnection,
+      vercelConnection,
+    });
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
   let manager: LocalRunners | undefined = options.runners;
@@ -225,7 +291,7 @@ export function createDashboardServer(
       activityStore,
       ...preparation,
       beforeLaunch: () => activityStore.ensure(),
-      releaseJobResources: (id) => sourceControl.releaseLease(id),
+      releaseJobResources: preparation.releaseJobResources,
     }));
   let dockerState: Awaited<ReturnType<DockerRunners["preflight"]>> | undefined;
   let dockerCheckedAt = 0;
@@ -236,12 +302,23 @@ export function createDashboardServer(
     }
     const saved = readConnections(root);
     const sources = await sourceControl.status();
+    const serviceConnections = await Promise.all([
+      linearConnection.status({ checkAvailability: false }),
+      vercelConnection.status({ checkAvailability: false }),
+    ]);
     const blockedSources = new Set<string>();
     const required = new Set([
       "CLAUDE_CODE_OAUTH_TOKEN",
       "LINEAR_API_KEY",
       "VERCEL_TOKEN",
     ]);
+    for (const connection of serviceConnections) {
+      const name =
+        connection.provider === "linear" ? "LINEAR_API_KEY" : "VERCEL_TOKEN";
+      if (connection.connected && !connection.needsReconnect)
+        required.delete(name);
+      else if (connection.method === "oauth") blockedSources.add(name);
+    }
     for (const name of listProjectNames(root)) {
       try {
         const project = loadProject(root, name);
@@ -292,6 +369,7 @@ export function createDashboardServer(
         ),
       },
       sourceConnections: sources,
+      serviceConnections,
       limitations: [
         "Local workers use Claude Code. Each worker runs one job at a time.",
         "Jobs create draft integration PRs/MRs; staging promotion and production merges still need review.",
@@ -431,6 +509,64 @@ export function createDashboardServer(
             throw new RequestError(
               400,
               "Source control could not complete this request. Check the connection and try again.",
+            );
+          }
+          return;
+        }
+        const serviceAction =
+          /^\/api\/(linear|vercel)(?:\/(connect|complete|resources))?$/.exec(
+            url.pathname,
+          );
+        if (serviceAction) {
+          const connection =
+            serviceAction[1] === "linear" ? linearConnection : vercelConnection;
+          const action = serviceAction[2];
+          try {
+            if (req.method === "GET" && !action)
+              json(res, 200, await connection.status());
+            else if (
+              req.method === "GET" &&
+              action === "resources" &&
+              serviceAction[1] === "linear"
+            )
+              json(res, 200, await linearProvisioning.resources());
+            else if (req.method === "DELETE" && !action) {
+              if (Object.keys(await body(req)).length)
+                throw new RequestError(
+                  400,
+                  "Disconnect takes an empty JSON object.",
+                );
+              json(res, 200, await connection.disconnect());
+            } else if (req.method === "POST" && action === "connect") {
+              if (Object.keys(await body(req)).length)
+                throw new RequestError(
+                  400,
+                  "Connection setup takes an empty JSON object.",
+                );
+              json(res, 200, await connection.connect(`${origin}/`));
+            } else if (req.method === "POST" && action === "complete") {
+              const value = await body(req);
+              if (
+                Object.keys(value).length !== 1 ||
+                typeof value.envelope !== "string"
+              )
+                throw new RequestError(
+                  400,
+                  "Provide the connection setup envelope.",
+                );
+              json(res, 200, await connection.complete(value.envelope));
+            } else
+              throw new RequestError(405, "Unsupported connection action.");
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            if (
+              error instanceof OAuthConnectionError ||
+              error instanceof LinearProvisioningError
+            )
+              throw new RequestError(error.status, error.message);
+            throw new RequestError(
+              400,
+              "The connection request did not finish. Check access and try again.",
             );
           }
           return;
@@ -757,6 +893,10 @@ export function createDashboardServer(
           assertNoSymlinks(join(root, "hub.json"));
           const saved = readConnections(root);
           const sourceConnections = await sourceControl.status();
+          const serviceConnections = await Promise.all([
+            linearConnection.status({ checkAvailability: false }),
+            vercelConnection.status({ checkAvailability: false }),
+          ]);
           const configWarnings: string[] = [];
           const projectConnections: {
             name: string;
@@ -794,11 +934,26 @@ export function createDashboardServer(
                 repo: project.config.repo,
                 provider: project.config.provider ?? "github",
                 serverUrl: project.config.serverUrl,
+                linear: linearProvisioning.status(name),
                 areas: project.areas.map(
-                  ({ key, name: areaName, enabled }) => ({
+                  ({
                     key,
                     name: areaName,
                     enabled,
+                    linearProjectId,
+                    mandate,
+                    paths,
+                    schedule,
+                    wipLimit,
+                  }) => ({
+                    key,
+                    name: areaName,
+                    enabled,
+                    linearProjectId,
+                    mandate,
+                    paths,
+                    schedule,
+                    wipLimit,
                   }),
                 ),
               };
@@ -816,6 +971,7 @@ export function createDashboardServer(
             configWarnings,
             projects,
             sourceConnections,
+            serviceConnections,
             connections: [
               ...new Map(
                 [
@@ -943,6 +1099,8 @@ export function createDashboardServer(
                   "hubRepo",
                   "provider",
                   "serverUrl",
+                  "linearMode",
+                  "linearTeamId",
                 ].includes(key),
             ) ||
             typeof input.project !== "string" ||
@@ -953,7 +1111,15 @@ export function createDashboardServer(
               !["github", "gitlab"].includes(String(input.provider))) ||
             (input.serverUrl !== undefined &&
               (input.provider !== "gitlab" ||
-                !validSourceServer(input.serverUrl)))
+                !validSourceServer(input.serverUrl))) ||
+            (input.linearMode !== undefined &&
+              !["create", "reuse", "later"].includes(
+                String(input.linearMode),
+              )) ||
+            (input.linearTeamId !== undefined &&
+              (typeof input.linearTeamId !== "string" ||
+                !/^[a-f0-9-]{36}$/i.test(input.linearTeamId))) ||
+            (input.linearMode === "reuse" && !input.linearTeamId)
           )
             throw new RequestError(
               400,
@@ -1032,7 +1198,79 @@ export function createDashboardServer(
               400,
               "Project setup could not finish. Check the project ID, source repository, and existing configuration with gremlins setup init --help.",
             );
-          json(res, 200, { ok: true, result: JSON.parse(output.join("\n")) });
+          const linear =
+            input.linearMode === "later"
+              ? {
+                  status: "skipped" as const,
+                  message: "App saved. Set up its Linear team when ready.",
+                }
+              : await provisionLinear(
+                  input.project,
+                  typeof input.linearTeamId === "string"
+                    ? input.linearTeamId
+                    : undefined,
+                );
+          json(res, 200, {
+            ok: true,
+            result: JSON.parse(output.join("\n")),
+            linear,
+          });
+          return;
+        }
+        const projectMapping =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/(linear|areas)$/.exec(
+            url.pathname,
+          );
+        if (projectMapping) {
+          if (req.method !== "POST")
+            throw new RequestError(
+              405,
+              "Use POST to configure the app's team or add a PM.",
+            );
+          const project = projectMapping[1]!;
+          const input = await body(req);
+          if (projectMapping[2] === "linear") {
+            if (
+              Object.keys(input).some((key) => key !== "teamId") ||
+              (input.teamId !== undefined &&
+                (typeof input.teamId !== "string" ||
+                  !/^[a-f0-9-]{36}$/i.test(input.teamId)))
+            )
+              throw new RequestError(
+                400,
+                "Provide an optional existing Linear team UUID.",
+              );
+            loadProject(root, project);
+            json(res, 200, {
+              ok: true,
+              linear: await provisionLinear(
+                project,
+                typeof input.teamId === "string" ? input.teamId : undefined,
+              ),
+            });
+          } else {
+            try {
+              await linearProvisioning.addArea(project, input);
+            } catch (error) {
+              if (error instanceof LinearProvisioningError)
+                throw new RequestError(error.status, error.message);
+              throw new RequestError(
+                400,
+                "PM settings could not be saved. Check the mandate, key, and configuration.",
+              );
+            }
+            const configured = loadProject(root, project).config.linear;
+            json(res, 200, {
+              ok: true,
+              linear: configured
+                ? await provisionLinear(project)
+                : {
+                    status: "skipped",
+                    message:
+                      "PM saved and disabled. Set up this app's Linear team to create its project.",
+                  },
+            });
+          }
           return;
         }
         const verifyProject =
@@ -1053,6 +1291,8 @@ export function createDashboardServer(
             fetch,
             today: () => new Date().toISOString().slice(0, 10),
             sourceControl,
+            linearConnection,
+            vercelConnection,
           });
           const ok = checks.every((check) => check.ok);
           if (ok)

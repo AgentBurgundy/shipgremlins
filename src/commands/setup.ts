@@ -11,6 +11,8 @@ import { preflightSummary } from "../terminal.ts";
 import { inspectSetup, type PreflightDeps } from "../setup/preflight.ts";
 import { parseFlags, type Io } from "./crons.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
+import { createLinearConnection } from "../linearConnection/index.ts";
+import { createVercelConnection } from "../vercelConnection/index.ts";
 
 export interface SetupDeps extends PreflightDeps {
   templatesRoot?: string;
@@ -188,9 +190,19 @@ export async function runSetup(
     const sourceConnections =
       deps.sourceConnections ??
       (await createSourceControl({ root: directory, env: deps.env }).status());
+    const oauthConnections =
+      deps.oauthConnections ??
+      (await Promise.all([
+        createLinearConnection({ root: directory, env: deps.env }).status({
+          checkAvailability: false,
+        }),
+        createVercelConnection({ root: directory, env: deps.env }).status({
+          checkAvailability: false,
+        }),
+      ]));
     const report = inspectSetup(
       directory,
-      { ...deps, sourceConnections },
+      { ...deps, sourceConnections, oauthConnections },
       string("project"),
     );
     if (values.json) io.log(JSON.stringify(report, null, 2));

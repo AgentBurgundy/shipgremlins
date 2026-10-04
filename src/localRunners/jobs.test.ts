@@ -10,6 +10,7 @@ import { createJobPreparation, scheduledThisMinute } from "./jobs.ts";
 import type { LocalJob } from "./types.ts";
 import { SourceControlError } from "../sourceControl/types.ts";
 import { LocalJobDeferredError } from "./engine.ts";
+import { OAuthConnectionError } from "../oauthConnection/types.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -187,13 +188,83 @@ describe("local job preparation", () => {
     expect(payload.credentials).toEqual({
       GITHUB_TOKEN: env.GITHUB_TOKEN,
       LINEAR_API_KEY: env.LINEAR_API_KEY,
-      VERCEL_TOKEN: env.VERCEL_TOKEN,
       CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
       GREMLINS_PREVIEW_BYPASS: "preview-secret",
     });
     expect(payload.prompt).toContain("DRAFT pull request");
     expect(payload.prompt).toContain("Never merge");
     expect(JSON.stringify(payload)).not.toContain("never-copy");
+  });
+  it("uses OAuth credentials for tickets and preview without exporting the Vercel token", async () => {
+    const linearCredential = {
+      token: "linear-oauth",
+      authorization: "Bearer linear-oauth",
+      method: "oauth" as const,
+    };
+    const releaseLease = vi.fn(async () => {});
+    const acquireLease = vi.fn(async () => linearCredential);
+    const linear = vi.fn(() => ({
+      getTicket: async () => ticket,
+      listTickets: async () => [ticket],
+    }));
+    const vercelResolve = vi.fn(async () => ({
+      token: "vercel-oauth",
+      authorization: "Bearer vercel-oauth",
+      method: "oauth" as const,
+    }));
+    const prepared = createJobPreparation({
+      root,
+      env: { ...env, LINEAR_API_KEY: undefined, VERCEL_TOKEN: undefined },
+      linear,
+      linearConnection: {
+        resolveCredential: async () => linearCredential,
+        acquireLease,
+        releaseLease,
+      },
+      vercelConnection: { resolveCredential: vercelResolve },
+      preview: async (_project, token) => {
+        expect(token).toBe("vercel-oauth");
+        return "https://preview.vercel.app";
+      },
+    });
+    const payload = await prepared.prepareJob(job);
+    expect(linear).toHaveBeenCalledWith("Bearer linear-oauth");
+    expect(acquireLease).toHaveBeenCalledWith({ jobId: job.id, minutes: 50 });
+    expect(vercelResolve).toHaveBeenCalledWith({
+      projectId: "prj_test",
+      teamId: null,
+      minValidityMs: 5 * 60_000,
+    });
+    expect(payload.credentials?.LINEAR_API_KEY).toBe("linear-oauth");
+    expect(payload.prompt).toContain("Authorization: Bearer");
+    expect(JSON.stringify(payload)).not.toContain("vercel-oauth");
+    expect(releaseLease).not.toHaveBeenCalled();
+    await prepared.releaseJobResources(job.id);
+    expect(releaseLease).toHaveBeenCalledWith(job.id);
+  });
+  it("defers Linear refresh conflicts and releases acquired resources when later admission fails", async () => {
+    const releaseLease = vi.fn(async () => {});
+    const prepared = createJobPreparation({
+      root,
+      env,
+      linearConnection: {
+        resolveCredential: async () => {
+          throw new OAuthConnectionError(
+            "private upstream",
+            "refresh_blocked",
+            409,
+          );
+        },
+        acquireLease: async () => {
+          throw new Error("not reached");
+        },
+        releaseLease,
+      },
+    });
+    await expect(prepared.prepareJob(job)).rejects.toBeInstanceOf(
+      LocalJobDeferredError,
+    );
+    expect(releaseLease).toHaveBeenCalledWith(job.id);
   });
   it.each([
     { labels: ["pm:core"] },

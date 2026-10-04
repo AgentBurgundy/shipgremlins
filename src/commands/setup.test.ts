@@ -518,6 +518,51 @@ describe("setup status and CLI", () => {
     ).toBe(false);
   });
 
+  it("accepts saved Linear and Vercel OAuth without requiring manual token variables", () => {
+    initializeSetup(root, templatesRoot, input);
+    const report = inspectSetup(root, {
+      ...deps,
+      oauthConnections: [
+        { provider: "linear", method: "oauth", connected: true },
+        { provider: "vercel", method: "oauth", connected: true },
+      ],
+    });
+    expect(
+      report.secrets.some((secret) =>
+        ["LINEAR_API_KEY", "VERCEL_TOKEN"].includes(secret.name),
+      ),
+    ).toBe(false);
+    expect(
+      report.checks
+        .filter((check) => check.id.startsWith("oauth:"))
+        .map((check) => check.status),
+    ).toEqual(["pass", "pass"]);
+    const revoked = inspectSetup(root, {
+      ...deps,
+      env: { LINEAR_API_KEY: "stale-key", VERCEL_TOKEN: "stale-token" },
+      oauthConnections: [
+        {
+          provider: "linear",
+          method: "oauth",
+          connected: false,
+          needsReconnect: true,
+        },
+        {
+          provider: "vercel",
+          method: "oauth",
+          connected: false,
+          needsReconnect: true,
+        },
+      ],
+    });
+    expect(
+      revoked.checks
+        .filter((check) => check.id.startsWith("oauth:"))
+        .every((check) => check.status === "fail"),
+    ).toBe(true);
+    expect(JSON.stringify(revoked)).not.toMatch(/stale-key|stale-token/);
+  });
+
   it("can distinguish a configured local installation from provider certification", () => {
     initializeSetup(root, templatesRoot, input);
     const projectFile = join(root, "projects", input.project, "project.json");

@@ -5,6 +5,7 @@ import { loadHub, loadProject } from "../config.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
 import { isExampleHub, validateName } from "./files.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
+import type { OAuthStatus } from "../oauthConnection/types.ts";
 
 export type Tool = "git" | "npm" | "docker" | "claude" | "gcloud";
 export interface ToolResult {
@@ -35,6 +36,10 @@ export interface PreflightDeps {
   sourceConnections?: Pick<
     SourceStatus,
     "provider" | "serverUrl" | "connected" | "method" | "needsReconnect"
+  >[];
+  oauthConnections?: Pick<
+    OAuthStatus,
+    "provider" | "connected" | "method" | "needsReconnect"
   >[];
 }
 
@@ -68,7 +73,7 @@ export function inspectSetup(
 ): SetupReport {
   if (selectedProject) validateName(selectedProject, "project");
   const checks: SetupCheck[] = [];
-  const secretNames = new Set(["LINEAR_API_KEY", "VERCEL_TOKEN"]);
+  const secretNames = new Set<string>();
   const add = (
     id: string,
     status: SetupCheck["status"],
@@ -76,6 +81,23 @@ export function inspectSetup(
   ): void => {
     checks.push({ id, status, detail });
   };
+  for (const [provider, secretName] of [
+    ["linear", "LINEAR_API_KEY"],
+    ["vercel", "VERCEL_TOKEN"],
+  ] as const) {
+    const connection = deps.oauthConnections?.find(
+      (item) => item.provider === provider && item.method === "oauth",
+    );
+    if (connection)
+      add(
+        `oauth:${provider}`,
+        connection.connected && !connection.needsReconnect ? "pass" : "fail",
+        connection.connected && !connection.needsReconnect
+          ? `${provider === "linear" ? "Linear" : "Vercel"} OAuth is saved; doctor checks live project access.`
+          : `Reconnect ${provider === "linear" ? "Linear" : "Vercel"} in the dashboard. The saved OAuth connection needs attention.`,
+      );
+    else secretNames.add(secretName);
+  }
   const nodeVersion = deps.nodeVersion ?? process.versions.node;
   const parsed = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(nodeVersion);
   const major = Number(parsed?.[1]);

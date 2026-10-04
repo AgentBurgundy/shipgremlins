@@ -25,6 +25,12 @@ import type { Updater, UpdateStatus } from "../update/index.ts";
 import type { LocalRunners } from "../localRunners/engine.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import type { createJobPreparation } from "../localRunners/jobs.ts";
+import type {
+  OAuthConnection,
+  OAuthProvider,
+} from "../oauthConnection/types.ts";
+import { OAuthConnectionError } from "../oauthConnection/types.ts";
+import { LinearProvisioningError } from "../setup/linearProvisioning.ts";
 import {
   SourceControlError,
   type SourceControl,
@@ -35,6 +41,38 @@ const session = "a".repeat(64);
 const directories: string[] = [];
 const servers: Server[] = [];
 const auth = { Authorization: `Bearer ${session}` };
+function oauthFixture(provider: OAuthProvider): OAuthConnection {
+  const status = {
+    provider,
+    available: true,
+    connected: true,
+    method: "oauth" as const,
+    workspace: { id: "workspace", name: "Test workspace" },
+  };
+  return {
+    status: vi.fn(async () => status),
+    connect: vi.fn(async () => ({
+      url: `https://shipgremlins.ai/api/${provider}/authorize?request=encrypted`,
+    })),
+    complete: vi.fn(async () => status),
+    disconnect: vi.fn(async () => ({
+      ...status,
+      connected: false,
+      method: "none" as const,
+    })),
+    resolveCredential: vi.fn(async () => ({
+      token: "never-public",
+      authorization: "Bearer never-public",
+      method: "oauth" as const,
+    })),
+    acquireLease: vi.fn(async () => ({
+      token: "never-public",
+      authorization: "Bearer never-public",
+      method: "oauth" as const,
+    })),
+    releaseLease: vi.fn(async () => {}),
+  };
+}
 function temporary(): string {
   const directory = mkdtempSync(
     join(realpathSync(tmpdir()), "sg-dashboard-test-"),
@@ -96,6 +134,130 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it.each(["linear", "vercel"] as const)(
+    "authenticates %s OAuth routes and derives the return URL server-side",
+    async (provider) => {
+      const connection = oauthFixture(provider);
+      const { url } = await start(undefined, [], {
+        [provider === "linear" ? "linearConnection" : "vercelConnection"]:
+          connection,
+      });
+      expect((await fetch(`${url}/api/${provider}`)).status).toBe(401);
+      expect(
+        (
+          await post(
+            `${url}/api/${provider}/connect`,
+            {},
+            { Origin: "https://evil.example" },
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (
+          await post(`${url}/api/${provider}/connect`, {
+            returnUrl: "https://evil.example",
+          })
+        ).status,
+      ).toBe(400);
+      expect(connection.connect).not.toHaveBeenCalled();
+      expect((await post(`${url}/api/${provider}/connect`, {})).status).toBe(
+        200,
+      );
+      expect(connection.connect).toHaveBeenCalledWith(url + "/");
+      expect(
+        (
+          await post(`${url}/api/${provider}/complete`, {
+            envelope: "encrypted",
+          })
+        ).status,
+      ).toBe(200);
+      expect(connection.complete).toHaveBeenCalledWith("encrypted");
+      const text = await (
+        await fetch(`${url}/api/${provider}`, { headers: auth })
+      ).text();
+      expect(text).not.toContain("never-public");
+      expect(JSON.parse(text)).toMatchObject({
+        connected: true,
+        method: "oauth",
+      });
+      connection.complete = vi.fn(async () => {
+        throw new OAuthConnectionError(
+          "Setup expired. Connect again.",
+          "expired",
+          409,
+        );
+      });
+      expect(
+        (await post(`${url}/api/${provider}/complete`, { envelope: "old" }))
+          .status,
+      ).toBe(409);
+    },
+  );
+
+  it("preserves a saved app after Linear failure and exposes explicit retry and PM creation", async () => {
+    const linearConnection = oauthFixture("linear");
+    const linearProvisioning: NonNullable<
+      DashboardOptions["linearProvisioning"]
+    > = {
+      status: vi.fn(() => ({ status: "skipped" as const })),
+      resources: vi.fn(async () => ({ teams: [], projects: [] })),
+      provision: vi.fn(async () => {
+        throw new LinearProvisioningError("Retry the saved operation.", 502);
+      }),
+      addArea: vi.fn(async () => {}),
+    };
+    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const { url, root } = await start(packageRoot, [], {
+      linearConnection,
+      linearProvisioning,
+    });
+    const response = await post(`${url}/api/projects`, {
+      project: "demo",
+      repo: "org/app",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      linear: { status: "error", message: "Retry the saved operation." },
+    });
+    expect(
+      readFileSync(join(root, "projects/demo/project.json"), "utf8"),
+    ).toContain("org/app");
+    expect(linearProvisioning.provision).toHaveBeenCalledWith("demo", {
+      teamId: undefined,
+    });
+    expect((await post(`${url}/api/projects/demo/linear`, {})).status).toBe(
+      200,
+    );
+    expect(linearProvisioning.provision).toHaveBeenCalledTimes(2);
+    expect(
+      (
+        await post(`${url}/api/projects/demo/areas`, {
+          key: "security",
+          name: "Security",
+          mandate: "Test permission boundaries.",
+        })
+      ).status,
+    ).toBe(200);
+    expect(linearProvisioning.addArea).toHaveBeenCalledWith("demo", {
+      key: "security",
+      name: "Security",
+      mandate: "Test permission boundaries.",
+    });
+    expect(
+      (await fetch(`${url}/api/linear/resources`, { headers: auth })).status,
+    ).toBe(200);
+    expect(linearProvisioning.resources).toHaveBeenCalledOnce();
+    const manual = await post(`${url}/api/projects`, {
+      project: "manual",
+      repo: "org/app",
+      linearMode: "later",
+    });
+    expect(await manual.json()).toMatchObject({
+      linear: { status: "skipped" },
+    });
+    expect(linearProvisioning.provision).toHaveBeenCalledTimes(2);
+  });
   function sourceFixture() {
     const connected: SourceStatus = {
       provider: "github",

@@ -14,6 +14,19 @@ import type {
 export interface LinearApiOptions {
   apiKey: string;
   endpoint?: string;
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+}
+
+export interface LinearTeam {
+  id: string;
+  key: string;
+  name: string;
+}
+export interface LinearProjectResource {
+  id: string;
+  name: string;
+  url: string;
+  teamIds: string[];
 }
 
 const PAGE = 100;
@@ -77,6 +90,7 @@ const sameName = (a: string, b: string): boolean =>
 export class LinearApi implements LinearClient {
   private readonly apiKey: string;
   private readonly endpoint: string;
+  private readonly fetcher?: LinearApiOptions["fetch"];
   /** `${teamId}:${label lowercased}` → label id */
   private readonly labelCache = new Map<string, string>();
 
@@ -84,6 +98,7 @@ export class LinearApi implements LinearClient {
     if (!opts.apiKey) throw new Error("LinearApi needs an apiKey");
     this.apiKey = opts.apiKey;
     this.endpoint = opts.endpoint ?? "https://api.linear.app/graphql";
+    this.fetcher = opts.fetch;
   }
 
   private async graphql<T>(
@@ -99,7 +114,9 @@ export class LinearApi implements LinearClient {
           authorization: this.apiKey,
         },
         body: JSON.stringify({ query, variables }),
+        redirect: "error",
       },
+      { fetch: this.fetcher, retries: 0 },
     );
     if (res.errors?.length) {
       throw new Error(
@@ -108,6 +125,124 @@ export class LinearApi implements LinearClient {
     }
     if (!res.data) throw new Error("Linear GraphQL: empty response");
     return res.data;
+  }
+
+  async organization(): Promise<{ id: string; name: string }> {
+    const data = await this.graphql<{
+      organization: { id: string; name: string };
+    }>(`query GremlinsOrganization { organization { id name } }`);
+    return data.organization;
+  }
+
+  /** IDs are persisted before mutation so retries can reconcile a lost response. */
+  async getTeam(id: string): Promise<LinearTeam | null> {
+    const data = await this.graphql<{ teams: { nodes: LinearTeam[] } }>(
+      `query GremlinsTeam($id: ID!) { teams(filter: { id: { eq: $id } }, first: 1) { nodes { id key name } } }`,
+      { id },
+    );
+    return data.teams.nodes.find((team) => team.id === id) ?? null;
+  }
+
+  async getProject(id: string): Promise<LinearProjectResource | null> {
+    const data = await this.graphql<{
+      projects: {
+        nodes: Array<{
+          id: string;
+          name: string;
+          url: string;
+          teams: { nodes: Array<{ id: string }> };
+        }>;
+      };
+    }>(
+      `query GremlinsProject($id: ID!) { projects(filter: { id: { eq: $id } }, first: 1) { nodes { id name url teams { nodes { id } } } } }`,
+      { id },
+    );
+    const project = data.projects.nodes.find((project) => project.id === id);
+    return project
+      ? {
+          id: project.id,
+          name: project.name,
+          url: project.url,
+          teamIds: project.teams.nodes.map((team) => team.id),
+        }
+      : null;
+  }
+
+  async createTeam(input: {
+    id: string;
+    name: string;
+    key: string;
+    description: string;
+  }): Promise<LinearTeam> {
+    const data = await this.graphql<{
+      teamCreate: { success: boolean; team: LinearTeam | null };
+    }>(
+      `mutation GremlinsCreateTeam($input: TeamCreateInput!) { teamCreate(input: $input) { success team { id key name } } }`,
+      { input },
+    );
+    if (
+      !data.teamCreate.success ||
+      !data.teamCreate.team ||
+      data.teamCreate.team.id !== input.id
+    )
+      throw new Error("Linear team creation was not confirmed.");
+    return data.teamCreate.team;
+  }
+
+  /** Bounded, cursor-checked lists for explicit dashboard reuse selections. */
+  async resources(): Promise<{
+    teams: LinearTeam[];
+    projects: LinearProjectResource[];
+  }> {
+    const teams: LinearTeam[] = [],
+      projects: LinearProjectResource[] = [];
+    for (const kind of ["teams", "projects"] as const) {
+      let after: string | null = null;
+      for (let page = 0; page < 50; page++) {
+        const fields =
+          kind === "teams"
+            ? "id key name"
+            : "id name url teams { nodes { id } }";
+        const data: Record<
+          string,
+          {
+            nodes: Array<
+              LinearTeam & {
+                url: string;
+                teams: { nodes: Array<{ id: string }> };
+              }
+            >;
+            pageInfo: PageInfo;
+          }
+        > = await this.graphql(
+          `query GremlinsResources($after: String) { ${kind}(first: 100, after: $after) { nodes { ${fields} } pageInfo { hasNextPage endCursor } } }`,
+          { after },
+        );
+        const result = data[kind]!;
+        for (const item of result.nodes) {
+          if (kind === "teams")
+            teams.push({ id: item.id, key: item.key, name: item.name });
+          else
+            projects.push({
+              id: item.id,
+              name: item.name,
+              url: item.url,
+              teamIds: item.teams.nodes.map((team) => team.id),
+            });
+        }
+        if (!result.pageInfo.hasNextPage) break;
+        if (
+          !result.pageInfo.endCursor ||
+          result.pageInfo.endCursor === after ||
+          page === 49
+        )
+          throw new Error(
+            "Linear resource list is incomplete. Narrow the workspace access.",
+          );
+        after = result.pageInfo.endCursor;
+      }
+    }
+    return { teams, projects };
   }
 
   /** Every project the key can see, with the ids areas.json needs. */
@@ -144,6 +279,7 @@ export class LinearApi implements LinearClient {
 
   /** Create a project in a team; returns its uuid + url. */
   async createProject(input: {
+    id?: string;
     teamId: string;
     name: string;
     description: string;
@@ -157,6 +293,7 @@ export class LinearApi implements LinearClient {
       `mutation CreateProject($input: ProjectCreateInput!) { projectCreate(input: $input) { success project { id url } } }`,
       {
         input: {
+          ...(input.id ? { id: input.id } : {}),
           teamIds: [input.teamId],
           name: input.name,
           description: input.description,
@@ -166,7 +303,12 @@ export class LinearApi implements LinearClient {
         },
       },
     );
-    if (!data.projectCreate.success) throw new Error("projectCreate refused");
+    if (
+      !data.projectCreate.success ||
+      !data.projectCreate.project ||
+      (input.id && data.projectCreate.project.id !== input.id)
+    )
+      throw new Error("projectCreate refused");
     return data.projectCreate.project;
   }
 

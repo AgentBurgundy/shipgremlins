@@ -13,6 +13,15 @@ import {
   SourceControlError,
   type SourceControl,
 } from "../sourceControl/types.ts";
+import {
+  createLinearConnection,
+  type LinearConnection,
+} from "../linearConnection/index.ts";
+import {
+  createVercelConnection,
+  type VercelConnection,
+} from "../vercelConnection/index.ts";
+import { OAuthConnectionError } from "../oauthConnection/types.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -25,6 +34,8 @@ export interface DoctorDeps {
   fetch: FetchLike;
   today: () => string;
   sourceControl?: Pick<SourceControl, "resolveCredential">;
+  linearConnection?: Pick<LinearConnection, "resolveCredential">;
+  vercelConnection?: Pick<VercelConnection, "resolveCredential">;
 }
 
 const GITHUB = "https://api.github.com";
@@ -143,12 +154,34 @@ export async function doctorChecks(
     }
   }
 
-  const vt = deps.env.VERCEL_TOKEN;
-  add("VERCEL_TOKEN", !!vt, vt ? "set" : "not set");
+  let vt = deps.env.VERCEL_TOKEN;
+  let vercelTeam = config.vercel.teamId;
+  let vercelDetail = vt ? "set" : "not set — connect Vercel in gremlins setup";
+  if (deps.vercelConnection) {
+    try {
+      const credential = await deps.vercelConnection.resolveCredential({
+        projectId: config.vercel.projectId,
+        ...(config.vercel.teamId ? { teamId: config.vercel.teamId } : {}),
+        minValidityMs: 5 * 60_000,
+      });
+      vt = credential.token;
+      vercelTeam ??= credential.teamId ?? null;
+      vercelDetail =
+        credential.method === "oauth"
+          ? "connected with the Vercel integration"
+          : "advanced token configured";
+    } catch (error) {
+      vt = undefined;
+      vercelDetail =
+        error instanceof OAuthConnectionError &&
+        ["refresh_blocked", "busy"].includes(error.code)
+          ? "waiting for active jobs before refreshing; retry verification when they finish"
+          : "Vercel access could not be verified — reconnect or select this project in the integration";
+    }
+  }
+  add("VERCEL_TOKEN", !!vt, vercelDetail);
   if (vt) {
-    const team = config.vercel.teamId
-      ? `?teamId=${encodeURIComponent(config.vercel.teamId)}`
-      : "";
+    const team = vercelTeam ? `?teamId=${encodeURIComponent(vercelTeam)}` : "";
     const proj = await probe(
       deps.fetch,
       `${VERCEL}/v9/projects/${config.vercel.projectId}${team}`,
@@ -168,7 +201,7 @@ export async function doctorChecks(
       target: "preview",
       limit: "20",
     });
-    if (config.vercel.teamId) q.set("teamId", config.vercel.teamId);
+    if (vercelTeam) q.set("teamId", vercelTeam);
     const deps6 = await probe(
       deps.fetch,
       `${VERCEL}/v6/deployments?${q.toString()}`,
@@ -197,8 +230,28 @@ export async function doctorChecks(
     );
   }
 
-  const lk = deps.env.LINEAR_API_KEY;
-  add("LINEAR_API_KEY", !!lk, lk ? "set" : "not set");
+  let lk = deps.env.LINEAR_API_KEY;
+  let linearDetail = lk ? "set" : "not set — connect Linear in gremlins setup";
+  if (deps.linearConnection) {
+    try {
+      const credential = await deps.linearConnection.resolveCredential({
+        minValidityMs: 5 * 60_000,
+      });
+      lk = credential.authorization;
+      linearDetail =
+        credential.method === "oauth"
+          ? "connected with Linear OAuth"
+          : "advanced API key configured";
+    } catch (error) {
+      lk = undefined;
+      linearDetail =
+        error instanceof OAuthConnectionError &&
+        ["refresh_blocked", "busy"].includes(error.code)
+          ? "waiting for active jobs before refreshing; retry verification when they finish"
+          : "Linear access could not be verified — reconnect Linear in gremlins setup";
+    }
+  }
+  add("LINEAR_API_KEY", !!lk, linearDetail);
   if (lk) {
     for (const area of areas) {
       const r = await probe(deps.fetch, LINEAR, {
@@ -308,7 +361,25 @@ export async function runDoctor(
           init,
         ),
     });
-  const checks = await doctorChecks(project, { ...deps, sourceControl });
+  const connectionOptions = {
+    root,
+    env: deps.env,
+    fetch: ((url: string | URL | Request, init?: RequestInit) =>
+      deps.fetch(
+        typeof url === "string" ? url : url instanceof URL ? url.href : url.url,
+        init,
+      )) as typeof fetch,
+  };
+  const linearConnection =
+    deps.linearConnection ?? createLinearConnection(connectionOptions);
+  const vercelConnection =
+    deps.vercelConnection ?? createVercelConnection(connectionOptions);
+  const checks = await doctorChecks(project, {
+    ...deps,
+    sourceControl,
+    linearConnection,
+    vercelConnection,
+  });
   io.log(renderTable(checks));
   const failed = checks.filter((c) => !c.ok);
   if (failed.length > 0) {

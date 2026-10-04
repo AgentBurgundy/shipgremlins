@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { doctorChecks } from "./doctor.ts";
 import type { Project } from "../config.ts";
 import { SourceControlError } from "../sourceControl/types.ts";
+import { OAuthConnectionError } from "../oauthConnection/types.ts";
 
 describe("GitLab local provider verification", () => {
   it("uses the chosen server, encodes a nested namespace and slash-containing branches", async () => {
@@ -140,6 +141,115 @@ describe("official source connections in doctor", () => {
       ).toBe(false);
       expect(JSON.stringify(checks)).not.toContain(
         "private provider credential",
+      );
+    },
+  );
+});
+
+describe("Linear and Vercel OAuth verification", () => {
+  const project = {
+    config: {
+      provider: "github",
+      repo: "owner/app",
+      branches: {
+        production: "main",
+        staging: "staging",
+        integration: "pm-staging",
+      },
+      vercel: { projectId: "prj_app", teamId: null, bypassSecret: "BYPASS" },
+    },
+    areas: [{ key: "core", linearProjectId: "linear-project" }],
+  } as unknown as Project;
+  it("uses OAuth with no manual keys and inherits the Vercel installation team", async () => {
+    const calls: { url: string; headers: Headers }[] = [];
+    const checks = await doctorChecks(project, {
+      env: { GITHUB_TOKEN: "source", BYPASS: "preview" },
+      today: () => "2026-10-04",
+      linearConnection: {
+        resolveCredential: async () => ({
+          token: "linear-private",
+          authorization: "Bearer linear-private",
+          method: "oauth",
+        }),
+      },
+      vercelConnection: {
+        resolveCredential: async (input) => {
+          expect(input).toEqual({
+            projectId: "prj_app",
+            minValidityMs: 300000,
+          });
+          return {
+            token: "vercel-private",
+            authorization: "Bearer vercel-private",
+            method: "oauth",
+            teamId: "team_installation",
+          };
+        },
+      },
+      fetch: async (url, init) => {
+        calls.push({ url, headers: new Headers(init?.headers) });
+        return Response.json(
+          url.includes("linear.app")
+            ? { data: { project: { id: "linear-project", name: "Core" } } }
+            : url.includes("/deployments?")
+              ? { deployments: [{ meta: { githubCommitRef: "pm-staging" } }] }
+              : {},
+        );
+      },
+    });
+    expect(checks.every((check) => check.ok)).toBe(true);
+    expect(
+      calls
+        .filter((call) => call.url.includes("api.vercel.com"))
+        .every(
+          (call) =>
+            new URL(call.url).searchParams.get("teamId") ===
+              "team_installation" &&
+            call.headers.get("authorization") === "Bearer vercel-private",
+        ),
+    ).toBe(true);
+    expect(
+      calls
+        .find((call) => call.url.includes("api.linear.app"))
+        ?.headers.get("authorization"),
+    ).toBe("Bearer linear-private");
+    expect(JSON.stringify(checks)).not.toContain("private");
+  });
+  it.each(["reconnect_required", "refresh_blocked"])(
+    "reports %s without using stale manual credentials",
+    async (code) => {
+      const calls: string[] = [];
+      const failed = {
+        resolveCredential: async () => {
+          throw new OAuthConnectionError("sensitive-provider-response", code);
+        },
+      };
+      const checks = await doctorChecks(project, {
+        env: {
+          LINEAR_API_KEY: "old-linear",
+          VERCEL_TOKEN: "old-vercel",
+          BYPASS: "preview",
+        },
+        today: () => "2026-10-04",
+        linearConnection: failed,
+        vercelConnection: failed,
+        fetch: async (url) => {
+          calls.push(url);
+          return Response.json({});
+        },
+      });
+      expect(
+        checks
+          .filter((check) =>
+            ["LINEAR_API_KEY", "VERCEL_TOKEN"].includes(check.name),
+          )
+          .every((check) => !check.ok),
+      ).toBe(true);
+      expect(calls.some((url) => /api\.(linear|vercel)\./.test(url))).toBe(
+        false,
+      );
+      expect(JSON.stringify(checks)).not.toMatch(
+        /sensitive-provider-response|old-linear|old-vercel/,
       );
     },
   );

@@ -24,6 +24,8 @@ export interface HubConfig {
 }
 
 export interface ProjectConfig {
+  /** The Linear team for this app; existing area project IDs remain authoritative. */
+  linear?: { teamId: string; workspaceId?: string; teamName?: string };
   telemetry?: TelemetryConfig;
   name: string;
   repo: string;
@@ -61,6 +63,8 @@ export interface ProjectConfig {
 }
 
 export interface AreaConfig {
+  /** A dashboard-authored mandate, in addition to the versioned mandate.md. */
+  mandate?: string;
   /** Optional saved Mixpanel Insights report, scoped to this project's connection. */
   mixpanelReportId?: string;
   key: string;
@@ -374,6 +378,9 @@ export function loadProject(root: string, name: string): Project {
     },
     verified: need(pf, raw, "verified", isStringOrNull, "a date or null"),
     signIn: parseSignIn(pf, raw.signIn),
+    ...(raw.linear === undefined
+      ? {}
+      : { linear: parseLinearMapping(pf, raw.linear) }),
   };
   const set = new Set(Object.values(config.branches));
   if (set.size !== 3)
@@ -422,6 +429,17 @@ export function loadProject(root: string, name: string): Project {
             ),
           }),
       key,
+      ...(a.mandate === undefined
+        ? {}
+        : {
+            mandate: need(
+              af,
+              a,
+              "mandate",
+              (v): v is string => isString(v) && v.length <= 12000,
+              "a mandate of 1–12000 characters",
+            ),
+          }),
       name: need(af, a, "name", isString, "a name"),
       paths: need(af, a, "paths", isStringArray, "an array of path prefixes"),
       sharedTouchpoints: need(
@@ -485,6 +503,43 @@ export function loadProject(root: string, name: string): Project {
   };
 
   return { config, areas, tiers, dir };
+}
+
+function parseLinearMapping(
+  file: string,
+  value: unknown,
+): NonNullable<ProjectConfig["linear"]> {
+  if (!isObj(value)) throw new ConfigError(file, '"linear" must be an object');
+  const id = (v: unknown): v is string =>
+    typeof v === "string" &&
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+      v,
+    );
+  return {
+    teamId: need(file, value, "teamId", id, "a Linear team UUID"),
+    ...(value.workspaceId === undefined
+      ? {}
+      : {
+          workspaceId: need(
+            file,
+            value,
+            "workspaceId",
+            id,
+            "a Linear workspace UUID",
+          ),
+        }),
+    ...(value.teamName === undefined
+      ? {}
+      : {
+          teamName: need(
+            file,
+            value,
+            "teamName",
+            (v): v is string => isString(v) && v.length <= 255,
+            "a team name of 1–255 characters",
+          ),
+        }),
+  };
 }
 
 /** every directory under projects/ except _templates */
