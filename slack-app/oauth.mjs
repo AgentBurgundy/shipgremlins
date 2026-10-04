@@ -117,7 +117,9 @@ export function createSlackBroker({
   };
   return async function handler(req, res) {
     res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Referrer-Policy", "no-referrer");
+    // Preserve the browser's Origin header on the confirmation POST while never
+    // sending the pairing request or OAuth state in a Referer URL.
+    res.setHeader("Referrer-Policy", "strict-origin");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader(
@@ -268,8 +270,27 @@ export function createSlackBroker({
               ) ||
               !value.team?.id ||
               !hook.channel_id
-            )
+            ) {
+              const knownErrors = new Set([
+                "bad_client_secret",
+                "invalid_client_id",
+                "invalid_code",
+                "invalid_redirect_uri",
+                "invalid_request",
+                "invalid_auth",
+                "code_already_used",
+                "access_denied",
+                "ratelimited",
+              ]);
+              console.error("Slack OAuth exchange failed", {
+                status: response.status,
+                reason: knownErrors.has(value.error)
+                  ? value.error
+                  : "invalid_exchange_response",
+                hasWebhook: typeof hook?.url === "string",
+              });
               throw new Error();
+            }
             result.connection = {
               webhookUrl: hook.url,
               teamId: String(value.team.id).slice(0, 200),

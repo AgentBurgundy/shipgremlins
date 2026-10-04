@@ -60,6 +60,12 @@ import { createJobPreparation } from "../localRunners/jobs.ts";
 import type { LocalJobInput, WorkerAction } from "../localRunners/types.ts";
 import { doctorChecks, stampVerified } from "./doctor.ts";
 import { createSlackConnect } from "../slack/connection.ts";
+import { createSourceControl } from "../sourceControl/index.ts";
+import {
+  SourceControlError,
+  type SourceControl,
+  type SourceStatus,
+} from "../sourceControl/types.ts";
 import {
   createActivityStore,
   parseActivityLogs,
@@ -182,6 +188,7 @@ export interface DashboardOptions {
   background?: boolean;
   slack?: ReturnType<typeof createSlackConnect>;
   activityStore?: ActivityStore;
+  sourceControl?: SourceControl;
 }
 
 export function createDashboardServer(
@@ -203,7 +210,10 @@ export function createDashboardServer(
   let updateRunning = false;
   let updateFailure = "";
   const docker = options.docker ?? createDockerRunners({ packageRoot });
-  const preparation = options.jobs ?? createJobPreparation({ root });
+  const sourceControl =
+    options.sourceControl ?? createSourceControl({ root, session });
+  const preparation =
+    options.jobs ?? createJobPreparation({ root, sourceControl });
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
   let manager: LocalRunners | undefined = options.runners;
@@ -215,6 +225,7 @@ export function createDashboardServer(
       activityStore,
       ...preparation,
       beforeLaunch: () => activityStore.ensure(),
+      releaseJobResources: (id) => sourceControl.releaseLease(id),
     }));
   let dockerState: Awaited<ReturnType<DockerRunners["preflight"]>> | undefined;
   let dockerCheckedAt = 0;
@@ -224,6 +235,8 @@ export function createDashboardServer(
       dockerCheckedAt = Date.now();
     }
     const saved = readConnections(root);
+    const sources = await sourceControl.status();
+    const blockedSources = new Set<string>();
     const required = new Set([
       "CLAUDE_CODE_OAUTH_TOKEN",
       "LINEAR_API_KEY",
@@ -231,11 +244,24 @@ export function createDashboardServer(
     ]);
     for (const name of listProjectNames(root)) {
       try {
-        required.add(
-          loadProject(root, name).config.provider === "gitlab"
-            ? "GITLAB_TOKEN"
-            : "GITHUB_TOKEN",
+        const project = loadProject(root, name);
+        const provider = project.config.provider ?? "github";
+        const serverUrl =
+          project.config.serverUrl ??
+          (provider === "gitlab" ? "https://gitlab.com" : "https://github.com");
+        const oauth = sources.find(
+          (connection) =>
+            connection.provider === provider &&
+            connection.serverUrl.replace(/\/$/, "") ===
+              serverUrl.replace(/\/$/, "") &&
+            connection.method === "oauth",
         );
+        const sourceKey =
+          provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN";
+        if (!oauth || !oauth.connected || oauth.needsReconnect)
+          required.add(sourceKey);
+        if (oauth && (!oauth.connected || oauth.needsReconnect))
+          blockedSources.add(sourceKey);
       } catch {
         /* Status reports broken project config separately. */
       }
@@ -256,12 +282,16 @@ export function createDashboardServer(
       })),
       credentials: {
         missing: [...required].filter(
-          (name) => !(saved[name] || process.env[name]),
+          (name) =>
+            blockedSources.has(name) || !(saved[name] || process.env[name]),
         ),
-        configured: [...required].filter((name) =>
-          Boolean(saved[name] || process.env[name]),
+        configured: [...required].filter(
+          (name) =>
+            !blockedSources.has(name) &&
+            Boolean(saved[name] || process.env[name]),
         ),
       },
+      sourceConnections: sources,
       limitations: [
         "Local workers use Claude Code. Each worker runs one job at a time.",
         "Jobs create draft integration PRs/MRs; staging promotion and production merges still need review.",
@@ -317,6 +347,94 @@ export function createDashboardServer(
             401,
             "Open the dashboard link printed by your CLI.",
           );
+        if (
+          url.pathname === "/api/source-control" ||
+          url.pathname.startsWith("/api/source-control/")
+        ) {
+          try {
+            const match =
+              /^\/api\/source-control(?:\/(github|gitlab)(?:\/(connect|poll|repositories))?)?$/.exec(
+                url.pathname,
+              );
+            if (!match)
+              throw new RequestError(404, "Unknown source-control action.");
+            const provider = match[1] as "github" | "gitlab" | undefined;
+            const action = match[2];
+            if (!provider && req.method === "GET" && !url.search) {
+              json(res, 200, { connections: await sourceControl.status() });
+            } else if (
+              provider &&
+              action === "repositories" &&
+              req.method === "GET"
+            ) {
+              const search = url.searchParams.get("search") ?? undefined;
+              if (
+                [...url.searchParams.keys()].some((key) => key !== "search") ||
+                (search?.length ?? 0) > 100
+              )
+                throw new RequestError(400, "Use a short repository search.");
+              json(
+                res,
+                200,
+                await sourceControl.repositories({ provider, search }),
+              );
+            } else if (
+              provider &&
+              !url.search &&
+              req.method === "POST" &&
+              action === "connect"
+            ) {
+              if (Object.keys(await body(req)).length)
+                throw new RequestError(
+                  400,
+                  "Source connection takes an empty JSON object. Official provider addresses are fixed.",
+                );
+              json(res, 200, await sourceControl.connect({ provider }));
+            } else if (
+              provider &&
+              !url.search &&
+              req.method === "POST" &&
+              action === "poll"
+            ) {
+              const input = await body(req);
+              if (
+                Object.keys(input).length !== 1 ||
+                typeof input.id !== "string" ||
+                !/^[A-Za-z0-9_-]{1,128}$/.test(input.id)
+              )
+                throw new RequestError(
+                  400,
+                  "Provide the pending source connection ID.",
+                );
+              json(res, 200, await sourceControl.poll(input.id));
+            } else if (
+              provider &&
+              !action &&
+              !url.search &&
+              req.method === "DELETE"
+            ) {
+              if (Object.keys(await body(req)).length)
+                throw new RequestError(
+                  400,
+                  "Disconnect takes an empty JSON object.",
+                );
+              json(res, 200, await sourceControl.disconnect({ provider }));
+            } else
+              throw new RequestError(
+                405,
+                "Unsupported source-control request.",
+              );
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            if (error instanceof SourceControlError)
+              throw new RequestError(error.status, error.message);
+            throw new RequestError(
+              400,
+              "Source control could not complete this request. Check the connection and try again.",
+            );
+          }
+          return;
+        }
         if (
           url.pathname === "/api/slack" ||
           url.pathname.startsWith("/api/slack/")
@@ -638,6 +756,7 @@ export function createDashboardServer(
           assertNoSymlinks(root);
           assertNoSymlinks(join(root, "hub.json"));
           const saved = readConnections(root);
+          const sourceConnections = await sourceControl.status();
           const configWarnings: string[] = [];
           const projectConnections: {
             name: string;
@@ -696,6 +815,7 @@ export function createDashboardServer(
             hubRepo,
             configWarnings,
             projects,
+            sourceConnections,
             connections: [
               ...new Map(
                 [
@@ -706,7 +826,9 @@ export function createDashboardServer(
               ).values(),
             ].map((connection) => ({
               ...connection,
-              configured: Boolean(saved[connection.name]),
+              configured: Boolean(
+                saved[connection.name] || process.env[connection.name],
+              ),
             })),
             runtime: {
               agents: hubRepo ? "github-actions" : "local-docker",
@@ -850,6 +972,40 @@ export function createDashboardServer(
               400,
               "Use a lowercase project ID and owner/repository names.",
             );
+          const provider = (input.provider ?? "github") as "github" | "gitlab";
+          const serverUrl =
+            typeof input.serverUrl === "string"
+              ? input.serverUrl.replace(/\/$/, "")
+              : provider === "github"
+                ? "https://github.com"
+                : "https://gitlab.com";
+          const sourceConnections = await sourceControl.status();
+          if (
+            sourceConnections.some(
+              (source: SourceStatus) =>
+                source.provider === provider &&
+                source.serverUrl.replace(/\/$/, "") === serverUrl &&
+                source.method === "oauth",
+            )
+          ) {
+            try {
+              await sourceControl.resolveCredential({
+                provider,
+                serverUrl,
+                repository: input.repo,
+                minValidityMs: 5 * 60_000,
+                write: true,
+              });
+            } catch (error) {
+              throw new RequestError(
+                error instanceof SourceControlError &&
+                  ["refresh_blocked", "busy"].includes(error.code)
+                  ? 409
+                  : 400,
+                "This repository is not ready for the connected source account. Check app installation and repository access, or wait for active jobs before refreshing.",
+              );
+            }
+          }
           const args = [
             "init",
             "--project",
@@ -896,6 +1052,7 @@ export function createDashboardServer(
             env: { ...readConnections(root), ...process.env },
             fetch,
             today: () => new Date().toISOString().slice(0, 10),
+            sourceControl,
           });
           const ok = checks.every((check) => check.ok);
           if (ok)

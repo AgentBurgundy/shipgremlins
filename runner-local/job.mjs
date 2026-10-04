@@ -17,7 +17,7 @@ import { runCheckedDelivery, validateDelivery } from "./delivery.mjs";
 import {
   enforceDeadline,
   jobEnvironments,
-  restoreGitConfig,
+  preparePublication,
 } from "./runtime.mjs";
 
 let current;
@@ -319,6 +319,7 @@ try {
       ],
       { cwd: "/work/repo", env, model: true },
     );
+    let publicationDirectory = "/work";
     const deliveryResult =
       kind === "developer"
         ? await runCheckedDelivery({
@@ -330,10 +331,19 @@ try {
             run: (command, args) =>
               run(command, args, { cwd: "/work/repo", env }),
             publish: (command, args) =>
-              run(command, args, { cwd: "/work/repo", env: publication }),
+              run(command, args, {
+                cwd: command === "git" ? "/work/repo" : publicationDirectory,
+                env: publication,
+              }),
             writeBody: (body) =>
               writeFileSync("/work/pr-body.md", body, { mode: 0o600 }),
-            prepareRepository: () => restoreGitConfig("/work/repo", repo.href),
+            prepareRepository: () => {
+              publicationDirectory = preparePublication(
+                "/work/repo",
+                repo.href,
+                publication,
+              );
+            },
             onCheck: (name, status) =>
               activity.emit("check", name, undefined, status),
           })

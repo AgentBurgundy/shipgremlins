@@ -6,10 +6,14 @@ import {
 } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { assertNoSymlinks } from "../setup/files.ts";
 
 export const SLACK_BROKER = "https://shipgremlins.ai";
 const TTL = 10 * 60_000;
+const execFileAsync = promisify(execFile);
+let ownerSid: Promise<string> | undefined;
 export interface SlackConnection {
   webhookUrl: string;
   teamId: string;
@@ -48,7 +52,24 @@ async function save(root: string, name: string, value: unknown) {
   await mkdir(join(root, ".run", "slack"), { recursive: true, mode: 0o700 });
   const temp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   try {
-    await writeFile(temp, JSON.stringify(value), { mode: 0o600, flag: "wx" });
+    await writeFile(temp, "", { mode: 0o600, flag: "wx" });
+    if (process.platform === "win32") {
+      ownerSid ??= execFileAsync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
+        windowsHide: true,
+      }).then(({ stdout }) => {
+        const sid = stdout.match(/S-1-(?:\d+-)+\d+/)?.[0];
+        if (!sid)
+          throw new Error("The current Windows account could not be verified.");
+        return sid;
+      });
+      await execFileAsync(
+        "icacls.exe",
+        [temp, "/inheritance:r", "/grant:r", `*${await ownerSid}:(F)`],
+        { windowsHide: true },
+      );
+    }
+    await writeFile(temp, JSON.stringify(value), { mode: 0o600 });
+    assertNoSymlinks(file);
     await rename(temp, file);
   } finally {
     await unlink(temp).catch(() => {});

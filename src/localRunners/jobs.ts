@@ -19,6 +19,12 @@ import type { DockerJobPayload } from "./docker.ts";
 import { LABELS } from "../dispatcher/notes.ts";
 import { pmTelemetrySnapshot } from "../telemetry/snapshot.ts";
 import type { TelemetryDeps } from "../telemetry/read.ts";
+import { createSourceControl } from "../sourceControl/index.ts";
+import {
+  SourceControlError,
+  type SourceControl,
+} from "../sourceControl/types.ts";
+import { LocalJobDeferredError } from "./engine.ts";
 
 export interface JobPreparationOptions {
   telemetryFetch?: TelemetryDeps["fetch"];
@@ -27,6 +33,7 @@ export interface JobPreparationOptions {
   linear?: (key: string) => Pick<LinearClient, "getTicket" | "listTickets">;
   preview?: (project: Project, token: string) => Promise<string | null>;
   now?: () => Date;
+  sourceControl?: Pick<SourceControl, "acquireLease">;
 }
 
 export function approvedForArea(
@@ -111,6 +118,8 @@ function projectSecrets(
 export function createJobPreparation(options: JobPreparationOptions) {
   const { root } = options;
   const env = options.env ?? process.env;
+  const sourceControl =
+    options.sourceControl ?? createSourceControl({ root, env });
   const connections = () => ({
     ...readConnections(root),
     ...Object.fromEntries(
@@ -180,7 +189,6 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const provider = project.config.provider ?? "github";
     const sourceKey = provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN";
     const required = [
-      sourceKey,
       "CLAUDE_CODE_OAUTH_TOKEN",
       "LINEAR_API_KEY",
       "VERCEL_TOKEN",
@@ -255,6 +263,26 @@ export function createJobPreparation(options: JobPreparationOptions) {
       `Mandate and memory:\n${JSON.stringify(memory)}`,
       ...(telemetry ? [telemetry] : []),
     ];
+    // Reserve the credential only after slow project/provider preparation. Refresh
+    // invalidates old OAuth access tokens, so the reservation covers publication.
+    try {
+      const credential = await sourceControl.acquireLease({
+        jobId: job.id,
+        provider,
+        repository: project.config.repo,
+        serverUrl: project.config.serverUrl,
+        minutes: 50,
+        write: job.type === "developer",
+      });
+      credentials[sourceKey] = credential.token;
+    } catch (error) {
+      if (
+        error instanceof SourceControlError &&
+        ["refresh_blocked", "busy"].includes(error.code)
+      )
+        throw new LocalJobDeferredError();
+      throw error;
+    }
     return {
       kind: job.type,
       nonce: job.id,

@@ -10,6 +10,7 @@ import { loadHub } from "../config.ts";
 import { preflightSummary } from "../terminal.ts";
 import { inspectSetup, type PreflightDeps } from "../setup/preflight.ts";
 import { parseFlags, type Io } from "./crons.ts";
+import { createSourceControl } from "../sourceControl/index.ts";
 
 export interface SetupDeps extends PreflightDeps {
   templatesRoot?: string;
@@ -184,7 +185,14 @@ export async function runSetup(
       throw new Error(
         "Configuration options require setup init; status does not change files",
       );
-    const report = inspectSetup(directory, deps, string("project"));
+    const sourceConnections =
+      deps.sourceConnections ??
+      (await createSourceControl({ root: directory, env: deps.env }).status());
+    const report = inspectSetup(
+      directory,
+      { ...deps, sourceConnections },
+      string("project"),
+    );
     if (values.json) io.log(JSON.stringify(report, null, 2));
     else
       io.log(

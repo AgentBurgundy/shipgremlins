@@ -8,6 +8,11 @@ import { loadProject, type Project } from "../config.ts";
 import type { Io } from "./crons.ts";
 import type { FetchLike } from "./metric.ts";
 import { readLogs, readMixpanel } from "../telemetry/read.ts";
+import { createSourceControl } from "../sourceControl/index.ts";
+import {
+  SourceControlError,
+  type SourceControl,
+} from "../sourceControl/types.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -19,6 +24,7 @@ export interface DoctorDeps {
   env: NodeJS.ProcessEnv;
   fetch: FetchLike;
   today: () => string;
+  sourceControl?: Pick<SourceControl, "resolveCredential">;
 }
 
 const GITHUB = "https://api.github.com";
@@ -79,15 +85,37 @@ export async function doctorChecks(
 
   const gitlab = config.provider === "gitlab";
   const tokenName = gitlab ? "GITLAB_TOKEN" : "GITHUB_TOKEN";
-  const gh = deps.env[tokenName];
+  let gh = deps.env[tokenName];
+  let sourceDetail = gh
+    ? "set"
+    : "not set — connect source control in gremlins setup or save an advanced token";
+  if (deps.sourceControl) {
+    try {
+      const credential = await deps.sourceControl.resolveCredential({
+        provider: gitlab ? "gitlab" : "github",
+        repository: config.repo,
+        serverUrl: config.serverUrl,
+        minValidityMs: 5 * 60_000,
+        write: true,
+      });
+      gh = credential.token;
+      sourceDetail =
+        credential.method === "oauth"
+          ? "connected with the official app"
+          : "advanced token configured";
+    } catch (error) {
+      gh = undefined;
+      sourceDetail =
+        error instanceof SourceControlError &&
+        ["refresh_blocked", "busy"].includes(error.code)
+          ? "waiting for active jobs before refreshing; retry verification when they finish"
+          : "source access could not be verified — reconnect the provider or check repository access in gremlins setup";
+    }
+  }
   const repoApi = gitlab
     ? `${(config.serverUrl ?? "https://gitlab.com").replace(/\/$/, "")}/api/v4/projects/${encodeURIComponent(config.repo)}`
     : `${GITHUB}/repos/${config.repo}`;
-  add(
-    tokenName,
-    !!gh,
-    gh ? "set" : "not set — export a token that can read the target repo",
-  );
+  add(tokenName, !!gh, sourceDetail);
   if (gh) {
     const repo = await probe(deps.fetch, repoApi, {
       headers: bearer(gh),
@@ -265,7 +293,22 @@ export async function runDoctor(
     return 1;
   }
   const project = loadProject(root, name);
-  const checks = await doctorChecks(project, deps);
+  const sourceControl =
+    deps.sourceControl ??
+    createSourceControl({
+      root,
+      env: deps.env,
+      fetch: (url, init) =>
+        deps.fetch(
+          typeof url === "string"
+            ? url
+            : url instanceof URL
+              ? url.href
+              : url.url,
+          init,
+        ),
+    });
+  const checks = await doctorChecks(project, { ...deps, sourceControl });
   io.log(renderTable(checks));
   const failed = checks.filter((c) => !c.ok);
   if (failed.length > 0) {

@@ -15,6 +15,7 @@ import {
   enforceDeadline,
   jobEnvironments,
   MAX_JOB_MS,
+  preparePublication,
   restoreGitConfig,
 } from "../../runner-local/runtime.mjs";
 import {
@@ -526,6 +527,9 @@ describe("trusted local job publication", () => {
       PATH: "/usr/bin",
       GH_TOKEN: "inherited-gh",
       GLAB_TOKEN: "inherited-glab",
+      GITLAB_ACCESS_TOKEN: "inherited-gitlab",
+      OAUTH_TOKEN: "inherited-oauth",
+      CI_JOB_TOKEN: "inherited-ci",
       GREMLINS_GIT_TOKEN: "inherited-git",
     };
     const { execution, publication } = jobEnvironments(
@@ -538,6 +542,9 @@ describe("trusted local job publication", () => {
       "GH_TOKEN",
       "GITLAB_TOKEN",
       "GLAB_TOKEN",
+      "GITLAB_ACCESS_TOKEN",
+      "OAUTH_TOKEN",
+      "CI_JOB_TOKEN",
       "GREMLINS_GIT_TOKEN",
     ])
       expect(execution).not.toHaveProperty(key);
@@ -549,11 +556,60 @@ describe("trusted local job publication", () => {
       GIT_CONFIG_SYSTEM: "/dev/null",
     });
     expect(publication.GREMLINS_GIT_TOKEN).toBe("gitlab-secret");
+    expect(publication.GITLAB_TOKEN).toBe("gitlab-secret");
+    expect(publication.GLAB_IS_OAUTH2).toBe("true");
+    expect(publication.GLAB_ENABLE_CI_AUTOLOGIN).toBe("false");
+    expect(publication.GLAB_SEND_TELEMETRY).toBe("false");
+    expect(publication).not.toHaveProperty("GLAB_TOKEN");
+    expect(publication).not.toHaveProperty("OAUTH_TOKEN");
     expect(publication).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
     expect(publication).not.toHaveProperty("GREMLINS_PREVIEW_BYPASS");
     expect(publication.GH_TOKEN).toBe("");
     expect(publication.GIT_ASKPASS).toBe("/opt/gremlins/git-askpass.sh");
     expect(inherited.GH_TOKEN).toBe("inherited-gh");
+  });
+
+  it("publishes from fresh CLI configuration pinned to the selected issuer", () => {
+    const root = mkdtempSync(
+      join(realpathSync(tmpdir()), "gremlins-publish-test-"),
+    );
+    let cleanHome: string | undefined;
+    try {
+      mkdirSync(join(root, ".git"));
+      writeFileSync(join(root, ".git", "config"), "[core]\n bare = false\n");
+      const publication: Record<string, string> = {
+        GITLAB_TOKEN: "only-publication",
+        HOME: "/work/model-home",
+        GLAB_CONFIG_DIR: "/work/model-config",
+        GITLAB_API_HOST: "wrong.invalid",
+        GLAB_API_PROTOCOL: "http",
+        GLAB_DEBUG_HTTP: "true",
+      };
+      cleanHome = preparePublication(
+        root,
+        "https://gitlab.example.com:8443/team/app.git",
+        publication,
+      );
+      expect(cleanHome).not.toBe(root);
+      expect(publication).toMatchObject({
+        HOME: cleanHome,
+        XDG_CONFIG_HOME: cleanHome,
+        GH_CONFIG_DIR: cleanHome,
+        GLAB_CONFIG_DIR: cleanHome,
+        GITLAB_HOST: "gitlab.example.com:8443",
+        GITLAB_API_HOST: "gitlab.example.com:8443",
+        GLAB_API_PROTOCOL: "https",
+        GLAB_DEBUG_HTTP: "false",
+        GITLAB_CI: "false",
+        GITLAB_TOKEN: "only-publication",
+      });
+      expect(readFileSync(join(root, ".git", "config"), "utf8")).toContain(
+        "gitlab.example.com:8443/team/app.git",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      if (cleanHome) rmSync(cleanHome, { recursive: true, force: true });
+    }
   });
 
   it("replaces model-edited credential helpers, hooks, and URL rewriting before publication", () => {

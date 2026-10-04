@@ -42,7 +42,7 @@ The older explicit `gremlins slack` PM report command remains available for adva
 
 ## Maintaining the OAuth broker
 
-The local dashboard uses the official broker at `https://shipgremlins.ai`; it does not need a Slack client secret or a publicly reachable homelab callback. The broker implementation is in `slack-app/oauth.mjs`, with the deployment route in `api/slack/[action].js` and a Slack app manifest alongside the broker.
+The local dashboard uses the official broker at `https://shipgremlins.ai`; it does not need a Slack client secret or a publicly reachable homelab callback. The broker implementation is in `slack-app/oauth.mjs`, with the deployment route in `slack-app/api/slack/[action].js` and a Slack app manifest alongside the broker.
 
 The broker deployment needs `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_OAUTH_STATE_KEY` (32 random bytes encoded as base64url). Configure the Slack redirect URL as `https://shipgremlins.ai/api/slack/callback` and request only the `incoming-webhook` scope. Keep the client secret and state key in the deployment's secret store. Generating a state key:
 

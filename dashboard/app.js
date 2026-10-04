@@ -58,6 +58,19 @@
   let historyLoading = false;
   let olderHistoryLoaded = false;
 
+  const sourceProviders = {
+    github: { name: "GitHub", origin: "https://github.com", icon: "GH" },
+    gitlab: { name: "GitLab", origin: "https://gitlab.com", icon: "GL" },
+  };
+  let sourceConnections = [];
+  let sourceLoading = false;
+  const sourceBusy = new Set();
+  const sourceFlows = new Map();
+  const sourceTimers = new Map();
+  let repositories = [];
+  let repositoryLoading = false;
+  let repositoryRevision = 0;
+
   function message(element, text, error = false) {
     element.replaceChildren();
     element.textContent = text;
@@ -69,10 +82,13 @@
   function lockForms(locked) {
     formsLocked = locked;
     $("connections-fields").disabled = locked;
+    $("source-token-fields").disabled = locked;
+    renderSourceControls();
     $("project-fields").disabled = locked;
     updateEditorControls();
     updateRunnerControls();
     renderSlackControls();
+    renderProjectProvider();
   }
 
   function restoreButton(id, label, symbol) {
@@ -154,11 +170,15 @@
       ? status.connections
       : [];
     const projects = Array.isArray(status.projects) ? status.projects : [];
-    const sourceSaved = connections.some(
-      (connection) =>
-        ["GITHUB_TOKEN", "GITLAB_TOKEN"].includes(connection.name) &&
-        connection.configured,
-    );
+    const sourceSaved =
+      (status.sourceConnections || sourceConnections).some(
+        (connection) => connection.connected && !connection.needsReconnect,
+      ) ||
+      connections.some(
+        (connection) =>
+          ["GITHUB_TOKEN", "GITLAB_TOKEN"].includes(connection.name) &&
+          connection.configured,
+      );
     const savedCount = connections.filter(
       (connection) => connection.configured,
     ).length;
@@ -234,15 +254,36 @@
         (connection) =>
           connection.name === badge.dataset.connection && connection.configured,
       );
-      badge.textContent = configured ? "✓ Saved" : "Not configured";
+      const sourceProvider =
+        badge.dataset.connection === "GITHUB_TOKEN"
+          ? "github"
+          : badge.dataset.connection === "GITLAB_TOKEN"
+            ? "gitlab"
+            : null;
+      const browserConnected =
+        sourceProvider &&
+        (status.sourceConnections || sourceConnections).some(
+          (item) =>
+            item.provider === sourceProvider &&
+            item.method === "oauth" &&
+            item.connected &&
+            !item.needsReconnect,
+        );
+      badge.textContent = browserConnected
+        ? "Browser connected"
+        : configured
+          ? "✓ Saved"
+          : "Not configured";
       badge.classList.toggle("configured", configured);
       const input = document.querySelector(
         `input[name="${badge.dataset.connection}"]`,
       );
       if (input)
-        input.placeholder = configured
-          ? "Saved — leave blank to keep"
-          : input.dataset.originalPlaceholder || input.placeholder;
+        input.placeholder = browserConnected
+          ? "Personal token optional"
+          : configured
+            ? "Saved — leave blank to keep"
+            : input.dataset.originalPlaceholder || input.placeholder;
     }
     const list = $("project-list");
     list.replaceChildren();
@@ -357,6 +398,7 @@
         initializeUpdates(),
         refreshRunners(),
         initializeSlack(),
+        refreshSources(),
       ]);
     } catch (error) {
       message($("global-message"), error.message, true);
@@ -400,7 +442,9 @@
   $("connections-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = {};
-    for (const input of document.querySelectorAll(".password-wrap input")) {
+    for (const input of $("connections-form").querySelectorAll(
+      ".password-wrap input",
+    )) {
       if (input.value.trim()) values[input.name] = input.value.trim();
     }
     if (!Object.keys(values).length) {
@@ -409,7 +453,7 @@
         "Paste at least one new token to save. Existing connections stay as they are.",
         true,
       );
-      $("github-token").focus();
+      $("linear-token").focus();
       return;
     }
     lockForms(true);
@@ -417,9 +461,13 @@
     message($("connections-message"), "");
     try {
       await api("/api/connections", { values });
-      for (const input of document.querySelectorAll(".password-wrap input"))
+      for (const input of $("connections-form").querySelectorAll(
+        ".password-wrap input",
+      ))
         input.value = "";
-      for (const button of document.querySelectorAll("[data-reveal]")) {
+      for (const button of $("connections-form").querySelectorAll(
+        "[data-reveal]",
+      )) {
         $(button.dataset.reveal).type = "password";
         button.textContent = "Show";
         button.setAttribute("aria-pressed", "false");
@@ -430,7 +478,7 @@
       }
       message(
         $("connections-message"),
-        "Connections saved on your ShipGremlins server. Blank fields were left unchanged. Verify access with the doctor command below.",
+        "Connections saved on your ShipGremlins server. Blank fields were left unchanged. Use Verify connections on your project to check live access.",
       );
       try {
         await refreshStatus();
@@ -454,20 +502,29 @@
   $("project-name").addEventListener("input", () => {
     projectNameEdited = Boolean($("project-name").value);
   });
-  $("project-repo").addEventListener("input", () => {
-    if (!projectNameEdited) {
-      $("project-name").value = $("project-repo")
-        .value.trim()
-        .split("/")
-        .pop()
-        .replace(/\.git$/i, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-    }
-  });
+  function suggestProjectName() {
+    if (projectNameEdited) return;
+    $("project-name").value = $("project-repo")
+      .value.trim()
+      .split("/")
+      .pop()
+      .replace(/\.git$/i, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+  $("project-repo").addEventListener("input", suggestProjectName);
   $("project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!$("manual-repository").checked && !$("repository-select").value) {
+      message(
+        $("project-message"),
+        "Choose a repository from your connection, or use manual entry with a saved token.",
+        true,
+      );
+      $("repository-select").focus();
+      return;
+    }
     const data = {
       project: $("project-name").value.trim(),
       repo: $("project-repo").value.trim(),
@@ -502,8 +559,9 @@
     try {
       const result = await api("/api/projects", data);
       $("project-form").reset();
-      renderProjectProvider();
       projectNameEdited = false;
+      renderProjectProvider();
+      await refreshRepositories();
       const created = Array.isArray(result.result?.created)
         ? result.result.created.length
         : null;
@@ -529,10 +587,618 @@
     }
   });
 
+  function sourceConnection(provider) {
+    return sourceConnections.find(
+      (connection) =>
+        connection.provider === provider &&
+        connection.serverUrl?.replace(/\/$/, "") ===
+          sourceProviders[provider].origin,
+    );
+  }
+  function sourceLink(provider, value, installation = false) {
+    try {
+      const url = new URL(value);
+      if (
+        url.origin !== sourceProviders[provider].origin ||
+        url.username ||
+        url.password
+      )
+        return null;
+      if (
+        installation &&
+        (provider !== "github" || !url.pathname.startsWith("/apps/"))
+      )
+        return null;
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+  function sourceButton(label, action, provider, className = "small-button") {
+    const button = element("button", className, label);
+    button.type = "button";
+    button.dataset.sourceAction = action;
+    button.dataset.provider = provider;
+    return button;
+  }
+  function createSourceCards() {
+    for (const [provider, config] of Object.entries(sourceProviders)) {
+      const card = element("article", `source-card source-${provider}`);
+      card.id = `source-${provider}`;
+      const heading = element("div", "source-card-heading");
+      const mark = element("span", "source-provider-mark", config.icon);
+      mark.setAttribute("aria-hidden", "true");
+      const title = element("div", "");
+      const h3 = element("h3", "", config.name);
+      h3.id = `source-${provider}-title`;
+      card.setAttribute("aria-labelledby", h3.id);
+      title.append(
+        h3,
+        element(
+          "p",
+          "",
+          provider === "github"
+            ? "Repositories & pull requests"
+            : "Repositories & merge requests",
+        ),
+      );
+      heading.append(mark, title);
+      const badge = element("span", "runtime-badge", "Checking…");
+      badge.id = `${provider}-source-state`;
+      const account = element(
+        "p",
+        "source-account",
+        "Loading connection status.",
+      );
+      account.id = `${provider}-source-account`;
+      const guidance = element("p", "runner-guidance", "");
+      guidance.id = `${provider}-source-guidance`;
+      const actions = element("div", "button-row source-actions");
+      const connect = sourceButton(
+        `Connect ${config.name}`,
+        "connect",
+        provider,
+        "button button-dark",
+      );
+      connect.id = `${provider}-source-connect`;
+      connect.disabled = true;
+      const install = element(
+        "a",
+        "small-button",
+        "Manage repository access ↗",
+      );
+      install.id = `${provider}-source-install`;
+      install.hidden = true;
+      install.target = "_blank";
+      install.rel = "noreferrer noopener";
+      const disconnect = sourceButton("Disconnect", "disconnect", provider);
+      disconnect.id = `${provider}-source-disconnect`;
+      disconnect.hidden = true;
+      actions.append(connect, install, disconnect);
+      const flow = element("div", "source-device");
+      flow.id = `${provider}-device`;
+      flow.hidden = true;
+      const step = element(
+        "p",
+        "eyebrow muted",
+        "1. COPY YOUR VERIFICATION CODE",
+      );
+      const codeRow = element("div", "device-code-row");
+      const code = element("code", "device-code");
+      code.id = `${provider}-device-code`;
+      code.tabIndex = 0;
+      code.setAttribute("aria-label", `${config.name} verification code`);
+      codeRow.append(code, sourceButton("Copy code", "copy", provider));
+      const open = element(
+        "a",
+        "button button-dark",
+        `2. Open ${config.name} to approve ↗`,
+      );
+      open.id = `${provider}-device-link`;
+      open.target = "_blank";
+      open.rel = "noreferrer noopener";
+      const instructions = element(
+        "p",
+        "runner-guidance",
+        "Approve only this connection request. Return to this tab when finished; connection status updates automatically.",
+      );
+      const pending = element("p", "device-pending");
+      pending.id = `${provider}-device-pending`;
+      pending.setAttribute("role", "status");
+      const tools = element("div", "button-row");
+      tools.append(
+        sourceButton("Retry status", "poll", provider),
+        sourceButton("Cancel sign-in", "cancel", provider),
+      );
+      flow.append(step, codeRow, open, instructions, pending, tools);
+      const prompt = element("div", "source-disconnect-prompt");
+      prompt.id = `${provider}-disconnect-prompt`;
+      prompt.hidden = true;
+      prompt.append(
+        element(
+          "p",
+          "runner-guidance",
+          "Disconnect browser sign-in? New jobs may need you to reconnect. A separately saved personal token is kept.",
+        ),
+      );
+      const promptActions = element("div", "button-row");
+      promptActions.append(
+        sourceButton("Keep connected", "keep", provider),
+        sourceButton(
+          "Disconnect",
+          "confirm-disconnect",
+          provider,
+          "small-button danger-button",
+        ),
+      );
+      prompt.append(promptActions);
+      const feedback = element("div", "form-message");
+      feedback.id = `${provider}-source-message`;
+      feedback.hidden = true;
+      feedback.setAttribute("role", "status");
+      card.append(
+        heading,
+        badge,
+        account,
+        guidance,
+        actions,
+        flow,
+        prompt,
+        feedback,
+      );
+      $("source-cards").append(card);
+    }
+  }
+  function renderSourceControls() {
+    if (!$("github-source-connect")) return;
+    let connectedCount = 0;
+    for (const [provider, config] of Object.entries(sourceProviders)) {
+      const status = sourceConnection(provider);
+      const flow = sourceFlows.get(provider);
+      const busy = sourceBusy.has(provider);
+      const connected = status?.connected && !status.needsReconnect;
+      if (connected) connectedCount += 1;
+      const badge = $(`${provider}-source-state`);
+      badge.textContent = !sessionToken
+        ? "Session required"
+        : sourceLoading && !status
+          ? "Checking…"
+          : status?.needsReconnect
+            ? "Reconnect needed"
+            : connected
+              ? status.method === "token"
+                ? "Token saved"
+                : "Connected"
+              : flow
+                ? "Waiting for approval"
+                : status?.available === false
+                  ? "Manual token available"
+                  : "Not connected";
+      badge.classList.toggle("ready", Boolean(connected));
+      const account = status?.account;
+      $(`${provider}-source-account`).textContent = account
+        ? [account.name, account.login ? `@${account.login}` : ""]
+            .filter(Boolean)
+            .join(" · ")
+        : connected
+          ? status.method === "token"
+            ? "Using a saved personal access token"
+            : "Account connected"
+          : `${config.name} access has not been connected.`;
+      $(`${provider}-source-guidance`).textContent =
+        status?.message ||
+        (connected
+          ? provider === "github" && status.method === "oauth"
+            ? "Install the ShipGremlins GitHub App on your chosen repositories, then refresh the repository picker below."
+            : "Choose a repository below. Jobs use this connection on your server."
+          : "Sign in through your provider. You never paste your account password here.");
+      const connect = $(`${provider}-source-connect`);
+      connect.textContent =
+        busy && !flow
+          ? "Connecting…"
+          : status?.needsReconnect
+            ? `Reconnect ${config.name}`
+            : connected && status.method === "oauth"
+              ? "Connect another account"
+              : `Connect ${config.name}`;
+      connect.disabled =
+        formsLocked ||
+        sourceLoading ||
+        busy ||
+        Boolean(flow) ||
+        !status?.available;
+      const installUrl = sourceLink(
+        provider,
+        flow?.installationUrl || status?.installationUrl,
+        true,
+      );
+      const install = $(`${provider}-source-install`);
+      install.hidden = !installUrl;
+      if (installUrl) install.href = installUrl;
+      const disconnect = $(`${provider}-source-disconnect`);
+      disconnect.hidden = status?.method !== "oauth";
+      disconnect.disabled = formsLocked || busy || Boolean(flow);
+      $(`${provider}-device`).hidden = !flow;
+      if (flow) {
+        $(`${provider}-device-code`).textContent = flow.userCode;
+        $(`${provider}-device-link`).href = flow.safeVerificationUrl;
+        const seconds = Math.max(
+          0,
+          Math.ceil((Date.parse(flow.expiresAt) - Date.now()) / 1000),
+        );
+        $(`${provider}-device-pending`).textContent = flow.paused
+          ? "Status check paused. Use Retry status to try again."
+          : `Waiting for approval · code expires in ${Math.max(1, Math.ceil(seconds / 60))} min`;
+      }
+      for (const button of $(`source-${provider}`).querySelectorAll(
+        "[data-source-action]",
+      )) {
+        if (
+          ["poll", "confirm-disconnect"].includes(button.dataset.sourceAction)
+        )
+          button.disabled = formsLocked || busy;
+        if (button.dataset.sourceAction === "poll")
+          button.hidden = !flow?.paused;
+        if (["copy", "cancel", "keep"].includes(button.dataset.sourceAction))
+          button.disabled = formsLocked;
+      }
+    }
+    $("source-count").textContent = String(connectedCount);
+    $("source-refresh").disabled = formsLocked || sourceLoading;
+  }
+  async function refreshSources() {
+    if (!sessionToken || sourceLoading) return;
+    sourceLoading = true;
+    renderSourceControls();
+    message($("source-message"), "");
+    try {
+      const result = await api("/api/source-control");
+      sourceConnections = Array.isArray(result.connections)
+        ? result.connections
+        : [];
+      if (currentStatus) {
+        currentStatus.sourceConnections = sourceConnections;
+        renderStatus(currentStatus);
+      }
+    } catch (error) {
+      message(
+        $("source-message"),
+        `${error.message} Manual source tokens remain available below.`,
+        true,
+      );
+    } finally {
+      sourceLoading = false;
+      renderSourceControls();
+    }
+    await refreshRepositories();
+  }
+  function endSourceFlow(provider) {
+    clearTimeout(sourceTimers.get(provider));
+    sourceTimers.delete(provider);
+    sourceFlows.delete(provider);
+    renderSourceControls();
+  }
+  function scheduleSourcePoll(provider, seconds) {
+    clearTimeout(sourceTimers.get(provider));
+    sourceTimers.set(
+      provider,
+      setTimeout(() => pollSource(provider), Math.max(1, seconds) * 1000),
+    );
+  }
+  async function pollSource(provider) {
+    const flow = sourceFlows.get(provider);
+    if (!flow || sourceBusy.has(provider) || !sessionToken) return;
+    clearTimeout(sourceTimers.get(provider));
+    if (Date.parse(flow.expiresAt) <= Date.now()) {
+      endSourceFlow(provider);
+      message(
+        $(`${provider}-source-message`),
+        "This verification code expired. Start a new connection to try again.",
+        true,
+      );
+      return;
+    }
+    sourceBusy.add(provider);
+    flow.paused = false;
+    renderSourceControls();
+    try {
+      const result = await api(`/api/source-control/${provider}/poll`, {
+        id: flow.id,
+      });
+      if (sourceFlows.get(provider) !== flow) return;
+      if (result.status === "pending") {
+        message($(`${provider}-source-message`), "");
+        scheduleSourcePoll(
+          provider,
+          Math.max(
+            flow.intervalSeconds,
+            result.retryAfterSeconds || 0,
+            document.hidden ? 15 : 1,
+          ),
+        );
+      } else if (result.status === "connected") {
+        endSourceFlow(provider);
+        message(
+          $(`${provider}-source-message`),
+          `${sourceProviders[provider].name} connected. Choose your app repository below.`,
+        );
+        await refreshSources();
+        await refreshRunners();
+      } else if (["expired", "denied"].includes(result.status)) {
+        endSourceFlow(provider);
+        message(
+          $(`${provider}-source-message`),
+          result.status === "denied"
+            ? "The connection was not approved. You can start again whenever you’re ready."
+            : "This verification code expired. Start a new connection to try again.",
+          true,
+        );
+      } else {
+        throw new Error("Unexpected connection status. Try checking again.");
+      }
+    } catch (error) {
+      if (sourceFlows.get(provider) === flow) {
+        flow.paused = true;
+        message($(`${provider}-source-message`), error.message, true);
+      }
+    } finally {
+      sourceBusy.delete(provider);
+      renderSourceControls();
+    }
+  }
+  $("source-refresh").addEventListener("click", refreshSources);
+  $("source-cards").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-source-action]");
+    if (!button || formsLocked) return;
+    const { provider, sourceAction: action } = button.dataset;
+    if (!sourceProviders[provider]) return;
+    const feedback = $(`${provider}-source-message`);
+    if (action === "copy") {
+      try {
+        await copyText(sourceFlows.get(provider)?.userCode || "");
+        copiedButton(button);
+      } catch (error) {
+        message(feedback, error.message, true);
+      }
+      return;
+    }
+    if (action === "poll") {
+      if (!sourceFlows.get(provider)?.paused) return;
+      await pollSource(provider);
+      return;
+    }
+    if (action === "cancel") {
+      endSourceFlow(provider);
+      message(
+        feedback,
+        "Sign-in canceled in this dashboard. The unused provider code will expire automatically.",
+      );
+      return;
+    }
+    if (action === "disconnect") {
+      $(`${provider}-disconnect-prompt`).hidden = false;
+      return;
+    }
+    if (action === "keep") {
+      $(`${provider}-disconnect-prompt`).hidden = true;
+      return;
+    }
+    if (sourceBusy.has(provider)) return;
+    sourceBusy.add(provider);
+    message(feedback, "");
+    renderSourceControls();
+    try {
+      if (action === "connect") {
+        const flow = await api(`/api/source-control/${provider}/connect`, {});
+        const safeVerificationUrl = sourceLink(
+          provider,
+          flow.verificationUriComplete || flow.verificationUri,
+        );
+        if (
+          !safeVerificationUrl ||
+          !flow.id ||
+          !flow.userCode ||
+          !Number.isFinite(Date.parse(flow.expiresAt))
+        )
+          throw new Error(
+            "The provider returned an unexpected sign-in link or code. Refresh the connection and try again.",
+          );
+        sourceFlows.set(provider, {
+          ...flow,
+          safeVerificationUrl,
+          intervalSeconds: Math.max(1, Number(flow.intervalSeconds) || 5),
+        });
+        renderSourceControls();
+        $(`${provider}-device-code`).focus();
+        scheduleSourcePoll(
+          provider,
+          Math.max(1, Number(flow.intervalSeconds) || 5),
+        );
+      } else if (action === "confirm-disconnect") {
+        await api(`/api/source-control/${provider}`, {}, "DELETE");
+        $(`${provider}-disconnect-prompt`).hidden = true;
+        message(
+          feedback,
+          "Browser connection removed. Your project files and any separately saved token are kept.",
+        );
+        await refreshSources();
+        await refreshRunners();
+      }
+    } catch (error) {
+      message(feedback, error.message, true);
+    } finally {
+      sourceBusy.delete(provider);
+      renderSourceControls();
+    }
+  });
+  $("source-token-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = $("source-token-form");
+    const values = Object.fromEntries(
+      [...form.querySelectorAll("input")]
+        .filter((input) => input.value.trim())
+        .map((input) => [input.name, input.value.trim()]),
+    );
+    if (!Object.keys(values).length) {
+      message(
+        $("source-token-message"),
+        "Paste at least one new source token. Blank fields keep saved values.",
+        true,
+      );
+      $("github-token").focus();
+      return;
+    }
+    lockForms(true);
+    $("save-source-tokens").textContent = "Saving…";
+    try {
+      await api("/api/connections", { values });
+      for (const input of form.querySelectorAll("input")) {
+        input.value = "";
+        input.type = "password";
+      }
+      for (const button of form.querySelectorAll("[data-reveal]")) {
+        button.textContent = "Show";
+        button.setAttribute("aria-pressed", "false");
+        button.setAttribute(
+          "aria-label",
+          button.getAttribute("aria-label").replace(/^Hide/, "Show"),
+        );
+      }
+      message(
+        $("source-token-message"),
+        "Source tokens saved on this server. Choose a repository below, then verify your project’s connections.",
+      );
+      await refreshStatus();
+      await refreshSources();
+      await refreshRunners();
+    } catch (error) {
+      message($("source-token-message"), error.message, true);
+    } finally {
+      for (const key of Object.keys(values)) delete values[key];
+      lockForms(!sessionToken);
+      $("save-source-tokens").textContent = "Save source tokens";
+    }
+  });
+  function renderRepositoryDetail() {
+    const repository = repositories.find(
+      (item) => item.fullName === $("repository-select").value,
+    );
+    $("repository-detail").hidden = !repository;
+    $("repository-detail").textContent = repository
+      ? `${repository.private ? "Private" : "Public"} · ${repository.defaultBranch || "Default branch unavailable"} · ${repository.canPush ? "Write access" : "Read-only access"}`
+      : "";
+  }
+  async function refreshRepositories() {
+    const provider = $("project-provider").value;
+    const manual = $("manual-repository").checked;
+    if (!sessionToken || manual) return;
+    const revision = ++repositoryRevision;
+    const select = $("repository-select");
+    const previous = select.value;
+    const connected = sourceConnection(provider);
+    if (
+      !connected?.connected ||
+      connected.needsReconnect ||
+      (provider === "gitlab" && connected.method === "token")
+    ) {
+      repositories = [];
+      repositoryLoading = false;
+      select.replaceChildren(
+        new Option(`Connect ${sourceProviders[provider].name} first`, ""),
+      );
+      $("project-repo").value = "";
+      renderRepositoryDetail();
+      message(
+        $("repository-status"),
+        provider === "gitlab" && connected?.method === "token"
+          ? "Use browser sign-in for the GitLab.com repository picker. Saved GitLab tokens use manual repository entry so you can choose the correct server."
+          : `Connect ${sourceProviders[provider].name} under Source control, or use a saved token with manual entry.`,
+      );
+      renderProjectProvider();
+      return;
+    }
+    repositoryLoading = true;
+    renderProjectProvider();
+    message($("repository-status"), "Loading repositories from your provider…");
+    try {
+      const search = $("repository-search").value.trim();
+      const result = await api(
+        `/api/source-control/${provider}/repositories${search ? `?search=${encodeURIComponent(search)}` : ""}`,
+      );
+      if (
+        revision !== repositoryRevision ||
+        provider !== $("project-provider").value
+      )
+        return;
+      repositories = Array.isArray(result.repositories)
+        ? result.repositories.filter(
+            (repository) =>
+              repository.provider === provider &&
+              typeof repository.fullName === "string",
+          )
+        : [];
+      const options = [
+        new Option(
+          repositories.length
+            ? "Choose your app repository"
+            : "No repositories available",
+          "",
+        ),
+      ];
+      for (const repository of repositories) {
+        const option = new Option(
+          `${repository.fullName}${repository.canPush ? "" : " · read only"}`,
+          repository.fullName,
+        );
+        option.disabled = !repository.canPush;
+        options.push(option);
+      }
+      select.replaceChildren(...options);
+      if (
+        repositories.some(
+          (repository) =>
+            repository.fullName === previous && repository.canPush,
+        )
+      )
+        select.value = previous;
+      if (!$("manual-repository").checked)
+        $("project-repo").value = select.value;
+      renderRepositoryDetail();
+      message(
+        $("repository-status"),
+        repositories.length
+          ? `${repositories.length} ${repositories.length === 1 ? "repository" : "repositories"} found.${result.truncated ? " More are available; narrow your search." : ""} Write access is needed to create branches and PRs/MRs.`
+          : "No repositories found. Check your search, account permissions, or GitHub App repository access, then refresh.",
+      );
+    } catch (error) {
+      if (revision === repositoryRevision)
+        message(
+          $("repository-status"),
+          `${error.message} Use Search / refresh to retry, or enter a repository manually with a saved token.`,
+          true,
+        );
+    } finally {
+      if (revision === repositoryRevision) {
+        repositoryLoading = false;
+        renderProjectProvider();
+      }
+    }
+  }
+
   function renderProjectProvider() {
     const gitlab = $("project-provider").value === "gitlab";
-    $("gitlab-options").hidden = !gitlab;
-    $("gitlab-server").disabled = !gitlab;
+    const manual = $("manual-repository").checked;
+    $("gitlab-options").hidden = !gitlab || !manual;
+    $("gitlab-server").disabled = !gitlab || !manual;
+    $("repository-picker").hidden = manual;
+    $("repository-search").disabled = manual || formsLocked;
+    $("repository-refresh").disabled =
+      manual || repositoryLoading || formsLocked;
+    $("manual-repository-field").hidden = !manual;
+    $("project-repo").required = manual;
+    $("repository-select").required = !manual;
+    $("repository-select").disabled =
+      manual || repositoryLoading || formsLocked;
     $("project-repo-label").textContent =
       `${gitlab ? "GitLab" : "GitHub"} repository`;
     $("project-repo").pattern = gitlab
@@ -542,10 +1208,38 @@
       ? "your-group/your-app"
       : "your-team/your-app";
     $("repo-help").textContent = gitlab
-      ? "Use group/project or group/subgroup/project."
-      : "Use the owner/repository format.";
+      ? "Use group/project or group/subgroup/project. Save a GitLab token under Source control first."
+      : "Use owner/repository. Save a GitHub token under Source control first.";
   }
-  $("project-provider").addEventListener("change", renderProjectProvider);
+  $("project-provider").addEventListener("change", () => {
+    $("project-repo").value = "";
+    $("repository-search").value = "";
+    $("gitlab-server").value = "";
+    suggestProjectName();
+    renderProjectProvider();
+    refreshRepositories();
+  });
+  $("manual-repository").addEventListener("change", () => {
+    if (!$("manual-repository").checked) {
+      $("gitlab-server").value = "";
+      $("project-repo").value = $("repository-select").value;
+      suggestProjectName();
+    }
+    renderProjectProvider();
+  });
+  $("repository-select").addEventListener("change", () => {
+    $("project-repo").value = $("repository-select").value;
+    suggestProjectName();
+    renderRepositoryDetail();
+  });
+  $("repository-refresh").addEventListener("click", refreshRepositories);
+  $("repository-search").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      refreshRepositories();
+    }
+  });
+  createSourceCards();
   renderProjectProvider();
   $("project-list").addEventListener("click", async (event) => {
     const launch = event.target.closest("[data-launch-project]");
@@ -2016,6 +2710,8 @@
     clearTimeout(updatePollTimer);
     clearTimeout(runnerPollTimer);
     clearArtifactBlobs();
+    for (const timer of sourceTimers.values()) clearTimeout(timer);
+    sourceFlows.clear();
     $("slack-webhook").value = "";
     for (const input of document.querySelectorAll(".password-wrap input"))
       input.value = "";

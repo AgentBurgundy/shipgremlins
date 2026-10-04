@@ -12,3 +12,8 @@ export function enforceDeadline(
   exit?: (code: number) => void,
 ): () => void;
 export function restoreGitConfig(directory: string, repoUrl: string): void;
+export function preparePublication(
+  directory: string,
+  repoUrl: string,
+  publication: Record<string, string | undefined>,
+): string;

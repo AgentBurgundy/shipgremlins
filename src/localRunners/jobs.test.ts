@@ -8,6 +8,8 @@ import { initializeSetup } from "../setup/files.ts";
 import type { LinearTicket } from "../services/types.ts";
 import { createJobPreparation, scheduledThisMinute } from "./jobs.ts";
 import type { LocalJob } from "./types.ts";
+import { SourceControlError } from "../sourceControl/types.ts";
+import { LocalJobDeferredError } from "./engine.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -89,6 +91,89 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("uses the connected source token only after preparation and reserves a publication-safe lease", async () => {
+    const acquireLease = vi.fn(async () => ({
+      token: "official-oauth-token",
+      method: "oauth" as const,
+    }));
+    const prepared = createJobPreparation({
+      root,
+      env: { ...env, GITHUB_TOKEN: undefined },
+      sourceControl: { acquireLease },
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [ticket],
+      }),
+      preview: async () => {
+        expect(acquireLease).not.toHaveBeenCalled();
+        return "https://preview.vercel.app";
+      },
+    });
+    const payload = await prepared.prepareJob(job);
+    expect(acquireLease).toHaveBeenCalledWith({
+      jobId: job.id,
+      provider: "github",
+      repository: "owner/app",
+      serverUrl: undefined,
+      minutes: 50,
+      write: true,
+    });
+    expect(payload.credentials?.GITHUB_TOKEN).toBe("official-oauth-token");
+    expect(JSON.stringify(payload)).not.toContain("source-token");
+    expect(payload.prompt).not.toContain("official-oauth-token");
+  });
+
+  it.each(["refresh_blocked", "busy"])(
+    "turns %s into a queue admission delay",
+    async (code) => {
+      const prepared = createJobPreparation({
+        root,
+        env,
+        sourceControl: {
+          acquireLease: async () => {
+            throw new SourceControlError(
+              "private provider response",
+              code,
+              409,
+            );
+          },
+        },
+        linear: () => ({
+          getTicket: async () => ticket,
+          listTickets: async () => [ticket],
+        }),
+        preview: async () => "https://preview.vercel.app",
+      });
+      await expect(prepared.prepareJob(job)).rejects.toBeInstanceOf(
+        LocalJobDeferredError,
+      );
+      await expect(prepared.prepareJob(job)).rejects.not.toThrow(
+        "private provider response",
+      );
+    },
+  );
+
+  it("does not acquire a source lease for failed project preparation", async () => {
+    const acquireLease = vi.fn(async () => ({
+      token: "unused",
+      method: "oauth" as const,
+    }));
+    const prepared = createJobPreparation({
+      root,
+      env,
+      sourceControl: { acquireLease },
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [ticket],
+      }),
+      preview: async () => null,
+    });
+    await expect(prepared.prepareJob(job)).rejects.toThrow(
+      "No ready integration preview",
+    );
+    expect(acquireLease).not.toHaveBeenCalled();
+  });
+
   it("rechecks approval at launch and supplies only this job's credentials", async () => {
     writeFileSync(
       join(root, ".env"),

@@ -74,12 +74,23 @@ export class LocalRunnerError extends Error {
   }
 }
 
+/** A temporary credential admission delay, not a failed agent attempt. */
+export class LocalJobDeferredError extends Error {
+  constructor() {
+    super(
+      "Waiting for active jobs to finish before refreshing the source connection. This job remains queued.",
+    );
+    this.name = "LocalJobDeferredError";
+  }
+}
+
 export interface LocalRunnersOptions {
   root: string;
   packageRoot: string;
   docker?: DockerRunners;
   prepareJob?: (job: LocalJob) => Promise<DockerJobPayload>;
   beforeLaunch?: () => Promise<void>;
+  releaseJobResources?: (jobId: string) => Promise<void>;
   scheduledJobs?: () => Promise<LocalJobInput[]>;
   activityStore?: ActivityStore;
   notify?: (event: JobNotificationEvent) => Promise<NotificationResult>;
@@ -329,7 +340,22 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   const capturePending = new Map<string, LocalJob>();
   const captured = new Map<string, { fingerprint: string; at: number }>();
   const sideEffectWarnings = new Map<string, string>();
+  const releasedResources = new Set<string>();
   const now = () => clock().toISOString();
+
+  async function releaseResources(job: LocalJob): Promise<void> {
+    if (!options.releaseJobResources || releasedResources.has(job.id)) return;
+    try {
+      await options.releaseJobResources(job.id);
+      sideEffectWarnings.delete(`resources:${job.id}`);
+      if (TERMINAL.has(job.status)) releasedResources.add(job.id);
+    } catch {
+      sideEffectWarnings.set(
+        `resources:${job.id}`,
+        "Source connection lease cleanup is pending. Other jobs may wait for the lease to expire; existing work is preserved.",
+      );
+    }
+  }
 
   function track(promise: Promise<void>): void {
     background.add(promise);
@@ -496,7 +522,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         );
       }
     }
-    for (const key of [`slack:${job.id}`, `storage:${job.id}`])
+    for (const key of [
+      `slack:${job.id}`,
+      `storage:${job.id}`,
+      `resources:${job.id}`,
+    ])
       if (sideEffectWarnings.has(key)) lines.push(sideEffectWarnings.get(key)!);
     return lines;
   }
@@ -962,7 +992,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     worker: LocalWorker,
   ): Promise<void> {
     if (stopping) return;
-    const keepQueued = () => {
+    const keepQueued = async () => {
       job.status = "queued";
       job.startedAt = undefined;
       job.message =
@@ -976,6 +1006,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         message: "The local controller has stopped scheduling.",
       };
       save(state);
+      await releaseResources(job);
     };
     job.workerId = worker.id;
     job.status = "running";
@@ -993,7 +1024,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     try {
       await options.beforeLaunch?.();
       if (stopping) {
-        keepQueued();
+        await keepQueued();
         return;
       }
       if (!imageReady) {
@@ -1002,15 +1033,16 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       }
     } catch {
       if (stopping) {
-        keepQueued();
+        await keepQueued();
         return;
       }
       retryBeforeLaunch(state, job, worker);
       save(state);
+      await releaseResources(job);
       return;
     }
     if (stopping) {
-      keepQueued();
+      await keepQueued();
       return;
     }
     let payload: DockerJobPayload;
@@ -1020,9 +1052,19 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           ? { kind: "verify", nonce: job.id }
           : await options.prepareJob!(job);
       if (!payload || payload.kind !== job.type) throw new Error();
-    } catch {
+    } catch (error) {
       if (stopping) {
-        keepQueued();
+        await keepQueued();
+        return;
+      }
+      if (error instanceof LocalJobDeferredError) {
+        job.status = "queued";
+        job.startedAt = undefined;
+        job.message = error.message;
+        delete state.launched[job.id];
+        idleWorker(worker);
+        save(state);
+        await releaseResources(job);
         return;
       }
       failed(
@@ -1032,10 +1074,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         "This job could not be prepared. Check project configuration and saved connections. No agent was started.",
       );
       save(state);
+      await releaseResources(job);
       return;
     }
     if (stopping) {
-      keepQueued();
+      await keepQueued();
       return;
     }
     try {
@@ -1057,6 +1100,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       }
     }
     save(state);
+    if (job.status !== "running") await releaseResources(job);
   }
 
   async function tickOnce(): Promise<void> {
@@ -1065,9 +1109,20 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         phase: "idle",
         message: "Local workers are watching the queue.",
       };
-      for (const job of state.jobs.filter((item) => item.status === "running"))
+      for (const job of state.jobs.filter(
+        (item) => item.status === "running",
+      )) {
         await reconcile(state, job);
+        if (job.status === "queued") {
+          // A restart can discover a lease acquired just before a crash, with no
+          // container created. Release it before retrying the same durable job.
+          save(state);
+          await releaseResources(job);
+        }
+      }
       save(state);
+      for (const job of state.jobs.filter((item) => TERMINAL.has(item.status)))
+        await releaseResources(job);
       if (stopping) {
         state.operation = {
           phase: "idle",

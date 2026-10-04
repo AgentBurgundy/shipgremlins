@@ -14,7 +14,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createLocalRunners, LocalRunnerError } from "./engine.ts";
+import {
+  createLocalRunners,
+  LocalRunnerError,
+  LocalJobDeferredError,
+} from "./engine.ts";
 import type { DockerJobPayload, DockerRunners } from "./docker.ts";
 import type { LocalJobInput } from "./types.ts";
 import type { JobNotificationEvent } from "../slack/messages.ts";
@@ -149,6 +153,161 @@ afterEach(() => {
 });
 
 describe("durable local worker engine", () => {
+  it("defers credential refresh contention without consuming retries or starting an agent", async () => {
+    const f = fixture();
+    await f.ready();
+    const releaseJobResources = vi.fn(async () => {});
+    const engine = createLocalRunners({
+      ...f.options,
+      releaseJobResources,
+      prepareJob: async () => {
+        throw new LocalJobDeferredError();
+      },
+    });
+    const job = await engine.enqueue({
+      type: "pm",
+      project: "my-app",
+      area: "core",
+    });
+    const starts = f.mock.startJob.mock.calls.length;
+    await engine.tick();
+    await engine.tick();
+    expect(await engine.job(job.id)).toMatchObject({
+      status: "queued",
+      retries: 0,
+    });
+    expect((await engine.job(job.id))?.startedAt).toBeUndefined();
+    expect((await engine.job(job.id))?.message).toContain("before refreshing");
+    expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
+    expect(f.options.notify).not.toHaveBeenCalled();
+    expect(releaseJobResources).toHaveBeenCalledWith(job.id);
+    await engine.stop();
+  });
+
+  it("holds source leases until the container exits and retries terminal cleanup after a restart", async () => {
+    const f = fixture();
+    await f.ready();
+    const releaseJobResources = vi.fn(async (_id: string) => {});
+    const engine = createLocalRunners({ ...f.options, releaseJobResources });
+    const job = await engine.enqueue({
+      type: "developer",
+      project: "my-app",
+      ticket: "APP-17",
+    });
+    await engine.tick();
+    await engine.tick();
+    expect(releaseJobResources.mock.calls.some(([id]) => id === job.id)).toBe(
+      false,
+    );
+    await engine.stop();
+    expect(releaseJobResources.mock.calls.some(([id]) => id === job.id)).toBe(
+      false,
+    );
+    f.finish(job.id);
+    const restarted = createLocalRunners({ ...f.options, releaseJobResources });
+    await restarted.tick();
+    expect(
+      releaseJobResources.mock.calls.filter(([id]) => id === job.id),
+    ).toHaveLength(1);
+    await restarted.tick();
+    expect(
+      releaseJobResources.mock.calls.filter(([id]) => id === job.id),
+    ).toHaveLength(1);
+    await restarted.stop();
+  });
+
+  it("does not release a lease while Docker cannot establish whether a job launched", async () => {
+    const f = fixture();
+    await f.ready();
+    const releaseJobResources = vi.fn(async (_id: string) => {});
+    const engine = createLocalRunners({ ...f.options, releaseJobResources });
+    const job = await engine.enqueue({
+      type: "pm",
+      project: "my-app",
+      area: "core",
+    });
+    f.mock.startJob.mockRejectedValueOnce(new Error("ambiguous"));
+    f.mock.inspectJob.mockRejectedValueOnce(new Error("unavailable"));
+    await engine.tick();
+    expect((await engine.job(job.id))?.status).toBe("running");
+    expect(releaseJobResources.mock.calls.some(([id]) => id === job.id)).toBe(
+      false,
+    );
+    await engine.stop();
+  });
+
+  it("releases an orphaned prelaunch lease before retrying the same job after restart", async () => {
+    const f = fixture();
+    await f.ready();
+    const events: string[] = [];
+    let id = "";
+    const releaseJobResources = async (jobId: string) => {
+      if (jobId === id) events.push("release");
+    };
+    const prepareJob = async (): Promise<DockerJobPayload> => {
+      events.push("acquire");
+      return { kind: "pm" };
+    };
+    const engine = createLocalRunners({
+      ...f.options,
+      prepareJob,
+      releaseJobResources,
+    });
+    id = (await engine.enqueue({ type: "pm", project: "my-app", area: "core" }))
+      .id;
+    f.mock.startJob.mockRejectedValueOnce(new Error("connection lost"));
+    f.mock.inspectJob.mockRejectedValueOnce(new Error("unavailable"));
+    await engine.tick();
+    expect(events).toEqual(["acquire"]);
+    const restarted = createLocalRunners({
+      ...f.options,
+      prepareJob,
+      releaseJobResources,
+    });
+    await restarted.tick();
+    expect(events).toEqual(["acquire", "release", "acquire"]);
+    expect(await restarted.job(id)).toMatchObject({
+      status: "running",
+      retries: 1,
+    });
+    await engine.stop();
+    await restarted.stop();
+  });
+
+  it("releases a prepared credential when the controller stops before launch", async () => {
+    const f = fixture();
+    await f.ready();
+    let finishPreparation!: (payload: DockerJobPayload) => void;
+    const prepareJob = vi.fn(
+      () =>
+        new Promise<DockerJobPayload>((resolve) => {
+          finishPreparation = resolve;
+        }),
+    );
+    const releaseJobResources = vi.fn(async (_id: string) => {});
+    const engine = createLocalRunners({
+      ...f.options,
+      prepareJob,
+      releaseJobResources,
+    });
+    const job = await engine.enqueue({
+      type: "pm",
+      project: "my-app",
+      area: "core",
+    });
+    const tick = engine.tick();
+    await vi.waitFor(() => expect(prepareJob).toHaveBeenCalledOnce());
+    const stop = engine.stop();
+    finishPreparation({
+      kind: "pm",
+      credentials: { GITHUB_TOKEN: "leased-token" },
+    });
+    await Promise.all([tick, stop]);
+    expect((await engine.job(job.id))?.status).toBe("queued");
+    expect(releaseJobResources).toHaveBeenCalledWith(job.id);
+    expect(f.calls.some((call) => call.id === job.id)).toBe(false);
+  });
+
   it("claims notifications before delivery and never repeats them after restart", async () => {
     const f = fixture();
     await f.ready();

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadHub, loadProject } from "../config.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
 import { isExampleHub, validateName } from "./files.ts";
+import type { SourceStatus } from "../sourceControl/types.ts";
 
 export type Tool = "git" | "npm" | "docker" | "claude" | "gcloud";
 export interface ToolResult {
@@ -31,6 +32,10 @@ export interface PreflightDeps {
   env: NodeJS.ProcessEnv;
   nodeVersion?: string;
   probe?: (tool: Tool) => ToolResult;
+  sourceConnections?: Pick<
+    SourceStatus,
+    "provider" | "serverUrl" | "connected" | "method" | "needsReconnect"
+  >[];
 }
 
 /** Commands are fixed, bounded and read-only. Tool output is reduced to a version, never echoed. */
@@ -148,14 +153,42 @@ export function inspectSetup(
       "fail",
       "No projects configured. Open gremlins setup or run gremlins setup init --project my-app --repo your-org/my-app. Use a lowercase project ID such as my-app, not a domain.",
     );
-  if (names.length === 0) secretNames.add("GITHUB_TOKEN");
+  if (
+    names.length === 0 &&
+    !deps.sourceConnections?.some(
+      (source) =>
+        source.method === "oauth" && source.connected && !source.needsReconnect,
+    )
+  )
+    secretNames.add("GITHUB_TOKEN");
   for (const name of names) {
     try {
       validateName(name, "project");
       const project = loadProject(root, name);
-      secretNames.add(
-        project.config.provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN",
+      const provider = project.config.provider ?? "github";
+      const serverUrl =
+        provider === "github"
+          ? "https://github.com"
+          : (project.config.serverUrl ?? "https://gitlab.com");
+      const oauth = deps.sourceConnections?.find(
+        (connection) =>
+          connection.provider === provider &&
+          connection.serverUrl.replace(/\/$/, "") ===
+            serverUrl.replace(/\/$/, "") &&
+          connection.method === "oauth",
       );
+      if (oauth)
+        add(
+          `source:${name}`,
+          oauth.connected && !oauth.needsReconnect ? "pass" : "fail",
+          oauth.connected && !oauth.needsReconnect
+            ? "Official source-control connection is saved; doctor checks live repository access."
+            : "Reconnect source control in the dashboard; the saved app authorization needs attention.",
+        );
+      else
+        secretNames.add(
+          provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN",
+        );
       add(`project:${name}`, "pass", "Project configuration is valid.");
       secretNames.add(project.config.vercel.bypassSecret);
       for (const secret of telemetrySecrets(project.config.telemetry))

@@ -27,6 +27,10 @@
           <a class="nav-item" href="#overview"
             ><span aria-hidden="true">◈</span> Overview</a
           >
+          <a class="nav-item" href="#source-control"
+            ><span aria-hidden="true">⑂</span> Source control
+            <span class="nav-count" id="source-count">—</span></a
+          >
           <a class="nav-item" href="#connections"
             ><span aria-hidden="true">⌘</span> Connections
             <span class="nav-count" id="connection-count">—</span></a
@@ -82,7 +86,7 @@
                 Connect your tools. Add your app.<br class="desktop-break" />
                 PM Gremlins find the gaps. Coding Gremlins build the fixes.
               </p>
-              <a class="button button-dark" href="#connections"
+              <a class="button button-dark" href="#source-control"
                 >Set up your crew <span aria-hidden="true">↗</span></a
               >
             </div>
@@ -138,17 +142,169 @@
           </section>
 
           <section
+            class="panel source-panel"
+            id="source-control"
+            aria-labelledby="source-title"
+          >
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow muted">01 / THE SOURCE</span>
+                <h2 id="source-title">Let the crew into your code.</h2>
+                <p>
+                  Connect GitHub or GitLab, choose a repository, and keep your
+                  gremlins working on your machine.
+                </p>
+              </div>
+              <span class="section-symbol" aria-hidden="true">⑂</span>
+            </div>
+            <div
+              id="source-cards"
+              class="source-grid"
+              aria-label="Source control providers"
+            ></div>
+            <div class="source-footer">
+              <p class="runner-guidance">
+                You choose the account and repository access. Source sign-in
+                opens in a separate tab; keep this dashboard open to finish
+                connecting.
+              </p>
+              <button
+                class="small-button"
+                id="source-refresh"
+                type="button"
+                disabled
+              >
+                Refresh connections
+              </button>
+            </div>
+            <div
+              class="form-message"
+              id="source-message"
+              role="status"
+              hidden
+            ></div>
+            <details class="source-advanced" id="source-manual">
+              <summary>Advanced: use a personal access token</summary>
+              <p class="runner-guidance">
+                Use this fallback if browser sign-in is unavailable, or for a
+                self-hosted GitLab server. Paste a token with access to your app
+                repository. Blank fields keep existing tokens.
+              </p>
+              <form id="source-token-form">
+                <fieldset id="source-token-fields" disabled>
+                  <legend class="sr-only">Manual source credentials</legend>
+                  <div class="token-grid">
+                    <div class="token-field">
+                      <div class="field-heading">
+                        <label for="github-token"
+                          ><span class="provider-icon" aria-hidden="true"
+                            >GH</span
+                          >GitHub</label
+                        ><span
+                          class="saved-state"
+                          data-connection="GITHUB_TOKEN"
+                          >Checking…</span
+                        >
+                      </div>
+                      <p id="github-help">
+                        Repositories, branches, and pull requests.
+                      </p>
+                      <div class="password-wrap">
+                        <input
+                          id="github-token"
+                          name="GITHUB_TOKEN"
+                          type="password"
+                          autocomplete="off"
+                          spellcheck="false"
+                          autocapitalize="none"
+                          placeholder="Paste your GitHub token"
+                          aria-describedby="github-help"
+                        /><button
+                          class="reveal-button"
+                          type="button"
+                          data-reveal="github-token"
+                          aria-label="Show GitHub token"
+                          aria-pressed="false"
+                        >
+                          Show
+                        </button>
+                      </div>
+                    </div>
+                    <div class="token-field">
+                      <div class="field-heading">
+                        <label for="gitlab-token"
+                          ><span
+                            class="provider-icon gitlab-icon"
+                            aria-hidden="true"
+                            >GL</span
+                          >GitLab</label
+                        ><span
+                          class="saved-state"
+                          data-connection="GITLAB_TOKEN"
+                          >Checking…</span
+                        >
+                      </div>
+                      <p id="gitlab-help">
+                        Repositories, branches, and merge requests.
+                      </p>
+                      <div class="password-wrap">
+                        <input
+                          id="gitlab-token"
+                          name="GITLAB_TOKEN"
+                          type="password"
+                          autocomplete="off"
+                          spellcheck="false"
+                          autocapitalize="none"
+                          placeholder="Paste your GitLab token"
+                          aria-describedby="gitlab-help"
+                        /><button
+                          class="reveal-button"
+                          type="button"
+                          data-reveal="gitlab-token"
+                          aria-label="Show GitLab token"
+                          aria-pressed="false"
+                        >
+                          Show
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="form-bottom">
+                    <p>
+                      Tokens stay in this server’s .env file. Saved values are
+                      never returned to your browser.
+                    </p>
+                    <button
+                      class="button button-dark"
+                      id="save-source-tokens"
+                      type="submit"
+                    >
+                      Save source tokens
+                    </button>
+                  </div>
+                </fieldset>
+                <div
+                  class="form-message"
+                  id="source-token-message"
+                  role="status"
+                  hidden
+                ></div>
+              </form>
+            </details>
+          </section>
+
+          <section
             class="panel connections-panel"
             id="connections"
             aria-labelledby="connections-title"
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">01 / THE CONNECTIONS</span>
-                <h2 id="connections-title">Give your crew the keys.</h2>
+                <span class="eyebrow muted">02 / THE CONNECTIONS</span>
+                <h2 id="connections-title">Connect the rest of your tools.</h2>
                 <p>
-                  Save credentials here. Keep secrets out of your terminal
-                  history.
+                  Linear, Claude Code, deployments, telemetry, and Slack. Your
+                  source connections live in their own section above.
                 </p>
               </div>
               <span class="section-symbol" aria-hidden="true">⌘</span>
@@ -157,75 +313,6 @@
               <fieldset id="connections-fields" disabled>
                 <legend class="sr-only">Provider credentials</legend>
                 <div class="token-grid">
-                  <div class="token-field">
-                    <div class="field-heading">
-                      <label for="github-token"
-                        ><span class="provider-icon" aria-hidden="true">GH</span
-                        >GitHub</label
-                      ><span class="saved-state" data-connection="GITHUB_TOKEN"
-                        >Checking…</span
-                      >
-                    </div>
-                    <p id="github-help">
-                      Repositories, branches, and pull requests.
-                    </p>
-                    <div class="password-wrap">
-                      <input
-                        id="github-token"
-                        name="GITHUB_TOKEN"
-                        type="password"
-                        autocomplete="off"
-                        spellcheck="false"
-                        autocapitalize="none"
-                        placeholder="Paste your GitHub token"
-                        aria-describedby="github-help"
-                      /><button
-                        class="reveal-button"
-                        type="button"
-                        data-reveal="github-token"
-                        aria-label="Show GitHub token"
-                        aria-pressed="false"
-                      >
-                        Show
-                      </button>
-                    </div>
-                  </div>
-                  <div class="token-field">
-                    <div class="field-heading">
-                      <label for="gitlab-token"
-                        ><span
-                          class="provider-icon gitlab-icon"
-                          aria-hidden="true"
-                          >GL</span
-                        >GitLab</label
-                      ><span class="saved-state" data-connection="GITLAB_TOKEN"
-                        >Checking…</span
-                      >
-                    </div>
-                    <p id="gitlab-help">
-                      Repositories, branches, and merge requests.
-                    </p>
-                    <div class="password-wrap">
-                      <input
-                        id="gitlab-token"
-                        name="GITLAB_TOKEN"
-                        type="password"
-                        autocomplete="off"
-                        spellcheck="false"
-                        autocapitalize="none"
-                        placeholder="Paste your GitLab token"
-                        aria-describedby="gitlab-help"
-                      /><button
-                        class="reveal-button"
-                        type="button"
-                        data-reveal="gitlab-token"
-                        aria-label="Show GitLab token"
-                        aria-pressed="false"
-                      >
-                        Show
-                      </button>
-                    </div>
-                  </div>
                   <div class="token-field">
                     <div class="field-heading">
                       <label for="linear-token"
@@ -482,7 +569,7 @@
           <section class="panel" id="projects" aria-labelledby="projects-title">
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">02 / THE PLAYGROUND</span>
+                <span class="eyebrow muted">03 / THE PLAYGROUND</span>
                 <h2 id="projects-title">Which app are we improving?</h2>
                 <p>
                   Add a GitHub or GitLab app repository to create its local
@@ -511,22 +598,19 @@
                   </p>
                 </div>
                 <div class="project-form-grid">
-                  <div class="field">
-                    <label for="project-repo" id="project-repo-label"
-                      >GitHub repository</label
-                    ><input
-                      id="project-repo"
-                      name="repo"
-                      type="text"
+                  <div class="field repository-picker" id="repository-picker">
+                    <label for="repository-select">Repository</label
+                    ><select
+                      id="repository-select"
                       required
-                      autocomplete="off"
-                      spellcheck="false"
-                      autocapitalize="none"
-                      placeholder="your-team/your-app"
-                      pattern="[^\/\s]+/[^\/\s]+"
-                      aria-describedby="repo-help"
-                    />
-                    <p id="repo-help">Use the owner/repository format.</p>
+                      aria-describedby="repository-status"
+                    >
+                      <option value="">Connect a source provider first</option>
+                    </select>
+                    <p id="repository-status" role="status">
+                      Choose an available repository from your connection.
+                    </p>
+                    <p id="repository-detail" hidden></p>
                   </div>
                   <div class="field">
                     <label for="project-name">Project name</label
@@ -546,6 +630,45 @@
                       Lowercase letters, numbers, and hyphens.
                     </p>
                   </div>
+                </div>
+                <div class="repository-tools">
+                  <div class="field">
+                    <label for="repository-search">Find a repository</label>
+                    <div class="repository-search-row">
+                      <input
+                        id="repository-search"
+                        type="search"
+                        autocomplete="off"
+                        placeholder="Search your repositories"
+                      /><button
+                        class="small-button"
+                        id="repository-refresh"
+                        type="button"
+                      >
+                        Search / refresh
+                      </button>
+                    </div>
+                  </div>
+                  <label class="checkbox-label" for="manual-repository"
+                    ><input id="manual-repository" type="checkbox" /> Enter a
+                    repository manually</label
+                  >
+                </div>
+                <div class="field" id="manual-repository-field" hidden>
+                  <label for="project-repo" id="project-repo-label"
+                    >GitHub repository</label
+                  ><input
+                    id="project-repo"
+                    name="repo"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    autocapitalize="none"
+                    placeholder="your-team/your-app"
+                    pattern="[^\/\s]+/[^\/\s]+"
+                    aria-describedby="repo-help"
+                  />
+                  <p id="repo-help">Use the owner/repository format.</p>
                 </div>
                 <div class="advanced" id="gitlab-options" hidden>
                   <p class="advanced-heading">Your GitLab server</p>
@@ -597,7 +720,7 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">03 / A PLACE TO WORK</span>
+                <span class="eyebrow muted">04 / A PLACE TO WORK</span>
                 <h2 id="runners-title">Small crew. Real work.</h2>
                 <p>
                   Local Docker workers run browsers and agents on your
@@ -807,7 +930,7 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">04 / FOLLOW THE WORK</span>
+                <span class="eyebrow muted">05 / FOLLOW THE WORK</span>
                 <h2 id="activity-title">See what your crew is up to.</h2>
                 <p>
                   Visible tool calls, progress, checks, and evidence from
@@ -920,7 +1043,7 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">05 / YOUR WORKSPACE</span>
+                <span class="eyebrow muted">06 / YOUR WORKSPACE</span>
                 <h2 id="configuration-title">Make it your own.</h2>
                 <p>
                   Edit your crew’s configuration right here, even when your

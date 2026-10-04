@@ -9,6 +9,13 @@ local dashboard credential fields, preflight/doctor checks and PM workflow secre
 wiring are included. Scope, failure and redaction tests use mocked HTTP;
 provider accounts still require live validation. See [setup and limits](TELEMETRY.md).
 
+Official GitHub App and GitLab OAuth device connections now feed the dashboard's
+repository picker, doctor checks, and local jobs. Credentials refresh on the
+controller; durable job leases defer new work when rotation would invalidate a
+running job's token. Existing PATs remain supported, with manual repository setup
+for self-hosted GitLab. See [source control](SOURCE_CONTROL.md). Provider access
+still needs verification for each user's repositories.
+
 | Capability       | Current state                                                                                                                                                                                                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |

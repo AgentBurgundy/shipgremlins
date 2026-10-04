@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createUpdater } from "../src/update/index.ts";
 import { resolveRuntime } from "./runtime.mjs";
+import { createSourceStore } from "../src/sourceControl/store.ts";
 
 const [bootstrap, configurationRoot, scratch, tarball] = process.argv.slice(2);
 assert(bootstrap && configurationRoot && scratch && tarball);
@@ -76,6 +77,9 @@ for (const [directory, filename, content] of [
     JSON.stringify(content),
   );
 }
+await createSourceStore(configurationRoot).locked(async (state, save) => {
+  await save(state);
+});
 const originalConfiguration = snapshot(configurationRoot);
 const sha = "d".repeat(40);
 const env = { ...process.env, HOME: home, USERPROFILE: home };

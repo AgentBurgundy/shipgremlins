@@ -456,6 +456,68 @@ describe("setup status and CLI", () => {
     );
   });
 
+  it("accepts saved official source authorization without claiming a PAT is missing", () => {
+    initializeSetup(root, templatesRoot, input);
+    const report = inspectSetup(root, {
+      ...deps,
+      sourceConnections: [
+        {
+          provider: "github",
+          serverUrl: "https://github.com",
+          connected: true,
+          method: "oauth",
+        },
+      ],
+    });
+    expect(
+      report.secrets.some((secret) => secret.name === "GITHUB_TOKEN"),
+    ).toBe(false);
+    expect(
+      report.checks.find((check) => check.id === `source:${input.project}`)
+        ?.status,
+    ).toBe("pass");
+    const revoked = inspectSetup(root, {
+      ...deps,
+      env: { GITHUB_TOKEN: "old-token" },
+      sourceConnections: [
+        {
+          provider: "github",
+          serverUrl: "https://github.com",
+          connected: true,
+          needsReconnect: true,
+          method: "oauth",
+        },
+      ],
+    });
+    expect(
+      revoked.checks.find((check) => check.id === `source:${input.project}`)
+        ?.status,
+    ).toBe("fail");
+  });
+
+  it("does not treat gitlab.com OAuth as credentials for a self-hosted GitLab", () => {
+    initializeSetup(root, templatesRoot, input);
+    const path = join(root, "projects", input.project, "project.json");
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    value.provider = "gitlab";
+    value.serverUrl = "https://gitlab.example.com";
+    writeFileSync(path, JSON.stringify(value));
+    const report = inspectSetup(root, {
+      ...deps,
+      sourceConnections: [
+        {
+          provider: "gitlab",
+          serverUrl: "https://gitlab.com",
+          connected: true,
+          method: "oauth",
+        },
+      ],
+    });
+    expect(
+      report.secrets.find((secret) => secret.name === "GITLAB_TOKEN")?.present,
+    ).toBe(false);
+  });
+
   it("can distinguish a configured local installation from provider certification", () => {
     initializeSetup(root, templatesRoot, input);
     const projectFile = join(root, "projects", input.project, "project.json");

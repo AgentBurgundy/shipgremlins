@@ -65,6 +65,7 @@ test("encrypted channel credentials complete the browser-bound OAuth flow", asyn
     "request",
   );
   const page = await invoke(handler, `authorize?request=${request}`);
+  assert.equal(page.headers["referrer-policy"], "strict-origin");
   assert.match(page.body, /192\.168\.1\.4:4311/);
   assert.ok(!page.body.includes(pair.key));
   const auth = await invoke(handler, "authorize", {

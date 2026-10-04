@@ -25,6 +25,11 @@ import type { Updater, UpdateStatus } from "../update/index.ts";
 import type { LocalRunners } from "../localRunners/engine.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import type { createJobPreparation } from "../localRunners/jobs.ts";
+import {
+  SourceControlError,
+  type SourceControl,
+  type SourceStatus,
+} from "../sourceControl/types.ts";
 
 const session = "a".repeat(64);
 const directories: string[] = [];
@@ -91,6 +96,202 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  function sourceFixture() {
+    const connected: SourceStatus = {
+      provider: "github",
+      serverUrl: "https://github.com",
+      available: true,
+      connected: true,
+      method: "oauth",
+      account: { id: "account-1", login: "test-user" },
+    };
+    return {
+      status: vi.fn(async () => [connected]),
+      connect: vi.fn(async () => ({
+        id: "f".repeat(48),
+        provider: "github" as const,
+        userCode: "USER-CODE",
+        verificationUri: "https://github.com/login/device",
+        intervalSeconds: 5,
+        expiresAt: "2026-10-04T18:00:00Z",
+      })),
+      poll: vi.fn(async () => ({
+        status: "connected" as const,
+        connection: connected,
+      })),
+      disconnect: vi.fn(async () => ({
+        ...connected,
+        connected: false,
+        method: "none" as const,
+      })),
+      repositories: vi.fn(async () => ({
+        repositories: [
+          {
+            id: "repo-1",
+            provider: "github" as const,
+            serverUrl: "https://github.com",
+            fullName: "example/app",
+            defaultBranch: "main",
+            private: true,
+            webUrl: "https://github.com/example/app",
+            canPush: true,
+          },
+        ],
+        truncated: false,
+      })),
+      resolveCredential: vi.fn(async () => ({
+        token: "private-source-token",
+        method: "oauth" as const,
+      })),
+      acquireLease: vi.fn(async () => ({
+        token: "private-source-token",
+        method: "oauth" as const,
+      })),
+      releaseLease: vi.fn(async () => {}),
+    } satisfies SourceControl;
+  }
+
+  it("exposes authenticated source app/device/repository actions without credential values", async () => {
+    const sourceControl = sourceFixture();
+    const { url } = await start(undefined, [], { sourceControl });
+    expect((await fetch(`${url}/api/source-control`)).status).toBe(401);
+    const status = (await (
+      await fetch(`${url}/api/source-control`, { headers: auth })
+    ).json()) as { connections: SourceStatus[] };
+    expect(status.connections[0]).toMatchObject({
+      connected: true,
+      account: { login: "test-user" },
+    });
+    expect(JSON.stringify(status)).not.toContain("private-source-token");
+    const connected = await post(
+      `${url}/api/source-control/github/connect`,
+      {},
+    );
+    expect(connected.status).toBe(200);
+    expect(((await connected.json()) as { userCode: string }).userCode).toBe(
+      "USER-CODE",
+    );
+    expect(sourceControl.connect).toHaveBeenCalledWith({ provider: "github" });
+    expect(
+      (
+        await post(`${url}/api/source-control/github/poll`, {
+          id: "f".repeat(48),
+        })
+      ).status,
+    ).toBe(200);
+    expect(sourceControl.poll).toHaveBeenCalledWith("f".repeat(48));
+    const repositories = await fetch(
+      `${url}/api/source-control/github/repositories?search=app`,
+      { headers: auth },
+    );
+    expect(repositories.status).toBe(200);
+    expect(
+      ((await repositories.json()) as { repositories: { fullName: string }[] })
+        .repositories[0]!.fullName,
+    ).toBe("example/app");
+    expect(sourceControl.repositories).toHaveBeenCalledWith({
+      provider: "github",
+      search: "app",
+    });
+    expect(
+      (
+        await fetch(`${url}/api/source-control/github`, {
+          method: "DELETE",
+          headers: { ...auth, "Content-Type": "application/json" },
+          body: "{}",
+        })
+      ).status,
+    ).toBe(200);
+    expect(sourceControl.disconnect).toHaveBeenCalledWith({
+      provider: "github",
+    });
+    const dashboard = (await (
+      await fetch(`${url}/api/status`, { headers: auth })
+    ).json()) as {
+      connections: { name: string; configured: boolean }[];
+      sourceConnections: SourceStatus[];
+    };
+    expect(
+      dashboard.connections.find((item) => item.name === "GITHUB_TOKEN")!
+        .configured,
+    ).toBe(Boolean(process.env.GITHUB_TOKEN));
+    expect(dashboard.sourceConnections[0]?.connected).toBe(true);
+  });
+
+  it("rejects source-control issuer overrides, credentials and cross-site requests", async () => {
+    const sourceControl = sourceFixture();
+    const { url } = await start(undefined, [], { sourceControl });
+    for (const input of [
+      { serverUrl: "http://127.0.0.1/internal" },
+      { clientId: "untrusted-client" },
+      { token: "private" },
+    ])
+      expect(
+        (await post(`${url}/api/source-control/gitlab/connect`, input)).status,
+      ).toBe(400);
+    expect(
+      (
+        await fetch(
+          `${url}/api/source-control/gitlab/repositories?serverUrl=https://evil.test`,
+          { headers: auth },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(
+          `${url}/api/source-control/github/connect`,
+          {},
+          { Origin: "https://evil.test" },
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (await post(`${url}/api/source-control/github/poll`, { id: "../escape" }))
+        .status,
+    ).toBe(400);
+    expect(sourceControl.connect).not.toHaveBeenCalled();
+    expect(sourceControl.repositories).not.toHaveBeenCalled();
+    expect(sourceControl.poll).not.toHaveBeenCalled();
+  });
+
+  it("validates an OAuth-selected repository before writing project configuration", async () => {
+    const sourceControl = sourceFixture();
+    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const { url, root } = await start(packageRoot, [], { sourceControl });
+    sourceControl.resolveCredential.mockRejectedValueOnce(
+      new SourceControlError(
+        "Repository not accessible",
+        "permission_denied",
+        403,
+      ),
+    );
+    expect(
+      (
+        await post(`${url}/api/projects`, {
+          project: "blocked-app",
+          repo: "example/private",
+        })
+      ).status,
+    ).toBe(400);
+    expect(() =>
+      readFileSync(join(root, "projects", "blocked-app", "project.json")),
+    ).toThrow();
+    const response = await post(`${url}/api/projects`, {
+      project: "my-app",
+      repo: "example/app",
+    });
+    expect(response.status).toBe(200);
+    expect(sourceControl.resolveCredential).toHaveBeenLastCalledWith({
+      provider: "github",
+      serverUrl: "https://github.com",
+      repository: "example/app",
+      minValidityMs: 300000,
+      write: true,
+    });
+    expect(await response.text()).not.toContain("private-source-token");
+  });
+
   it("authenticates Slack connection actions and accepts only the OAuth return document across sites", async () => {
     const slack = {
       status: vi.fn(async () => ({

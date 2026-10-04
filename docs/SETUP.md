@@ -13,7 +13,7 @@ This installs from the official GitHub repository; an npm registry package is no
 
 ## Your setup dashboard
 
-1. Save the source connection for your app: GitHub or GitLab. Connect Linear, Vercel, and Claude Code.
+1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Linear, Vercel, and Claude Code in Connections. See [source-control setup](SOURCE_CONTROL.md).
 2. Add the **app repository** and a short local ID such as `my-app`. Local Docker execution is the default. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
 3. Review branches, provider IDs, test commands, and the PM mandate. Use isolated staging accounts and synthetic data.
 4. Choose **Create runner on this machine**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
@@ -33,6 +33,8 @@ The local runtime prepares a PostgreSQL activity store before launching work. Th
 ## Connections and configuration
 
 Supported tokens are saved in the configuration directory's `.env`. Existing values are not returned to the browser. Blank fields preserve saved values; exported variables take precedence. Files use owner-only permissions where supported. The file is not encrypted: keep the directory private and out of Git.
+
+Official GitHub/GitLab authorizations use encrypted state under `.run/source-control/` instead of `.env`. The local controller refreshes credentials directly with the provider and reserves them for active jobs so refresh cannot interrupt another worker. If refreshing must wait, new work remains queued. A saved OAuth connection takes precedence over a manual token for its provider/server; failed OAuth is not silently replaced with a PAT. See [credential storage and leases](SOURCE_CONTROL.md#jobs-keep-their-credentials-until-publication-finishes).
 
 The controller supplies only the job's required credentials to its container. Credentials are not written into queue metadata or shell arguments. The worker redacts known credential values from persistent logs. Local mode does not copy tokens to GitHub Actions secrets or GitLab CI variables.
 
