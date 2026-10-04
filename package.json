@@ -2,6 +2,7 @@
   "name": "shipgremlins",
   "version": "0.2.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "AI product managers, evidence-gated delivery, and production-aware ticket tracking for your web applications.",
   "engines": {
