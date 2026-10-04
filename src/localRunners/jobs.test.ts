@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -60,7 +61,7 @@ function edit(
   writeFileSync(path, JSON.stringify(raw));
 }
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "gremlins-jobs-"));
+  root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-jobs-"));
   initializeSetup(root, packageRoot, { project: "app", repo: "owner/app" });
   edit("project.json", (raw) => {
     raw.verified = "2026-10-04";

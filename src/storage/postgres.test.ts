@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   mkdtempSync,
@@ -18,7 +19,9 @@ import {
 
 const roots: string[] = [];
 const root = () => {
-  const value = mkdtempSync(join(tmpdir(), "gremlins-storage-test-"));
+  const value = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-storage-test-"),
+  );
   roots.push(value);
   return value;
 };

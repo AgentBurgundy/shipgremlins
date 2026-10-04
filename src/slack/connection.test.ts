@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,7 +26,9 @@ const connection = {
   connectedAt: "2026-10-04T12:00:00.000Z",
 };
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "gremlins-slack-test-"));
+  const root = await mkdtemp(
+    join(realpathSync(tmpdir()), "gremlins-slack-test-"),
+  );
   roots.push(root);
   let pair: { key: string; nonce: string; returnUrl: string } | undefined;
   const fetcher = vi.fn(

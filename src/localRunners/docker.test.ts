@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import {
@@ -556,7 +557,9 @@ describe("trusted local job publication", () => {
   });
 
   it("replaces model-edited credential helpers, hooks, and URL rewriting before publication", () => {
-    const root = mkdtempSync(join(tmpdir(), "gremlins-git-config-"));
+    const root = mkdtempSync(
+      join(realpathSync(tmpdir()), "gremlins-git-config-"),
+    );
     try {
       mkdirSync(join(root, ".git"));
       writeFileSync(

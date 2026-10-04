@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,7 +18,9 @@ import type { DockerRunners } from "../localRunners/docker.ts";
 
 const roots: string[] = [];
 const root = () => {
-  const value = mkdtempSync(join(tmpdir(), "gremlins-history-test-"));
+  const value = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-history-test-"),
+  );
   roots.push(value);
   return value;
 };
