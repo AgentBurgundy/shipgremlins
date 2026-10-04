@@ -6,6 +6,7 @@ import {
   rmSync,
   mkdirSync,
   symlinkSync,
+  realpathSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,7 +25,9 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "gremlins-linear-mapping-"));
+  const root = realpathSync(
+    mkdtempSync(join(tmpdir(), "gremlins-linear-mapping-")),
+  );
   roots.push(root);
   initializeSetup(root, process.cwd(), { project: "demo", repo: "org/app" });
   const workspace = { id: randomUUID(), name: "Test" };
