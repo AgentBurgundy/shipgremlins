@@ -670,6 +670,11 @@ export function createUpdater(options: UpdaterOptions): Updater {
             return;
           }
           assertNodeEngine(latest.node);
+          state = {
+            ...state,
+            phase: "installing",
+            message: "Checking the selected release's CI before installing…",
+          };
           await verifyReleaseChecks(latest.sha);
           state = {
             ...state,

@@ -167,6 +167,25 @@ afterEach(() => {
 });
 
 describe("staged runtime updater", () => {
+  it("keeps polling active while a previously discovered release waits for its CI check", async () => {
+    const f = fixture();
+    await f.updater.check();
+    const fetcher = f.fetch.getMockImplementation()!;
+    let finish!: () => void;
+    const waiting = new Promise<void>((done) => {
+      finish = done;
+    });
+    f.fetch.mockImplementation(async (url, init) => {
+      if (String(url).includes("/actions/workflows/")) await waiting;
+      return fetcher(url, init);
+    });
+    const applying = f.updater.apply();
+    expect(f.updater.status().phase).toBe("installing");
+    expect(f.calls).toHaveLength(0);
+    finish();
+    expect((await applying).phase).toBe("ready");
+  });
+
   it("checks official HTTPS metadata then activates only a pinned, healthy isolated installation", async () => {
     const f = fixture();
     const before = configurationSnapshot(f.configurationRoot);
