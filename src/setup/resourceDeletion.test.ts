@@ -87,10 +87,17 @@ describe("reversible project and PM deletion", () => {
         f.root,
         "projects",
         "app",
-        ...Array.from({ length: 6 }, () => "x".repeat(175)),
+        // macOS rejects >1,024-byte absolute paths in mkdir itself. Exercise
+        // another non-portable journal path there using a legal APFS filename.
+        ...Array.from({ length: process.platform === "darwin" ? 0 : 6 }, () =>
+          "x".repeat(175),
+        ),
       );
     mkdirSync(deep, { recursive: true });
-    writeFileSync(join(deep, "note.md"), "private note");
+    writeFileSync(
+      join(deep, process.platform === "darwin" ? "note:private.md" : "note.md"),
+      "private note",
+    );
     await expect(f.service.preview({ project: "app" })).rejects.toMatchObject({
       code: "unsafe_path",
     });
