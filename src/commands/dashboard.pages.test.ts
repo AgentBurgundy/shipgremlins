@@ -48,6 +48,7 @@ function browser(path = "/") {
     "runners",
     "activity",
     "settings",
+    "project",
   ];
   const panels = pages.map((page) => element(page, page));
   const source = element("source-control", "connections");
@@ -69,6 +70,9 @@ function browser(path = "/") {
   interface Navigation {
     navigate(path: string): boolean;
     current: string;
+    project: string;
+    pm: string;
+    tab: string;
     destroy(): void;
   }
   const window = {
@@ -142,6 +146,44 @@ function browser(path = "/") {
 }
 
 describe("dashboard page navigation", () => {
+  it("opens a separate project and PM workspace directly and retains tab identity across back navigation", () => {
+    const view = browser("/projects/storefront?pm=checkout&tab=discovery");
+    const pages = view.initialize();
+    expect(pages.current).toBe("project");
+    expect(pages.project).toBe("storefront");
+    expect(pages.pm).toBe("checkout");
+    expect(pages.tab).toBe("discovery");
+    expect(view.document.title).toBe("storefront · ShipGremlins");
+    expect(
+      view.panels.filter((panel) => !panel.hidden).map((panel) => panel.id),
+    ).toEqual(["project"]);
+    pages.navigate("/projects/another-app?pm=security&tab=queue");
+    expect(pages.project).toBe("another-app");
+    expect(pages.tab).toBe("queue");
+    view.window.location = new URL(
+      "http://localhost:4311/projects/storefront?pm=checkout&tab=discovery",
+    );
+    view.windowEvents.get("popstate")!();
+    expect(pages.project).toBe("storefront");
+    expect(pages.pm).toBe("checkout");
+    expect(pages.tab).toBe("discovery");
+    pages.navigate("/connections#source-control");
+    expect(pages.project).toBe("");
+    expect(pages.pm).toBe("");
+  });
+  it("rejects unsafe project paths without sending project names to external origins", () => {
+    const view = browser("/projects/shop");
+    const pages = view.initialize();
+    for (const destination of [
+      "/projects/shop%2Fsecret",
+      "/projects/%3Cscript%3E",
+      "/projects/%",
+      "/projects/shop/extra",
+      "https://evil.example/projects/shop",
+    ])
+      expect(pages.navigate(destination), destination).toBe(false);
+    expect(pages.project).toBe("shop");
+  });
   it("shows only the deep-linked page while keeping the shared banner and drafts", () => {
     const view = browser("/settings");
     const pages = view.initialize();

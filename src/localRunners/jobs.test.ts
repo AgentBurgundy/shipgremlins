@@ -112,6 +112,92 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("admits code-only discovery before Linear/hosting verification and leases only source plus AI credentials", async () => {
+    edit("project.json", (raw) => {
+      raw.verified = null;
+    });
+    edit("areas.json", (raw) => {
+      raw.areas.core.enabled = false;
+      raw.areas.core.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
+    });
+    writeFileSync(
+      join(root, "projects/app/core/mandate.md"),
+      "Owner-only direction: inspect account boundaries.",
+    );
+    const forbidden = vi.fn(async () => {
+      throw new Error("Integration must not be contacted");
+    });
+    const acquireLease = vi.fn(async () => ({
+      token: "source-read-token",
+      method: "token" as const,
+    }));
+    const source = {
+      acquireLease,
+      resolveCredential: vi.fn(async () => ({
+        token: "source-read-token",
+        method: "token" as const,
+      })),
+      releaseLease: vi.fn(async () => {}),
+    };
+    const preparation = createJobPreparation({
+      root,
+      env,
+      sourceControl: source,
+      linearConnection: {
+        acquireLease: forbidden,
+        resolveCredential: forbidden,
+        releaseLease: vi.fn(async () => {}),
+      },
+      vercelConnection: { resolveCredential: forbidden },
+      resolveEnvironment: forbidden,
+      telemetryFetch: forbidden,
+    });
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      area: "core",
+      runOnce: true,
+      pmMode: "discovery" as const,
+    };
+    const validated = await preparation.validate(input);
+    const queued = {
+      ...job,
+      ...input,
+      ticket: undefined,
+      discoveryRevision: validated.discoveryRevision,
+    };
+    const payload = await preparation.prepareJob(queued);
+    expect(payload).toMatchObject({
+      kind: "pm",
+      pmMode: "discovery",
+      browserVerification: false,
+      nonce: job.id,
+      branch: "pm-staging",
+    });
+    expect(Object.keys(payload.credentials!).sort()).toEqual([
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "GITHUB_TOKEN",
+    ]);
+    expect(payload.prompt).toContain("Owner-only direction");
+    expect(payload.prompt).not.toContain("linear-token");
+    expect(payload.commands).toBeUndefined();
+    expect(payload.delivery).toBeUndefined();
+    expect(acquireLease).toHaveBeenCalledWith(
+      expect.objectContaining({ write: false, repository: "owner/app" }),
+    );
+    expect(forbidden).not.toHaveBeenCalled();
+    await expect(
+      preparation.validate({ ...input, runOnce: false }),
+    ).rejects.toThrow("explicit PM run");
+    writeFileSync(
+      join(root, "projects/app/core/mandate.md"),
+      "Different owner scope",
+    );
+    await expect(preparation.prepareJob(queued)).rejects.toThrow(
+      "settings changed",
+    );
+    expect(acquireLease).toHaveBeenCalledTimes(1);
+  });
   it("reviews repositories and targets the chosen branch without hosting or browser credentials", async () => {
     edit("project.json", (raw) => {
       raw.workflow = { kind: "pull-request", baseBranch: "release/current" };
@@ -157,7 +243,7 @@ describe("local job preparation", () => {
       area: "core",
       ticket: undefined,
     });
-    expect(pm.prompt).toContain("file references and test output");
+    expect(pm.prompt).toContain("Cite commands, exit codes and actual output");
     expect(pm.delivery).toBeUndefined();
   });
   it("resolves only the selected browser environment and separates its baseline from the coding branch", async () => {

@@ -1,6 +1,14 @@
-# PM Hub master plan
+# ShipGremlins master plan
 
-Updated October 4, 2026. Status: planning baseline for the next version; implementation has not started under this plan. PM Hub remains the working project name.
+Updated October 4, 2026. This document preserves the original planning baseline
+and the longer-term roadmap. ShipGremlins is the current project name. The audit
+below describes the original system, not today's shipped capabilities; consult
+[implementation status](IMPLEMENTATION_STATUS.md) for release-specific progress.
+
+The current PM workspace direction builds on that plan: project pages in the
+sidebar, structured owner briefs, a repository discovery run, and durable feature,
+queue, and memory documents. See [PM workflow](PM_WORKFLOW.md). Discovery informs
+future work without granting ticket approval or rewriting the owner's mandate.
 
 PM Hub should give a developer a persistent team of AI product managers and developers. Each PM owns a mandate, explores the real application, records evidence, proposes useful work, and verifies improvements. Developers implement approved Linear tickets in the background. A deterministic controller manages execution, recovery, and promotion. The owner keeps building while the system handles routine work and surfaces decisions that actually need attention.
 

@@ -43,6 +43,11 @@ import { resolveEnvironment } from "../hosting/index.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import { listConnectionIds } from "../oauthConnection/profiles.ts";
 import { hasPmMandate, hasPmMapping } from "../setup/pmReadiness.ts";
+import { createPmKnowledge, knowledgeRevision } from "../pmKnowledge/index.ts";
+import {
+  buildPmDiscoveryPrompt,
+  buildPmPatrolPrompt,
+} from "../pmKnowledge/prompts.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -212,6 +217,23 @@ export function createJobPreparation(options: JobPreparationOptions) {
       Object.entries(env).filter(([, value]) => value !== undefined),
     ),
   });
+  const knowledge = createPmKnowledge({
+    root,
+    secrets: () => {
+      const saved = readConnections(root);
+      const names = new Set([
+        ...Object.keys(saved),
+        "GITHUB_TOKEN",
+        "GITLAB_TOKEN",
+        "LINEAR_API_KEY",
+        "VERCEL_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+      ]);
+      return [...names]
+        .map((name) => env[name] ?? saved[name])
+        .filter((value): value is string => Boolean(value));
+    },
+  });
   const linear = (key: string) =>
     options.linear?.(key) ?? new LinearApi({ apiKey: key });
 
@@ -241,7 +263,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new JobReadinessError(
         "This workspace uses CI runners. Set runners.mode to local in Configuration to use Docker workers.",
       );
-    if (!project.config.verified)
+    if (!project.config.verified && input.pmMode !== "discovery")
       throw new JobReadinessError(
         "Run Verify connections for this project (or gremlins doctor) before starting agent jobs.",
       );
@@ -253,7 +275,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     input: LocalJobInput,
     checkConnections: boolean,
   ) {
-    if (!hasPmMapping(area))
+    if (input.pmMode !== "discovery" && !hasPmMapping(area))
       throw new JobReadinessError(
         "Map this PM to a Linear project in Edit project → Linear mappings before running it.",
       );
@@ -290,8 +312,29 @@ export function createJobPreparation(options: JobPreparationOptions) {
     ticket?: LinearTicket;
     linearWorkspaceId?: string;
     linearBinding?: LocalJobInput["linearBinding"];
+    discoveryRevision?: string;
   }> {
     const project = projectFor(input);
+    if (input.pmMode === "discovery") {
+      if (
+        input.type !== "pm" ||
+        !input.runOnce ||
+        input.linearBinding ||
+        input.ticket
+      )
+        throw new JobReadinessError(
+          "Discovery must be an explicit PM run without a ticket or Linear binding.",
+        );
+      const area = project.areas.find((item) => item.key === input.area);
+      if (!area) throw new JobReadinessError("Choose an existing PM.");
+      const revision = knowledgeRevision(project, area);
+      if (requireQueuedBinding && input.discoveryRevision !== revision)
+        throw new JobReadinessError(
+          "PM settings changed after discovery was queued. Review its brief and start a new discovery run.",
+        );
+      await manualPrerequisites(project, area, input, !requireQueuedBinding);
+      return { project, area, discoveryRevision: revision };
+    }
     const connectionId = project.config.linear?.connectionId ?? "default";
     if (
       input.type === "developer" &&
@@ -336,6 +379,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
           return {
             project,
             area,
+            discoveryRevision: knowledgeRevision(project, area),
             linearBinding: {
               connectionId,
               ...((credential.workspaceId ?? project.config.linear?.workspaceId)
@@ -354,7 +398,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
           );
         }
       }
-      return { project, area };
+      return {
+        project,
+        area,
+        discoveryRevision: knowledgeRevision(project, area),
+      };
     }
     if (
       input.type !== "developer" ||
@@ -417,6 +465,49 @@ export function createJobPreparation(options: JobPreparationOptions) {
       job,
       true,
     );
+    if (job.pmMode === "discovery") {
+      const saved = connections();
+      if (!saved.CLAUDE_CODE_OAUTH_TOKEN?.trim())
+        throw new JobReadinessError(
+          "Save a Claude Code connection before discovery.",
+        );
+      const provider = project.config.provider ?? "github";
+      const branch = baseBranch(project.config);
+      const credential = await sourceControl.acquireLease({
+        jobId: job.id,
+        provider,
+        repository: project.config.repo,
+        serverUrl: project.config.serverUrl,
+        minutes: 50,
+        write: false,
+      });
+      const memory = { ...knowledge.memory(project, area) };
+      const mandatePath = join(project.dir, area.key, "mandate.md");
+      assertNoSymlinks(mandatePath);
+      if (existsSync(mandatePath))
+        memory["mandate.md"] = readFileSync(mandatePath, "utf8");
+      return {
+        kind: "pm",
+        pmMode: "discovery",
+        browserVerification: false,
+        nonce: job.id,
+        provider,
+        repoUrl: `${(project.config.serverUrl ?? (provider === "gitlab" ? "https://gitlab.com" : "https://github.com")).replace(/\/$/, "")}/${project.config.repo}.git`,
+        branch,
+        credentials: {
+          CLAUDE_CODE_OAUTH_TOKEN: saved.CLAUDE_CODE_OAUTH_TOKEN,
+          [provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"]:
+            credential.token,
+        },
+        prompt: buildPmDiscoveryPrompt({
+          project,
+          area,
+          checkoutBranch: branch,
+          memory,
+        }),
+        memory: {},
+      };
+    }
     const selectedLinear = linearFor(project.config.linear?.connectionId);
     const saved = connections();
     const verification = effectiveVerification(project.config);
@@ -478,6 +569,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         memory[name] = value;
       }
     }
+    Object.assign(memory, knowledge.memory(project, area));
     const telemetry =
       job.type === "pm"
         ? await pmTelemetrySnapshot(project.config, area, {
@@ -566,10 +658,30 @@ export function createJobPreparation(options: JobPreparationOptions) {
       provider,
       repoUrl: `${(provider === "gitlab" ? (project.config.serverUrl ?? "https://gitlab.com") : "https://github.com").replace(/\/$/, "")}/${project.config.repo}.git`,
       branch: checkoutBranch,
-      prompt: instructions.join("\n\n"),
+      prompt:
+        job.type === "pm"
+          ? [
+              buildPmPatrolPrompt({
+                project,
+                area,
+                checkoutBranch,
+                memory,
+                telemetry,
+                preview,
+              }),
+              instructions.at(-1),
+              ...(verification.mode === "browser"
+                ? [
+                    `Preview bypass credential, if configured, is GREMLINS_PREVIEW_BYPASS; use it only for the selected environment. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
+                  ]
+                : []),
+            ].join("\n\n")
+          : instructions.join("\n\n"),
       credentials,
       commands: project.config.commands,
-      memory,
+      // PM prompts already contain bounded, authority-separated context. Do not
+      // duplicate full seed files and learned snapshots into the job payload.
+      memory: job.type === "pm" ? {} : memory,
       ...(ticket
         ? {
             delivery: {
@@ -651,6 +763,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
             type: "pm",
             project: name,
             area: area.key,
+            discoveryRevision: knowledgeRevision(project, area),
             idempotencyKey: `pm:${name}:${area.key}:${minute}`,
           });
         if (!linearCredential) continue;
@@ -679,5 +792,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
     return jobs;
   }
-  return { validate, prepareJob, scheduledJobs, releaseJobResources };
+  return {
+    validate,
+    prepareJob,
+    scheduledJobs,
+    releaseJobResources,
+    completeJob: knowledge.capture,
+  };
 }

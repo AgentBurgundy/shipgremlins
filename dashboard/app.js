@@ -159,6 +159,11 @@
   let pmDraft = null;
   const areaActions = new Map();
   let projectLayoutInitialized = false;
+  let projectWorkspace = null;
+  const pmCharter = window.createPmCharter(
+    $("pm-charter-fields"),
+    "new-charter",
+  );
   let newProjectSettings = window.createProjectSettings(
     $("new-project-settings"),
     "new-settings",
@@ -648,7 +653,9 @@
       const name = document.createElement("div");
       name.className = "project-row-name";
       const title = element("div", "project-title-line");
-      title.append(element("strong", "project-title", project.name));
+      const projectLink = element("a", "project-title", project.name);
+      projectLink.href = `/projects/${encodeURIComponent(project.name)}`;
+      title.append(projectLink);
       const repo = document.createElement("span");
       repo.className = "project-row-repo";
       repo.textContent = `${project.provider === "gitlab" ? "GitLab" : "GitHub"} · ${project.repo}`;
@@ -743,7 +750,15 @@
         );
       if (scopes.length)
         card.append(element("p", "project-scope", scopes.join(" · ")));
-      card.append(projectLinearDetails(project));
+      const projectSummary = element("div", "project-pm-actions");
+      const workspaceLink = element(
+        "a",
+        "small-button",
+        `Open workspace · ${project.areas?.length || 0} PMs →`,
+      );
+      workspaceLink.href = `/projects/${encodeURIComponent(project.name)}`;
+      projectSummary.append(workspaceLink);
+      card.append(projectSummary);
       if (check) {
         const result = element("div", "project-checks");
         result.setAttribute("role", check.error ? "alert" : "status");
@@ -776,6 +791,7 @@
       `gremlins doctor ${exampleProject ? exampleProject.name : "PROJECT"}`;
     renderJobProjects();
     renderPmProjects();
+    projectWorkspace?.setStatus(status, formsLocked);
     if (!projectLayoutInitialized) {
       $("new-project-drawer").open = projects.length === 0;
       projectLayoutInitialized = true;
@@ -1728,7 +1744,7 @@
   });
   createSourceCards();
   renderProjectProvider();
-  $("project-list").addEventListener("click", async (event) => {
+  document.addEventListener("click", async (event) => {
     const edit = event.target.closest("[data-edit-project]");
     if (edit && !formsLocked) {
       await openProjectSettings(edit.dataset.editProject, edit);
@@ -2062,6 +2078,7 @@
       $("remove-runner-prompt").hidden = true;
     }
     renderJobs(jobs);
+    projectWorkspace?.render();
     updateRunnerControls();
   }
   function mergedJobs(jobs = runnerStatus?.jobs || []) {
@@ -2140,7 +2157,7 @@
         element(
           "h4",
           "",
-          `${job.type === "pm" ? "PM Gremlin" : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
+          `${job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
         ),
       );
       text.append(
@@ -2649,7 +2666,7 @@
     if (changed) $("job-detail").focus({ preventScroll: true });
     const job = mergedJobs().find((item) => item.id === selectedJobId);
     $("job-detail-title").textContent =
-      `${job?.project || "Browser verification"}${job?.runId ? ` · run ${job.runId}` : ""}`;
+      `${job?.project || "Browser verification"}${job?.pmMode === "discovery" ? " · Discovery" : ""}${job?.runId ? ` · run ${job.runId}` : ""}`;
     renderJobs(runnerStatus?.jobs || []);
     refreshJobOutput();
   }
@@ -2879,6 +2896,7 @@
     refreshLinearResources,
   );
   const readPmDraft = () => ({
+    charter: pmCharter.read(),
     project: $("pm-project").value,
     mandate: $("pm-mandate").value,
     name: $("pm-name").value,
@@ -2936,7 +2954,7 @@
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
   });
-  $("project-list").addEventListener("change", (event) => {
+  document.addEventListener("change", (event) => {
     if (event.target.dataset.mappingProject)
       mappingTeamSelections.set(
         event.target.dataset.mappingProject,
@@ -2984,6 +3002,16 @@
         button.dataset.setupStep === "schedule" ||
         button.dataset.setupStep === "configuration"
       ) {
+        if (
+          button.dataset.setupArea &&
+          button.dataset.setupStep !== "configuration"
+        ) {
+          await projectWorkspace.openBrief(
+            project.name,
+            button.dataset.setupArea,
+          );
+          return;
+        }
         pages.navigate("/settings#config-form");
         await requestEditorAction(
           "switch",
@@ -2999,7 +3027,7 @@
       message($("global-message"), error.message, true);
     }
   });
-  $("project-list").addEventListener("click", async (event) => {
+  document.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-toggle-area]");
     if (!button || button.disabled || formsLocked) return;
     const project = currentStatus?.projects?.find(
@@ -3036,9 +3064,11 @@
       renderStatus(currentStatus);
     }
   });
-  $("project-list").addEventListener("click", async (event) => {
+  document.addEventListener("click", async (event) => {
     const create = event.target.closest("[data-create-pm-project]");
     if (create) {
+      if (formsLocked || pmCreating) return;
+      pages.navigate("/projects#pm-create-drawer");
       $("pm-project").value = create.dataset.createPmProject;
       pmDraft.reset();
       $("pm-create-drawer").open = true;
@@ -3085,6 +3115,7 @@
       key: $("pm-key").value.trim(),
       name: $("pm-name").value.trim(),
       mandate: $("pm-mandate").value.trim(),
+      charter: pmCharter.read(),
       schedule: $("pm-schedule").value.trim(),
       wipLimit: Number($("pm-wip").value),
       metric: $("pm-metric").value.trim() || "/",
@@ -3133,7 +3164,9 @@
         "POST",
         90000,
       );
+      const startDiscovery = $("pm-discover-after-create").checked;
       $("pm-create-form").reset();
+      pmCharter.reset();
       pmDraft?.reset();
       pmKeyEdited = false;
       $("pm-project").value = project;
@@ -3145,6 +3178,11 @@
       await refreshStatus();
       await refreshConfigFiles();
       await refreshLinearResources();
+      pages.navigate(
+        `/projects/${encodeURIComponent(project)}?pm=${encodeURIComponent(input.key)}${startDiscovery ? "&tab=discovery" : ""}`,
+      );
+      if (startDiscovery)
+        await projectWorkspace.discover(project, input.key).catch(() => {});
     } catch (error) {
       message(
         $("pm-create-message"),
@@ -4371,6 +4409,9 @@
     return (
       pmPlanning ||
       pmCreating ||
+      projectWorkspace?.isDirty() ||
+      projectWorkspace?.isBusy() ||
+      Object.keys(pmCharter.read()).length > 0 ||
       pmDraft?.hasDraft() ||
       isEditorDirty() ||
       [...profileControls.values()].some((control) => control.isDirty()) ||
@@ -4469,6 +4510,7 @@
       restartReloadApproved ||
       !(
         isEditorDirty() ||
+        projectWorkspace?.isDirty() ||
         Boolean(mixpanelReports?.isDirty()) ||
         newProjectSettings.isDirty() ||
         (isProjectEditorDirty() && $("project-settings-dialog").open)
@@ -4507,6 +4549,33 @@
       refreshSlack(),
       ...Object.keys(serviceProviders).map(refreshService),
     ]);
+  });
+  projectWorkspace = window.createProjectWorkspace($("project-workspace"), {
+    api,
+    pages,
+    getJobs: () => mergedJobs(),
+    getCheck: (name) => projectChecks.get(name),
+    getAreaAction: (project, area) => areaActions.get(`${project}/${area}`),
+    onSaved: refreshStatus,
+    onCreatePm: (project) => {
+      if (formsLocked || pmCreating) return;
+      pages.navigate("/projects#pm-create-drawer");
+      $("pm-project").value = project;
+      pmDraft.reset();
+      $("pm-create-drawer").open = true;
+      renderLinearSetup();
+      $("pm-name").focus();
+      refreshLinearResources();
+    },
+    onJob: (job) => {
+      jobHistory = [...jobHistory.filter((item) => item.id !== job.id), job];
+      renderJobs(runnerStatus?.jobs || []);
+      refreshRunners();
+    },
+    onActivity: (id) => {
+      selectJob(id);
+      pages.navigate("/activity#job-detail");
+    },
   });
   initialize();
 })();

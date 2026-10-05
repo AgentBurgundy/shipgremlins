@@ -47,6 +47,57 @@ it("persists explicit one-off job admission across a controller restart", async 
   ).rejects.toThrow();
 });
 
+it("persists discovery admission and completes only after retry-safe knowledge adoption", async () => {
+  const f = fixture();
+  await f.ready();
+  const input = {
+    type: "pm" as const,
+    project: "demo",
+    area: "core",
+    runOnce: true,
+    pmMode: "discovery" as const,
+    discoveryRevision: "a".repeat(64),
+  };
+  const queued = await f.engine.enqueue(input);
+  const completeJob = vi.fn(async () => {});
+  const engine = createLocalRunners({
+    ...f.options,
+    completeJob,
+    prepareJob: async (job) => ({ kind: job.type, pmMode: job.pmMode }),
+  });
+  expect(await engine.job(queued.id)).toMatchObject(input);
+  await engine.tick();
+  f.finish(queued.id);
+  await engine.tick();
+  expect(completeJob).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: queued.id,
+      pmMode: "discovery",
+      discoveryRevision: input.discoveryRevision,
+    }),
+    f.options.docker,
+  );
+  expect(await engine.job(queued.id)).toMatchObject({
+    status: "succeeded",
+    pmMode: "discovery",
+  });
+  await engine.tick();
+  expect(completeJob).toHaveBeenCalledTimes(1);
+  await expect(engine.enqueue({ ...input, runOnce: false })).rejects.toThrow();
+  await expect(
+    engine.enqueue({ ...input, discoveryRevision: undefined }),
+  ).rejects.toThrow();
+  const failed = await engine.enqueue(input);
+  await engine.tick();
+  f.finish(failed.id);
+  completeJob.mockRejectedValueOnce(new Error("stale output"));
+  await engine.tick();
+  expect(await engine.job(failed.id)).toMatchObject({
+    status: "failed",
+    message: expect.stringContaining("Previous knowledge was preserved"),
+  });
+});
+
 function fixture() {
   const root = mkdtempSync(
     join(realpathSync(tmpdir()), "sg-local-engine-test-"),

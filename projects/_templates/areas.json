@@ -1,5 +1,5 @@
 {
-  "$comment": "Ownership map for {{name}}: one entry per product area an AI product manager owns. The key is the area; `label` must be `pm:<key>`; `paths` are prefixes inside the target repo; `metric` is a Vercel Analytics event name or a path; `schedule` is a 5-field cron in UTC (weekdays by convention). Paste the Linear project id after creating the project.",
+  "$comment": "Ownership map for {{name}}: one entry per product area an AI product manager owns. The key is the area; `label` must be `pm:<key>`; `paths` are prefixes inside the target repo; `metric` identifies a product outcome, event, or route; `schedule` is a 5-field cron in UTC. Optional `charter` fields hold owner ambition, goal, metricDefinition, users, expectedToBuild, nonGoals, guardrails, and standingPriorities. Learned discovery notes stay separate. Configure the Linear project before patrols; repository discovery can run first.",
   "areas": {
     "{{area}}": {
       "name": "{{Area}}",

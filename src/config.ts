@@ -4,6 +4,7 @@
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { parsePmCharter, type PmCharter } from "./pmCharter.ts";
 import {
   ID_RE,
   parseTelemetry,
@@ -83,6 +84,8 @@ export interface ProjectConfig extends ProjectCapabilities {
 export interface AreaConfig {
   /** A dashboard-authored mandate, in addition to the versioned mandate.md. */
   mandate?: string;
+  /** Structured owner product brief, kept separate from learned observations. */
+  charter?: PmCharter;
   /** Optional saved Mixpanel Insights report, scoped to this project's connection. */
   mixpanelReportId?: string;
   key: string;
@@ -94,7 +97,7 @@ export interface AreaConfig {
   /** Linear label that marks this area's tickets, e.g. "pm:core" */
   label: string;
   wipLimit: number;
-  /** a Vercel Analytics event name or a path like "/play" */
+  /** A metric, event name, or product route; charter.metricDefinition explains measurement. */
   metric: string;
   /** 5-field cron in UTC; weekdays by convention */
   schedule: string;
@@ -506,7 +509,16 @@ export function loadProject(root: string, name: string): Project {
     const label = need(af, a, "label", isString, "a Linear label");
     if (label !== `pm:${key}`)
       throw new ConfigError(af, `area "${key}" label must be "pm:${key}"`);
+    let charter: PmCharter | undefined;
+    if (a.charter !== undefined) {
+      try {
+        charter = parsePmCharter(a.charter);
+      } catch {
+        throw new ConfigError(af, "PM charter fields are invalid or too large");
+      }
+    }
     areas.push({
+      ...(charter ? { charter } : {}),
       ...(a.mixpanelReportId === undefined
         ? {}
         : {
@@ -554,7 +566,7 @@ export function loadProject(root: string, name: string): Project {
         a,
         "metric",
         isString,
-        "a Vercel Analytics event or path",
+        "a metric, event name, or product route",
       ),
       schedule: need(
         af,

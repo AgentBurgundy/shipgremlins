@@ -54,6 +54,8 @@ const INPUT_KEYS = [
   "idempotencyKey",
   "linearBinding",
   "runOnce",
+  "pmMode",
+  "discoveryRevision",
 ];
 
 interface State {
@@ -91,6 +93,7 @@ export interface LocalRunnersOptions {
   packageRoot: string;
   docker?: DockerRunners;
   prepareJob?: (job: LocalJob) => Promise<DockerJobPayload>;
+  completeJob?: (job: LocalJob, docker: DockerRunners) => Promise<void>;
   beforeLaunch?: () => Promise<void>;
   releaseJobResources?: (jobId: string) => Promise<void>;
   scheduledJobs?: () => Promise<LocalJobInput[]>;
@@ -127,6 +130,23 @@ function validInput(value: unknown): value is LocalJobInput {
   )
     return false;
   if (Object.keys(value).some((key) => !INPUT_KEYS.includes(key))) return false;
+  if (
+    value.pmMode !== undefined &&
+    (value.type !== "pm" ||
+      value.pmMode !== "discovery" ||
+      value.runOnce !== true ||
+      typeof value.discoveryRevision !== "string" ||
+      value.linearBinding !== undefined ||
+      value.ticket !== undefined)
+  )
+    return false;
+  if (
+    value.discoveryRevision !== undefined &&
+    (value.type !== "pm" ||
+      typeof value.discoveryRevision !== "string" ||
+      !/^[a-f0-9]{64}$/.test(value.discoveryRevision))
+  )
+    return false;
   if (
     value.runOnce !== undefined &&
     (typeof value.runOnce !== "boolean" || value.type === "verify")
@@ -983,12 +1003,19 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         const result = (await docker.artifacts(job.id)).result;
         if (!record(result) || result.ok !== true || result.kind !== job.type)
           throw new Error();
+        if (job.type === "pm") {
+          if (job.pmMode === "discovery" && !options.completeJob)
+            throw new Error();
+          await options.completeJob?.({ ...job, finishedAt: now() }, docker);
+        }
       } catch {
         failed(
           state,
           job,
           worker,
-          "The agent exited without a matching completion record. Inspect its logs and artifacts before retrying.",
+          job.pmMode === "discovery"
+            ? "Discovery could not save a matching knowledge snapshot. Previous knowledge was preserved; review its artifacts and current PM brief before retrying."
+            : "The agent exited without a matching completion record or knowledge snapshot. Inspect its logs and artifacts before retrying; previous knowledge was preserved.",
         );
         return;
       }
@@ -999,7 +1026,9 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     job.message =
       job.type === "verify"
         ? "Chromium started and a matching screenshot was verified."
-        : "The local worker completed this job.";
+        : job.pmMode === "discovery"
+          ? "Discovery finished and its repository knowledge was saved."
+          : "The local worker completed this job.";
     delete state.launched[job.id];
     if (worker) {
       idleWorker(worker);
@@ -1074,7 +1103,12 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         job.type === "verify"
           ? { kind: "verify", nonce: job.id }
           : await options.prepareJob!(job);
-      if (!payload || payload.kind !== job.type) throw new Error();
+      if (
+        !payload ||
+        payload.kind !== job.type ||
+        payload.pmMode !== job.pmMode
+      )
+        throw new Error();
     } catch (error) {
       if (stopping) {
         await keepQueued();

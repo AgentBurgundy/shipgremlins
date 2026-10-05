@@ -4,6 +4,10 @@ ShipGremlins can work on a repository without a hosted web app. Hosting is optio
 
 Run `gremlins setup`, or `gremlins setup --lan --port 4311` on a server. In **Projects**, choose your GitHub or GitLab repository, review its commands, and select how to verify work. Existing projects have an **Edit settings** button. Connections holds credentials; project settings hold resource IDs and credential variable names.
 
+Choose a project's name in the sidebar to open its own workspace. Its PMs,
+setup actions, launch controls, and settings stay scoped to that repository.
+Open a PM to edit its owner brief and read the knowledge produced by its runs.
+
 ## Get one PM ready, then automate
 
 Start from the selected project's guided setup actions. Source control selects
@@ -18,6 +22,18 @@ a draft using that brief and repository paths. Review its rationale, scope, and
 warnings, then **Apply suggestions** if useful. The original mandate remains
 unchanged. Applying a draft only fills the form; **Create PM** is the separate
 save/provisioning action, and the new PM starts with automation paused.
+
+Expand **Product brief** to describe ambition, the outcome and metric, users,
+expected capabilities, priorities, guardrails, and non-goals. These are owner
+instructions, not learned memory. Existing PMs can edit the same brief with
+conflict protection; saving it preserves their Linear mapping and automation state.
+
+Use **Discovery** to investigate the actual checkout before a first patrol.
+Discovery needs source access, Claude Code, and a ready worker, but does not need
+Linear or a hosted app. It records a codebase map, feature inventory, ranked queue,
+and memory with run and commit provenance. Later patrols consume that context.
+It does not file issues or change your saved ownership or instructions. See the
+[PM workflow](PM_WORKFLOW.md) for the distinction between discovery and AI form fill.
 
 Use **Run once** to test a mapped PM after verification. Paused automation does
 not prevent an explicit run. Inspect its Activity before selecting **Enable

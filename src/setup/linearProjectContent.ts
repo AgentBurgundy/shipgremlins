@@ -50,6 +50,27 @@ export function buildLinearProjectContent(
   source.search = "";
   source.hash = "";
   const mandate = plain(savedMandate).trim();
+  const charter = area.charter ?? {};
+  const charterSections = [
+    ...(charter.ambition ? ["### Ambition", plain(charter.ambition)] : []),
+    ...(charter.goal ? ["### What good looks like", plain(charter.goal)] : []),
+    ...(charter.metricDefinition
+      ? ["### How success is measured", plain(charter.metricDefinition)]
+      : []),
+    ...(
+      [
+        ["Users and situations", charter.users],
+        ["Expected to build", charter.expectedToBuild],
+        ["Standing priorities", charter.standingPriorities],
+        ["Guardrails", charter.guardrails],
+        ["Non-goals", charter.nonGoals],
+      ] as const
+    ).flatMap(([heading, items]) =>
+      items?.length
+        ? [`### ${heading}`, items.map((item) => `- ${text(item)}`).join("\n")]
+        : [],
+    ),
+  ];
   const verification = effectiveVerification(config);
   const workflow = effectiveWorkflow(config);
   const branch = baseBranch(config);
@@ -64,6 +85,7 @@ export function buildLinearProjectContent(
     "## 🎯 The mandate",
     mandate ||
       "No mandate is saved yet. Write and review this PM's mandate in ShipGremlins before running it.",
+    ...charterSections,
     "## 🗺️ Patrol map",
     `- **Repository:** [${text(config.repo)}](${source.href})\n- **Issue label:** ${code(area.label)}\n- **Coding PR target:** ${code(branch)}\n- **Verification:** ${verification.mode === "browser" ? `browser review against the selected ${text(verification.environment)} environment; capture actual screenshots` : "repository code, documentation, and configured tests; cite files and test output"}.`,
     "### Owned paths",
@@ -83,7 +105,7 @@ export function buildLinearProjectContent(
     "## 🤝 PM finds. Coding fixes.",
     `1. **PM Gremlin:** investigate the mandate and propose findings with ${code(LABELS.proposal)} and ${code(area.label)}. Do not self-approve tickets, change app code, or merge PRs.\n2. **Human owner:** review scope and evidence, remove ${code(LABELS.proposal)}, and add ${code(LABELS.approved)} to authorize Coding work. Tickets marked ${code(LABELS.needsHuman)} stay blocked until reviewed.\n3. **Coding Gremlin:** work only on an open approved ticket in this project. Recheck approval, implement the fix on an isolated branch, and pass the configured checks before opening a **draft PR/MR** to ${code(branch)}. Failed checks mean no ready draft.\n4. **Human review and release:** inspect the evidence and merge through the app's release process. ${workflow.kind === "promotion" ? "An integration merge still needs verified staging and production promotion." : "A PR into the chosen base branch may still need a separate production release."} **Done means the fix's PR is merged into production and the required verification has passed.** A draft, successful agent run, or staging merge is not Done. Local workers never merge or mark a ticket Done themselves.`,
     "## 🚦 First patrol checklist",
-    "- [ ] Review the mandate and ownership paths.\n- [ ] Check this PM's Linear mapping and the selected account.\n- [ ] Run **Verify connections** in ShipGremlins.\n- [ ] Create or resume a worker, then choose **Run once**.\n- [ ] Review its evidence and proposals before enabling automation.",
+    "- [ ] Review the mandate, product brief, and ownership paths.\n- [ ] Create or resume a worker and run **Discovery** to build the codebase map and initial queue.\n- [ ] Review its Features, Queue, and Memory in the PM workspace.\n- [ ] Check this PM's Linear mapping and the selected account.\n- [ ] Run **Verify connections** in ShipGremlins, then choose **Run once** for a patrol.\n- [ ] Review its evidence and proposals before enabling automation.",
     "---\nCreated by [ShipGremlins](https://shipgremlins.ai). This is the initial PM brief; the dashboard and local configuration remain the source of truth for execution settings. Your subsequent Linear edits are yours to keep.",
   ].join("\n\n");
   return {

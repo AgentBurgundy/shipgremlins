@@ -125,6 +125,8 @@ import {
   createDashboardOutputReader,
   dashboardOutputDeadline,
 } from "./dashboardOutput.ts";
+import { createPmKnowledge } from "../pmKnowledge/index.ts";
+import { readPmBrief, savePmBrief, PmBriefError } from "../setup/pmBrief.ts";
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -396,6 +398,7 @@ export function createDashboardServer(
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
   const outputRead = createDashboardOutputReader();
+  const knowledge = createPmKnowledge({ root });
   const cleanOutput = (lines: string[]) => {
     let secrets: string[] = [];
     try {
@@ -454,10 +457,28 @@ export function createDashboardServer(
         `projects/${name}/project.json`,
       ),
       areasDocument = readEditableConfig(root, `projects/${name}/areas.json`);
+    const readiness = inspectPmReadiness(loadProject(root, name), context);
     return {
       projectRevision: projectDocument.revision,
       areasRevision: areasDocument.revision,
-      readiness: inspectPmReadiness(loadProject(root, name), context),
+      readiness: {
+        ...readiness,
+        areas: readiness.areas.map((area) => {
+          const blockers = area.blockers.filter((item) =>
+            [
+              "configuration",
+              "source_connection",
+              "ai_connection",
+              "worker",
+              "mandate",
+            ].includes(item.id),
+          );
+          return {
+            ...area,
+            discovery: { canRun: blockers.length === 0, blockers },
+          };
+        }),
+      },
     };
   }
   let dockerState: Awaited<ReturnType<DockerRunners["preflight"]>> | undefined;
@@ -986,12 +1007,17 @@ export function createDashboardServer(
           const input = await body(req);
           if (
             Object.keys(input).some(
-              (key) => !["type", "project", "area", "ticket"].includes(key),
+              (key) =>
+                !["type", "project", "area", "ticket", "pmMode"].includes(key),
             ) ||
             !["pm", "developer"].includes(String(input.type)) ||
             typeof input.project !== "string" ||
             (input.area !== undefined && typeof input.area !== "string") ||
-            (input.ticket !== undefined && typeof input.ticket !== "string")
+            (input.ticket !== undefined && typeof input.ticket !== "string") ||
+            (input.pmMode !== undefined &&
+              (input.type !== "pm" ||
+                input.pmMode !== "discovery" ||
+                input.ticket !== undefined))
           )
             throw new RequestError(
               400,
@@ -1009,10 +1035,14 @@ export function createDashboardServer(
                 400,
                 "Choose an existing PM before starting its run.",
               );
-            if (!ready.canRun)
+            const selectedReadiness =
+              jobInput.pmMode === "discovery" ? ready.discovery : ready;
+            if (!selectedReadiness.canRun)
               throw new RequestError(
                 409,
-                ready.blockers.map((item) => item.message).join(" "),
+                selectedReadiness.blockers
+                  .map((item) => item.message)
+                  .join(" "),
               );
           }
           let validated: Awaited<ReturnType<typeof preparation.validate>>;
@@ -1027,6 +1057,8 @@ export function createDashboardServer(
             );
           }
           jobInput.linearBinding = validated.linearBinding;
+          if (jobInput.type === "pm")
+            jobInput.discoveryRevision = validated.discoveryRevision;
           if (validated.ticket) {
             jobInput.area = validated.area.key;
             jobInput.ticket = validated.ticket.identifier;
@@ -1324,7 +1356,10 @@ export function createDashboardServer(
                     enabled,
                     linearProjectId,
                     mandate,
+                    charter,
                     paths,
+                    sharedTouchpoints,
+                    metric,
                     schedule,
                     wipLimit,
                     mixpanelReportId,
@@ -1334,7 +1369,10 @@ export function createDashboardServer(
                     enabled,
                     linearProjectId,
                     mandate,
+                    charter,
                     paths,
+                    sharedTouchpoints,
+                    metric,
                     schedule,
                     wipLimit,
                     mixpanelReportId,
@@ -1676,6 +1714,60 @@ export function createDashboardServer(
           });
           return;
         }
+        const pmDocument =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/pms\/([a-z][a-z0-9-]{0,62})\/(brief|knowledge)$/.exec(
+            url.pathname,
+          );
+        if (pmDocument) {
+          const [, project, area, document] = pmDocument;
+          try {
+            if (document === "knowledge") {
+              if (req.method !== "GET")
+                throw new RequestError(405, "Use GET for PM knowledge.");
+              json(
+                res,
+                200,
+                knowledge.read(project!, area!, await runners().jobs()),
+              );
+            } else if (req.method === "GET") {
+              json(res, 200, readPmBrief(root, project!, area!));
+            } else if (req.method === "POST") {
+              const input = await body(req);
+              if (
+                Object.keys(input).some(
+                  (key) => !["revision", "brief"].includes(key),
+                )
+              )
+                throw new RequestError(
+                  400,
+                  "Provide the current revision and PM brief.",
+                );
+              json(
+                res,
+                200,
+                savePmBrief(
+                  root,
+                  project!,
+                  area!,
+                  input as Parameters<typeof savePmBrief>[3],
+                ),
+              );
+            } else
+              throw new RequestError(405, "Use GET or POST for the PM brief.");
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            if (
+              error instanceof PmBriefError ||
+              error instanceof ConfigEditorError
+            )
+              throw new RequestError(error.status, error.message);
+            throw new RequestError(
+              400,
+              "PM details could not be loaded or saved. Check the project and PM configuration; existing knowledge was preserved.",
+            );
+          }
+          return;
+        }
         const pmReadiness =
           /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/readiness$/.exec(
             url.pathname,
@@ -1935,7 +2027,10 @@ export function createDashboardServer(
         const file = await realpath(
           join(
             directory,
-            HTML_ROUTES.has(pathname) ? "index.html" : pathname.slice(1),
+            HTML_ROUTES.has(pathname) ||
+              /^\/projects\/[a-z][a-z0-9-]{0,62}$/.test(pathname)
+              ? "index.html"
+              : pathname.slice(1),
           ),
         );
         const rel = relative(directory, file);

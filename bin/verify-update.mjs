@@ -10,6 +10,11 @@ import { createUpdater } from "../src/update/index.ts";
 import { resolveRuntime } from "./runtime.mjs";
 import { createSourceStore } from "../src/sourceControl/store.ts";
 import { createOAuthStore } from "../src/oauthConnection/storage.ts";
+import { loadProject } from "../src/config.ts";
+import {
+  createPmKnowledge,
+  knowledgeRevision,
+} from "../src/pmKnowledge/index.ts";
 
 const [bootstrap, configurationRoot, scratch, tarball] = process.argv.slice(2);
 assert(bootstrap && configurationRoot && scratch && tarball);
@@ -53,7 +58,29 @@ function snapshot(directory) {
           ];
     });
 }
+const knowledgeProject = loadProject(configurationRoot, "smoke-app");
+const knowledgeSnapshot = {
+  schema: 1,
+  project: "smoke-app",
+  area: "core",
+  revision: knowledgeRevision(knowledgeProject, knowledgeProject.areas[0]),
+  provenance: {
+    jobId: "completed-discovery",
+    runId: 7,
+    commitSha: "e".repeat(40),
+    repository: knowledgeProject.config.repo,
+    branch: "main",
+    completedAt: "2026-10-05T00:00:00.000Z",
+  },
+  documents: ["discovery.md", "features.md", "queue.md", "memory.md"].map(
+    (name) => ({
+      name,
+      content: "# Preserve the PM's learned context\nFixture observation.",
+    }),
+  ),
+};
 for (const [directory, filename, content] of [
+  ["pm-knowledge/smoke-app/core", "latest.json", knowledgeSnapshot],
   [
     "storage",
     "postgres.json",
@@ -148,6 +175,12 @@ writeFileSync(
   }),
 );
 const originalConfiguration = snapshot(configurationRoot);
+const originalKnowledge = createPmKnowledge({ root: configurationRoot }).read(
+  "smoke-app",
+  "core",
+);
+assert.equal(originalKnowledge.state, "ready");
+assert.equal(originalKnowledge.stale, false);
 const sha = "d".repeat(40);
 const env = { ...process.env, HOME: home, USERPROFILE: home };
 delete env.SHIPGREMLINS_BOOTSTRAP_ROOT;
@@ -216,11 +249,19 @@ assert.equal(
   previousVersion,
 );
 assert.deepEqual(snapshot(configurationRoot), originalConfiguration);
+assert.deepEqual(
+  createPmKnowledge({ root: configurationRoot }).read("smoke-app", "core"),
+  originalKnowledge,
+);
 const rolledBack = await updater.rollback();
 assert.equal(rolledBack.phase, "ready", rolledBack.message);
 assert.equal(resolveRuntime(bootstrap, home), bootstrap);
 assert.equal(selectedVersion(), `ShipGremlins ${previousVersion}`);
 assert.deepEqual(snapshot(configurationRoot), originalConfiguration);
+assert.deepEqual(
+  createPmKnowledge({ root: configurationRoot }).read("smoke-app", "core"),
+  originalKnowledge,
+);
 for (const provider of ["linear", "vercel"]) {
   for (const connectionId of ["default", "client"]) {
     const preserved = await createOAuthStore(
@@ -240,5 +281,5 @@ for (const provider of ["linear", "vercel"]) {
   }
 }
 console.log(
-  "PASS real staged update: isolated npm install, candidate startup/config checks, activation, bootstrap rollback, unchanged PM files, encrypted OAuth keys/connections, Linear provisioning journal, credentials and local queue storage.",
+  "PASS real staged update: isolated npm install, candidate startup/config checks, activation, bootstrap rollback, unchanged PM files and learned context, encrypted OAuth keys/connections, Linear provisioning journal, credentials and local queue storage.",
 );

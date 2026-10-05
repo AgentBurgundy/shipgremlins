@@ -1,0 +1,157 @@
+# How a PM learns and plans
+
+A ShipGremlins PM starts with the owner's direction, learns the codebase, then
+uses evidence to propose useful work. The same workflow can serve a web app,
+API, internal tool, library or service. Hosting and browser access are optional
+for repository verification.
+
+## Give the PM a product brief
+
+The PM's `mandate` states its job. An optional `charter` in its `areas.json` entry
+adds the owner's ambition, goal, users, expected-to-build roadmap, non-goals,
+guardrails, standing priorities and metric definition. Write the desired user
+outcome and boundaries, not a fixed number of tickets.
+
+The current owner charter and mandate outrank learned notes. Missing direction
+stays unknown, and conflicting owner instructions need an owner decision. A PM
+cannot turn a suggestion in memory into approval or rewrite its own charter.
+Runtime rules still prohibit self-approval, merges and production actions.
+
+In the dashboard, open **Projects**, choose an app, then choose a PM. Its page is
+`/projects/<project>?pm=<area>`. **Edit brief** changes the owner direction with a
+revision guard. The **Product brief**, **Discovery**, **Features**, **Ranked queue**,
+**Memory** and **Activity** tabs keep each PM's context together. A direct discovery
+link is `/projects/<project>?pm=<area>&tab=discovery`.
+
+**Run discovery** queues a codebase investigation. **Run patrol once** queues a normal
+patrol without enabling automation. **Enable automation** enables scheduled
+patrols and automatic pickup of approved Coding tickets; **Pause automation**
+pauses both. Each action shows its own missing setup requirements. The AI form
+assistant suggests brief fields from a mandate; it does not replace discovery
+of the checked-out repository or create learned knowledge.
+
+## Discover before patrolling
+
+Codebase discovery reads the selected repository checkout and traces the PM's
+scope through relevant source, tests and documentation. It identifies the
+observed stack, entrypoints, capabilities, permissions, dependencies and open
+questions, then drafts a ranked investigation queue.
+
+Discovery gives the model only Read, Glob and Grep tools. It cannot install
+dependencies, run shell commands or app scripts, browse a deployment, contact
+Linear, create tickets or publish code. Source access is used by the trusted
+worker to clone the repository; the model does not receive integration tokens.
+Hosting, Linear, telemetry and notification credentials are not part of this
+job. Discovery does not require a Linear project or a browser environment, and
+it does not verify those connections for later patrols.
+
+The model returns a bounded JSON object containing a public summary and four
+Markdown documents. The trusted worker validates it, writes the artifacts and
+records the actual checked-out commit SHA in its result. Each document also
+cites that SHA, inspected scope and observation date. A requested branch or an
+AI-written claim is not a substitute for trusted provenance. The controller
+validates the result before retaining the notes.
+
+| File           | Purpose                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `discovery.md` | Product/system map, roadmap coverage, evidence index and unknowns.                         |
+| `features.md`  | Capabilities and interfaces, code references, runtime status, confidence and known gaps.   |
+| `queue.md`     | Ranked opportunities, defects, risks and research, with dependencies and next validation.  |
+| `memory.md`    | Attributable owner decisions, separate provisional observations, coverage and run journal. |
+
+Each file is limited to 64 KiB. Learned artifacts never replace `mandate.md` or
+the owner's structured charter. Validated discovery and patrol snapshots live
+in the configuration directory at
+`.run/pm-knowledge/<project>/<area>/latest.json`, with the source job, repository,
+branch, trusted checkout SHA and completion time. A full valid snapshot replaces
+the previous one only after provenance and current settings pass validation.
+Failed runs and older patrols without knowledge output preserve previous notes.
+
+Changing the project settings, PM brief or versioned mandate marks earlier
+knowledge stale. It remains visible in the PM page, but the controller does not
+automatically pass it to later prompts. Run discovery again to refresh it.
+Enabling or pausing automation alone does not stale the notes. Retained notes
+are observations at their recorded SHA; repository changes still need inspection
+before treating those observations as current facts.
+
+Prompts use bounded excerpts of learned documents: up to 12 KiB per document
+and 32 KiB for all learned context, including formatting. Retained documents
+take priority over manual seed notes, with space shared across retained files.
+Truncation and omission are explicit. The retained artifact can be larger;
+keeping notes concise and journals newest-first helps the PM see the most useful
+evidence. These limits do not trim the owner brief. Neither retained notes nor
+manual seed notes can override that brief.
+
+## Observe, research, rank, propose, verify, learn
+
+A patrol chooses useful coverage from recent changes, important risks, owner
+priorities and gaps in the inventory. It can perform a broad review or a
+targeted investigation. It records what it actually inspected and what it
+skipped; a fixed sweep quota does not determine quality.
+
+When relevant and available, research adds dated public primary sources and
+alternative approaches. Private repository data and user information must not
+be sent to external search. Provider documentation proves what that source
+says, not what the app has deployed or what its users need.
+
+Ranking connects evidence to user outcomes and the owner's ambition. A PM should
+consider substantial product opportunities when the mandate calls for them,
+rather than filling every run with cosmetic fixes. Serious security or
+reliability risks may be more important than new features. Confidence, severity,
+reach, dependencies and effort shape the ranking. There are no minimum ticket
+or epic counts; no new proposal is a valid result.
+
+Verification follows the configured mode. Repository mode uses inspected code
+and actual relevant check results. Browser mode uses Playwright MCP against the
+selected non-production target and real screenshots where useful. A deployed
+baseline may not contain an unmerged change. Tests, observations and claims
+must identify the checkout or deployment they actually cover.
+
+The PM finishes with updated proposed knowledge artifacts and a concise visible
+report of evidence, proposals, checks, failures, unknowns and owner actions.
+It does not push memory branches, edit controller files, send its own Slack
+messages, or leave background work to be finished after the run ends.
+
+## Keep evidence and confidence separate
+
+Use explicit evidence kinds: **observed-in-source**,
+**documented-but-unverified**, **inferred**, **runtime-reproduced**, or
+**unknown**. Confidence is high, medium or low with a short reason. A PM can be
+highly confident that a permission check is absent in an inspected function
+without claiming an exploit was reproduced in the app.
+
+Every finding needs real references: full repository SHA plus files/symbols or
+lines, command output, an actual screenshot, supplied telemetry with its time
+window, or a public URL and access date. Missing analytics means unknown, not
+zero usage. A metric route or event name does not prove instrumentation exists.
+Projected impact is a hypothesis until measured.
+
+## Write tickets a developer can use
+
+Search the configured Linear project for duplicates first. Add new evidence to
+an existing matching issue while preserving its approval and state. Never pick
+a similarly named project or change the PM's mapping. New findings stay in that
+PM's mapped project with its area label and `pm-proposal`.
+
+Each proposal explains:
+
+1. The user problem, impact, owner-goal connection and priority rationale.
+2. Evidence, exact repository SHA/files, expected versus actual behavior and
+   reproduction details, with inference clearly separated from observation.
+3. Confidence, unknowns and what would disprove the finding.
+4. A coherent proposal and alternatives; larger ideas include architecture,
+   dependencies and ordered, testable milestones.
+5. Observable acceptance criteria and a feasible verification method for each,
+   including relevant negative, permission and failure cases.
+6. Owned/shared implementation scope, review tier, compatibility risks and
+   explicit out-of-scope boundaries.
+7. The metric definition or risk outcome, evidence-backed expectations and a
+   measurement plan where instrumentation is missing.
+8. Owner decisions/access needed and relevant rollout or rollback considerations.
+
+The PM never adds `pm-approved`, clears a needs-human block, merges, promotes
+or marks Done. A tier describes scope, not permission to bypass human approval.
+Coding Gremlins work approved tickets and produce tested draft PRs/MRs for
+review. **Done requires the fix's PR to be merged into production and required
+verification to pass.** A completed agent run, green check or staging deployment
+alone does not meet that rule.

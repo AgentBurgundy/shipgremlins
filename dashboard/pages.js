@@ -8,6 +8,7 @@
     runners: "Your gremlins",
     activity: "Activity",
     settings: "Settings",
+    project: "Project",
   });
   const routes = new Set(Object.keys(labels));
   const protectedFragments = ["session", "slack", "linear", "vercel"];
@@ -17,10 +18,30 @@
     if (window.dashboardPages) return window.dashboardPages;
     const panels = [...document.querySelectorAll("[data-page]")];
     let current = "overview";
+    let currentRoute = null;
+
+    function projectFromPath(path) {
+      const match = /^\/projects\/([^/]+)\/?$/.exec(path);
+      if (!match) return null;
+      try {
+        const name = decodeURIComponent(match[1]);
+        return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name) &&
+          ![".", ".."].includes(name)
+          ? name
+          : null;
+      } catch {
+        return null;
+      }
+    }
 
     function pageFromPath(path) {
+      if (projectFromPath(path)) return "project";
       const name = path.replace(/^\//, "").replace(/\/$/, "");
-      return routes.has(name) ? name : path === "/" ? "overview" : null;
+      return routes.has(name) && name !== "project"
+        ? name
+        : path === "/"
+          ? "overview"
+          : null;
     }
 
     function resolve(destination) {
@@ -54,31 +75,51 @@
         target && target.id !== page && target.id !== "main"
           ? `#${encodeURIComponent(target.id)}`
           : "";
-      return { page, target, path: `/${page}${anchor}` };
+      const project = page === "project" ? projectFromPath(url.pathname) : null;
+      const pm = project ? url.searchParams.get("pm") || "" : "";
+      const tab = project ? url.searchParams.get("tab") || "brief" : "brief";
+      const query = new URLSearchParams();
+      if (pm) query.set("pm", pm);
+      if (pm && tab !== "brief") query.set("tab", tab);
+      const path = project
+        ? `/projects/${encodeURIComponent(project)}${query.size ? `?${query}` : ""}`
+        : `/${page}`;
+      return { page, project, pm, tab, target, path: `${path}${anchor}` };
     }
 
     function show(route, { focus = false, scroll = false } = {}) {
       current = route.page;
+      currentRoute = route;
       for (const panel of panels) panel.hidden = panel.dataset.page !== current;
       document.body.dataset.page = current;
-      document.title = `${labels[current]} · ShipGremlins`;
+      const title = route.project || labels[current];
+      document.title = `${title} · ShipGremlins`;
       for (const label of document.querySelectorAll("[data-page-title]"))
-        label.textContent = labels[current];
+        label.textContent = title;
       for (const link of document.querySelectorAll(".navigation a")) {
         const destination = resolve(link.href);
-        if (destination?.page === current)
+        if (
+          destination?.page === current &&
+          destination?.project === route.project
+        )
           link.setAttribute("aria-current", "page");
         else link.removeAttribute("aria-current");
       }
       window.dispatchEvent(
         new CustomEvent("dashboard:pagechange", {
-          detail: { page: current, path: route.path },
+          detail: {
+            page: current,
+            path: route.path,
+            project: route.project,
+            pm: route.pm,
+            tab: route.tab,
+          },
         }),
       );
       if (focus || scroll)
         window.requestAnimationFrame(() => {
           // A later navigation may have won before this frame runs.
-          if (current !== route.page) return;
+          if (currentRoute !== route) return;
           const active = panels.find((panel) => panel.dataset.page === current);
           const target =
             route.target ||
@@ -156,6 +197,15 @@
       navigate,
       get current() {
         return current;
+      },
+      get project() {
+        return currentRoute?.project || "";
+      },
+      get pm() {
+        return currentRoute?.pm || "";
+      },
+      get tab() {
+        return currentRoute?.tab || "brief";
       },
       destroy() {
         document.removeEventListener("click", onClick);

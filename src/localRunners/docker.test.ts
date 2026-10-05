@@ -161,6 +161,59 @@ const developer = {
 } satisfies DockerJobPayload;
 
 describe("local Docker job runtime", () => {
+  it("rejects discovery payloads with commands, publication or integration credentials before Docker starts", async () => {
+    const test = fake();
+    const payload: DockerJobPayload = {
+      kind: "pm",
+      pmMode: "discovery",
+      browserVerification: false,
+      repoUrl: developer.repoUrl,
+      branch: "main",
+      provider: "github",
+      prompt: "Inspect code",
+      nonce: id,
+      credentials: developer.credentials,
+    };
+    for (const invalid of [
+      {
+        ...payload,
+        credentials: { ...payload.credentials, LINEAR_API_KEY: "forbidden" },
+      },
+      { ...payload, commands: { install: "npm ci" } },
+      { ...payload, delivery: developer.delivery },
+      { ...payload, browserVerification: true },
+    ]) {
+      await expect(
+        test.api.startJob({ id, workerId, payload: invalid }),
+      ).rejects.toThrow();
+    }
+    expect(test.calls).toHaveLength(0);
+    await test.api.startJob({ id, workerId, payload });
+    expect(test.calls.some((call) => call.args[0] === "start")).toBe(true);
+  });
+  it("accepts bounded large UTF-8 prompts over stdin but rejects oversized contexts before launching", async () => {
+    const valid = {
+      ...developer,
+      kind: "pm" as const,
+      delivery: undefined,
+      commands: undefined,
+      prompt: "é".repeat(180000),
+    };
+    const test = fake();
+    await test.api.startJob({ id, workerId, payload: valid });
+    expect(
+      test.calls.some((call) => call.options?.stdin?.includes(valid.prompt)),
+    ).toBe(true);
+    const invalid = fake();
+    await expect(
+      invalid.api.startJob({
+        id,
+        workerId,
+        payload: { ...valid, prompt: "é".repeat(270000) },
+      }),
+    ).rejects.toThrow();
+    expect(invalid.calls).toHaveLength(0);
+  });
   it("checks the Docker server, supported architecture, and Linux mode", async () => {
     expect(await fake().api.preflight()).toMatchObject({
       available: true,

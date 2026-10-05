@@ -354,6 +354,8 @@ export function createActivityStore(options: {
           "id",
           "runId",
           "type",
+          "pmMode",
+          "discoveryRevision",
           "project",
           "area",
           "ticket",

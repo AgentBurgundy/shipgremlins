@@ -18,6 +18,10 @@ The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your g
 browser Back/Forward and reload. Moving between pages keeps unfinished forms in
 memory; save them before closing or restarting the dashboard.
 
+Projects appear individually in the sidebar. Each project page keeps its
+repository, setup progress, PM crew, and launch controls together. Open a PM to
+edit its owner brief and browse Discovery, Features, Queue, and Memory.
+
 Overview shows your projects, PM mandates, verified workers, and active jobs.
 Connections has category tabs; mobile navigation opens from the menu button.
 Your gremlins starts with the launch form, with worker management below. Settings
@@ -33,7 +37,7 @@ automatically.
 2. Add the **app repository** and a short local ID such as `my-app`. When Linear is connected, setup creates an app team and a project for its first PM. Reuse an existing team or choose setup later when needed. [Linear and Vercel connections](LINEAR_VERCEL.md) explains mappings and retry recovery. Local Docker execution is the default. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
 3. Review the PR base branch, install/test commands, and PM mandate. New projects default to repository-only verification. For browser work, add a named preview/staging target using a direct URL, Vercel, Railway, or Cloud Run. Keep credentials in Connections. Existing projects have **Edit settings**. See [project and hosting settings](PROJECTS.md).
 4. Choose **Create local worker**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
-5. Follow the project's remaining setup steps and choose **Verify connections**, or run `gremlins doctor my-app`. Check the PM's Linear mapping and ownership. New PMs start with automation paused; you do not need to edit JSON to try one.
+5. Give the PM a mandate and optional structured **Product brief**. Choose **Discovery** to build its codebase context using source access, Claude Code, and a ready worker. Then follow the project's remaining setup steps and choose **Verify connections**, or run `gremlins doctor my-app`. Check the PM's Linear mapping and ownership. New PMs start with automation paused; you do not need to edit JSON to try one.
 6. Choose **Run once** for a supervised PM investigation. Inspect Activity and its evidence. When ready, choose **Enable automation** for recurring patrols and automatic pickup of approved tickets. A manual Coding run requires an open, approved ticket in the matching Linear project; approval is checked again before launch, even when automation is paused.
 
 Approval uses `pm-approved`; proposals use `pm-proposal`. Area labels remain `pm:core`, `pm:security`, and similar. After the agent's work passes configured checks, the worker publishes its unique branch and opens a **draft** PR or MR targeting the configured base branch. Legacy promotion projects target their integration branch. The agent does not publish directly. The local queue does not merge changes or mark tickets Done.
@@ -59,13 +63,14 @@ for which tests actually ran.
 A PM is a saved product mandate. A worker is the Docker capacity that executes
 it. Creating one does not implicitly create or enable the other.
 
-| Action                | Result                                                                                                                                                            |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Run once**          | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.               |
-| **Run Coding**        | Queues work on one open ticket with `pm-approved`, the matching area label, and the PM's Linear project. Manual coding does not require automation to be enabled. |
-| **Enable automation** | Allows that PM's UTC patrol schedule and background pickup of its approved tickets while the controller runs.                                                     |
-| **Pause automation**  | Stops new scheduled patrols and automatic approved-ticket pickup. It does not cancel an already-running job.                                                      |
-| **Pause worker**      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                   |
+| Action                | Result                                                                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Discovery**         | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change. |
+| **Run once**          | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                  |
+| **Run Coding**        | Queues work on one open ticket with `pm-approved`, the matching area label, and the PM's Linear project. Manual coding does not require automation to be enabled.    |
+| **Enable automation** | Allows that PM's UTC patrol schedule and background pickup of its approved tickets while the controller runs.                                                        |
+| **Pause automation**  | Stops new scheduled patrols and automatic approved-ticket pickup. It does not cancel an already-running job.                                                         |
+| **Pause worker**      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                      |
 
 Use the guided setup actions beside the selected project when something is
 missing. Connect source control and Claude Code in Connections; repair the
@@ -93,6 +98,25 @@ automation, or start work. Choose **Create PM** separately after reviewing the
 form. Changes to the selected project or form while a suggestion is pending make
 it stale; generate another draft instead of overwriting those edits. You can
 always fill in the form manually.
+
+### Discover the codebase and keep a useful PM memory
+
+**Discovery** is a separate worker run that reads actual source and tests. It
+produces a codebase map, feature inventory, ranked opportunity queue, and memory
+for subsequent patrols. It can run before Linear or hosting is configured, and
+does not file tickets, publish changes, or change owner settings. Check the
+result's run, branch, and commit before treating an observation as current.
+
+Use the PM's **Product brief** for ambition, users, expected capabilities, a
+measurable outcome, priorities, guardrails, and non-goals. Edit this owner direction
+separately from the learned documents. Saving is revision guarded so another
+browser's changes are not silently overwritten.
+
+Learned documents are stored under `.run/pm-knowledge` in the configuration
+directory. Back them up with your projects; updates preserve them. Missing,
+failed, or incomplete new snapshots keep the last valid context. Repository
+observations are not proof of a deployed behavior: browser evidence and actual
+test results remain explicit. See [the full PM workflow](PM_WORKFLOW.md).
 
 ## Connections and configuration
 

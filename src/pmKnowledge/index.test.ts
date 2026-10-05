@@ -1,0 +1,206 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { initializeSetup } from "../setup/files.ts";
+import { loadProject } from "../config.ts";
+import type { LocalJob } from "../localRunners/types.ts";
+import type { DockerRunners } from "../localRunners/docker.ts";
+import { createPmKnowledge, knowledgeRevision } from "./index.ts";
+import { PM_KNOWLEDGE_FILES } from "./prompts.ts";
+let root: string;
+beforeEach(() => {
+  root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-knowledge-"));
+  initializeSetup(root, fileURLToPath(new URL("../..", import.meta.url)), {
+    project: "app",
+    repo: "owner/app",
+  });
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  rmSync(root, { recursive: true, force: true });
+});
+function fixture(runId = 1) {
+  const project = loadProject(root, "app"),
+    area = project.areas[0]!;
+  const job: LocalJob = {
+    id: `job-${runId}`,
+    runId,
+    type: "pm",
+    pmMode: "discovery",
+    project: "app",
+    area: area.key,
+    runOnce: true,
+    discoveryRevision: knowledgeRevision(project, area),
+    status: "succeeded",
+    createdAt: "2026-10-05T00:00:00Z",
+    finishedAt: "2026-10-05T00:01:00Z",
+  };
+  const documents = Object.fromEntries(
+    PM_KNOWLEDGE_FILES.map((name) => [
+      name,
+      `# ${name}\nObserved source. secret-unique-credential`,
+    ]),
+  );
+  const result = {
+    ok: true,
+    kind: "pm",
+    pmMode: "discovery",
+    nonce: job.id,
+    commitSha: "b".repeat(40),
+    branch: "main",
+  };
+  const artifacts = vi.fn(async () => ({
+    result,
+    files: Object.entries(documents).map(([name, content]) => ({
+      name,
+      size: Buffer.byteLength(content),
+    })),
+  }));
+  const docker = {
+    artifacts,
+    readArtifact: vi.fn(async (_id: string, name: string) =>
+      Buffer.from(documents[name]!),
+    ),
+  } as unknown as DockerRunners;
+  const store = createPmKnowledge({
+    root,
+    secrets: () => ["secret-unique-credential"],
+  });
+  return { job, project, area, documents, result, artifacts, docker, store };
+}
+describe("PM knowledge retention", () => {
+  it("adopts a complete snapshot, redacts credentials, survives restart, and preserves owner files", async () => {
+    const f = fixture(),
+      owner = readFileSync(join(f.project.dir, "core", "mandate.md"), "utf8");
+    await f.store.capture(f.job, f.docker);
+    const result = createPmKnowledge({ root }).read("app", "core");
+    expect(result).toMatchObject({
+      state: "ready",
+      stale: false,
+      provenance: {
+        jobId: "job-1",
+        runId: 1,
+        repository: "owner/app",
+        branch: "main",
+        commitSha: "b".repeat(40),
+      },
+    });
+    expect(result.documents).toHaveLength(4);
+    expect(JSON.stringify(result)).not.toContain("secret-unique-credential");
+    expect(
+      f.store.memory(f.project, f.area)["discovered-features.md"],
+    ).toContain("Observed source");
+    expect(
+      readFileSync(join(f.project.dir, "core", "mandate.md"), "utf8"),
+    ).toBe(owner);
+  });
+  it("keeps newer provenance on older completions and repeated reconciliation", async () => {
+    const newer = fixture(2);
+    await newer.store.capture(newer.job, newer.docker);
+    const old = fixture(1);
+    await old.store.capture(old.job, old.docker);
+    await newer.store.capture(newer.job, newer.docker);
+    expect(old.store.read("app", "core").provenance?.runId).toBe(2);
+  });
+  it("preserves previous knowledge when output is partial or provenance is wrong", async () => {
+    const first = fixture();
+    await first.store.capture(first.job, first.docker);
+    const next = fixture(2);
+    delete next.documents["queue.md"];
+    await expect(next.store.capture(next.job, next.docker)).rejects.toThrow(
+      "all four",
+    );
+    next.result.nonce = "other-job";
+    await expect(next.store.capture(next.job, next.docker)).rejects.toThrow(
+      "provenance",
+    );
+    next.result.nonce = next.job.id;
+    next.result.branch = "production";
+    await expect(next.store.capture(next.job, next.docker)).rejects.toThrow(
+      "provenance",
+    );
+    const view = next.store.read("app", "core", [
+      { ...next.job, status: "failed" },
+    ]);
+    expect(view).toMatchObject({ state: "failed", provenance: { runId: 1 } });
+    expect(view.documents).toHaveLength(4);
+  });
+  it("rejects stale admitted settings and excludes stale notes from future prompts", async () => {
+    const f = fixture();
+    await f.store.capture(f.job, f.docker);
+    const path = join(f.project.dir, "areas.json"),
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    raw.areas.core.mandate = "New scope";
+    writeFileSync(path, JSON.stringify(raw));
+    await expect(
+      f.store.capture({ ...f.job, id: "job-2", runId: 2 }, f.docker),
+    ).rejects.toThrow("settings changed");
+    const current = loadProject(root, "app");
+    expect(f.store.memory(current, current.areas[0]!)).toEqual({});
+    expect(f.store.read("app", "core").stale).toBe(true);
+  });
+  it("ignores legacy patrol output without knowledge, but accepts a complete new patrol snapshot", async () => {
+    const f = fixture();
+    await expect(
+      f.store.capture(
+        { ...f.job, pmMode: undefined, discoveryRevision: undefined },
+        f.docker,
+      ),
+    ).resolves.toBeUndefined();
+    f.artifacts.mockResolvedValueOnce({ result: f.result, files: [] });
+    await f.store.capture({ ...f.job, pmMode: undefined }, f.docker);
+    expect(f.store.read("app", "core").state).toBe("empty");
+    await f.store.capture({ ...f.job, pmMode: undefined }, f.docker);
+    expect(f.store.read("app", "core").state).toBe("ready");
+  });
+  it("recovers a dead process lock while leaving live locks intact", async () => {
+    const f = fixture(),
+      dir = join(root, ".run", "pm-knowledge", "app", "core");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "write.lock"), JSON.stringify({ pid: 12345 }));
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
+    await f.store.capture(f.job, f.docker);
+    writeFileSync(
+      join(dir, "write.lock"),
+      JSON.stringify({ pid: process.pid }),
+    );
+    vi.mocked(process.kill).mockReturnValue(true);
+    await expect(f.store.capture(f.job, f.docker)).rejects.toThrow(
+      "being saved",
+    );
+  });
+  it("rejects traversal and symlinked storage without touching the destination", async () => {
+    const f = fixture();
+    expect(() => f.store.read("../app", "core")).toThrow();
+    const outside = join(root, "outside");
+    mkdirSync(outside);
+    mkdirSync(join(root, ".run"));
+    symlinkSync(
+      outside,
+      join(root, ".run", "pm-knowledge"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await expect(f.store.capture(f.job, f.docker)).rejects.toThrow();
+  });
+  it("rejects private transcript envelopes and oversized documents", async () => {
+    const f = fixture();
+    f.documents["memory.md"] = '{"type":"thinking","thinking":"private"}';
+    await expect(f.store.capture(f.job, f.docker)).rejects.toThrow(
+      "public observations",
+    );
+    f.documents["memory.md"] = "a".repeat(65537);
+    await expect(f.store.capture(f.job, f.docker)).rejects.toThrow("bounded");
+  });
+});

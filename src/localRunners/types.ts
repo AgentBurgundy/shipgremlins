@@ -21,6 +21,9 @@ export interface LocalJobInput {
   };
   /** Explicit controller-authorized one-off; it does not enable scheduled automation. */
   runOnce?: boolean;
+  pmMode?: "discovery";
+  /** Owner configuration snapshot for adopting learned PM observations. */
+  discoveryRevision?: string;
 }
 
 export interface LocalJob extends LocalJobInput {

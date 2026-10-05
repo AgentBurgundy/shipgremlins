@@ -76,6 +76,14 @@ projects in Linear receive gremlin branding and a mandate-based operating brief;
 explicitly reused projects retain their existing content. Retry recovery fills
 missing metadata only for projects with a saved controller creation record.
 
+Version 0.10 adds individual project workspaces and PM knowledge views, structured
+owner briefs, and an explicit repository discovery job. Discovery does not receive
+Linear, hosting, telemetry, or app sign-in credentials. Valid learned documents
+are retained separately from owner configuration with run/commit provenance and
+fed into later patrols. Invalid or stale results cannot replace current context.
+Prompt templates now ask for product outcomes, ranked evidence, feature coverage,
+and useful memory without ticket quotas or self-approval. See [PM workflow](PM_WORKFLOW.md).
+
 ## What still needs implementation
 
 The trusted verifier must be provisioned separately. The tools verify signed

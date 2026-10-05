@@ -144,6 +144,85 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it("protects PM briefs and knowledge and admits discovery without Linear or hosting readiness", async () => {
+    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const enqueue = vi.fn(async (input) => ({ id: "job-discovery", ...input }));
+    const runners = {
+      jobs: vi.fn(async () => []),
+      status: vi.fn(async () => ({
+        runners: [{ status: "ready", verifiedAt: "2026-10-05", paused: false }],
+        jobs: [],
+      })),
+      enqueue,
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+    } as unknown as LocalRunners;
+    const validate = vi.fn(async () => ({
+      area: { key: "core" },
+      discoveryRevision: "f".repeat(64),
+    }));
+    const { root, url } = await start(packageRoot, [], {
+      runners,
+      sourceControl: sourceFixture(),
+      jobs: { validate } as unknown as ReturnType<typeof createJobPreparation>,
+    });
+    initializeSetup(root, packageRoot, { project: "demo", repo: "owner/app" });
+    writeFileSync(
+      join(root, ".env"),
+      "CLAUDE_CODE_OAUTH_TOKEN=synthetic-only\n",
+    );
+    const base = `${url}/api/projects/demo/pms/core`;
+    expect((await fetch(`${base}/knowledge`)).status).toBe(401);
+    expect((await fetch(`${base}/brief`)).status).toBe(401);
+    expect(
+      await (await fetch(`${base}/knowledge`, { headers: auth })).json(),
+    ).toMatchObject({ state: "empty", documents: [], stale: false });
+    const doc = (await (
+      await fetch(`${base}/brief`, { headers: auth })
+    ).json()) as { revision: string; brief: Record<string, unknown> };
+    const saved = await post(`${base}/brief`, {
+      revision: doc.revision,
+      brief: { ...doc.brief, mandate: "Inspect code and trust boundaries." },
+    });
+    expect(saved.status).toBe(200);
+    expect(
+      (
+        await post(`${base}/brief`, {
+          revision: doc.revision,
+          brief: doc.brief,
+        })
+      ).status,
+    ).toBe(409);
+    const input = {
+      type: "pm",
+      project: "demo",
+      area: "core",
+      pmMode: "discovery",
+    };
+    expect((await post(`${url}/api/jobs`, input)).status).toBe(202);
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...input,
+        runOnce: true,
+        discoveryRevision: "f".repeat(64),
+      }),
+    );
+    expect(
+      (
+        await post(`${url}/api/jobs`, {
+          ...input,
+          discoveryRevision: "a".repeat(64),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await post(`${url}/api/jobs`, { ...input, pmMode: undefined })).status,
+    ).toBe(409);
+    expect(
+      JSON.parse(readFileSync(join(root, "projects/demo/areas.json"), "utf8"))
+        .areas.core.enabled,
+    ).toBe(false);
+  });
   it("serves live public activity and logs without waiting for PostgreSQL or running-job artifacts", async () => {
     const job = {
       id: "job-live",
@@ -523,6 +602,7 @@ describe("local dashboard HTTP boundary", () => {
       "/overview",
       "/connections",
       "/projects",
+      "/projects/demo",
       "/runners",
       "/activity",
       "/settings",
@@ -543,7 +623,8 @@ describe("local dashboard HTTP boundary", () => {
     for (const route of [
       "/unknown-page",
       "/settings/private",
-      "/projects/demo",
+      "/projects/demo/private",
+      "/projects/.env",
       "/connections/secret.json",
     ])
       expect((await fetch(url + route)).status, route).toBe(404);

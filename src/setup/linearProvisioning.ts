@@ -27,6 +27,7 @@ import {
 } from "./configEditor.ts";
 import { validateName } from "./files.ts";
 import { buildLinearProjectContent } from "./linearProjectContent.ts";
+import { parsePmCharter, type PmCharter } from "../pmCharter.ts";
 import type {
   LinearApi,
   LinearTeam,
@@ -936,6 +937,7 @@ export function createLinearProvisioning(options: {
       "key",
       "name",
       "mandate",
+      "charter",
       "paths",
       "sharedTouchpoints",
       "metric",
@@ -958,6 +960,16 @@ export function createLinearProvisioning(options: {
         "Provide a PM key, name (1–100 characters), and mandate (1–12000 characters).",
       );
     validateName(input.key, "area");
+    let charter: PmCharter | undefined;
+    if (input.charter !== undefined) {
+      try {
+        charter = parsePmCharter(input.charter);
+      } catch {
+        throw new LinearProvisioningError(
+          "Check the PM product brief: supported text and list fields must fit the displayed limits.",
+        );
+      }
+    }
     if (
       input.mixpanelReportId !== undefined &&
       (typeof input.mixpanelReportId !== "string" ||
@@ -1048,6 +1060,7 @@ export function createLinearProvisioning(options: {
         value.areas[String(input.key)] = {
           name: input.name,
           mandate: input.mandate,
+          ...(charter ? { charter } : {}),
           paths: input.paths ?? [],
           sharedTouchpoints: input.sharedTouchpoints ?? [],
           linearProjectId: input.linearProjectId ?? "PASTE_LINEAR_PROJECT_ID",

@@ -35,6 +35,12 @@ Coding Gremlins produce tested draft PRs. It states the production rule clearly:
 The dashboard remains the source of truth for execution settings; later config
 edits do not automatically rewrite your Linear document.
 
+The initial brief also includes any structured ambition, users, expected
+capabilities, metric definition, priorities, guardrails, and non-goals you saved.
+Edit these in the PM's **Product brief** on its project page. Discovery can gather
+codebase context before Linear is mapped; it does not receive Linear credentials
+or create tickets. See [PM workflow](PM_WORKFLOW.md).
+
 Existing area `linearProjectId` values are preserved. For an older app, explicit Linear setup can infer a team when all mapped projects share exactly one team. Otherwise choose the shared team yourself. It will not move or delete existing Linear projects. An explicitly reused PM project must belong to the configured team.
 
 The app's team is recorded in `projects/APP/project.json` under `linear`; each PM's project remains in `areas.json` under `linearProjectId`. Dashboard-authored instructions use the area's `mandate` field and are supplied alongside its existing `mandate.md` and memory files. These mappings are used for ticket lookup, proposals, and approval checks.
@@ -66,8 +72,10 @@ journal together. Concurrent edits are rejected. Unrelated project settings,
 mandates, and credentials are preserved. This does not move, create, or delete
 anything in Linear. Leaving a PM unmapped pauses it; saving a valid mapping does
 not automatically enable a paused PM. An intentionally unmapped, paused PM does
-not block verification of other configured PMs. It cannot run or be enabled until
-its mapping is repaired. Verify connections after mapping changes, then use
+not block verification of other configured PMs. It cannot patrol, run Coding work,
+or enable automation until its mapping is repaired; code-only Discovery remains
+available when its source, AI, and worker requirements are ready. Verify
+connections after mapping changes, then use
 **Run once** or explicitly resume automation. Explicit provisioning remains available for creating
 missing resources.
 

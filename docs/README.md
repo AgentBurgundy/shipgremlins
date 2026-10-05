@@ -6,6 +6,10 @@ repository, GitHub Actions, or GitLab CI. This document preserves the original
 CI dispatcher/release architecture as an advanced reference; its CI enrollment,
 secret provisioning, and workflow scheduling are not default setup requirements.
 
+For current project pages, structured owner briefs, repository discovery, and
+durable learned context, use [PM workflow](PM_WORKFLOW.md). The historical
+self-approval and memory-branch descriptions below do not apply to local workers.
+
 For current PM log and analytics access, see [project telemetry](TELEMETRY.md):
 Sentry logs/errors, Datadog logs, and per-area Mixpanel Insights reports.
 

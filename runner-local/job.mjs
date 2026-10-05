@@ -13,6 +13,11 @@ import { join } from "node:path";
 import { browserSmoke } from "./runner-smoke.mjs";
 import { chromium } from "playwright";
 import { createActivityWriter } from "./activity.mjs";
+import {
+  discoveryArguments,
+  discoveryResult,
+  sanitizeKnowledge,
+} from "./discovery.mjs";
 import { runCheckedDelivery, validateDelivery } from "./delivery.mjs";
 import {
   enforceDeadline,
@@ -99,7 +104,11 @@ async function run(command, args, options = {}) {
     current = spawn(command, args, {
       cwd: options.cwd ?? "/work",
       env: options.env ?? process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [
+        typeof options.input === "string" ? "pipe" : "ignore",
+        "pipe",
+        "pipe",
+      ],
       detached: true,
     });
     let modelError = false;
@@ -146,6 +155,14 @@ async function run(command, args, options = {}) {
     current.once("error", () =>
       reject(new Error("A required job tool could not start.")),
     );
+    if (typeof options.input === "string") {
+      current.stdin.on("error", () =>
+        reject(
+          new Error("The agent could not receive its bounded task context."),
+        ),
+      );
+      current.stdin.end(options.input);
+    }
     current.once("close", (code) => {
       current = undefined;
       if (code === 0 && !modelError && !stopping) done(captured);
@@ -171,6 +188,9 @@ try {
   if (!input || !["verify", "pm", "developer"].includes(input.kind))
     throw new Error("Unsupported job kind.");
   kind = input.kind;
+  const discovery = input.pmMode === "discovery";
+  if (input.pmMode !== undefined && (!discovery || kind !== "pm"))
+    throw new Error("Invalid PM mode.");
   if (
     input.browserVerification !== undefined &&
     typeof input.browserVerification !== "boolean"
@@ -197,7 +217,7 @@ try {
     if (
       typeof input.prompt !== "string" ||
       !input.prompt.trim() ||
-      input.prompt.length > 200000
+      Buffer.byteLength(input.prompt, "utf8") > 512 * 1024
     )
       throw new Error("An agent prompt is required.");
     const repo = new URL(input.repoUrl);
@@ -216,6 +236,23 @@ try {
     )
       throw new Error("A valid project branch is required.");
     const credentials = input.credentials ?? {};
+    if (
+      discovery &&
+      (input.browserVerification !== false ||
+        input.delivery ||
+        Object.values(input.commands ?? {}).some(Boolean) ||
+        Object.keys(credentials).some(
+          (key) =>
+            ![
+              "GITHUB_TOKEN",
+              "GITLAB_TOKEN",
+              "CLAUDE_CODE_OAUTH_TOKEN",
+            ].includes(key),
+        ))
+    )
+      throw new Error(
+        "Discovery cannot use integration credentials, project commands, or publication.",
+      );
     if (
       !credentials ||
       typeof credentials !== "object" ||
@@ -294,28 +331,32 @@ try {
     writeFileSync(
       "/work/mcp.json",
       JSON.stringify({
-        mcpServers: {
-          playwright: {
-            command: "node",
-            args: [
-              "/opt/gremlins/node_modules/@playwright/mcp/cli.js",
-              "--headless",
-              "--executable-path",
-              chromium.executablePath(),
-              "--no-sandbox",
-              "--output-dir",
-              "/output/screenshots",
-            ],
-          },
-        },
+        mcpServers: discovery
+          ? {}
+          : {
+              playwright: {
+                command: "node",
+                args: [
+                  "/opt/gremlins/node_modules/@playwright/mcp/cli.js",
+                  "--headless",
+                  "--executable-path",
+                  chromium.executablePath(),
+                  "--no-sandbox",
+                  "--output-dir",
+                  "/output/screenshots",
+                ],
+              },
+            },
       }),
       { mode: 0o600 },
     );
     writeFileSync("/work/prompt.md", input.prompt, { mode: 0o600 });
-    await run(
+    const modelOutput = await run(
       "claude",
       [
-        "--dangerously-skip-permissions",
+        ...(discovery
+          ? discoveryArguments()
+          : ["--dangerously-skip-permissions"]),
         "--output-format",
         "stream-json",
         "--verbose",
@@ -325,14 +366,37 @@ try {
         "--mcp-config",
         "/work/mcp.json",
         "-p",
-        input.prompt +
-          (input.browserVerification === false
-            ? "\n\nThis job uses repository verification. Capture reproducible test output and file references; screenshots are optional. Browser tools are available if local app testing is useful, but never claim a browser check you did not perform."
-            : "\n\nUse the Playwright MCP browser for visual verification. Save screenshots under /output/screenshots.") +
-          " Your memory snapshot is in /work/memory. Never print credentials.",
       ],
-      { cwd: "/work/repo", env, model: true },
+      {
+        cwd: "/work/repo",
+        env,
+        model: true,
+        input:
+          input.prompt +
+          `\n\nTrusted checkout metadata: repository ${repo.href}, branch ${input.branch}, commit SHA ${baseSha}, run UTC time ${new Date().toISOString()}.` +
+          (discovery
+            ? "\n\nReturn the requested structured JSON documents. You have only read/search tools; the worker writes the four output files. No installs, scripts, browser tools, tickets, remote writes, or repository changes."
+            : input.browserVerification === false
+              ? "\n\nThis job uses repository verification. Capture reproducible test output and file references; screenshots are optional. Browser tools are available if local app testing is useful, but never claim a browser check you did not perform."
+              : "\n\nUse the Playwright MCP browser for visual verification. Save screenshots under /output/screenshots.") +
+          (kind === "pm"
+            ? " Owner direction and bounded learned context are included above."
+            : " Your memory snapshot is in /work/memory.") +
+          " Never print credentials.",
+      },
     );
+    if (discovery) {
+      const result = discoveryResult(modelOutput);
+      for (const [name, content] of Object.entries(result.documents))
+        writeFileSync(join("/output", name), redact(content), { mode: 0o600 });
+      activity.emit(
+        "summary",
+        "Discovery summary",
+        result.summary,
+        "succeeded",
+      );
+    }
+    if (kind === "pm") sanitizeKnowledge("/output", redact);
     let publicationDirectory = "/work";
     const deliveryResult =
       kind === "developer"
@@ -368,6 +432,10 @@ try {
         {
           ok: true,
           kind,
+          nonce: input.nonce,
+          commitSha: baseSha,
+          branch: input.branch,
+          ...(discovery ? { pmMode: "discovery" } : {}),
           ...deliveryResult,
           ...(activity.summary() ? { summary: activity.summary() } : {}),
           completedAt: new Date().toISOString(),

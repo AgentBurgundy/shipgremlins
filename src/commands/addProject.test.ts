@@ -126,7 +126,9 @@ describe("addProject", () => {
     expect(mandate).toContain("# Play PM — mandate");
     expect(mandate).toContain("`projects/word-game/areas.json`");
     const memory = readFileSync(join(dir, "play", "memory.md"), "utf8");
-    expect(memory).toContain("pm/word-game/play");
+    expect(memory).toContain("**word-game / play**");
+    expect(memory).toContain("/output/memory.md");
+    expect(memory).not.toContain("pm/word-game/play");
     expect(memory).toContain("2026-10-02");
   });
 

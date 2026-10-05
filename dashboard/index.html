@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/update-banner.css" />
     <link rel="stylesheet" href="/workspace.css" />
+    <link rel="stylesheet" href="/project-workspace.css" />
     <script src="/signals-settings.js" defer></script>
     <script src="/project-settings.js" defer></script>
     <script src="/pages.js" defer></script>
@@ -21,6 +22,8 @@
     <script src="/pm-draft.js" defer></script>
     <script src="/crew-guidance.js" defer></script>
     <script src="/job-output.js" defer></script>
+    <script src="/pm-charter.js" defer></script>
+    <script src="/project-workspace.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
   </head>
@@ -104,6 +107,12 @@
             Settings</a
           >
         </nav>
+        <div class="workspace-label project-nav-label">YOUR PROJECTS</div>
+        <nav
+          class="navigation project-navigation"
+          id="project-navigation"
+          aria-label="Projects"
+        ></nav>
         <div class="sidebar-bottom">
           <div class="local-indicator">
             <span aria-hidden="true"></span> Self-hosted, by you
@@ -1734,6 +1743,18 @@
                     </p>
                   </div>
                   <div id="pm-ai-draft"></div>
+                  <section
+                    class="pm-charter-create"
+                    aria-labelledby="new-pm-charter-title"
+                  >
+                    <h3 id="new-pm-charter-title">Product brief</h3>
+                    <p>
+                      Give this PM a direction it can return to: who the product
+                      serves, what it should become, and where its boundaries
+                      are.
+                    </p>
+                    <div id="pm-charter-fields"></div>
+                  </section>
                   <details class="pm-advanced" id="pm-advanced">
                     <summary>Ownership, schedule &amp; work limits</summary>
                     <div class="project-form-grid">
@@ -1811,6 +1832,15 @@
                       </div>
                     </div>
                   </details>
+                  <label class="discovery-after-create"
+                    ><input type="checkbox" id="pm-discover-after-create" />
+                    <span
+                      >Start discovery after saving. Uses your source
+                      connection, Claude, and a verified local worker to map the
+                      product. Linear is optional for discovery; automation
+                      stays paused.</span
+                    >
+                  </label>
                   <div class="form-bottom">
                     <p>
                       Saves a paused PM. Run it once when setup is ready, or
@@ -1834,6 +1864,14 @@
               </form>
             </details>
           </section>
+
+          <section
+            class="project-workspace"
+            data-page="project"
+            id="project-workspace"
+            aria-label="Project workspace"
+            hidden
+          ></section>
 
           <section
             class="panel runners-panel"

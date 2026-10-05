@@ -784,6 +784,10 @@ describe("Linear app and mandate provisioning", () => {
       key: "security",
       name: "Security",
       mandate: "Test RBAC with test accounts.",
+      charter: {
+        ambition: "Prevent cross-account exposure.",
+        guardrails: ["Use isolated test accounts"],
+      },
       paths: ["src/"],
       schedule: "15 10 * * 1-5",
     });
@@ -792,10 +796,14 @@ describe("Linear app and mandate provisioning", () => {
     )!;
     expect(area.enabled).toBe(false);
     expect(area.mandate).toContain("RBAC");
+    expect(area.charter?.ambition).toBe("Prevent cross-account exposure.");
     await f.create().provision("demo");
     await f.create().provision("demo");
     expect(f.client.createTeam).toHaveBeenCalledTimes(1);
     expect(f.client.createProject).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(f.client.createProject).mock.calls[1]![0].content,
+    ).toContain("Prevent cross-account exposure.");
     await expect(
       f
         .create()
@@ -814,6 +822,19 @@ describe("Linear app and mandate provisioning", () => {
         schedule: "99 99 * * *",
       }),
     ).rejects.toThrow();
+    await expect(
+      f.create().addArea("demo", {
+        key: "bad-brief",
+        name: "Bad",
+        mandate: "A real mandate",
+        charter: { selfApprove: true },
+      }),
+    ).rejects.toThrow("product brief");
+    expect(
+      loadProject(f.root, "demo").areas.some(
+        (item) => item.key === "bad-brief",
+      ),
+    ).toBe(false);
   });
   it("does not reset corrupt state or steal a live operation lock", async () => {
     const f = fixture();

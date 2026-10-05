@@ -14,6 +14,7 @@ export interface DockerJobPayload {
   prompt?: string;
   /** Browser tools remain available; repository mode does not require screenshots. */
   browserVerification?: boolean;
+  pmMode?: "discovery";
   credentials?: Record<string, string>;
   commands?: Partial<
     Record<"install" | "test" | "lint" | "typecheck" | "build", string | null>
@@ -173,6 +174,7 @@ function validatePayload(payload: DockerJobPayload): string {
           "provider",
           "prompt",
           "browserVerification",
+          "pmMode",
           "credentials",
           "commands",
           "memory",
@@ -186,6 +188,23 @@ function validatePayload(payload: DockerJobPayload): string {
     typeof payload.browserVerification !== "boolean"
   )
     throw new Error("Invalid browser verification mode.");
+  if (
+    payload.pmMode !== undefined &&
+    (payload.kind !== "pm" ||
+      payload.pmMode !== "discovery" ||
+      payload.browserVerification !== false ||
+      payload.delivery ||
+      Object.values(payload.commands ?? {}).some(Boolean) ||
+      Object.keys(payload.credentials ?? {}).some(
+        (key) =>
+          !["GITHUB_TOKEN", "GITLAB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"].includes(
+            key,
+          ),
+      ))
+  )
+    throw new Error(
+      "Discovery accepts only source and Claude credentials and cannot run project commands or publish changes.",
+    );
   if (payload.kind === "verify") {
     if (
       typeof payload.nonce !== "string" ||
@@ -218,7 +237,7 @@ function validatePayload(payload: DockerJobPayload): string {
     if (
       typeof payload.prompt !== "string" ||
       !payload.prompt.trim() ||
-      payload.prompt.length > 200000
+      Buffer.byteLength(payload.prompt, "utf8") > 512 * 1024
     )
       throw new Error("An agent prompt is required.");
     if (!["github", "gitlab"].includes(payload.provider ?? ""))

@@ -95,6 +95,10 @@ focused. Provider cards contain setup instructions and token creation links.
 Connect Slack once for the workspace; every project inherits that channel unless
 you deliberately configure an override.
 
+Each project also has its own sidebar link and workspace. Open a PM to edit its
+product brief and review its discovery, feature inventory, ranked opportunities,
+and learned memory together. The repository and PM name stay visible while you work.
+
 On a homelab server, run `gremlins setup --lan` and open the printed private-network link from your laptop or phone. Edit configuration in the dashboard and find both installation and settings folders under File locations. LAN mode uses HTTP on your trusted network; see the [server guide](docs/SETUP.md#server-use) for firewall and encrypted SSH-tunnel access.
 
 Install future updates from the dashboard's **Updates** panel or with `gremlins update`. New code is staged and checked before activation; your existing projects, PM mandates, and credentials stay in place. The previous runtime remains available for rollback.
@@ -123,6 +127,14 @@ On the PM creation form, write your brief and choose **Fill with AI** for sugges
 ownership paths, a name, metric, UTC schedule, and WIP limit. Review the draft and
 choose **Apply suggestions** to fill the form. Your original mandate is preserved;
 AI fill does not create the PM, change Linear, enable automation, or run a job.
+
+**Let the PM learn the codebase first.** A **Discovery** run reads the actual
+repository and produces a feature map, ranked opportunities, and durable notes
+for later patrols. It needs source access, Claude Code, and a ready Docker worker;
+Linear and hosting setup can come later. Discovery does not file tickets, publish
+code, enable automation, or rewrite your brief. Give the PM ambition, users,
+success measures, priorities, guardrails, and non-goals in its **Product brief**.
+Owner direction stays separate from what the PM learns. [PM workflow →](docs/PM_WORKFLOW.md)
 
 Connect GitHub or GitLab with a device code in **Source control**, then select your repository. GitHub requires installing the App on the repositories you choose. The controller manages token refresh and waits when active work still needs the old credential. Existing manual tokens and self-hosted GitLab remain available as advanced setup options.
 
