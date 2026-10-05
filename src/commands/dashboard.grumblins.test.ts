@@ -18,7 +18,11 @@ import {
   type createGrumblins,
   type GrumblinProfileSnapshot,
 } from "../grumblins/index.ts";
-import { LocalRunnerError, type LocalRunners } from "../localRunners/engine.ts";
+import {
+  createLocalRunners,
+  LocalRunnerError,
+  type LocalRunners,
+} from "../localRunners/engine.ts";
 import type { LocalJob } from "../localRunners/types.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 import type { createJobPreparation } from "../localRunners/jobs.ts";
@@ -34,7 +38,12 @@ afterEach(async () => {
     rmSync(root, { recursive: true, force: true });
 });
 async function fixture(
-  options: { browser?: boolean; worker?: boolean; foundation?: boolean } = {},
+  options: {
+    browser?: boolean;
+    worker?: boolean;
+    foundation?: boolean;
+    instanceId?: string;
+  } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "grumblin-api-")));
   roots.push(root);
@@ -42,6 +51,7 @@ async function fixture(
   writeFileSync(join(root, ".env"), "CLAUDE_CODE_OAUTH_TOKEN=synthetic-only\n");
   const file = join(root, "projects", "demo", "project.json");
   const config = JSON.parse(readFileSync(file, "utf8"));
+  if (options.instanceId) config.instanceId = options.instanceId;
   if (options.browser !== false) {
     config.verification = { mode: "browser", environment: "preview" };
     config.environments = {
@@ -198,6 +208,46 @@ async function fixture(
   };
 }
 describe("project Grumblins API", () => {
+  it.each([undefined, "33333333-3333-4333-8333-333333333333"])(
+    "persists simulation requests in the real queue for project instance %s",
+    async (instanceId) => {
+      const f = await fixture({ instanceId });
+      const queueOptions = { root: f.root, packageRoot: process.cwd() };
+      const queue = createLocalRunners(queueOptions);
+      f.enqueue.mockImplementation(queue.enqueue);
+      vi.mocked(f.runners.jobs).mockImplementation(queue.jobs);
+
+      const response = await f.run();
+      const body = (await response.json()) as { job: LocalJob };
+      expect(body).toMatchObject({
+        reused: false,
+        job: {
+          status: "queued",
+          project: "demo",
+          pmMode: "grumblin",
+          grumblin: f.profile,
+          discoveryRevision: "c".repeat(64),
+        },
+      });
+      expect(response.status).toBe(202);
+      expect(body.job.projectInstanceId).toBe(instanceId);
+      expect(await createLocalRunners(queueOptions).job(body.job.id)).toEqual(
+        body.job,
+      );
+      expect(await (await f.run()).json()).toMatchObject({
+        reused: true,
+        job: { id: body.job.id },
+      });
+      expect(f.enqueue).toHaveBeenCalledOnce();
+
+      await queue.cancel(body.job.id);
+      const rerun = await f.run();
+      expect(rerun.status).toBe(202);
+      const next = (await rerun.json()) as { job: LocalJob };
+      expect(next.job.id).not.toBe(body.job.id);
+      expect(next.job.idempotencyKey).not.toBe(body.job.idempotencyKey);
+    },
+  );
   it("keeps customer planning available while blocking walkthroughs until the foundation exists", async () => {
     const f = await fixture({ foundation: true });
     expect((await f.call("/generate", {})).status).toBe(200);
