@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { listProjectNames, loadProject } from "../config.ts";
 import { createOAuthStore, safeOAuthPath } from "./storage.ts";
 import { normalizeConnectionId, validConnectionId } from "./profileId.ts";
 import { OAuthConnectionError, type OAuthProvider } from "./types.ts";
@@ -93,6 +94,12 @@ export async function createConnectionProfile(
     );
   return createOAuthStore(root, input.provider, id).locked(
     async (state, save) => {
+      if (state.deleted)
+        throw new OAuthConnectionError(
+          "That saved account ID was deleted. Choose a new ID so old project or job references cannot select a different account.",
+          "profile_exists",
+          409,
+        );
       if (state.label !== undefined || state.connection || state.pending)
         throw new OAuthConnectionError(
           "That connection ID already exists. Choose another name.",
@@ -102,6 +109,73 @@ export async function createConnectionProfile(
       state.label = label;
       await save(state);
       return { provider: input.provider, id, label };
+    },
+  );
+}
+
+/** Caller must hold the controller's global configuration-mutation guard. */
+export async function deleteConnectionProfile(
+  root: string,
+  input: { provider: OAuthProvider; id: string },
+): Promise<{ ok: true; provider: OAuthProvider; id: string }> {
+  validProvider(input.provider);
+  const id = normalizeConnectionId(input.id);
+  if (id === "default")
+    throw new OAuthConnectionError(
+      "The default account cannot be deleted. Use Disconnect or clear its saved API token instead.",
+      "default_profile",
+      409,
+    );
+  return createOAuthStore(root, input.provider, id).locked(
+    async (state, save) => {
+      if (state.deleted) return { ok: true, provider: input.provider, id };
+      if (state.label === undefined)
+        throw new OAuthConnectionError(
+          "This saved connection no longer exists.",
+          "profile_not_found",
+          404,
+        );
+      if (
+        state.connection?.leases.some((lease) => lease.expiresAt > Date.now())
+      )
+        throw new OAuthConnectionError(
+          "Wait for jobs using this account to finish before deleting it.",
+          "refresh_blocked",
+          409,
+        );
+      let referenced = false;
+      try {
+        safeOAuthPath(join(root, "projects"));
+        for (const name of listProjectNames(root)) {
+          for (const file of ["project.json", "areas.json", "tiers.json"])
+            safeOAuthPath(join(root, "projects", name, file));
+          const { config } = loadProject(root, name);
+          referenced ||=
+            input.provider === "linear"
+              ? config.linear?.connectionId === id
+              : config.vercel?.connectionId === id ||
+                Object.values(config.environments ?? {}).some(
+                  (target) =>
+                    target.kind === "vercel" && target.connectionId === id,
+                );
+        }
+      } catch {
+        throw new OAuthConnectionError(
+          "Project references could not be checked safely. Repair the project configuration before deleting saved accounts.",
+          "profile_in_use",
+          409,
+        );
+      }
+      if (referenced)
+        throw new OAuthConnectionError(
+          "This saved account is selected by a project. Choose another account in that project's settings before deleting it.",
+          "profile_in_use",
+          409,
+        );
+      // One atomic encrypted replacement removes label, tokens and pending OAuth state.
+      // Keep a token-free tombstone so stale references cannot bind to a reused ID.
+      await save({ schema: 1, deleted: true });
+      return { ok: true, provider: input.provider, id };
     },
   );
 }

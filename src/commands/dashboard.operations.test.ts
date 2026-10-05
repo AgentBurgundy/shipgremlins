@@ -31,6 +31,14 @@ it("resumes saved promotion intent on startup once, preserves a newer review and
   );
   const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
   initializeSetup(root, packageRoot, { project: "app", repo: "owner/app" });
+  const projectFile = join(root, "projects", "app", "project.json");
+  writeFileSync(
+    projectFile,
+    JSON.stringify({
+      ...JSON.parse(readFileSync(projectFile, "utf8")),
+      verified: "2026-10-05T10:00:00Z",
+    }),
+  );
   const automatic = createAutomaticPromotions({ root });
   automatic.enqueue("app", "core", "b".repeat(64));
   let finish: (rows: { text: string }[]) => void;
@@ -67,6 +75,33 @@ it("resumes saved promotion intent on startup once, preserves a newer review and
   await new Promise<void>((done) => server.close(() => done()));
   await open();
   expect(preparePromotion).toHaveBeenCalledTimes(2);
+});
+
+it("retains pending promotion intent without automatically resuming an unverified project", async () => {
+  root = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-unverified-promotion-"),
+  );
+  const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+  initializeSetup(root, packageRoot, { project: "app", repo: "owner/app" });
+  expect(loadProject(root, "app").config.verified).toBeNull();
+  const automatic = createAutomaticPromotions({ root });
+  automatic.enqueue("app", "core", "b".repeat(64));
+  const preparePromotion = vi.fn(async () => []);
+  server = createDashboardServer(root, packageRoot, "a".repeat(64), [], {
+    delivery: {
+      deliveryStatus: () => ({
+        enabled: true,
+        deliveries: [{ area: "core", status: "verified" }],
+        declarations: [],
+      }),
+      preparePromotion,
+    } as unknown as ReturnType<typeof createDeliveryController>,
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  expect(preparePromotion).not.toHaveBeenCalled();
+  expect(automatic.pending()).toEqual([
+    { project: "app", area: "core", key: "b".repeat(64) },
+  ]);
 });
 
 it("saves a separate candidate target with conflict protection and requires explicit production scope confirmation", async () => {

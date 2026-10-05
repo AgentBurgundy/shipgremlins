@@ -9,12 +9,23 @@
   };
   window.createConnectionProfiles = (
     container,
-    { provider, api, onChange, onCreated },
+    { provider, api, onChange, onCreated, onRemoved },
   ) => {
     let locked = true;
     let busy = false;
     let selected = "default";
     const root = node("div", "connection-profiles");
+    const remove = node(
+        "button",
+        "small-button danger-button",
+        "Remove saved account",
+      ),
+      prompt = node("div", "approval-confirm"),
+      removeStatus = node("p", "form-message");
+    remove.type = "button";
+    prompt.hidden = true;
+    removeStatus.hidden = true;
+    removeStatus.setAttribute("role", "status");
     const label = node("label", "", "Saved connection");
     const select = node("select", "");
     select.id = `${provider}-profile`;
@@ -39,15 +50,21 @@
     status.hidden = true;
     status.setAttribute("role", "status");
     add.append(nameLabel, name, create, status);
-    root.append(label, select, note, add);
+    root.append(label, select, note, remove, prompt, removeStatus, add);
     container.replaceChildren(root);
     const controls = () => {
       select.disabled = name.disabled = create.disabled = locked || busy;
+      remove.disabled = locked || busy;
+      remove.hidden = selected === "default";
+      for (const button of prompt.querySelectorAll("button"))
+        button.disabled = locked || busy;
     };
     select.addEventListener("change", async () => {
       if (locked || busy) return;
       const previous = selected;
       selected = select.value;
+      prompt.hidden = true;
+      removeStatus.hidden = true;
       busy = true;
       controls();
       try {
@@ -62,6 +79,52 @@
         busy = false;
         controls();
       }
+    });
+    remove.addEventListener("click", () => {
+      if (locked || busy || selected === "default") return;
+      const id = selected,
+        display = select.selectedOptions?.[0]?.textContent || selected;
+      prompt.replaceChildren(
+        node(
+          "p",
+          "",
+          `Remove ${display} from this instance? Local browser credentials will be removed. Projects that still use this account or active jobs will block removal. This does not uninstall or revoke a shared provider app. Its local ID stays reserved; reconnect with a new saved account.`,
+        ),
+      );
+      const accept = node(
+          "button",
+          "small-button danger-button",
+          "Remove this saved account",
+        ),
+        keep = node("button", "small-button", "Keep account");
+      accept.type = keep.type = "button";
+      keep.addEventListener("click", () => {
+        prompt.hidden = true;
+      });
+      accept.addEventListener("click", async () => {
+        if (locked || busy || id !== selected) return;
+        busy = true;
+        controls();
+        removeStatus.hidden = true;
+        try {
+          await api("/api/service-connections", { provider, id }, "DELETE");
+          selected = "default";
+          prompt.hidden = true;
+          await onRemoved?.(id);
+          removeStatus.textContent =
+            "Saved account removed from this instance. The provider app remains installed.";
+          removeStatus.hidden = false;
+        } catch (error) {
+          removeStatus.textContent = error.message;
+          removeStatus.hidden = false;
+        } finally {
+          busy = false;
+          controls();
+        }
+      });
+      prompt.append(accept, keep);
+      prompt.hidden = false;
+      accept.focus();
     });
     create.addEventListener("click", async () => {
       if (locked || busy) return;
@@ -124,6 +187,7 @@
         controls();
       },
       isDirty: () => Boolean(name.value.trim()),
+      isBusy: () => busy,
     };
   };
 })();

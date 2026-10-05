@@ -21,6 +21,7 @@ import {
 import { fillTemplate, templateVars } from "../commands/addProject.ts";
 import { projectSecretNames } from "../projectCapabilities.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
+import { assertResourceAvailable } from "./resourceDeletion.ts";
 
 const PORTABLE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const RESERVED_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
@@ -158,6 +159,7 @@ export function initializeSetup(
 ): InitResult {
   validateName(input.project, "project");
   validateName(input.area ?? "core", "area");
+  assertResourceAvailable(root, input.project, input.area ?? "core");
   validateRepo(input.repo, input.provider);
   if (
     input.settings &&

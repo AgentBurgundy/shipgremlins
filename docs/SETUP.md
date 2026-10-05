@@ -27,6 +27,13 @@ Connections has category tabs; mobile navigation opens from the menu button.
 Your gremlins starts with the launch form, with worker management below. Settings
 puts software updates first and keeps files and JSON under advanced configuration.
 
+Projects and PMs have **Delete** controls in their workspace/settings. The preview
+shows what is removed and preserved, and asks you to type the identifier. Active
+work blocks deletion. Settings includes deleted resources with **Restore**;
+restored PMs start paused and the project needs verification again. Connections
+offers **Remove saved account** and **Clear saved token**. See
+[resource removal and recovery](RESOURCE_LIFECYCLE.md) for the exact scope.
+
 An update banner appears across the dashboard when a release is available. You
 can install from that banner, see installation progress, and restart once the new
 runtime is ready. Update details and rollback remain in Settings. A visible open

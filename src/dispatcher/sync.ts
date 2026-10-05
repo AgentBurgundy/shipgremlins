@@ -24,6 +24,14 @@ const SYNC_MERGE_METHOD = "merge";
 const SYNC_MERGEABLE = new Set(["clean", "unstable", "has_hooks"]);
 
 export async function runSync(ctx: Ctx): Promise<DigestRow[]> {
+  if (!ctx.project.areas.length)
+    return [
+      {
+        rule: "sync",
+        needsYou: true,
+        text: "Create a PM before scheduling branch synchronization or conflict resolution.",
+      },
+    ];
   const repo = repoOf(ctx);
   const { staging, integration } = branchesOf(ctx);
   const rows: DigestRow[] = [];

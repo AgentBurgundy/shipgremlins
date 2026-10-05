@@ -210,10 +210,9 @@ describe("loadProject", () => {
     expect(err.message).toContain('"schedule" must be a 5-field cron');
   });
 
-  it("raises ConfigError when areas.json has no areas", () => {
+  it("keeps a project valid after its last PM is removed", () => {
     writeProject("game", { areas: { areas: {} } });
-    const err = errorOf(() => loadProject(root, "game"));
-    expect(err.message).toContain("at least one area is required");
+    expect(loadProject(root, "game").areas).toEqual([]);
   });
 
   it("raises ConfigError for a repo that is not owner/name", () => {

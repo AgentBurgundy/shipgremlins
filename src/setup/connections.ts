@@ -1,9 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
+  fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -392,6 +396,17 @@ function readSource(root: string): string {
   const file = join(resolve(root), ".env");
   assertConnectionPath(file);
   if (!existsSync(file)) return "";
+  const info = lstatSync(file);
+  if (info.isFile() && info.nlink !== 1)
+    throw new ConnectionSaveError(
+      "storage_hardlink",
+      "Connections could not be saved. The .env file has multiple links. Use a private regular credential file.",
+    );
+  if (info.size > MAX_ENV_BYTES)
+    throw new ConnectionSaveError(
+      "storage_too_large",
+      "Connections could not be saved. The .env file exceeds the 512 KB limit. Review its size without sharing its contents.",
+    );
   const source = readFileSync(file, "utf8");
   if (Buffer.byteLength(source) > MAX_ENV_BYTES)
     throw new ConnectionSaveError(
@@ -423,7 +438,7 @@ export function readConnections(root: string): Record<string, string> {
 /** Retain unrelated dotenv content, including multiline quoted values and comments. */
 function replaceValues(
   source: string,
-  updates: Record<string, string>,
+  updates: Record<string, string | null>,
 ): string {
   const remaining = new Set(Object.keys(updates));
   let output = "";
@@ -442,6 +457,11 @@ function replaceValues(
       const quote = source[valueStart];
       if (quote === '"' || quote === "'" || quote === "`") {
         const closing = source.indexOf(quote, valueStart + 1);
+        if (closing < 0)
+          throw new ConnectionSaveError(
+            "storage_format",
+            "Connections could not be saved. Existing .env quoting is ambiguous or malformed. Fix unmatched quotes before saving; existing credentials were preserved.",
+          );
         if (closing >= end) {
           const newline = source.indexOf("\n", closing);
           end = newline < 0 ? source.length : newline + 1;
@@ -449,7 +469,8 @@ function replaceValues(
       }
       const key = assignment[1]!;
       if (Object.hasOwn(updates, key)) {
-        if (remaining.delete(key)) output += `${key}='${updates[key]}'\n`;
+        if (remaining.delete(key) && updates[key] !== null)
+          output += `${key}='${updates[key]}'\n`;
         start = end;
         continue;
       }
@@ -457,13 +478,23 @@ function replaceValues(
     output += source.slice(start, end);
     start = end;
   }
-  if (remaining.size && output && !output.endsWith("\n")) output += "\n";
-  for (const key of remaining) output += `${key}='${updates[key]}'\n`;
+  if (
+    [...remaining].some((key) => updates[key] !== null) &&
+    output &&
+    !output.endsWith("\n")
+  )
+    output += "\n";
+  for (const key of remaining)
+    if (updates[key] !== null) output += `${key}='${updates[key]}'\n`;
 
   // Refuse ambiguous/malformed quoting instead of risking an unrelated setting.
   const before = parseEnv(source);
   const after = parseEnv(output);
-  const expected = { ...before, ...updates };
+  const expected: Record<string, string | undefined> = { ...before };
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === null) delete expected[key];
+    else expected[key] = value;
+  }
   if (
     Object.keys(after).length !== Object.keys(expected).length ||
     Object.entries(expected).some(([key, value]) => after[key] !== value)
@@ -473,6 +504,130 @@ function replaceValues(
       "Connections could not be saved. Existing .env quoting is ambiguous or malformed. Fix unmatched quotes before saving; existing credentials were preserved.",
     );
   return output;
+}
+
+/** All dashboard saves and explicit clears share the same local write lock. */
+function updateSource(root: string, updates: Record<string, string | null>) {
+  let temporary: string | undefined;
+  let handle: number | undefined;
+  const directory = resolve(root),
+    file = join(directory, ".env"),
+    lock = join(directory, ".env.lock"),
+    token = randomBytes(16).toString("hex");
+  try {
+    assertConnectionPath(file);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    assertConnectionPath(lock);
+    const lockInfo = lstatSync(lock, { throwIfNoEntry: false });
+    if (lockInfo) {
+      if (!lockInfo.isFile() || lockInfo.nlink !== 1 || lockInfo.size > 1024)
+        throw new ConnectionSaveError(
+          "storage_lock",
+          "Connection storage has an unsafe lock. Check its configuration directory before retrying.",
+        );
+      let dead = false;
+      const content = readFileSync(lock, "utf8");
+      try {
+        const owner = JSON.parse(content) as { pid?: number };
+        if (Number.isSafeInteger(owner.pid) && owner.pid! > 0) {
+          try {
+            process.kill(owner.pid!, 0);
+          } catch (error) {
+            dead = (error as NodeJS.ErrnoException).code === "ESRCH";
+          }
+        }
+      } catch {
+        /* Unknown owners keep the lock closed. */
+      }
+      if (dead) {
+        const current = lstatSync(lock);
+        if (
+          current.ino === lockInfo.ino &&
+          current.dev === lockInfo.dev &&
+          current.nlink === 1 &&
+          readFileSync(lock, "utf8") === content
+        )
+          unlinkSync(lock);
+      }
+    }
+    try {
+      handle = openSync(lock, "wx", 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST")
+        throw new ConnectionSaveError(
+          "storage_busy",
+          "Another process is updating connections. Retry shortly.",
+        );
+      throw error;
+    }
+    writeFileSync(handle, JSON.stringify({ pid: process.pid, token }));
+    const source = readSource(directory),
+      content = replaceValues(source, updates);
+    if (content === source) return;
+    if (Buffer.byteLength(content) > MAX_ENV_BYTES)
+      throw new ConnectionSaveError(
+        "storage_too_large",
+        "Connections could not be saved. The updated .env file exceeds the 512 KB limit; existing credentials were preserved.",
+      );
+    temporary = join(directory, `.env.${randomBytes(12).toString("hex")}.tmp`);
+    writeFileSync(temporary, "", { encoding: "utf8", mode: 0o600, flag: "wx" });
+    protectWindowsFile(temporary);
+    const fd = openSync(temporary, "w", 0o600);
+    try {
+      writeFileSync(fd, content, { encoding: "utf8" });
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    assertConnectionPath(file);
+    renameSync(temporary, file);
+    temporary = undefined;
+  } catch (error) {
+    throw storageError(error);
+  } finally {
+    if (handle !== undefined) {
+      const owned = fstatSync(handle);
+      closeSync(handle);
+      try {
+        assertConnectionPath(lock);
+        const current = lstatSync(lock);
+        if (
+          current.isFile() &&
+          current.nlink === 1 &&
+          current.ino === owned.ino &&
+          current.dev === owned.dev
+        )
+          unlinkSync(lock);
+      } catch {
+        /* Never delete another owner's lock or hide the original error. */
+      }
+    }
+    if (temporary) {
+      try {
+        unlinkSync(temporary);
+      } catch {
+        /* Preserve the original error. */
+      }
+    }
+  }
+}
+
+/** Explicit local removal only; exported environment and OAuth accounts are untouched. */
+export function clearConnections(root: string, names: unknown): void {
+  if (
+    !Array.isArray(names) ||
+    names.length < 1 ||
+    names.length > 100 ||
+    names.some((name) => typeof name !== "string" || !isAllowed(name, root))
+  )
+    throw new ConnectionSaveError(
+      "unsupported_connection",
+      "Choose one or more supported saved connections to clear.",
+    );
+  updateSource(
+    root,
+    Object.fromEntries(names.map((name: string) => [name, null])),
+  );
 }
 
 /** Save allowlisted tokens atomically; blanks preserve existing credentials. */
@@ -544,34 +699,5 @@ export function saveConnections(root: string, input: unknown): void {
     updates[name] = value;
   }
   if (!Object.keys(updates).length) return;
-  let temporary: string | undefined;
-  try {
-    const directory = resolve(root);
-    const file = join(directory, ".env");
-    const content = replaceValues(readSource(directory), updates);
-    assertConnectionPath(file);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    assertConnectionPath(file);
-    temporary = join(directory, `.env.${randomBytes(12).toString("hex")}.tmp`);
-    writeFileSync(temporary, "", {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    });
-    protectWindowsFile(temporary);
-    writeFileSync(temporary, content, { encoding: "utf8", mode: 0o600 });
-    assertConnectionPath(file);
-    renameSync(temporary, file);
-    temporary = undefined;
-  } catch (error) {
-    throw storageError(error);
-  } finally {
-    if (temporary) {
-      try {
-        unlinkSync(temporary);
-      } catch {
-        /* Preserve the original error. */
-      }
-    }
-  }
+  updateSource(root, updates);
 }

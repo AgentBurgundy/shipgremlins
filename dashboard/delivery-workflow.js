@@ -710,6 +710,10 @@
         const s = entries.get(name);
         if (s) return load(s, true);
       },
+      forget(name) {
+        entries.delete(name);
+        clearTimeout(timer);
+      },
       isDirty: () =>
         [...entries.values()].some(
           (s) => dirty(s) || s.candidateSelect.value !== s.candidateBaseline,

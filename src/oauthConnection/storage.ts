@@ -43,6 +43,8 @@ export interface PendingConnection {
 }
 export interface OAuthState {
   schema: 1;
+  /** Retired named IDs cannot be rebound to another account by a stale request. */
+  deleted?: true;
   label?: string;
   connection?: SavedConnection;
   pending?: PendingConnection;
@@ -64,6 +66,14 @@ const identity = (value: unknown) =>
   value.name.length <= 200;
 function validate(value: unknown): OAuthState {
   if (!object(value) || value.schema !== 1) throw new Error();
+  if (
+    value.deleted !== undefined &&
+    (value.deleted !== true ||
+      value.label !== undefined ||
+      value.connection !== undefined ||
+      value.pending !== undefined)
+  )
+    throw new Error();
   if (
     value.label !== undefined &&
     (typeof value.label !== "string" ||

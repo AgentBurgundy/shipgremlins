@@ -6,9 +6,12 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { initializeSetup } from "../setup/files.ts";
 import { createOAuthConnection, sealOAuthEnvelope } from "./connection.ts";
 import { createOAuthStore, type SavedConnection } from "./storage.ts";
 import {
@@ -18,6 +21,7 @@ import {
   normalizeConnectionId,
   updateConnectionProfileLabel,
   validConnectionId,
+  deleteConnectionProfile,
 } from "./profiles.ts";
 import type { OAuthProvider } from "./types.ts";
 
@@ -32,6 +36,19 @@ afterEach(() => {
     rmSync(value, { recursive: true, force: true });
 });
 const now = Date.now();
+
+function project(directory: string, values: Record<string, unknown>) {
+  initializeSetup(
+    directory,
+    fileURLToPath(new URL("../../", import.meta.url)),
+    { project: "shop", repo: "owner/shop", hubRepo: "owner/hub" },
+  );
+  const file = join(directory, "projects/shop/project.json");
+  writeFileSync(
+    file,
+    JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), ...values }),
+  );
+}
 async function seed(
   directory: string,
   provider: OAuthProvider,
@@ -83,6 +100,139 @@ function factory(
 }
 
 describe("named encrypted service connections", () => {
+  it.each(["linear", "vercel"] as const)(
+    "deletes unused %s profiles locally, retires their ID, and preserves other accounts",
+    async (provider) => {
+      const directory = root();
+      await seed(directory, provider, "client");
+      await seed(directory, provider, "other");
+      const before = readFileSync(
+        join(
+          directory,
+          `.run/oauth/${provider}/connections/other/connection.enc`,
+        ),
+      );
+      await expect(
+        deleteConnectionProfile(directory, { provider, id: "client" }),
+      ).resolves.toEqual({ ok: true, provider, id: "client" });
+      expect(await listConnectionIds(directory, provider)).toEqual([
+        "default",
+        "other",
+      ]);
+      expect(
+        await createOAuthStore(directory, provider, "client").read(),
+      ).toEqual({ schema: 1, deleted: true });
+      expect(
+        readFileSync(
+          join(
+            directory,
+            `.run/oauth/${provider}/connections/other/connection.enc`,
+          ),
+        ),
+      ).toEqual(before);
+      await expect(
+        factory(directory, provider, "client").resolveCredential(),
+      ).rejects.toMatchObject({ code: "profile_not_found" });
+      await expect(
+        createConnectionProfile(directory, {
+          provider,
+          id: "client",
+          label: "Rebound account",
+        }),
+      ).rejects.toMatchObject({ code: "profile_exists" });
+      await expect(
+        deleteConnectionProfile(directory, { provider, id: "client" }),
+      ).resolves.toMatchObject({ ok: true });
+    },
+  );
+
+  it("blocks default deletion and active leased credentials without changing stored state", async () => {
+    const directory = root();
+    await seed(directory, "linear", "client");
+    await createOAuthStore(directory, "linear", "client").locked(
+      async (state, save) => {
+        state.connection!.leases = [
+          { jobId: "job-active", expiresAt: Date.now() + 60000 },
+        ];
+        await save(state);
+      },
+    );
+    const file = join(
+        directory,
+        ".run/oauth/linear/connections/client/connection.enc",
+      ),
+      before = readFileSync(file);
+    await expect(
+      deleteConnectionProfile(directory, { provider: "linear", id: "client" }),
+    ).rejects.toMatchObject({ code: "refresh_blocked", status: 409 });
+    expect(readFileSync(file)).toEqual(before);
+    await expect(
+      deleteConnectionProfile(directory, { provider: "linear", id: "default" }),
+    ).rejects.toMatchObject({ code: "default_profile", status: 409 });
+  });
+
+  it.each([
+    ["linear", { linear: { connectionId: "client" } }],
+    [
+      "vercel",
+      {
+        vercel: {
+          connectionId: "client",
+          projectId: "prj_shop",
+          teamId: null,
+          bypassSecret: "VERCEL_BYPASS_SHOP",
+        },
+      },
+    ],
+    [
+      "vercel",
+      {
+        environments: {
+          candidate: {
+            kind: "vercel",
+            role: "preview",
+            connectionId: "client",
+            projectId: "prj_shop",
+          },
+        },
+      },
+    ],
+  ] as const)(
+    "blocks %s references in project configuration, including inactive and legacy environments",
+    async (provider, values) => {
+      const directory = root();
+      await seed(directory, provider, "client");
+      project(directory, values);
+      await expect(
+        deleteConnectionProfile(directory, { provider, id: "client" }),
+      ).rejects.toMatchObject({
+        code: "profile_in_use",
+        status: 409,
+        message: expect.stringContaining("selected by a project"),
+      });
+      expect(
+        (await createOAuthStore(directory, provider, "client").read())
+          .connection?.accessToken,
+      ).toBe("secret-client");
+    },
+  );
+
+  it("fails closed when another project's references cannot be classified", async () => {
+    const directory = root();
+    await seed(directory, "linear", "client");
+    project(directory, {});
+    writeFileSync(
+      join(directory, "projects/shop/project.json"),
+      "malformed synthetic configuration",
+    );
+    await expect(
+      deleteConnectionProfile(directory, { provider: "linear", id: "client" }),
+    ).rejects.toMatchObject({ code: "profile_in_use" });
+    expect(
+      (await createOAuthStore(directory, "linear", "client").read()).connection
+        ?.accessToken,
+    ).toBe("secret-client");
+  });
   it("validates portable exact IDs before using filesystem paths", () => {
     for (const id of ["default", "work", "client-2", "a".repeat(63)])
       expect(validConnectionId(id)).toBe(true);

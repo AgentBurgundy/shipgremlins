@@ -103,6 +103,12 @@ Project **Review**, **Knowledge**, **Delivery**, and **Run limits** keep decisio
 shared owner notes, releases, and capacity in separate views. The workspace inbox
 shows what needs attention and links to the remedy. [Use the control room →](docs/PROJECT_OPERATIONS.md)
 
+Retire a project or PM from its own workspace with **Delete**. Review the impact
+and type its identifier to confirm. Settings keeps a recovery list; restored PMs
+start paused. Connections also lets you remove unused saved accounts and clear
+saved tokens. Git repositories, Linear resources, and run history stay intact.
+[Delete, disconnect, and restore →](docs/RESOURCE_LIFECYCLE.md)
+
 On a homelab server, run `gremlins setup --lan` and open the printed private-network link from your laptop or phone. Edit configuration in the dashboard and find both installation and settings folders under File locations. LAN mode uses HTTP on your trusted network; see the [server guide](docs/SETUP.md#server-use) for firewall and encrypted SSH-tunnel access.
 
 Install future updates from the dashboard's **Updates** panel or with `gremlins update`. New code is staged and checked before activation; your existing projects, PM mandates, and credentials stay in place. The previous runtime remains available for rollback.

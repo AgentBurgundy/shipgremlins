@@ -111,6 +111,8 @@
           loadedAt: 0,
           views: new Map(),
           note: "",
+          deletingDecision: null,
+          decisionError: "",
           limitDraft: null,
           limitBase: "",
           review: null,
@@ -599,6 +601,7 @@
           s.busy = false;
           save.disabled = isLocked();
           save.textContent = "Save decision";
+          s.views.get("knowledge")?.notes.update();
         }
       });
       section.append(notes, form);
@@ -618,6 +621,62 @@
                   : "Saved decision",
               ),
             );
+            const remove = btn("Delete decision", () => {
+              if (s.busy || isLocked()) return;
+              s.deletingDecision = {
+                id: note.id,
+                revision: s.data.knowledge.revision,
+              };
+              s.decisionError = "";
+              s.views.get("knowledge")?.notes.update();
+            });
+            remove.disabled = s.busy || isLocked();
+            card.append(remove);
+            if (s.deletingDecision?.id === note.id) {
+              const prompt = el("div", "approval-confirm");
+              prompt.append(
+                el(
+                  "p",
+                  "",
+                  "Delete this shared decision? Future runs will no longer receive it. Existing run history is kept.",
+                ),
+              );
+              const accept = btn("Delete this decision", async () => {
+                if (s.busy || isLocked()) return;
+                const selected = s.deletingDecision;
+                s.busy = true;
+                accept.disabled = true;
+                try {
+                  await api(
+                    `/api/projects/${encodeURIComponent(s.name)}/decisions/${encodeURIComponent(selected.id)}`,
+                    { revision: selected.revision },
+                    "DELETE",
+                  );
+                  s.deletingDecision = null;
+                  s.decisionError = "";
+                  await refresh(s.name, true);
+                  setMessage(
+                    status,
+                    "Shared decision deleted. Existing run history is kept.",
+                  );
+                } catch (error) {
+                  s.decisionError = `${error.message} Refresh the project and review the decision again before retrying.`;
+                } finally {
+                  s.busy = false;
+                  s.views.get("knowledge")?.notes.update();
+                }
+              });
+              const keep = btn("Keep decision", () => {
+                s.deletingDecision = null;
+                s.decisionError = "";
+                s.views.get("knowledge")?.notes.update();
+              });
+              accept.disabled = keep.disabled = s.busy || isLocked();
+              prompt.append(accept, keep);
+              if (s.decisionError)
+                prompt.append(message(s.decisionError, true));
+              card.append(prompt);
+            }
             notes.append(card);
           }
           if (!notes.children.length)
@@ -1155,6 +1214,16 @@
       },
       refresh,
       refreshInbox,
+      forget(name) {
+        states.delete(name);
+        deliveryWorkflow?.forget(name);
+        globalProjects = globalProjects.filter(
+          (project) => project.project !== name,
+        );
+        globalLoadedAt = 0;
+        clearTimeout(timer);
+        paintInbox();
+      },
       protectFocus: (root) =>
         Boolean(
           root.contains(document.activeElement) &&

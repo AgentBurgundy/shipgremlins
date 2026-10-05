@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, parse, resolve } from "node:path";
 import { ConfigError, loadHub, loadProject } from "../config.ts";
+import { assertResourceAvailable } from "./resourceDeletion.ts";
 
 export const MAX_CONFIG_BYTES = 64 * 1024;
 const PROJECT_NAME = /^[a-z][a-z0-9-]{0,62}$/;
@@ -384,6 +385,26 @@ export function saveEditableConfig(
       ),
       path,
     );
+    if (path !== "hub.json") {
+      const project = path.split("/")[1]!;
+      try {
+        assertResourceAvailable(root, project);
+        if (path.endsWith("/areas.json")) {
+          const next = parseJson(content);
+          if (object(next) && object(next.areas))
+            for (const area of Object.keys(next.areas))
+              assertResourceAvailable(root, project, area);
+        }
+      } catch (error) {
+        throw new ConfigEditorError(
+          "conflict",
+          error instanceof Error
+            ? error.message
+            : "A deleted identifier is reserved for recovery.",
+          409,
+        );
+      }
+    }
     const target = configLocation(root, path);
     const temporary = join(
       dirname(target),

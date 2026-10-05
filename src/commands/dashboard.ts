@@ -33,6 +33,7 @@ import {
   CONNECTIONS,
   readConnections,
   saveConnections,
+  clearConnections,
   ConnectionSaveError,
   projectConnections as projectConnectionDefinitions,
 } from "../setup/connections.ts";
@@ -100,7 +101,14 @@ import {
 import {
   listConnectionProfiles,
   createConnectionProfile,
+  deleteConnectionProfile,
 } from "../oauthConnection/profiles.ts";
+import {
+  createResourceDeletion,
+  ResourceDeletionError,
+  type ConfigurationMutation,
+  type ResourceTarget,
+} from "../setup/resourceDeletion.ts";
 import { LinearApi } from "../services/linear.ts";
 import {
   createLinearProvisioning,
@@ -329,6 +337,31 @@ export function createDashboardServer(
   let updateRunning = false;
   let updateFailure = "";
   const remote = options.remote ?? createRemoteWorkers({ root });
+  const activeProjectOperations = new Map<string, number>();
+  let configurationMutation = false;
+  let activeMutationRequests = 0;
+  function trackProject(name: string): () => void {
+    activeProjectOperations.set(
+      name,
+      (activeProjectOperations.get(name) ?? 0) + 1,
+    );
+    return () => {
+      const remaining = (activeProjectOperations.get(name) ?? 1) - 1;
+      if (remaining) activeProjectOperations.set(name, remaining);
+      else activeProjectOperations.delete(name);
+    };
+  }
+  async function withProjectOperation<T>(
+    name: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const finish = trackProject(name);
+    try {
+      return await action();
+    } finally {
+      finish();
+    }
+  }
   const localDocker = options.docker ?? createDockerRunners({ packageRoot });
   const docker = remote.adapter(localDocker);
   const sourceControl =
@@ -410,6 +443,7 @@ export function createDashboardServer(
     project: string,
     teamId?: string,
   ): Promise<LinearMappingStatus> {
+    const finish = trackProject(project);
     try {
       const status = await linearConnectionFor(
         loadProject(root, project).config.linear?.connectionId,
@@ -431,6 +465,8 @@ export function createDashboardServer(
             ? error.message
             : "Linear setup did not finish. Saved settings were preserved; reconnect Linear and retry.",
       };
+    } finally {
+      finish();
     }
   }
   const delivery =
@@ -484,16 +520,21 @@ export function createDashboardServer(
   const productionReports = new Map<string, unknown[]>();
   const automaticPromotions = createAutomaticPromotions({ root });
   function continuePromotions(name: string) {
+    if (configurationMutation) return;
     if (deliveryOperations.get(name)?.phase === "running") return;
     try {
+      const project = loadProject(root, name);
+      if (!project.config.verified) return;
       for (const item of automaticPromotions.pending()) {
         if (item.project !== name) continue;
-        const hasVerified = delivery
-          .deliveryStatus(name)
-          .deliveries.some(
-            (record) =>
-              record.area === item.area && record.status === "verified",
-          );
+        const hasVerified =
+          project.areas.some((area) => area.key === item.area) &&
+          delivery
+            .deliveryStatus(name)
+            .deliveries.some(
+              (record) =>
+                record.area === item.area && record.status === "verified",
+            );
         const token = automaticPromotions.claim(item);
         if (!token) return;
         if (!hasVerified) {
@@ -620,13 +661,15 @@ export function createDashboardServer(
   }
   let productionBusy = false;
   async function reconcileDeliveries() {
-    if (productionBusy) return;
+    if (productionBusy || configurationMutation) return;
     productionBusy = true;
     try {
       for (const name of listProjectNames(root)) {
+        if (configurationMutation) break;
         try {
           const status = delivery.deliveryStatus(name);
-          if (!status.enabled) continue;
+          if (!status.enabled || !loadProject(root, name).config.verified)
+            continue;
           continuePromotions(name);
           if (
             status.deliveries.some(
@@ -639,7 +682,9 @@ export function createDashboardServer(
           if (status.declarations.length)
             productionReports.set(
               name,
-              await delivery.reconcileProduction(name),
+              await withProjectOperation(name, () =>
+                delivery.reconcileProduction(name),
+              ),
             );
         } catch {
           /*Each project keeps its durable scope. One unavailable provider must not stop other projects.*/
@@ -698,6 +743,65 @@ export function createDashboardServer(
       beforeLaunch: () => activityStore.ensure(),
       releaseJobResources: preparation.releaseJobResources,
     }));
+  async function resourceBlockers(target: ResourceTarget): Promise<string[]> {
+    const blockers: string[] = [];
+    if (activeProjectOperations.has(target.project))
+      blockers.push(
+        "Project setup, editing, or provider work is still running. Wait for it to finish.",
+      );
+    if (
+      deliveryOperations.get(target.project)?.phase === "running" ||
+      automaticPromotions
+        .pending()
+        .some(
+          (item) =>
+            item.project === target.project &&
+            (!target.area || item.area === target.area),
+        )
+    )
+      blockers.push(
+        "A promotion is running or awaiting reconciliation. Finish its delivery work before removing this configuration.",
+      );
+    if (
+      (await runners().jobs()).some(
+        (job) =>
+          job.project === target.project &&
+          (!target.area || job.area === target.area) &&
+          ["queued", "running"].includes(job.status),
+      )
+    )
+      blockers.push(
+        "This configuration has queued, running, or recoverable jobs. Cancel queued jobs and resolve active work first.",
+      );
+    return blockers;
+  }
+  const withConfigurationMutation: ConfigurationMutation = async (
+    target,
+    operation,
+  ) => {
+    if (
+      configurationMutation ||
+      activeMutationRequests ||
+      activeProjectOperations.size ||
+      (!target.project && automaticPromotions.pending().length > 0) ||
+      [...deliveryOperations.values()].some((item) => item.phase === "running")
+    )
+      throw new RequestError(
+        409,
+        "Configuration or provider work is in progress. Wait for it to finish and retry.",
+      );
+    configurationMutation = true;
+    try {
+      return await runners().withConfigurationMutation(target, operation);
+    } finally {
+      configurationMutation = false;
+    }
+  };
+  const resourceDeletion = createResourceDeletion({
+    root,
+    withConfigurationMutation,
+    blockers: resourceBlockers,
+  });
   let remoteSyncBusy = false;
   async function syncRemoteWorkers() {
     if (remoteSyncBusy) return;
@@ -882,6 +986,8 @@ export function createDashboardServer(
     canRestart: Boolean(options.restart),
   });
   const server = createServer(async (req, res) => {
+    let finishProjectRequest: (() => void) | undefined;
+    let countedMutation = false;
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
@@ -933,6 +1039,120 @@ export function createDashboardServer(
             401,
             "Open the dashboard link printed by your CLI.",
           );
+        const scopedProject =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})(?:\/|$)/.exec(url.pathname);
+        const resourceDelete =
+          req.method === "DELETE" &&
+          /^\/api\/projects\/[a-z][a-z0-9-]{0,62}(?:\/pms\/[a-z][a-z0-9-]{0,62})?$/.test(
+            url.pathname,
+          );
+        const destructiveConfiguration =
+          resourceDelete ||
+          /^\/api\/deleted\/[a-f0-9-]+\/restore$/.test(url.pathname) ||
+          url.pathname === "/api/connections/clear" ||
+          (url.pathname === "/api/service-connections" &&
+            req.method === "DELETE");
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          if (configurationMutation)
+            throw new RequestError(
+              409,
+              "Configuration is being removed or restored. Wait for it to finish and retry.",
+            );
+          if (!destructiveConfiguration) {
+            activeMutationRequests++;
+            countedMutation = true;
+          }
+        }
+        if (
+          scopedProject &&
+          req.method !== "GET" &&
+          req.method !== "HEAD" &&
+          !resourceDelete
+        )
+          finishProjectRequest = trackProject(scopedProject[1]!);
+        const deleteTarget =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})(?:\/pms\/([a-z][a-z0-9-]{0,62}))?(\/deletion)?$/.exec(
+            url.pathname,
+          );
+        if (deleteTarget && (deleteTarget[3] || req.method === "DELETE")) {
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Deletion requests do not accept query parameters.",
+            );
+          const target = {
+            project: deleteTarget[1]!,
+            ...(deleteTarget[2] ? { area: deleteTarget[2] } : {}),
+          };
+          if (deleteTarget[3] && req.method === "GET")
+            json(res, 200, await resourceDeletion.preview(target));
+          else if (!deleteTarget[3] && req.method === "DELETE") {
+            const input = await body(req);
+            if (
+              Object.keys(input).length !== 2 ||
+              typeof input.revision !== "string" ||
+              typeof input.confirm !== "string"
+            )
+              throw new RequestError(
+                400,
+                "Provide the reviewed revision and exact confirmation identifier.",
+              );
+            json(
+              res,
+              200,
+              await resourceDeletion.remove({
+                ...target,
+                revision: input.revision,
+                confirmation: input.confirm,
+              }),
+            );
+          } else
+            throw new RequestError(
+              405,
+              "Use GET to review deletion and DELETE to confirm it.",
+            );
+          return;
+        }
+        const recovery = /^\/api\/deleted(?:\/([a-f0-9-]+)(\/restore)?)?$/.exec(
+          url.pathname,
+        );
+        if (recovery) {
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Recovery requests do not accept query parameters.",
+            );
+          if (!recovery[1] && req.method === "GET")
+            json(res, 200, { recoveries: resourceDeletion.listRecoveries() });
+          else if (recovery[1] && !recovery[2] && req.method === "GET")
+            json(res, 200, await resourceDeletion.previewRestore(recovery[1]));
+          else if (recovery[1] && recovery[2] && req.method === "POST") {
+            const input = await body(req);
+            if (
+              Object.keys(input).length !== 2 ||
+              typeof input.revision !== "string" ||
+              typeof input.confirm !== "string"
+            )
+              throw new RequestError(
+                400,
+                "Provide the reviewed revision and exact confirmation identifier.",
+              );
+            json(
+              res,
+              200,
+              await resourceDeletion.restore({
+                id: recovery[1],
+                revision: input.revision,
+                confirmation: input.confirm,
+              }),
+            );
+          } else
+            throw new RequestError(
+              405,
+              "Use GET to review recovery and POST to restore it.",
+            );
+          return;
+        }
         if (
           url.pathname === "/api/source-control" ||
           url.pathname.startsWith("/api/source-control/")
@@ -1056,13 +1276,38 @@ export function createDashboardServer(
                 ).status({ checkAvailability: false })),
                 ...profile,
               });
+            } else if (req.method === "DELETE") {
+              const input = await body(req);
+              if (
+                Object.keys(input).length !== 2 ||
+                !["linear", "vercel"].includes(String(input.provider)) ||
+                !validConnectionId(input.id)
+              )
+                throw new RequestError(
+                  400,
+                  "Provide the provider and saved account ID to remove.",
+                );
+              json(
+                res,
+                200,
+                await withConfigurationMutation({}, () =>
+                  deleteConnectionProfile(root, {
+                    provider: input.provider as OAuthProvider,
+                    id: input.id as string,
+                  }),
+                ),
+              );
             } else
               throw new RequestError(
                 405,
-                "Use GET or POST for saved accounts.",
+                "Use GET, POST or DELETE for saved accounts.",
               );
           } catch (error) {
-            if (error instanceof RequestError) throw error;
+            if (
+              error instanceof RequestError ||
+              error instanceof LocalRunnerError
+            )
+              throw error;
             if (error instanceof OAuthConnectionError)
               throw new RequestError(error.status, error.message);
             throw new RequestError(
@@ -2122,6 +2367,8 @@ export function createDashboardServer(
               configured: Boolean(
                 saved[connection.name] || process.env[connection.name],
               ),
+              saved: Boolean(saved[connection.name]),
+              inherited: Boolean(process.env[connection.name]),
             })),
             runtime: {
               agents: hubRepo ? "github-actions" : "local-docker",
@@ -2200,6 +2447,26 @@ export function createDashboardServer(
               "The server could not open its file manager. Copy the folder path instead.",
             );
           }
+          json(res, 200, { ok: true });
+          return;
+        }
+        if (url.pathname === "/api/connections/clear") {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to clear saved credentials.");
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Credential removal does not accept query parameters.",
+            );
+          const input = await body(req);
+          if (Object.keys(input).length !== 1 || !Object.hasOwn(input, "names"))
+            throw new RequestError(
+              400,
+              "Provide the saved credential names to clear.",
+            );
+          await withConfigurationMutation({}, () =>
+            clearConnections(root, input.names),
+          );
           json(res, 200, { ok: true });
           return;
         }
@@ -2770,18 +3037,26 @@ export function createDashboardServer(
         error instanceof RequestError ||
         error instanceof LocalRunnerError ||
         error instanceof ProjectKnowledgeError ||
+        error instanceof ResourceDeletionError ||
         error instanceof RemoteWorkerError
           ? error.status
-          : 500;
+          : error instanceof ConnectionSaveError
+            ? 400
+            : 500;
       const message =
         error instanceof RequestError ||
         error instanceof LocalRunnerError ||
         error instanceof ProjectKnowledgeError ||
+        error instanceof ResourceDeletionError ||
+        error instanceof ConnectionSaveError ||
         error instanceof RemoteWorkerError
           ? error.message
           : "Dashboard request failed. Check your local configuration files and permissions.";
       if (!res.headersSent) json(res, status, { error: message });
       else res.end();
+    } finally {
+      finishProjectRequest?.();
+      if (countedMutation) activeMutationRequests--;
     }
   });
   server.requestTimeout = 15_000;

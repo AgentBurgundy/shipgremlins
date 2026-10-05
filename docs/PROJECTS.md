@@ -8,6 +8,13 @@ Choose a project's name in the sidebar to open its own workspace. Its PMs,
 setup actions, launch controls, and settings stay scoped to that repository.
 Open a PM to edit its owner brief and read the knowledge produced by its runs.
 
+Use **Delete project** or a PM's **Delete PM** control to retire local
+configuration. Confirm the reviewed identifier; queued/running work must finish
+or be canceled first. Settings keeps a recovery copy, and restoring it pauses
+automation until you verify the project and enable the PMs again. This does not
+delete repositories or Linear resources. You can delete the last PM and leave a
+project ready for a new crew. [Removal and recovery details](RESOURCE_LIFECYCLE.md).
+
 ## Get one PM ready, then automate
 
 Start from the selected project's guided setup actions. Source control selects

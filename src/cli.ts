@@ -452,6 +452,9 @@ export async function main(argv: string[]): Promise<number> {
       "add-project",
       "update",
       "worker",
+      "start",
+      "stop",
+      "status",
     ].includes(command) &&
     !args.includes("--help") &&
     !args.includes("-h")

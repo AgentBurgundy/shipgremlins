@@ -22,6 +22,10 @@ import {
 import { publicActivityLogs, type ActivityStore } from "../storage/activity.ts";
 import { validConnectionId } from "../oauthConnection/profileId.ts";
 import {
+  assertResourceAvailable,
+  type ConfigurationMutation,
+} from "../setup/resourceDeletion.ts";
+import {
   infrastructureRetry,
   validFailure,
   type FailureCategory,
@@ -126,6 +130,7 @@ export interface LocalRunnersOptions {
 }
 
 export interface LocalRunners {
+  withConfigurationMutation: ConfigurationMutation;
   status(): Promise<LocalRunnerStatus>;
   create(): Promise<LocalWorker>;
   addRemote(remoteId: string, name: string): Promise<LocalWorker>;
@@ -860,6 +865,18 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       throw new LocalRunnerError(
         "Choose a valid project, job type, area or ticket, and retry key. Credentials and prompts are not accepted in queue requests.",
       );
+    if (input.project) {
+      try {
+        assertResourceAvailable(options.root, input.project, input.area);
+      } catch (error) {
+        throw new LocalRunnerError(
+          error instanceof Error
+            ? error.message
+            : "This resource is reserved for recovery.",
+          409,
+        );
+      }
+    }
     if (input.idempotencyKey) {
       const existing = keyedJob(state, input.idempotencyKey);
       if (existing) {
@@ -1766,6 +1783,33 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         save(state);
         return worker;
       }),
+    withConfigurationMutation: async (target, operation) => {
+      if (
+        (target.project !== undefined && !NAME.test(target.project)) ||
+        (target.area !== undefined &&
+          (!target.project || !NAME.test(target.area)))
+      )
+        throw new LocalRunnerError("Choose a valid configuration target.");
+      const release = acquire();
+      try {
+        const jobs = read().jobs;
+        if (
+          jobs.some(
+            (job) =>
+              (!target.project || job.project === target.project) &&
+              (!target.area || job.area === target.area) &&
+              !TERMINAL.has(job.status),
+          )
+        )
+          throw new LocalRunnerError(
+            "Configuration is in use by queued, running, or recoverable jobs. Cancel queued work and resolve active or pending delivery reconciliation before deleting or restoring it.",
+            409,
+          );
+        return await operation();
+      } finally {
+        release();
+      }
+    },
     enqueue: (input) =>
       exclusive((state) => {
         if (!validInput(input))

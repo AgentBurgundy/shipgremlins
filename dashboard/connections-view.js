@@ -34,6 +34,7 @@
   }
   window.createConnectionsView = ({ api, message, onSaved, onConfigure }) => {
     const rows = new Map();
+    const clearRows = new Map();
     let locked = true;
     // Secondary management controls stay available without filling the directory with buttons.
     for (const provider of ["linear", "vercel", "slack"]) {
@@ -66,9 +67,86 @@
     function setLocked(value) {
       locked = value;
       for (const row of rows.values()) row.fields.disabled = locked || row.busy;
+      for (const row of clearRows.values())
+        for (const button of row.node.querySelectorAll("button"))
+          button.disabled = locked || row.busy;
       for (const button of document.querySelectorAll("[data-configure-signal]"))
         button.disabled =
           locked || !$(`${button.dataset.configureSignal}-scope-project`).value;
+    }
+    function clearControl(connection) {
+      const input = [
+        ...document.querySelectorAll("input[name],textarea[name]"),
+      ].find((value) => value.name === connection.name);
+      if (!input) return;
+      let row = clearRows.get(connection.name);
+      if (!row) {
+        const host = node("div", "credential-clear-controls"),
+          button = node("button", "small-button danger-button"),
+          prompt = node("div", "approval-confirm"),
+          notice = node("p", "form-message");
+        button.type = "button";
+        prompt.hidden = true;
+        notice.hidden = true;
+        notice.setAttribute("role", "status");
+        const copy = node("p"),
+          accept = node(
+            "button",
+            "small-button danger-button",
+            "Clear saved value",
+          ),
+          keep = node("button", "small-button", "Keep credential");
+        accept.type = keep.type = "button";
+        prompt.append(copy, accept, keep);
+        host.append(button, prompt, notice);
+        (
+          input.closest(".field") ||
+          input.closest("fieldset") ||
+          input.parentElement
+        ).append(host);
+        row = {
+          node: host,
+          button,
+          prompt,
+          copy,
+          notice,
+          busy: false,
+          connection,
+        };
+        clearRows.set(connection.name, row);
+        button.addEventListener("click", () => {
+          prompt.hidden = false;
+          copy.textContent = `Clear ${row.connection.label || "this saved credential"} from this server? Exported environment values and browser connections are kept. This does not revoke access at the provider.`;
+        });
+        keep.addEventListener("click", () => {
+          prompt.hidden = true;
+        });
+        accept.addEventListener("click", async () => {
+          if (locked || row.busy) return;
+          row.busy = true;
+          setLocked(locked);
+          message(notice, "Clearing the saved credential…");
+          try {
+            await api("/api/connections/clear", { names: [connection.name] });
+            prompt.hidden = true;
+            await onSaved();
+            message(
+              notice,
+              "Saved value cleared. Exported environment access or an OAuth connection may still configure this provider.",
+            );
+          } catch (error) {
+            message(notice, error.message, true);
+          } finally {
+            row.busy = false;
+            setLocked(locked);
+          }
+        });
+      }
+      row.connection = connection;
+      row.button.textContent = `Clear saved ${connection.label || "credential"}`;
+      row.button.hidden = connection.saved !== true;
+      row.node.hidden =
+        connection.saved !== true && row.notice.hidden && !row.busy;
     }
     function createRow(connection) {
       const details = node("details", "credential-row");
@@ -208,6 +286,7 @@
         if (!names.has(name) && !row.input.value && !row.busy) {
           row.details.remove();
           rows.delete(name);
+          clearRows.delete(name);
         }
       for (const connection of custom) {
         let row = rows.get(connection.name);
@@ -348,8 +427,14 @@
         $(`${provider}-connection`).querySelector(".signal-empty").hidden =
           Boolean(projects.length);
       }
+      for (const connection of connections) clearControl(connection);
       setLocked(nextLocked);
     }
-    return { render, setLocked };
+    return {
+      render,
+      setLocked,
+      isBusy: () =>
+        [...rows.values(), ...clearRows.values()].some((row) => row.busy),
+    };
   };
 })();

@@ -584,8 +584,6 @@ export function loadProject(root: string, name: string): Project {
       memoryBranch: `pm/${name}/${key}`,
     });
   }
-  if (areas.length === 0)
-    throw new ConfigError(af, "at least one area is required");
 
   const tf = join(dir, "tiers.json");
   const rawTiers = readJson(tf);

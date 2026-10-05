@@ -262,7 +262,24 @@
       openBrief(editor.project, editor.area);
     });
     const footerActions = node("div", "button-row");
-    footerActions.append(reload, save);
+    const removePm = button(
+      "Delete PM",
+      () => {
+        if (editor.busy || locked) return;
+        if (isDirty()) {
+          showEditorMessage(
+            "Save or discard your brief edits before deleting this PM.",
+            true,
+          );
+          return;
+        }
+        const target = { project: editor.project, area: editor.area };
+        finishClose();
+        options.onDelete?.(target);
+      },
+      "small-button danger-button",
+    );
+    footerActions.append(removePm, reload, save);
     footer.append(
       node(
         "p",
@@ -320,6 +337,7 @@
       editor.busy = value;
       save.disabled = value || locked;
       reload.disabled = value || locked;
+      removePm.disabled = value || locked || !editor.original;
       close.disabled = value && Boolean(editor.original);
       if (editor.form) editor.form.disabled = value || locked;
     }
@@ -1082,6 +1100,20 @@
           );
       }
       main.append(content);
+      const deletion = node("div", "pm-delete-action");
+      const remove = button(
+        "Delete PM",
+        () =>
+          options.onDelete?.({
+            project: project.name,
+            area: area.key,
+            trigger: remove,
+          }),
+        "small-button danger-button",
+      );
+      remove.disabled = locked;
+      deletion.append(remove);
+      main.append(deletion);
       layout.append(navigation, main);
       root.append(layout);
     }
@@ -1201,6 +1233,26 @@
       isDirty,
       isBusy: () => editor.busy || launching || setupSuggestions?.isBusy(),
       refresh: refreshKnowledge,
+      forget(project, area) {
+        stopKnowledge();
+        for (const key of knowledge.keys())
+          if (
+            key.startsWith(`${project}/`) &&
+            (!area || key === `${project}/${area}`)
+          ) {
+            knowledge.delete(key);
+            notices.delete(key);
+          }
+        setupSuggestions?.forget(project, area);
+        if (editor.project === project && (!area || editor.area === area)) {
+          finishClose();
+          editor.original = "";
+          editor.form = null;
+        }
+        signature = "";
+        sidebarSignature = "";
+        contextKey = "";
+      },
     };
   };
 })();

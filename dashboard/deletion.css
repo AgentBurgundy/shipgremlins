@@ -1,0 +1,175 @@
+.button-danger,
+.danger-button {
+  color: #9f3428;
+  border-color: #e6c4bc;
+  background: #fff9f7;
+}
+.button-danger:hover:not(:disabled),
+.danger-button:hover:not(:disabled) {
+  background: #fce8e0;
+  border-color: #c57867;
+}
+.deletion-dialog {
+  width: min(650px, calc(100vw - 32px));
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: var(--ink);
+  background: #fff;
+  overflow: auto;
+}
+.deletion-dialog::backdrop {
+  background: #10281f80;
+  backdrop-filter: blur(3px);
+}
+.deletion-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 26px 28px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.deletion-heading > div {
+  min-width: 0;
+}
+.deletion-heading h2 {
+  font-size: 24px;
+  line-height: 1.3;
+  letter-spacing: -0.6px;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.deletion-heading p {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.deletion-heading button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.deletion-content {
+  padding: 8px 28px;
+}
+.deletion-content section {
+  margin: 18px 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.deletion-content h3 {
+  font-size: 14px;
+  margin: 0 0 9px;
+}
+.deletion-content ul {
+  margin: 0;
+  padding-left: 19px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.deletion-content li {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+.deletion-blockers {
+  background: #fff4e8;
+  border-color: #e3c6a0 !important;
+}
+.deletion-retained {
+  background: #f4f8ef;
+}
+.deletion-recovery-note {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.deletion-confirmation {
+  padding: 18px 28px;
+}
+.deletion-confirmation label {
+  display: block;
+  font-weight: 650;
+  font-size: 13px;
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+.deletion-confirmation input {
+  width: 100%;
+}
+.deletion-dialog > .form-message {
+  margin: 10px 28px;
+  overflow-wrap: anywhere;
+}
+.deletion-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 18px 28px 24px;
+  border-top: 1px solid var(--line);
+}
+.settings-dialog-footer .danger-button {
+  margin-left: auto;
+}
+.pm-delete-action {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.credential-clear-controls {
+  margin-top: 14px;
+}
+.credential-clear-controls .approval-confirm button + button {
+  margin-left: 8px;
+}
+.deleted-resource-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.deleted-resource-row > div {
+  min-width: 0;
+}
+.deleted-resource-row strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.deleted-resource-row small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.deleted-resource-row button {
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .deletion-heading,
+  .deletion-content,
+  .deletion-confirmation,
+  .deletion-controls {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .deletion-heading {
+    gap: 12px;
+  }
+  .deletion-heading h2 {
+    font-size: 20px;
+  }
+  .deletion-controls {
+    flex-wrap: wrap;
+  }
+  .deletion-controls button {
+    flex: 1 1 auto;
+  }
+  .deletion-dialog > .form-message {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
+}
+body:has(dialog.deletion-dialog[open]) {
+  overflow: hidden;
+}

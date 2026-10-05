@@ -9,6 +9,8 @@ import {
   statSync,
   realpathSync,
   chmodSync,
+  existsSync,
+  linkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +22,7 @@ import {
   saveConnections,
   projectConnections,
   ConnectionSaveError,
+  clearConnections,
 } from "./connections.ts";
 import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
 import { initializeSetup } from "./files.ts";
@@ -35,6 +38,103 @@ function temporary(): string {
 afterEach(() => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
+});
+
+describe("explicit saved connection clearing", () => {
+  it("removes every chosen assignment while preserving unrelated formatting and multiline content", () => {
+    const root = temporary();
+    const untouched =
+      '# owner notes\r\nOTHER="first\nGITHUB_TOKEN=inside-other-value\nlast"\r\nCUSTOM=keep # comment\r\n';
+    writeFileSync(
+      join(root, ".env"),
+      `${untouched}export GITHUB_TOKEN='first-secret'\r\nGITHUB_TOKEN=duplicate-secret\r\nGCP_SERVICE_ACCOUNT_JSON='line1\nline2'\r\nLINEAR_API_KEY=keep-linear\r\n`,
+    );
+    clearConnections(root, ["GITHUB_TOKEN", "GCP_SERVICE_ACCOUNT_JSON"]);
+    const content = readFileSync(join(root, ".env"), "utf8");
+    expect(content).toBe(`${untouched}LINEAR_API_KEY=keep-linear\r\n`);
+    expect(readConnections(root)).toEqual({ LINEAR_API_KEY: "keep-linear" });
+    if (process.platform !== "win32")
+      expect(statSync(join(root, ".env")).mode & 0o777).toBe(0o600);
+  });
+
+  it("is idempotent and does not change an unrelated final line or create an absent .env", () => {
+    const root = temporary();
+    clearConnections(root, ["VERCEL_TOKEN"]);
+    expect(existsSync(join(root, ".env"))).toBe(false);
+    writeFileSync(join(root, ".env"), "OTHER=keep");
+    clearConnections(root, ["VERCEL_TOKEN", "VERCEL_TOKEN"]);
+    expect(readFileSync(join(root, ".env"), "utf8")).toBe("OTHER=keep");
+  });
+
+  it("does not clear exported environment values or reinterpret blank saves as removal", () => {
+    const root = temporary(),
+      before = process.env.VERCEL_TOKEN;
+    try {
+      process.env.VERCEL_TOKEN = "synthetic-exported-token";
+      saveConnections(root, { VERCEL_TOKEN: "synthetic-saved-token" });
+      saveConnections(root, { VERCEL_TOKEN: "" });
+      expect(readConnections(root).VERCEL_TOKEN).toBe("synthetic-saved-token");
+      clearConnections(root, ["VERCEL_TOKEN"]);
+      expect(readConnections(root)).toEqual({});
+      expect(process.env.VERCEL_TOKEN).toBe("synthetic-exported-token");
+    } finally {
+      if (before === undefined) delete process.env.VERCEL_TOKEN;
+      else process.env.VERCEL_TOKEN = before;
+    }
+  });
+
+  it("rejects arbitrary environment keys and malformed clear requests without touching stored credentials", () => {
+    const root = temporary(),
+      content = "GITHUB_TOKEN=preserved\nNODE_OPTIONS=preserved-too\n";
+    writeFileSync(join(root, ".env"), content);
+    for (const names of [
+      [],
+      null,
+      "GITHUB_TOKEN",
+      ["NODE_OPTIONS"],
+      ["GITHUB_TOKEN", "PATH"],
+      [42],
+      Array(101).fill("GITHUB_TOKEN"),
+    ]) {
+      expect(() => clearConnections(root, names)).toThrow(
+        /supported saved connections/,
+      );
+      expect(readFileSync(join(root, ".env"), "utf8")).toBe(content);
+    }
+  });
+
+  it("serializes clear with saves and preserves state when another owner holds the lock", () => {
+    const root = temporary(),
+      content = "GITHUB_TOKEN=preserved\n";
+    writeFileSync(join(root, ".env"), content);
+    const lock = JSON.stringify({ pid: process.pid, token: "synthetic-lock" });
+    writeFileSync(join(root, ".env.lock"), lock);
+    expect(() => clearConnections(root, ["GITHUB_TOKEN"])).toThrow(
+      /Another process/,
+    );
+    expect(() => saveConnections(root, { LINEAR_API_KEY: "new" })).toThrow(
+      /Another process/,
+    );
+    expect(readFileSync(join(root, ".env"), "utf8")).toBe(content);
+    expect(readFileSync(join(root, ".env.lock"), "utf8")).toBe(lock);
+  });
+
+  it("rejects hard-linked files and ambiguous multiline values without destructive repair", () => {
+    const root = temporary(),
+      file = join(root, ".env"),
+      other = join(root, "other");
+    writeFileSync(file, "GITHUB_TOKEN=preserved\n");
+    linkSync(file, other);
+    expect(() => clearConnections(root, ["GITHUB_TOKEN"])).toThrow(
+      /multiple links/,
+    );
+    expect(readFileSync(other, "utf8")).toBe("GITHUB_TOKEN=preserved\n");
+    rmSync(other);
+    const malformed = 'GITHUB_TOKEN="token\nOTHER=unclosed';
+    writeFileSync(file, malformed);
+    expect(() => clearConnections(root, ["GITHUB_TOKEN"])).toThrow(/quoting/);
+    expect(readFileSync(file, "utf8")).toBe(malformed);
+  });
 });
 
 function configure(

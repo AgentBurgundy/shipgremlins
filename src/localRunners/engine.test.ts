@@ -29,6 +29,57 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6eH8AAAAASUVORK5CYII=",
   "base64",
 );
+it("serializes deletion guards with job admission and preserves typed mutation errors", async () => {
+  const f = fixture(),
+    queued = await f.engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "core",
+    }),
+    mutation = vi.fn();
+  await expect(
+    f.engine.withConfigurationMutation({ project: "demo" }, mutation),
+  ).rejects.toMatchObject({ status: 409 });
+  expect(mutation).not.toHaveBeenCalled();
+  await f.engine.withConfigurationMutation(
+    { project: "demo", area: "other" },
+    mutation,
+  );
+  expect(mutation).toHaveBeenCalledOnce();
+  await f.engine.cancel(queued.id);
+  const stateFile = join(f.root, ".run", "local-runners", "state.json"),
+    state = JSON.parse(readFileSync(stateFile, "utf8"));
+  state.jobs.find((job: { id: string }) => job.id === queued.id).failure = {
+    category: "completion",
+    at: new Date().toISOString(),
+    retryable: true,
+  };
+  writeFileSync(stateFile, JSON.stringify(state));
+  await f.engine.withConfigurationMutation({ project: "demo" }, mutation);
+  let enter!: () => void, release!: () => void;
+  const started = new Promise<void>((done) => (enter = done)),
+    gate = new Promise<void>((done) => (release = done));
+  const active = f.engine.withConfigurationMutation({}, async () => {
+    enter();
+    await gate;
+    return "saved";
+  });
+  await started;
+  const second = createLocalRunners(f.options);
+  await expect(
+    second.enqueue({ type: "pm", project: "demo", area: "core" }),
+  ).rejects.toMatchObject({ status: 409 });
+  release();
+  expect(await active).toBe("saved");
+  const expected = Object.assign(new Error("specific guarded recovery error"), {
+    status: 409,
+  });
+  await expect(
+    f.engine.withConfigurationMutation({}, () => {
+      throw expected;
+    }),
+  ).rejects.toBe(expected);
+});
 it("persists remote worker bindings and checks project scope before preparing credentials", async () => {
   const f = fixture(),
     prepareWorker = vi.fn(async () => {});
@@ -353,6 +404,12 @@ it("retries completion reconciliation without executing the agent or publication
     reconciliationAttempts: 3,
     failure: { category: "completion", retryable: false },
   });
+  await expect(
+    restarted.withConfigurationMutation(
+      { project: "demo" },
+      () => "historical failure retained",
+    ),
+  ).resolves.toBe("historical failure retained");
   expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
 });
 

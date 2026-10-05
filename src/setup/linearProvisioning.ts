@@ -26,6 +26,7 @@ import {
   MAX_CONFIG_BYTES,
 } from "./configEditor.ts";
 import { validateName } from "./files.ts";
+import { assertResourceAvailable } from "./resourceDeletion.ts";
 import { buildLinearProjectContent } from "./linearProjectContent.ts";
 import { parsePmCharter, type PmCharter } from "../pmCharter.ts";
 import type {
@@ -960,6 +961,7 @@ export function createLinearProvisioning(options: {
         "Provide a PM key, name (1–100 characters), and mandate (1–12000 characters).",
       );
     validateName(input.key, "area");
+    assertResourceAvailable(options.root, project, input.key);
     let charter: PmCharter | undefined;
     if (input.charter !== undefined) {
       try {

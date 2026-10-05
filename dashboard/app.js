@@ -45,6 +45,8 @@
   let currentStatus = null;
   let projectOperations = null;
   let remoteWorkers = null;
+  let workspaceDeletion = null;
+  let deletedResources = null;
   let projectNameEdited = false;
   let loading = false;
   let formsLocked = true;
@@ -262,6 +264,13 @@
           );
           $(provider + "-connect").focus();
         },
+        onRemoved: async () => {
+          rememberService(provider, "default");
+          serviceStatuses.delete(provider);
+          await refreshProfileCatalog();
+          await refreshService(provider);
+          await refreshStatus();
+        },
       }),
     );
   }
@@ -326,6 +335,8 @@
 
   function lockForms(locked) {
     formsLocked = locked;
+    workspaceDeletion?.sync();
+    deletedResources?.sync();
     $("connections-fields").disabled = locked;
     connectionsView.setLocked(locked);
     $("source-token-fields").disabled = locked;
@@ -4363,6 +4374,9 @@
     } catch (error) {
       projectEditor.form = null;
       $("edit-project-settings").replaceChildren();
+      $("project-settings-repo").textContent = "Configuration needs repair";
+      if ($("project-settings-provider"))
+        $("project-settings-provider").textContent = "Local project";
       message(
         $("project-settings-message"),
         `${error.message} Reload to try again, or use full configuration to repair the file.`,
@@ -4386,6 +4400,9 @@
     $("close-project-settings").disabled = Boolean(busy);
     $("reload-project-settings").disabled = Boolean(formsLocked || busy);
     $("advanced-project-settings").disabled = Boolean(formsLocked || busy);
+    $("delete-project").disabled = Boolean(
+      formsLocked || busy || !projectEditor.name,
+    );
     projectLinearSettings?.setLocked(formsLocked || projectEditor.busy);
   }
   async function projectSettingsAction(action, discard = false) {
@@ -4404,6 +4421,13 @@
     }
     $("project-settings-dialog").close();
     projectLinearSettings?.reset();
+    if (action === "delete") {
+      openDeletion({
+        project: projectEditor.name,
+        trigger: projectEditor.trigger,
+      });
+      return;
+    }
     if (action === "connections") {
       pages.navigate("/connections");
       return;
@@ -4432,6 +4456,9 @@
   );
   $("advanced-project-settings").addEventListener("click", () =>
     projectSettingsAction("advanced"),
+  );
+  $("delete-project").addEventListener("click", () =>
+    projectSettingsAction("delete"),
   );
   $("project-settings-dialog").addEventListener("cancel", (event) => {
     event.preventDefault();
@@ -4583,6 +4610,9 @@
       pmCreating ||
       projectWorkspace?.isDirty() ||
       projectWorkspace?.isBusy() ||
+      workspaceDeletion?.isBusy() ||
+      connectionsView?.isBusy() ||
+      [...profileControls.values()].some((control) => control.isBusy?.()) ||
       projectOperations?.isDirty() ||
       projectOperations?.isBusy() ||
       remoteWorkers?.isBusy() ||
@@ -4687,6 +4717,9 @@
         isEditorDirty() ||
         projectWorkspace?.isDirty() ||
         projectOperations?.isDirty() ||
+        workspaceDeletion?.isBusy() ||
+        connectionsView?.isBusy() ||
+        [...profileControls.values()].some((control) => control.isBusy?.()) ||
         Boolean(mixpanelReports?.isDirty()) ||
         newProjectSettings.isDirty() ||
         (isProjectEditorDirty() && $("project-settings-dialog").open)
@@ -4725,6 +4758,89 @@
       refreshSlack(),
       ...Object.keys(serviceProviders).map(refreshService),
     ]);
+  });
+  function openDeletion(target) {
+    const scope = `projects/${target.project}/`;
+    const affectsEditor = target.area
+      ? editor.path === `${scope}areas.json`
+      : editor.path.startsWith(scope);
+    if (affectsEditor && isEditorDirty()) {
+      pages.navigate("/settings#configuration");
+      message(
+        $("config-message"),
+        "Save or discard your configuration draft before deleting this item. The draft has been kept.",
+        true,
+      );
+      return;
+    }
+    workspaceDeletion.open(target);
+  }
+  workspaceDeletion = window.createWorkspaceDeletion({
+    api,
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onDeleted: async (result) => {
+      projectChecks.delete(result.project);
+      mappingMessages.delete(result.project);
+      projectDetailsState.delete(result.project);
+      for (const key of areaActions.keys())
+        if (
+          key === `${result.project}/${result.area}` ||
+          (!result.area && key.startsWith(`${result.project}/`))
+        )
+          areaActions.delete(key);
+      projectWorkspace?.forget(result.project, result.area);
+      projectOperations?.forget(result.project);
+      const prefix = `projects/${result.project}/`;
+      if (
+        editor.path.startsWith(prefix) &&
+        (!result.area || editor.path === `${prefix}areas.json`)
+      ) {
+        editor.path = "";
+        editor.revision = "";
+        editor.original = "";
+        $("config-content").value = "";
+        clearDiscardPrompt();
+      }
+      if (projectEditor.name === result.project) {
+        projectEditor.form = null;
+        projectEditor.name = "";
+        projectEditor.config = null;
+        $("project-settings-dialog").close();
+        projectLinearSettings?.reset();
+      }
+      pages.navigate(
+        result.area
+          ? `/projects/${encodeURIComponent(result.project)}`
+          : "/projects",
+        { replace: true },
+      );
+      await refreshStatus();
+      await Promise.allSettled([
+        refreshConfigFiles(),
+        projectOperations?.refreshInbox(),
+        deletedResources?.refresh(),
+      ]);
+    },
+    onRestored: async (result) => {
+      projectChecks.delete(result.project);
+      projectWorkspace?.forget(result.project, result.area);
+      projectOperations?.forget(result.project);
+      await refreshStatus();
+      pages.navigate(`/projects/${encodeURIComponent(result.project)}`, {
+        replace: true,
+      });
+      await Promise.allSettled([
+        refreshConfigFiles(),
+        projectOperations?.refreshInbox(),
+        deletedResources?.refresh(),
+      ]);
+    },
+  });
+  deletedResources = window.createDeletedResources($("deleted-resources"), {
+    api,
+    pages,
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onRestore: (target) => openDeletion(target),
   });
   projectOperations = window.createProjectOperations({
     api,
@@ -4765,6 +4881,7 @@
     pages,
     operations: projectOperations,
     getJobs: () => mergedJobs(),
+    onDelete: openDeletion,
     getCheck: (name) => projectChecks.get(name),
     getAreaAction: (project, area) => areaActions.get(`${project}/${area}`),
     onSaved: refreshStatus,

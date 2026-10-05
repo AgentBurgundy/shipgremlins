@@ -13,6 +13,18 @@ const STAGING = "staging";
 const INTEGRATION = "pm-staging";
 
 describe("runSync", () => {
+  it("waits for a PM when the last area has been removed", async () => {
+    const ctx = makeCtx();
+    ctx.project.areas = [];
+    expect(await runSync(ctx)).toEqual([
+      {
+        rule: "sync",
+        needsYou: true,
+        text: expect.stringContaining("Create a PM"),
+      },
+    ]);
+    expect(ctx.forge.dispatched).toEqual([]);
+  });
   it("does nothing when staging is not ahead of integration", async () => {
     const ctx = makeCtx();
     const rows = await runSync(ctx);

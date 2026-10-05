@@ -201,6 +201,77 @@ function fixture(api: (path: string, body?: unknown) => Promise<unknown>) {
 }
 
 describe("project operations edit safety", () => {
+  it("allows deleting a newly saved decision without reloading the page", async () => {
+    const current = {
+      ...data(),
+      knowledge: {
+        ...data().knowledge,
+        decisions: [] as { id: string; text: string; createdAt: string }[],
+      },
+    };
+    const api = vi.fn(async (_path: string, body?: unknown) => {
+      if (body)
+        current.knowledge.decisions.push({
+          id: "new-decision",
+          text: "Synthetic data only",
+          createdAt: "2026-10-05T10:00:00Z",
+        });
+      return structuredClone(current);
+    });
+    const { control } = fixture(api),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "knowledge");
+    await flush();
+    const input = field(root, "decision-alpha");
+    input.value = "Synthetic data only";
+    await input.fire("input");
+    await root.querySelector("form")!.fire("submit");
+    expect(find(root, "Delete decision").disabled).toBe(false);
+    await find(root, "Delete decision").fire("click");
+    expect(find(root, "Delete this decision").disabled).toBe(false);
+  });
+  it("deletes a reviewed owner decision with its original revision while preserving an unrelated draft", async () => {
+    let current = {
+      ...data(),
+      knowledge: {
+        ...data().knowledge,
+        decisions: [
+          {
+            id: "decision-one",
+            text: "Keep checkout simple.",
+            createdAt: "2026-10-05T10:00:00Z",
+          },
+        ],
+      },
+    };
+    const writes: unknown[] = [];
+    const api = vi.fn(
+      async (_path: string, body?: unknown, method?: string) => {
+        if (method === "DELETE") {
+          writes.push(body);
+          throw new Error("The shared decisions changed.");
+        }
+        return structuredClone(current);
+      },
+    );
+    const { control } = fixture(api),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "knowledge");
+    await flush();
+    field(root, "decision-alpha").value = "Unrelated owner draft";
+    await field(root, "decision-alpha").fire("input");
+    await find(root, "Delete decision").fire("click");
+    expect(writes).toEqual([]);
+    current = {
+      ...current,
+      knowledge: { ...current.knowledge, revision: "newer-knowledge" },
+    };
+    await control.refresh("alpha", true);
+    await find(root, "Delete this decision").fire("click");
+    expect(writes).toEqual([{ revision: "knowledge-old" }]);
+    expect(text(root)).toContain("The shared decisions changed");
+    expect(field(root, "decision-alpha").value).toBe("Unrelated owner draft");
+  });
   it("keeps the original revision and dirty limits while background data changes", async () => {
     let current = data();
     const writes: unknown[] = [];

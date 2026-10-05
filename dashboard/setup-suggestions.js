@@ -189,6 +189,11 @@
         return load(state(project, area), true);
       },
       isBusy: () => [...entries.values()].some((s) => s.busy),
+      forget(project, area) {
+        for (const [key, value] of entries)
+          if (value.project === project && (!area || value.area === area))
+            entries.delete(key);
+      },
     };
   };
 })();

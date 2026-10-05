@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseFlags, type Io } from "./crons.ts";
+import { assertResourceAvailable } from "../setup/resourceDeletion.ts";
 
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -76,6 +77,7 @@ export function addProject(
     throw new Error(`--repo must be "owner/name", got "${repo}"`);
   if (!NAME_RE.test(area))
     throw new Error(`area "${area}" must be lowercase kebab-case`);
+  assertResourceAvailable(root, name, area);
 
   const templates = join(templatesRoot, "projects", "_templates");
   const dir = join(root, "projects", name);

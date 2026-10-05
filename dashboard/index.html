@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/workspace.css" />
     <link rel="stylesheet" href="/project-workspace.css" />
     <link rel="stylesheet" href="/operations.css" />
+    <link rel="stylesheet" href="/deletion.css" />
     <script src="/signals-settings.js" defer></script>
     <script src="/project-settings.js" defer></script>
     <script src="/pages.js" defer></script>
@@ -29,6 +30,8 @@
     <script src="/setup-suggestions.js" defer></script>
     <script src="/remote-workers.js" defer></script>
     <script src="/project-workspace.js" defer></script>
+    <script src="/deletion.js" defer></script>
+    <script src="/deleted-resources.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
   </head>
@@ -2374,6 +2377,11 @@
                 restarting.
               </p>
             </section>
+            <section
+              id="deleted-resources"
+              class="updates-card"
+              aria-label="Recently deleted"
+            ></section>
             <details id="advanced-settings" class="advanced-settings">
               <summary>
                 <span>Files &amp; advanced configuration</span
@@ -2711,6 +2719,13 @@
             id="advanced-project-settings"
           >
             Open full configuration
+          </button>
+          <button
+            type="button"
+            class="small-button danger-button"
+            id="delete-project"
+          >
+            Delete project
           </button>
         </div>
       </form>
