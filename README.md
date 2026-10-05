@@ -136,7 +136,8 @@ turn **Automation** on for recurring patrols and background approved-ticket
 pickup. Turning it off stops new automatic work; manual runs remain separate. A manual
 Coding run still requires an open, approved ticket in the PM's Linear project.
 
-On the PM creation form, write your mandate and choose **Fill with AI**. It fills
+Choose **+ PM** on your project's page to open the creation dialog. Write your
+mandate and choose **Fill with AI**. It fills
 blank fields and default controls with a suggested name, ID, grounded ownership,
 shared touchpoints, metric, UTC schedule, WIP limit, and complete product brief:
 ambition, goal, measurement, users, expected capabilities, non-goals, guardrails,
@@ -144,6 +145,11 @@ and priorities. Your original mandate and existing edits are preserved. Review
 the filled form, then choose **Create PM** separately. AI fill uses repository
 paths and existing PM ownership; it does not read file contents, invent provider
 IDs, change Linear, enable automation, or run a patrol.
+
+The project page puts PM controls first, with setup details collapsed below the
+crew and recent runs. Open any run for separate **Summary**, **Activity**,
+**Output**, and **Artifacts** tabs. Live refreshes keep your tab and reading
+position; closing the viewer leaves the worker running.
 
 **Let the PM learn the codebase first.** A **Discovery** run reads the actual
 repository and produces a feature map, ranked opportunities, and durable notes

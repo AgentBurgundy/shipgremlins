@@ -39,7 +39,7 @@
   };
   const tabs = [
     ["brief", "Product brief"],
-    ["discovery", "Discovery"],
+    ["discovery", "Learning"],
     ["features", "Features"],
     ["queue", "Ranked queue"],
     ["memory", "Memory"],
@@ -204,7 +204,18 @@
       contextKey = "";
     let launching = false;
     const knowledge = new Map(),
-      notices = new Map();
+      notices = new Map(),
+      disclosures = new Map();
+    function disclosure(key, label, className = "workspace-disclosure") {
+      const details = node("details", className);
+      const id = `${pages.project}/${pages.pm || ""}/${key}`;
+      details.open = disclosures.get(id) === true;
+      details.append(node("summary", "", label));
+      details.addEventListener("toggle", () =>
+        disclosures.set(id, details.open),
+      );
+      return details;
+    }
     const sidebar = document.getElementById("project-navigation");
     const editor = {
       project: "",
@@ -604,21 +615,19 @@
     }
     function projectActions(project) {
       const actions = node("div", "project-header-actions");
-      actions.append(
-        action("Project settings", { editProject: project.name }),
-        action("Run Coding", {
-          launchProject: project.name,
-          launchCrew: "developer",
-        }),
-        button(
-          "+ Create PM",
-          () => onCreatePm(project.name),
-          "button button-dark",
-        ),
+      const settings = action("Settings", { editProject: project.name });
+      settings.setAttribute("aria-label", `Settings for ${project.name}`);
+      const add = button(
+        "+ PM",
+        () => onCreatePm(project.name),
+        "button button-dark",
       );
+      add.setAttribute("aria-label", `Create a PM for ${project.name}`);
+      add.disabled = locked;
+      actions.append(settings, add);
       return actions;
     }
-    function activityList(project, area) {
+    function activityList(project, area, limit = 12) {
       const list = node("div");
       const jobs = (getJobs?.() || [])
         .filter(
@@ -627,13 +636,13 @@
         )
         .slice()
         .sort((a, b) => b.runId - a.runId)
-        .slice(0, 12);
+        .slice(0, limit);
       if (!jobs.length)
         list.append(
           node(
             "p",
             "runner-guidance",
-            "No runs yet. Start discovery to build this PM’s first product map.",
+            "No runs yet. Your crew’s activity will appear here.",
           ),
         );
       for (const job of jobs) {
@@ -684,100 +693,98 @@
         );
     }
     function home(project) {
-      const stats = node("div", "project-workspace-stats");
-      for (const [value, label] of [
-        [project.areas?.length || 0, "PM Gremlins"],
-        [
-          project.areas?.filter((area) => area.enabled).length || 0,
-          "Automation enabled",
-        ],
-        [
-          (getJobs?.() || []).filter(
-            (job) =>
-              job.project === project.name &&
-              ["queued", "running"].includes(job.status),
-          ).length,
-          "Active runs",
-        ],
-      ]) {
-        const stat = node("div", "project-workspace-stat");
-        stat.append(node("strong", "", value), node("span", "", label));
-        stats.append(stat);
-      }
-      root.append(stats);
-      const grid = node("div", "project-home-grid"),
-        main = node("div"),
-        side = node("aside");
+      const crew = node("section", "project-crew-section");
       const title = node("div", "project-section-title");
-      title.append(node("h2", "", "Your product crew"));
-      main.append(title);
-      const cards = node("div", "project-pm-grid");
+      title.append(
+        node("h2", "", "PM Gremlins"),
+        node("span", "project-crew-count", String(project.areas?.length || 0)),
+      );
+      crew.append(title);
+      const cards = node("div", "project-crew-list");
       for (const area of project.areas || []) {
-        const card = node("article", "project-pm-tile"),
+        const card = node("article", "project-pm-row"),
           image = node("img");
         image.src = "/assets/gremlin-security.webp";
         image.alt = "";
-        const text = node("div"),
+        image.width = image.height = 48;
+        const copy = node("div", "project-pm-copy"),
           heading = node("h3");
         heading.append(
           link(area.name || area.key, path(project.name, area.key)),
         );
-        text.append(
+        copy.append(
           heading,
           node(
-            "span",
-            "runtime-badge",
-            area.enabled ? "Automation enabled" : "Automation paused",
-          ),
-          node(
             "p",
-            "",
-            (
-              area.charter?.goal ||
+            "project-pm-mandate",
+            area.charter?.goal ||
               area.mandate ||
-              "Add a product brief to give this PM direction."
-            ).slice(0, 220),
+              "Add a mandate to give this PM direction.",
           ),
         );
-        const actions = node("div", "project-pm-actions");
-        actions.append(
-          link(
-            "Open workspace →",
-            path(project.name, area.key),
-            "small-button",
-          ),
-          discoveryButton(project, area),
-        );
-        text.append(
+        card.append(
+          image,
+          copy,
           window.renderPmControls(project, area, {
             locked,
             jobs: getJobs?.() || [],
             operation: options.getAreaAction?.(project.name, area.key),
           }),
-          actions,
         );
-        if (notices.get(`${project.name}/${area.key}`))
-          text.append(
-            node(
-              "p",
-              "project-workspace-notice",
-              notices.get(`${project.name}/${area.key}`),
-            ),
-          );
-        card.append(image, text);
         cards.append(card);
       }
-      if (!project.areas?.length)
-        cards.append(
+      if (!project.areas?.length) {
+        const empty = node("div", "project-crew-empty");
+        empty.append(
+          node("h3", "", "What should your first PM investigate?"),
           node(
             "p",
-            "runner-guidance",
-            "Give your first PM a product ambition, a mandate, and a few clear boundaries. Discovery can map the repository before Linear is connected.",
+            "",
+            "Give it a mandate. You can run it once before turning on automation.",
           ),
         );
-      main.append(cards);
-      const context = node("section", "project-side-section");
-      context.append(node("h3", "", "Project context"));
+        const add = button(
+          "Create your first PM",
+          () => onCreatePm(project.name),
+          "button button-dark",
+        );
+        add.disabled = locked;
+        empty.append(add);
+        cards.append(empty);
+      }
+      crew.append(cards);
+      root.append(crew);
+      const coding = node("section", "project-coding-section"),
+        codingImage = node("img"),
+        codingCopy = node("div", "project-coding-copy");
+      codingImage.src = "/assets/gremlin-coding.webp";
+      codingImage.alt = "";
+      codingImage.width = codingImage.height = 40;
+      codingCopy.append(
+        node("h2", "", "Coding Gremlins"),
+        node("p", "", "Turn an approved ticket into a tested draft PR."),
+      );
+      coding.append(
+        codingImage,
+        codingCopy,
+        action("Run coding", {
+          launchProject: project.name,
+          launchCrew: "developer",
+        }),
+      );
+      root.append(coding);
+      const recent = node("section", "project-recent-activity");
+      recent.append(
+        node("h2", "", "Recent activity"),
+        activityList(project, null, 4),
+      );
+      root.append(recent);
+      const context = disclosure(
+        "details",
+        "Project details",
+        "project-details workspace-disclosure",
+      );
+      const contextBody = node("div", "project-details-body");
       const facts = [
         ["Repository", project.repo],
         [
@@ -801,7 +808,7 @@
       for (const [label, value] of facts) {
         const item = node("dl", "project-fact");
         item.append(node("dt", "", label), node("dd", "", value));
-        context.append(item);
+        contextBody.append(item);
       }
       const setup = node("div", "project-pm-actions");
       const check = options.getCheck?.(project.name);
@@ -816,7 +823,7 @@
           editLinear: "true",
         }),
       );
-      context.append(setup);
+      contextBody.append(setup);
       if (check?.message) {
         const result = node(
           "div",
@@ -837,13 +844,15 @@
             );
           result.append(details);
         }
-        context.append(result);
+        contextBody.append(result);
       }
       const blocker = project.readiness?.blockers?.[0];
       if (blocker) {
-        context.append(node("p", "project-workspace-notice", blocker.message));
+        contextBody.append(
+          node("p", "project-workspace-notice", blocker.message),
+        );
         if (blocker.action)
-          context.append(
+          contextBody.append(
             action("Finish setup", {
               setupAction: blocker.action,
               setupProject: project.name,
@@ -851,12 +860,15 @@
             }),
           );
       }
-      const recent = node("section", "project-side-section");
-      recent.append(node("h3", "", "Recent activity"), activityList(project));
-      side.append(context, recent);
-      grid.append(main, side);
-      root.append(grid);
-      options.operations?.mount(root, project, "overview");
+      context.append(contextBody);
+      const guidance = disclosure(
+        "guidance",
+        "Setup & next steps",
+        "project-guidance workspace-disclosure",
+      );
+      options.operations?.mount(guidance, project, "overview");
+      context.append(guidance);
+      root.append(context);
     }
     function pmWorkspace(project, area) {
       const layout = node("div", "pm-workspace-layout"),
@@ -865,7 +877,7 @@
       navigation.append(
         link("← Project overview", path(project.name), "pm-back"),
       );
-      for (const pm of project.areas || []) {
+      for (const pm of project.areas?.length > 1 ? project.areas : []) {
         const item = link(pm.name || pm.key, path(project.name, pm.key));
         if (pm.key === area.key) item.setAttribute("aria-current", "page");
         navigation.append(item);
@@ -879,18 +891,8 @@
       title.append(
         node("span", "eyebrow muted", "PM GREMLIN"),
         node("h2", "", area.name || area.key),
-        node(
-          "span",
-          "runtime-badge",
-          area.enabled ? "Automation enabled" : "Automation paused",
-        ),
       );
-      const actions = node("div", "project-pm-actions");
-      actions.append(
-        button("Edit brief", () => openBrief(project.name, area.key)),
-        discoveryButton(project, area),
-      );
-      heading.append(image, title, actions);
+      heading.append(image, title);
       main.append(heading);
       main.append(
         window.renderPmControls(project, area, {
@@ -911,7 +913,7 @@
       const discoveryReadiness = project.readiness?.areas?.find(
         (item) => item.key === area.key,
       )?.discovery;
-      if (discoveryReadiness?.canRun === false) {
+      if (tab === "discovery" && discoveryReadiness?.canRun === false) {
         const blocker = discoveryReadiness.blockers?.[0];
         const setup = node("div", "project-workspace-notice");
         setup.append(
@@ -939,14 +941,24 @@
       const content = node("section", "pm-workspace-content");
       content.setAttribute("aria-label", tabs.find(([key]) => key === tab)[1]);
       if (tab === "brief") {
-        content.append(
+        const briefHeading = node("div", "pm-brief-heading");
+        briefHeading.append(
           node("h3", "", "Mandate"),
+          button("Edit brief", () => openBrief(project.name, area.key)),
+        );
+        content.append(
+          briefHeading,
           node(
             "p",
             "pm-mandate-copy",
             area.mandate ||
               "No mandate saved yet. Edit the brief to define this PM’s purpose.",
           ),
+        );
+        const advanced = disclosure(
+          "brief-details",
+          "Product brief & schedule",
+          "pm-brief-details workspace-disclosure",
         );
         const charter = node("div", "pm-charter-grid");
         for (const [key, label] of Object.entries(briefLabels)) {
@@ -962,15 +974,15 @@
           charter.append(section);
         }
         if (!charter.children.length)
-          content.append(
+          advanced.append(
             node(
               "p",
               "runner-guidance",
               "Add product ambition, audiences, expected capabilities, and guardrails in Edit brief. A clear charter helps the PM judge what is missing.",
             ),
           );
-        else content.append(charter);
-        content.append(
+        else advanced.append(charter);
+        advanced.append(
           node("h4", "", "Work rhythm"),
           node(
             "p",
@@ -978,19 +990,32 @@
             `${area.schedule || "No schedule"} UTC · Up to ${area.wipLimit || 1} open work items`,
           ),
         );
-        content.append(
+        advanced.append(
           node(
             "p",
             "runner-guidance",
             "Discovery maps the product. Patrols investigate it. Automation adds scheduled patrols and approved-ticket pickup; it never approves its own tickets.",
           ),
         );
+        content.append(advanced);
       } else if (tab === "activity")
         content.append(
           node("h3", "", "This PM’s runs"),
           activityList(project, area),
         );
       else {
+        if (tab === "discovery") {
+          const learning = node("div", "pm-learning-actions");
+          learning.append(
+            node(
+              "div",
+              "",
+              "Read-only discovery maps the codebase and saves what this PM learns.",
+            ),
+            discoveryButton(project, area),
+          );
+          content.append(learning);
+        }
         const statusRow = node("div", "knowledge-status");
         const state = !data
           ? notice
@@ -1038,8 +1063,15 @@
               `Build this PM’s ${tab === "queue" ? "ranked queue" : tab}`,
             ),
             node("p", "", descriptions[tab]),
-            discoveryButton(project, area),
           );
+          if (tab !== "discovery")
+            empty.append(
+              link(
+                "Open Learning →",
+                path(project.name, area.key, "discovery"),
+                "small-button",
+              ),
+            );
           content.append(empty);
         }
         if (data?.provenance)
@@ -1058,7 +1090,11 @@
           );
       }
       main.append(content);
-      const deletion = node("div", "pm-delete-action");
+      const deletion = disclosure(
+        "manage-pm",
+        "Manage PM",
+        "pm-delete-action workspace-disclosure",
+      );
       const remove = button(
         "Delete PM",
         () =>
@@ -1125,11 +1161,6 @@
       identity.append(
         link("← All projects", "/projects", "project-back"),
         node("h1", "", project.name),
-        node(
-          "p",
-          "project-repository",
-          `${project.provider === "gitlab" ? "GitLab" : "GitHub"} / ${project.repo}`,
-        ),
       );
       header.append(identity, projectActions(project));
       root.append(header);

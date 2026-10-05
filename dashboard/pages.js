@@ -67,7 +67,9 @@
           return null;
         }
         target = document.getElementById(id);
-        const owner = target?.closest("[data-page]")?.dataset.page;
+        const owner =
+          target?.closest("[data-page]")?.dataset.page ||
+          { "pm-create-drawer": "projects", "job-detail": "activity" }[id];
         if (routes.has(owner)) page = owner;
         else if (routes.has(id)) page = id;
         else if (id !== "main") return null;

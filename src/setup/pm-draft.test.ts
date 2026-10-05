@@ -207,7 +207,7 @@ describe("PM draft suggestions", () => {
     expect(f.helper.hasDraft()).toBe(false);
     expect(f.requests).toHaveBeenCalledTimes(1);
     expect(f.status().textContent).toContain(
-      "Nothing has been created or enabled",
+      "Draft filled. Review below, then Create PM.",
     );
   });
   it("blocks stale suggestions when fields change during the request", async () => {

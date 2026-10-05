@@ -1392,6 +1392,27 @@ describe("durable local worker engine", () => {
       });
     }
     state.nextRunId = 503;
+    // These are historical completions, including their already attempted
+    // notifications. Omitting the claims would exercise 500 fsynced Slack
+    // recovery attempts rather than the archive/deduplication behavior here.
+    const notifications = join(
+      f.root,
+      ".run",
+      "local-runners",
+      "notifications",
+    );
+    mkdirSync(notifications, { recursive: true });
+    for (const job of state.jobs)
+      writeFileSync(
+        join(notifications, `${job.id}-succeeded.json`),
+        JSON.stringify({
+          schema: 1,
+          type: "succeeded",
+          status: "skipped",
+          attemptedAt: job.finishedAt,
+          finishedAt: job.finishedAt,
+        }),
+      );
     writeFileSync(f.stateFile, JSON.stringify(state));
     const result = await f.engine.enqueue({
       type: "pm",
@@ -1400,11 +1421,25 @@ describe("durable local worker engine", () => {
       idempotencyKey: "keep-this-slot",
     });
     expect(result.id).toBe(first.id);
-    expect((await f.engine.job(first.id))?.status).toBe("succeeded");
-    expect(await f.engine.jobs()).toHaveLength(502);
+    const restarted = createLocalRunners(f.options);
+    expect((await restarted.job(first.id))?.status).toBe("succeeded");
+    expect(await restarted.jobs()).toHaveLength(502);
     expect(
-      JSON.parse(readFileSync(f.stateFile, "utf8")).jobs.length,
-    ).toBeLessThanOrEqual(500);
+      (
+        await restarted.enqueue({
+          type: "pm",
+          project: "demo",
+          area: "core",
+          idempotencyKey: "keep-this-slot",
+        })
+      ).id,
+    ).toBe(first.id);
+    expect(f.options.notify).not.toHaveBeenCalled();
+    expect(f.mock.artifacts).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(f.stateFile, "utf8")).jobs.length).toBe(500);
+    expect(
+      readdirSync(join(f.root, ".run", "local-runners", "history")),
+    ).toHaveLength(2);
     expect(
       existsSync(
         join(f.root, ".run", "local-runners", "history", `${first.id}.json`),

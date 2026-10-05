@@ -135,7 +135,7 @@
       node(
         "p",
         "setup-help",
-        "Fill the name, product brief, ownership, metric, and work rhythm from your mandate. Your own entries stay. Review before creating.",
+        "Draft the brief and settings from your mandate. Keeps your edits.",
       ),
     );
     const message = node("p", "form-message pm-ai-draft-status");
@@ -143,7 +143,6 @@
     message.setAttribute("role", "status");
     const preview = node("div", "pm-ai-draft-preview");
     preview.hidden = true;
-    const title = node("h4", "", "AI setup · not saved");
     const context = node("p", "setup-help pm-ai-draft-context");
     const values = node("dl", "pm-ai-draft-fields");
     const rationale = node("p", "pm-ai-draft-rationale");
@@ -154,13 +153,14 @@
     actions.append(discard);
     const details = node("details", "pm-ai-review");
     details.append(
-      node("summary", "", "Review suggestions & why these settings"),
+      node("summary", "", "Why these settings?"),
       context,
       values,
       rationale,
       warnings,
+      actions,
     );
-    preview.append(title, details, actions);
+    preview.append(details);
     root.append(heading, message, preview);
     container.replaceChildren(root);
     const currentInput = () => copy(getInput());
@@ -238,7 +238,6 @@
       fingerprint = JSON.stringify(input);
       draft = null;
       applied = false;
-      title.textContent = "AI suggestions · form unchanged";
       setBusy(true);
       show(
         "Reading this repository’s paths and drafting suggestions. No PM, ticket, or schedule is created.",
@@ -295,11 +294,7 @@
           return;
         }
         applied = true;
-        title.textContent = "Form filled · review before creating";
-        show(
-          result?.message ||
-            "PM setup filled in. Your mandate and own entries are kept. Review the form, then Create PM. Nothing has been created or enabled.",
-        );
+        show(result?.message || "Draft filled. Review below, then Create PM.");
       } catch (error) {
         if (request === generation) {
           draft = null;

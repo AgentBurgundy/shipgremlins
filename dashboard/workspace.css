@@ -6,6 +6,278 @@
   font-weight: 200 800;
   font-display: swap;
 }
+
+/* A run has its own focused viewer instead of living below a long activity feed. */
+dialog.run-viewer {
+  padding: 0;
+  margin: auto;
+  width: min(1000px, calc(100vw - 64px));
+  height: min(820px, calc(100dvh - 64px));
+  max-width: none;
+  max-height: none;
+  border: 1px solid #dce5df;
+  border-radius: 18px;
+  background: #fff;
+  color: #172f22;
+  box-shadow: 0 24px 90px #081d2840;
+  overflow: hidden;
+}
+dialog.run-viewer[open] {
+  display: flex;
+  flex-direction: column;
+}
+dialog.run-viewer:not([open]) {
+  display: none;
+}
+dialog.run-viewer::backdrop {
+  background: #0f211e66;
+  backdrop-filter: blur(4px);
+}
+body:has(dialog.run-viewer[open]) {
+  overflow: hidden;
+}
+.run-viewer .run-viewer-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 18px;
+  padding: 20px 26px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #e8ece9;
+  background: white;
+}
+.run-viewer .run-viewer-header-actions {
+  display: contents;
+}
+body:not([data-page="settings"]) .page-footer .config-location {
+  display: none;
+}
+.run-viewer .run-viewer-back {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  padding: 4px 0;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  color: #5a6f61;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.run-viewer .run-viewer-back:hover {
+  color: #173c29;
+}
+.run-viewer #refresh-job-output {
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: 11px;
+  background: #f4f7f5;
+  border-color: transparent;
+}
+.run-viewer .run-viewer-identity {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+}
+.run-viewer #job-detail-context {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: #6b7a71;
+  overflow-wrap: anywhere;
+}
+.run-viewer #job-detail-title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.65px;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.run-viewer #job-detail-status {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  padding: 6px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.run-viewer .run-viewer-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  background: #f0f4f1;
+  margin: 16px 26px 0;
+  padding: 4px;
+  border-radius: 9px;
+  flex-shrink: 0;
+}
+.run-viewer .run-viewer-tab {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: #617166;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.run-viewer .run-viewer-tab[aria-selected="true"] {
+  color: #183c29;
+  background: #fff;
+  box-shadow: 0 1px 4px #183c2917;
+}
+.run-viewer .run-viewer-tab:focus-visible,
+.run-viewer .run-viewer-back:focus-visible {
+  outline: 2px solid #488158;
+  outline-offset: 2px;
+}
+.run-viewer .run-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 22px 26px 26px;
+}
+.run-viewer .run-viewer-panel[hidden] {
+  display: none;
+}
+.run-viewer .run-viewer-panel {
+  min-width: 0;
+}
+.run-viewer .run-summary-state {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #45614e;
+  margin: 0 0 18px;
+}
+.run-viewer .run-metadata {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 20px;
+  padding: 14px 16px;
+  margin: 0 0 24px;
+  background: #f7f9f6;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.run-viewer .run-metadata dt {
+  color: #78877b;
+}
+.run-viewer .run-metadata dd {
+  margin: 0;
+  color: #4b6453;
+}
+.run-viewer .run-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 14px;
+}
+.run-viewer .run-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.run-viewer .run-summary-actions #job-run-controls {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.run-viewer #activity-summary {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0 0 22px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #344e3e;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.run-viewer #activity-live-status {
+  padding: 11px 13px;
+  margin: 0 0 18px;
+  border: 1px solid #e1e9df;
+  border-radius: 8px;
+  background: #f4f8f1;
+  color: #45653c;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.run-viewer #job-log {
+  margin: 0;
+  min-height: 240px;
+  max-height: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 18px;
+  background: #15221c;
+  color: #d4e2d7;
+  font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", monospace;
+  font-size: 12px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+}
+.run-viewer .run-summary-empty,
+.run-viewer .run-artifact-empty {
+  padding: 26px 18px;
+  border: 1px dashed #d8e2da;
+  border-radius: 12px;
+  color: #67776d;
+  background: #fafcf9;
+  font-size: 13px;
+  line-height: 1.8;
+  text-align: center;
+}
+.run-viewer #job-run-controls {
+  margin: 18px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid #edf0ec;
+}
+@media (max-width: 760px) {
+  dialog.run-viewer {
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .run-viewer .run-viewer-header {
+    padding: max(14px, env(safe-area-inset-top)) 18px 16px;
+    gap: 12px;
+  }
+  .run-viewer #job-detail-title {
+    font-size: 19px;
+  }
+  .run-viewer .run-viewer-back {
+    min-height: 36px;
+  }
+  .run-viewer .run-viewer-tabs {
+    margin: 12px 16px 0;
+  }
+  .run-viewer .run-viewer-tab {
+    padding: 11px 4px;
+    font-size: 12px;
+  }
+  .run-viewer .run-viewer-body {
+    padding: 18px 18px max(22px, env(safe-area-inset-bottom));
+  }
+  .run-viewer #job-log {
+    padding: 14px;
+    font-size: 11px;
+    border-radius: 8px;
+  }
+}
 :root {
   --ink: #172b23;
   --muted: #607269;

@@ -45,6 +45,7 @@ function fixture() {
     linearResources: { teams: [] },
     pmCreating: false,
     pmPlanning: false,
+    pendingPmCreate: false,
     pmDraft: null,
     pmLinearContext: "",
     currentStatus: { projects },

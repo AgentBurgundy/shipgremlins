@@ -18,9 +18,11 @@ The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your g
 browser Back/Forward and reload. Moving between pages keeps unfinished forms in
 memory; save them before closing or restarting the dashboard.
 
-Projects appear individually in the sidebar. Each project page keeps its
-repository, setup progress, PM crew, and launch controls together. Open a PM to
-edit its owner brief and browse Discovery, Features, Queue, and Memory.
+Projects appear individually in the sidebar. The project page leads with your
+PM crew: each row has **Run now** and an **Automation** switch. Coding Gremlins and
+recent runs follow; repository and setup details are collapsed below. Open a PM
+for its brief, Learning, Features, Queue, Memory, and run history. **Learning**
+contains the discovery controls.
 
 Overview shows your projects, PM mandates, verified workers, and active jobs.
 Connections has category tabs; mobile navigation opens from the menu button.
@@ -57,13 +59,15 @@ Connect an optional [Slack channel](SLACK.md) once for PM patrol results, coding
 
 The local runtime prepares a PostgreSQL activity store before launching work. This adds a local Docker service and persistent volume; it is managed on the CLI/dashboard server. Visible tool activity, result summaries, checks, redacted logs, and bounded artifacts appear in the dashboard. Private model reasoning is not stored or displayed. Activity storage failures are separate from the recorded outcome of an already-running job; Docker output remains available.
 
-Open **Activity → View activity** to follow a run. Live output and saved history
-load independently, so a slow history service does not hide available worker
-events. Refreshes preserve the displayed timeline and your reading position.
+Open a recent run or **Activity → View activity** for a focused run viewer with
+**Summary**, **Activity**, **Output**, and **Artifacts** tabs. The selected tab and
+reading position survive live refreshes. Live output and saved history load
+independently, so a slow history service does not hide available worker events.
 Artifacts become available after the job finishes and their contents are
-sanitized. **Close** or leaving Activity stops detail polling without stopping
-the job. A successful PM run means its investigation finished; check its summary
-for which tests actually ran.
+sanitized. **Back to activity**, Escape, or leaving Activity closes the viewer and
+stops detail polling without stopping the job. Run links can be bookmarked. A
+finished PM run means its process completed; check the summary and evidence to
+see which tests actually ran.
 
 ## Run now and automation are separate
 
@@ -98,8 +102,8 @@ verification; remove an unwanted configuration rather than leaving it broken.
 
 ### Fill a PM draft with AI
 
-Choose **Create PM**, select its project, and describe the investigation in your
-own words. **Fill with AI** combines that brief with a bounded view of the
+Choose **+ PM** on your project to open a focused creation dialog. Describe the
+investigation in your own words. **Fill with AI** combines that brief with a bounded view of the
 repository's paths and existing PM ownership to suggest a name, mandate ID,
 ownership paths, shared touchpoints, metric, UTC schedule, and WIP limit. It also
 fills all eight **Product brief** fields: ambition, goal, measurement, users,
@@ -108,6 +112,10 @@ label is derived from the final mandate ID. Review the rationale and warnings,
 especially when the repository view was truncated or a business assumption needs
 confirmation. Success metrics are proposals, not invented baselines or verified
 telemetry. Shared project permission tiers are unchanged.
+
+Product brief, ownership, and schedule settings expand when you need them. Close
+or Escape keeps the unfinished draft for your next visit during the same dashboard
+session. Saving opens the new PM's workspace; automation starts off.
 
 AI fill uses the saved Claude Code connection and source access, with a disposable
 Docker container on your controller. The first request may need to build the

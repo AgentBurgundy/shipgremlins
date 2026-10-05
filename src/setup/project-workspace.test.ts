@@ -8,6 +8,9 @@ class Element {
   className = "";
   textContent = "";
   value = "";
+  open = false;
+  disabled = false;
+  listeners = new Map<string, () => void>();
   href = "";
   rel = "";
   target = "";
@@ -19,24 +22,49 @@ class Element {
   setAttribute(name: string, value: string) {
     this.attributes.set(name, value);
   }
-  addEventListener() {}
+  addEventListener(name: string, callback: () => void) {
+    this.listeners.set(name, callback);
+  }
+  replaceChildren(...children: Element[]) {
+    this.children = children;
+  }
+  fire(name: string) {
+    this.listeners.get(name)?.();
+  }
 }
 function fixture() {
   const window = {} as {
+    addEventListener(): void;
     renderKnowledgeDocument: (value: string) => Element;
+    createProjectWorkspace: (
+      root: Element,
+      options: object,
+    ) => { setStatus(value: object, locked: boolean): void; render(): void };
     createPmCharter: (
       root: Element,
       prefix: string,
       initial: object,
     ) => { read(): object; reset(): void };
   };
+  window.addEventListener = () => {};
   const document = {
+    body: new Element("BODY"),
+    hidden: true,
+    getElementById: () => null,
+    addEventListener() {},
     createElement: (name: string) => new Element(name.toUpperCase()),
     createTextNode: (value: string) =>
       Object.assign(new Element("#TEXT"), { textContent: value }),
   };
-  const context = { window, document, URL, URLSearchParams };
-  for (const name of ["project-workspace", "pm-charter"])
+  const context = {
+    window,
+    document,
+    URL,
+    URLSearchParams,
+    clearTimeout,
+    setTimeout,
+  };
+  for (const name of ["crew-guidance", "project-workspace", "pm-charter"])
     runInNewContext(
       readFileSync(
         new URL(`../../dashboard/${name}.js`, import.meta.url),
@@ -133,5 +161,159 @@ describe("progressive PM product brief", () => {
     a.reset();
     expect(a.read()).toEqual({});
     expect(b.read()).toEqual({ goal: "A different project" });
+  });
+});
+
+describe("focused project crew workspace", () => {
+  function workspace() {
+    const root = new Element("MAIN"),
+      pages = {
+        current: "project",
+        project: "shipgremlins",
+        pm: "",
+        tab: "overview",
+      };
+    const project = {
+      name: "shipgremlins",
+      repo: "AgentBurgundy/shipgremlins",
+      areas: [
+        {
+          key: "security-gremlin-v2",
+          name: "Security gremlin v2",
+          mandate: "Find reproducible RBAC gaps using synthetic users.",
+          enabled: false,
+          charter: { goal: "Protect each workspace's data." },
+        },
+      ],
+    };
+    const state = { projects: [project] },
+      jobs: object[] = [];
+    const view = fixture().createProjectWorkspace(root, {
+      pages,
+      api: async () => ({}),
+      getJobs: () => jobs,
+    });
+    view.setStatus(state, false);
+    return { root, pages, project, state, view, jobs };
+  }
+  it("puts the linked PM identity and scoped Run/Automation controls before secondary details", () => {
+    const { root } = workspace();
+    const row = all(root).find((item) => item.className === "project-pm-row")!;
+    expect(row.children.map((item) => item.className)).toEqual([
+      "",
+      "project-pm-copy",
+      "pm-simple-controls",
+    ]);
+    expect(all(row).find((item) => item.tagName === "A")?.href).toBe(
+      "/projects/shipgremlins?pm=security-gremlin-v2",
+    );
+    expect(
+      all(row).find((item) => item.dataset.launchArea)?.dataset,
+    ).toMatchObject({
+      launchProject: "shipgremlins",
+      launchArea: "security-gremlin-v2",
+      launchCrew: "pm",
+    });
+    expect(
+      all(row).filter((item) => item.attributes.get("role") === "switch"),
+    ).toHaveLength(1);
+    expect(text(row)).not.toContain("Open workspace");
+    expect(text(root)).not.toContain("Run discovery");
+    const header = all(root).find(
+      (item) => item.className === "workspace-project-header",
+    )!;
+    expect(text(header)).not.toContain("Run coding");
+    expect(text(header)).toContain("shipgremlins");
+    const details = all(root).find((item) =>
+      item.className.includes("project-details workspace-disclosure"),
+    )!;
+    expect(details.open).toBe(false);
+    expect(text(details)).toContain("AgentBurgundy/shipgremlins");
+  });
+  it("retains disclosure state across polling and labels an active PM action View run", () => {
+    const { root, state, view, jobs } = workspace();
+    const details = all(root).find((item) =>
+      item.className.includes("project-details workspace-disclosure"),
+    )!;
+    details.open = true;
+    details.fire("toggle");
+    jobs.push({
+      id: "run-1",
+      runId: 1,
+      project: "shipgremlins",
+      area: "security-gremlin-v2",
+      type: "pm",
+      status: "running",
+    });
+    view.setStatus(state, false);
+    expect(
+      all(root).find((item) =>
+        item.className.includes("project-details workspace-disclosure"),
+      )?.open,
+    ).toBe(true);
+    expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
+      "View run",
+    );
+  });
+  it("keeps direct PM switching when the project has more than one PM", () => {
+    const { root, pages, project, view } = workspace();
+    project.areas.push({
+      ...project.areas[0]!,
+      key: "imports",
+      name: "Import quality",
+    });
+    pages.pm = "security-gremlin-v2";
+    pages.tab = "brief";
+    view.render();
+    const navigation = all(root).find(
+      (item) => item.className === "pm-workspace-nav",
+    )!;
+    expect(all(navigation).filter((item) => item.tagName === "A")).toHaveLength(
+      3,
+    );
+    expect(
+      all(navigation).find((item) => item.textContent === "Import quality")
+        ?.href,
+    ).toBe("/projects/shipgremlins?pm=imports");
+  });
+  it("keeps discovery in Learning while brief, deletion and project settings remain accessible", () => {
+    const { root, pages, view } = workspace();
+    pages.pm = "security-gremlin-v2";
+    pages.tab = "brief";
+    view.render();
+    expect(text(root)).not.toContain("Run discovery");
+    expect(text(root)).toContain("Find reproducible RBAC gaps");
+    const navigation = all(root).find(
+      (item) => item.className === "pm-workspace-nav",
+    )!;
+    expect(all(navigation).filter((item) => item.tagName === "A")).toHaveLength(
+      1,
+    );
+    expect(text(navigation)).toContain("Project overview");
+    expect(
+      text(
+        all(root).find((item) => item.className === "pm-workspace-heading")!,
+      ),
+    ).not.toContain("Edit brief");
+    expect(
+      text(all(root).find((item) => item.className === "pm-brief-heading")!),
+    ).toBe("MandateEdit brief");
+    expect(
+      all(root).find((item) => item.className.includes("pm-brief-details"))
+        ?.open,
+    ).toBe(false);
+    expect(
+      all(root).find((item) => item.className.includes("pm-delete-action"))
+        ?.tagName,
+    ).toBe("DETAILS");
+    expect(text(root)).toContain("Delete PM");
+    expect(
+      all(root).find((item) => item.textContent === "Learning")?.href,
+    ).toBe("/projects/shipgremlins?pm=security-gremlin-v2&tab=discovery");
+    pages.tab = "discovery";
+    view.render();
+    expect(
+      all(root).filter((item) => item.textContent === "Run discovery"),
+    ).toHaveLength(1);
   });
 });

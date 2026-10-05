@@ -25,6 +25,7 @@
     <script src="/pm-actions.js" defer></script>
     <script src="/crew-guidance.js" defer></script>
     <script src="/job-output.js" defer></script>
+    <script src="/run-viewer.js" defer></script>
     <script src="/pm-charter.js" defer></script>
     <script src="/delivery-workflow.js" defer></script>
     <script src="/operations.js" defer></script>
@@ -1714,26 +1715,31 @@
                 ></div>
               </form>
             </details>
-            <details
-              class="setup-drawer pm-create-drawer"
+            <dialog
+              class="pm-create-dialog"
               id="pm-create-drawer"
+              aria-labelledby="pm-create-title"
             >
-              <summary>
-                Create a PM Gremlin
-                <span class="drawer-note"
-                  >One mandate. One Linear project.</span
+              <header class="pm-create-dialog-header">
+                <div>
+                  <p class="eyebrow muted">GROW YOUR CREW</p>
+                  <h2 id="pm-create-title">Add a PM Gremlin</h2>
+                  <p>Give it a mission. AI helps with the rest.</p>
+                </div>
+                <button
+                  id="close-pm-create"
+                  class="small-button"
+                  type="button"
+                  aria-label="Close PM creation"
                 >
-              </summary>
-              <p class="runner-guidance">
-                Start with your mandate. Fill with AI completes the PM setup and
-                product brief; review it, then create. Coding still needs your
-                approval.
-              </p>
+                  Close ×
+                </button>
+              </header>
               <form id="pm-create-form">
                 <fieldset id="pm-create-fields" disabled>
                   <legend class="sr-only">New PM mandate</legend>
                   <div class="field">
-                    <label for="pm-project">App</label
+                    <label for="pm-project">Project</label
                     ><select id="pm-project" required>
                       <option value="">Add an app first</option>
                     </select>
@@ -1743,15 +1749,12 @@
                       >What should this PM investigate?</label
                     ><textarea
                       id="pm-mandate"
-                      rows="6"
+                      rows="4"
                       required
                       maxlength="12000"
                       placeholder="Own the checkout journey from cart to confirmation. Test signed-in and guest flows, discounts, failures, and mobile layouts. Use test payments only. Propose improvements with screenshots and exact reproduction steps."
                     ></textarea>
-                    <p>
-                      Define the goal, scope, test accounts, important flows,
-                      and boundaries.
-                    </p>
+                    <p>Describe the goal, important flows, and boundaries.</p>
                   </div>
                   <div id="pm-ai-draft"></div>
                   <p
@@ -1762,7 +1765,7 @@
                     Choose an app and write the mandate. Fill with AI completes
                     the setup for your review.
                   </p>
-                  <h3 class="pm-review-heading">Review PM details</h3>
+                  <h3 class="pm-review-heading">Your new gremlin</h3>
                   <div class="project-form-grid">
                     <div class="field">
                       <label for="pm-name">PM name</label
@@ -1808,18 +1811,20 @@
                     </div>
                   </div>
 
-                  <section
+                  <details
                     class="pm-charter-create"
                     aria-labelledby="new-pm-charter-title"
                   >
-                    <h3 id="new-pm-charter-title">Product brief</h3>
+                    <summary id="new-pm-charter-title">
+                      Product brief <span>Goals, users &amp; guardrails</span>
+                    </summary>
                     <p>
                       Give this PM a direction it can return to: who the product
                       serves, what it should become, and where its boundaries
                       are.
                     </p>
                     <div id="pm-charter-fields"></div>
-                  </section>
+                  </details>
                   <details class="pm-advanced" id="pm-advanced">
                     <summary>Ownership, schedule &amp; work limits</summary>
                     <div class="project-form-grid">
@@ -1900,23 +1905,18 @@
                   <label class="discovery-after-create"
                     ><input type="checkbox" id="pm-discover-after-create" />
                     <span
-                      >Start discovery after saving. Uses your source
-                      connection, Claude, and a verified local worker to map the
-                      product. Linear is optional for discovery; automation
-                      stays paused.</span
+                      >Explore the codebase after saving. Runs discovery with
+                      Claude and a ready worker; keeps automation off.</span
                     >
                   </label>
                   <div class="form-bottom">
-                    <p>
-                      Saves a paused PM. Run it once when setup is ready, or
-                      enable automation from its card for recurring work.
-                    </p>
+                    <p>Starts with automation off. You choose when it runs.</p>
                     <button
                       class="button button-dark"
                       id="create-pm"
                       type="submit"
                     >
-                      Create PM Gremlin +
+                      Create PM
                     </button>
                   </div>
                 </fieldset>
@@ -1927,7 +1927,7 @@
                   hidden
                 ></div>
               </form>
-            </details>
+            </dialog>
           </section>
 
           <section
@@ -2231,92 +2231,222 @@
                 Load earlier activity
               </button>
             </div>
-            <section
-              class="job-detail"
+            <dialog
+              class="run-viewer"
               id="job-detail"
               aria-labelledby="job-detail-title"
-              tabindex="-1"
+              aria-describedby="job-detail-description"
               hidden
             >
-              <div class="job-detail-heading">
-                <div>
-                  <span class="eyebrow muted">ACTIVITY</span>
-                  <h3 id="job-detail-title">Job activity</h3>
+              <header class="run-viewer-header">
+                <button
+                  type="button"
+                  class="small-button run-viewer-back"
+                  id="close-job-output"
+                  aria-label="Close run and return to activity"
+                >
+                  <span aria-hidden="true">←</span> Back to activity
+                </button>
+                <div class="run-viewer-identity">
+                  <p class="eyebrow muted" id="job-detail-context">
+                    RUN DETAILS
+                  </p>
+                  <h2 id="job-detail-title">Run activity</h2>
                 </div>
-                <div class="button-row">
-                  <button
-                    type="button"
-                    class="small-button"
-                    id="show-worker-output"
+                <div class="run-viewer-header-actions">
+                  <span class="runtime-badge" id="job-detail-status"
+                    >Loading</span
                   >
-                    Worker output
-                  </button>
                   <button
                     type="button"
                     class="small-button"
                     id="refresh-job-output"
                   >
-                    Refresh activity
-                  </button>
-                  <button
-                    type="button"
-                    class="small-button close-activity"
-                    id="close-job-output"
-                    aria-label="Close activity details"
-                  >
-                    Close <span aria-hidden="true">×</span>
+                    Refresh
                   </button>
                 </div>
-              </div>
-              <p class="runner-guidance" id="job-detail-description">
-                Visible actions and results from this run, with credentials
-                redacted.
+              </header>
+              <p class="sr-only" id="job-detail-description">
+                Run summary, visible activity, redacted output, and artifacts.
               </p>
-              <div class="job-run-controls" id="job-run-controls"></div>
               <div
-                class="job-action-confirm"
-                id="job-action-confirm"
-                hidden
-              ></div>
-              <p
-                class="form-message"
-                id="job-action-message"
-                role="status"
-                hidden
-              ></p>
-              <p
-                id="activity-live-status"
-                class="activity-live-status"
-                role="status"
-              ></p>
-              <div class="activity-summary" id="activity-summary" hidden></div>
-              <div class="activity-checks" id="activity-checks" hidden></div>
-              <ol class="activity-timeline" id="activity-timeline"></ol>
-              <div
-                class="form-message"
-                id="activity-message"
-                role="status"
-                hidden
-              ></div>
-              <details class="raw-output" id="worker-output">
-                <summary>
-                  Worker output<span id="worker-output-count"></span>
-                </summary>
-                <pre
-                  class="job-log"
-                  id="job-log"
+                class="run-viewer-tabs"
+                role="tablist"
+                aria-label="Run details"
+              >
+                <button
+                  type="button"
+                  class="run-viewer-tab"
+                  id="run-tab-summary"
+                  data-run-tab="summary"
+                  role="tab"
+                  aria-controls="run-panel-summary"
+                  aria-selected="true"
+                >
+                  Summary
+                </button>
+                <button
+                  type="button"
+                  class="run-viewer-tab"
+                  id="run-tab-activity"
+                  data-run-tab="activity"
+                  role="tab"
+                  aria-controls="run-panel-activity"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  Activity
+                </button>
+                <button
+                  type="button"
+                  class="run-viewer-tab"
+                  id="run-tab-output"
+                  data-run-tab="output"
+                  role="tab"
+                  aria-controls="run-panel-output"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  Output
+                </button>
+                <button
+                  type="button"
+                  class="run-viewer-tab"
+                  id="run-tab-artifacts"
+                  data-run-tab="artifacts"
+                  role="tab"
+                  aria-controls="run-panel-artifacts"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  Artifacts
+                </button>
+              </div>
+              <div class="run-viewer-body">
+                <section
+                  class="run-viewer-panel"
+                  id="run-panel-summary"
+                  data-run-panel="summary"
+                  role="tabpanel"
+                  aria-labelledby="run-tab-summary"
                   tabindex="0"
-                  aria-label="Job output"
-                ></pre>
-              </details>
-              <div
-                class="form-message"
-                id="job-output-message"
-                role="status"
-                hidden
-              ></div>
-              <div class="artifact-list" id="job-artifacts"></div>
-            </section>
+                >
+                  <p class="run-summary-state" id="run-summary-state"></p>
+                  <dl class="run-metadata" id="run-metadata"></dl>
+                  <h3 class="run-section-title">Outcome</h3>
+                  <p class="run-summary-empty" id="run-summary-empty">
+                    The worker's summary will appear here when it is available.
+                  </p>
+                  <div
+                    class="activity-summary"
+                    id="activity-summary"
+                    hidden
+                  ></div>
+                  <div
+                    class="activity-checks"
+                    id="activity-checks"
+                    hidden
+                  ></div>
+                  <div class="run-summary-actions">
+                    <button
+                      type="button"
+                      class="small-button"
+                      id="show-worker-output"
+                    >
+                      View output
+                    </button>
+                    <div class="job-run-controls" id="job-run-controls"></div>
+                  </div>
+                  <div
+                    class="job-action-confirm"
+                    id="job-action-confirm"
+                    hidden
+                  ></div>
+                  <p
+                    class="form-message"
+                    id="job-action-message"
+                    role="status"
+                    hidden
+                  ></p>
+                </section>
+                <section
+                  class="run-viewer-panel"
+                  id="run-panel-activity"
+                  data-run-panel="activity"
+                  role="tabpanel"
+                  aria-labelledby="run-tab-activity"
+                  tabindex="0"
+                  hidden
+                >
+                  <p
+                    id="activity-live-status"
+                    class="activity-live-status"
+                    role="status"
+                    aria-live="polite"
+                  ></p>
+                  <ol class="activity-timeline" id="activity-timeline"></ol>
+                  <div
+                    class="form-message"
+                    id="activity-message"
+                    role="status"
+                    hidden
+                  ></div>
+                </section>
+                <section
+                  class="run-viewer-panel run-output-panel"
+                  id="run-panel-output"
+                  data-run-panel="output"
+                  role="tabpanel"
+                  aria-labelledby="run-tab-output"
+                  tabindex="0"
+                  hidden
+                >
+                  <p class="run-panel-hint">
+                    Redacted worker output<span id="worker-output-count"></span
+                    >. Private reasoning is not shown.
+                  </p>
+                  <div class="raw-output" id="worker-output">
+                    <pre
+                      class="job-log"
+                      id="job-log"
+                      tabindex="0"
+                      aria-label="Job output"
+                    ></pre>
+                  </div>
+                  <div
+                    class="form-message"
+                    id="job-output-message"
+                    role="status"
+                    hidden
+                  ></div>
+                </section>
+                <section
+                  class="run-viewer-panel"
+                  id="run-panel-artifacts"
+                  data-run-panel="artifacts"
+                  role="tabpanel"
+                  aria-labelledby="run-tab-artifacts"
+                  tabindex="0"
+                  hidden
+                >
+                  <p class="run-panel-hint">
+                    Screenshots and files from this run. Downloads require your
+                    dashboard session.
+                  </p>
+                  <p class="run-artifact-empty" id="run-artifact-empty">
+                    Artifacts appear after the worker finishes and sanitizes its
+                    output.
+                  </p>
+                  <div
+                    class="form-message"
+                    id="job-artifact-message"
+                    role="status"
+                    hidden
+                  ></div>
+                  <div class="artifact-list" id="job-artifacts"></div>
+                </section>
+              </div>
+            </dialog>
           </section>
 
           <section

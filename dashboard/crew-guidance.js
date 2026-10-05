@@ -152,7 +152,7 @@
     toggle.disabled = locked || Boolean(operation?.busy);
     buttons.append(run, toggle);
     root.append(buttons);
-    if (operation?.message) {
+    if (operation?.message && operation.error) {
       const message = el(
         "p",
         "form-message" + (operation.error ? " error" : ""),
@@ -168,7 +168,6 @@
     { locked = false, areaActions = new Map(), jobs = [] } = {},
   ) => {
     const root = el("section", "project-crew");
-    root.append(window.renderCrewSetup(project));
     const heading = el("div", "project-crew-heading");
     heading.append(el("h3", "", "PM Gremlins"));
     const add = el("button", "small-button", "+ Add PM");
@@ -188,40 +187,37 @@
       );
     for (const area of areas) {
       const operation = areaActions.get(`${project.name}/${area.key}`);
-      const card = el("article", "pm-control-card");
-      const identity = el("div", "pm-control-identity");
+      const card = el("article", "project-pm-row");
       const image = el("img", "");
       image.src = "/assets/gremlin-security.webp";
       image.alt = "";
-      image.width = 44;
-      image.height = 50;
+      image.width = image.height = 48;
       image.loading = "lazy";
-      const text = el("div", "");
-      text.append(el("strong", "", area.name || area.key));
-      text.append(
-        el(
-          "span",
-          "pm-automation-state" + (area.enabled ? " enabled" : ""),
-          area.enabled ? "Automation on" : "Automation paused",
-        ),
-      );
-      identity.append(image, text);
-      card.append(identity);
-      if (area.mandate)
-        card.append(el("p", "pm-control-mandate", area.mandate));
-      card.append(
+      const copy = el("div", "project-pm-copy"),
+        heading = el("h3", ""),
+        name = el("a", "", area.name || area.key);
+      name.href = `/projects/${encodeURIComponent(project.name)}?pm=${encodeURIComponent(area.key)}`;
+      heading.append(name);
+      copy.append(
+        heading,
         el(
           "p",
-          "setup-help",
-          `Schedule: ${area.schedule || "not configured"} UTC · Up to ${area.wipLimit || 1} open work items`,
+          "project-pm-mandate",
+          area.charter?.goal ||
+            area.mandate ||
+            "Add a mandate to give this PM direction.",
         ),
       );
       card.append(
+        image,
+        copy,
         window.renderPmControls(project, area, { locked, operation, jobs }),
       );
       root.append(card);
     }
-    const footer = el("div", "project-crew-footer");
+    const footer = el("details", "project-crew-footer workspace-disclosure");
+    footer.append(el("summary", "", "Setup & automation details"));
+    footer.append(window.renderCrewSetup(project));
     footer.append(
       el(
         "p",
