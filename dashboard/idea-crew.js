@@ -214,6 +214,13 @@
         );
         if (input.value === saved.idea && !busy) {
           draft = result;
+          suggestName(
+            result.plan.name
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "")
+              .slice(0, 63),
+          );
           onRestore(result.destination);
           render();
           show(
