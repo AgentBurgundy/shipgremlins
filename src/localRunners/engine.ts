@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createUsage } from "../usage/index.ts";
 import { isDeepStrictEqual } from "node:util";
 import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
 import { loadProject } from "../config.ts";
@@ -461,6 +462,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       environmentNamespace: options.root,
     });
   const clock = options.clock ?? (() => new Date());
+  const tokenUsage = createUsage({ root: options.root, now: clock });
   let imageReady = false;
   let inFlight: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -777,6 +779,18 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     for (const job of archive) delete state.launched[job.id];
     writeJson(stateFile, state);
     // Side effects happen after durable transitions and do not hold up the queue.
+    for (const job of [...state.jobs, ...archive])
+      track(
+        tokenUsage.captureJob(job, async (id, name) => {
+          try {
+            return await docker.readArtifact(id, name);
+          } catch (error) {
+            if (options.activityStore)
+              return options.activityStore.readArtifact(id, name);
+            throw error;
+          }
+        }),
+      );
     for (const job of state.jobs) {
       capture(job);
       if (job.status !== "running" || state.launched[job.id])
@@ -2013,9 +2027,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     },
     async stop() {
       stopping = true;
+      tokenUsage.cancelPendingReads();
       if (timer) clearInterval(timer);
       timer = undefined;
       await inFlight;
+      tokenUsage.cancelPendingReads();
       // Delivery has a short timeout; flushing here preserves its final status.
       while (background.size) await Promise.allSettled([...background]);
     },

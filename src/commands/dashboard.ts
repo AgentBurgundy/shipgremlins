@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { projectRuntimeKey } from "../projectIdentity.ts";
+import { createUsage } from "../usage/index.ts";
 import { spawn } from "node:child_process";
 import {
   existsSync,
@@ -105,7 +106,11 @@ import {
   foundationSummary,
   sameCodingTicket,
 } from "../ideaCrew/foundation.ts";
-import type { LocalJobInput, WorkerAction } from "../localRunners/types.ts";
+import type {
+  LocalJob,
+  LocalJobInput,
+  WorkerAction,
+} from "../localRunners/types.ts";
 import {
   doctorChecks,
   stampVerified,
@@ -211,6 +216,7 @@ const HTML_ROUTES = new Set([
   "/projects",
   "/runners",
   "/activity",
+  "/usage",
   "/settings",
   "/inbox",
 ]);
@@ -623,6 +629,8 @@ export function createDashboardServer(
     });
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
+  const tokenUsage = createUsage({ root });
+  let usageHistoryImported = false;
   const outputRead = createDashboardOutputReader();
   const knowledge = createPmKnowledge({ root });
   const projectKnowledge = createProjectKnowledge({ root });
@@ -2409,8 +2417,51 @@ export function createDashboardServer(
                   .join(" "),
               );
           }
+          const matchingCodingJobs = (jobs: LocalJob[], legacy = false) =>
+            jobs.filter((job) => {
+              if (
+                job.type !== "developer" ||
+                job.project !== jobInput.project ||
+                job.projectInstanceId !== jobInput.projectInstanceId
+              )
+                return false;
+              const previous = job.linearBinding,
+                current = jobInput.linearBinding;
+              if (!previous?.ticketId || !current?.ticketId)
+                return legacy && job.ticket === jobInput.ticket;
+              if (previous.ticketId !== current.ticketId) return false;
+              return previous.workspaceId && current.workspaceId
+                ? previous.workspaceId === current.workspaceId
+                : previous.connectionId === current.connectionId;
+            });
+          const reusableCodingJob = (jobs: LocalJob[]) =>
+            matchingCodingJobs(jobs).find((job) =>
+              ["queued", "running"].includes(job.status),
+            ) ??
+            matchingCodingJobs(jobs).find((job) => job.status === "succeeded");
+          const reuseCodingJob = (job: LocalJob) =>
+            json(res, job.status === "succeeded" ? 200 : 202, {
+              job,
+              reused: true,
+            });
           let validated: Awaited<ReturnType<typeof preparation.validate>>;
           try {
+            if (
+              jobInput.type === "developer" &&
+              jobInput.ticket?.trim() &&
+              preparation.resolveDeveloperIdentity
+            ) {
+              const identity =
+                await preparation.resolveDeveloperIdentity(jobInput);
+              jobInput.ticket = identity.ticket.identifier;
+              jobInput.projectInstanceId = identity.project.config.instanceId;
+              jobInput.linearBinding = identity.linearBinding;
+              const existing = reusableCodingJob(await runners().jobs());
+              if (existing) {
+                reuseCodingJob(existing);
+                return;
+              }
+            }
             if (jobInput.type === "developer" && !jobInput.ticket?.trim()) {
               Object.assign(
                 jobInput,
@@ -2436,24 +2487,13 @@ export function createDashboardServer(
           if (validated.ticket) {
             jobInput.area = validated.area.key;
             jobInput.ticket = validated.ticket.identifier;
-            const previous = (await runners().jobs()).filter((job) => {
-              if (
-                job.type !== "developer" ||
-                job.project !== jobInput.project ||
-                job.projectInstanceId !== jobInput.projectInstanceId
-              )
-                return false;
-              const oldBinding = job.linearBinding,
-                currentBinding = jobInput.linearBinding;
-              // Identifiers such as ENG-123 can belong to unrelated workspaces.
-              // Older jobs without immutable identity retain the conservative guard.
-              if (!oldBinding?.ticketId || !currentBinding?.ticketId)
-                return job.ticket === jobInput.ticket;
-              if (oldBinding.ticketId !== currentBinding.ticketId) return false;
-              if (oldBinding.workspaceId && currentBinding.workspaceId)
-                return oldBinding.workspaceId === currentBinding.workspaceId;
-              return oldBinding.connectionId === currentBinding.connectionId;
-            });
+            const history = await runners().jobs();
+            const previous = matchingCodingJobs(history, true);
+            const existing = reusableCodingJob(history);
+            if (existing) {
+              reuseCodingJob(existing);
+              return;
+            }
             if (
               previous.some((job) =>
                 ["queued", "running", "succeeded"].includes(job.status),
@@ -2461,11 +2501,27 @@ export function createDashboardServer(
             )
               throw new RequestError(
                 409,
-                "This ticket already has active or completed work. Review its job and draft PR/MR before requesting another implementation.",
+                "An older run uses this ticket identifier without a verified Linear identity. Review its work in Activity before starting another implementation.",
               );
             jobInput.idempotencyKey = `developer:${jobInput.project}:${jobInput.projectInstanceId ? jobInput.projectInstanceId + ":" : ""}${validated.ticket.id}${previous.length ? `:retry:${randomBytes(8).toString("hex")}` : ""}`;
           }
-          const job = await runners().enqueue(jobInput);
+          let job: LocalJob;
+          try {
+            job = await runners().enqueue(jobInput);
+          } catch (error) {
+            if (
+              jobInput.type === "developer" &&
+              error instanceof LocalRunnerError &&
+              error.status === 409
+            ) {
+              const existing = reusableCodingJob(await runners().jobs());
+              if (existing) {
+                reuseCodingJob(existing);
+                return;
+              }
+            }
+            throw error;
+          }
           runners().start();
           json(res, 202, { job });
           return;
@@ -2676,6 +2732,58 @@ export function createDashboardServer(
               updateRunning = false;
             });
           json(res, 202, updateStatus());
+          return;
+        }
+        if (url.pathname === "/api/usage") {
+          if (req.method !== "GET")
+            throw new RequestError(405, "Use GET for usage.");
+          if (
+            [...url.searchParams.keys()].some(
+              (key) => !["range", "project", "instance"].includes(key),
+            ) ||
+            [...new Set(url.searchParams.keys())].some(
+              (key) => url.searchParams.getAll(key).length > 1,
+            )
+          )
+            throw new RequestError(
+              400,
+              "Choose a valid usage range and project.",
+            );
+          const query = {
+            ...(url.searchParams.has("range")
+              ? { range: url.searchParams.get("range")! }
+              : {}),
+            ...(url.searchParams.has("project")
+              ? { project: url.searchParams.get("project")! }
+              : {}),
+            ...(url.searchParams.has("instance")
+              ? { instance: url.searchParams.get("instance")! }
+              : {}),
+          };
+          // Validate before reading history. Backfill only metadata, never Docker
+          // output, so an offline runner cannot hold the stats page hostage.
+          try {
+            tokenUsage.summary(query);
+          } catch {
+            throw new RequestError(
+              400,
+              "Choose a valid usage range and project.",
+            );
+          }
+          let historyWarning: string | undefined;
+          if (!usageHistoryImported) {
+            try {
+              for (const job of await runners().jobs())
+                await tokenUsage.captureJob(job);
+              usageHistoryImported = true;
+            } catch {
+              historyWarning =
+                "Job history could not be read. Historical coverage may be incomplete; existing usage is preserved.";
+            }
+          }
+          const result = tokenUsage.summary(query);
+          if (historyWarning) result.warnings.push(historyWarning);
+          json(res, 200, result);
           return;
         }
         if (url.pathname === "/api/status") {

@@ -578,6 +578,58 @@ export function createJobPreparation(options: JobPreparationOptions) {
     };
   }
 
+  /** Resolve identity for read-only history reuse, without admitting a new run.
+   * Completed tickets and changed approval/mapping still have the same issue ID.
+   */
+  async function resolveDeveloperIdentity(input: LocalJobInput) {
+    if (
+      input.type !== "developer" ||
+      !input.project ||
+      !input.ticket?.trim() ||
+      !/^[A-Za-z0-9-]{1,80}$/.test(input.ticket.trim())
+    )
+      throw new JobReadinessError(
+        "Choose a project and a Linear ticket identifier.",
+      );
+    validateName(input.project, "project");
+    const project = loadProject(root, input.project);
+    const connectionId = project.config.linear?.connectionId ?? "default";
+    const credential = await linearFor(connectionId).resolveCredential({
+      minValidityMs: 5 * 60_000,
+      workspaceId: project.config.linear?.workspaceId,
+    });
+    const ticket = await linear(credential.authorization).getTicket(
+      input.ticket.trim(),
+    );
+    if (!ticket)
+      throw new JobReadinessError(
+        "That Linear ticket could not be found in this project's connected workspace.",
+      );
+    const current = loadProject(root, input.project);
+    if (
+      current.config.instanceId !== project.config.instanceId ||
+      (current.config.linear?.connectionId ?? "default") !== connectionId ||
+      current.config.linear?.workspaceId !== project.config.linear?.workspaceId
+    )
+      throw new JobReadinessError(
+        "This project's identity or Linear connection changed. Review the current project and try again.",
+      );
+    return {
+      project,
+      ticket,
+      linearBinding: {
+        connectionId,
+        ...((credential.workspaceId ?? project.config.linear?.workspaceId)
+          ? {
+              workspaceId:
+                credential.workspaceId ?? project.config.linear?.workspaceId,
+            }
+          : {}),
+        ticketId: ticket.id,
+      },
+    };
+  }
+
   /** Resolve a one-off queue request to a concrete approved issue before enqueueing. */
   async function selectDeveloperTicket(
     input: LocalJobInput,
@@ -1138,6 +1190,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
   }
   return {
     validate,
+    resolveDeveloperIdentity,
     selectDeveloperTicket,
     prepareJob,
     scheduledJobs,

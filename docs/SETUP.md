@@ -46,9 +46,14 @@ walkthroughs. Slack and product signals can wait.
 ## Your setup dashboard
 
 The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your gremlins**,
-**Activity**, and **Settings** pages. Each page has its own address and supports
+**Activity**, **Usage**, and **Settings** pages. Each page has its own address and supports
 browser Back/Forward and reload. Moving between pages keeps unfinished forms in
 memory; save them before closing or restarting the dashboard.
+
+**Usage** shows workspace token totals, a trend, and project breakdowns. Filter
+by period or project, and read reporting coverage alongside the totals: missing
+reports are unknown, not zero. Counts update after runs and AI setup actions finish.
+[Understand token usage →](TOKEN_USAGE.md)
 
 Projects appear individually in the sidebar. Each project leads with its next
 useful action and crew; focused pages keep Environment, Review, Knowledge,

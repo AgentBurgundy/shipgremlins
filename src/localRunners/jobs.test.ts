@@ -121,6 +121,95 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("resolves a completed issue's immutable identity without admission, mapping repair, or source leases", async () => {
+    edit("project.json", (raw) => {
+      raw.verified = null;
+    });
+    edit("areas.json", (raw) => {
+      raw.areas.core.enabled = false;
+      raw.areas.core.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
+    });
+    const closed = {
+      ...ticket,
+      labels: [],
+      stateType: "completed",
+      projectId: "a-new-mapping",
+    };
+    const getTicket = vi.fn(async () => closed),
+      forbidden = vi.fn(async () => {
+        throw new Error("Must remain read-only");
+      });
+    const preparation = createJobPreparation({
+      root,
+      env: {},
+      linear: () => ({
+        getTicket,
+        listTickets: forbidden,
+        ensureLabels: forbidden,
+      }),
+      linearConnection: {
+        resolveCredential: vi.fn(async () => ({
+          token: "read-only",
+          authorization: "Bearer read-only",
+          method: "oauth" as const,
+          workspaceId: "workspace-current",
+        })),
+        acquireLease: forbidden,
+        releaseLease: forbidden,
+      },
+      sourceControl: { acquireLease: forbidden, resolveCredential: forbidden },
+    });
+    const before = readFileSync(join(root, "projects/app/areas.json"), "utf8");
+    const resolved = await preparation.resolveDeveloperIdentity({
+      type: "developer",
+      project: "app",
+      ticket: " APP-12 ",
+      runOnce: true,
+    });
+    expect(resolved.ticket).toEqual(closed);
+    expect(resolved.linearBinding).toEqual({
+      connectionId: "default",
+      workspaceId: "workspace-current",
+      ticketId: "ticket-id",
+    });
+    expect(getTicket).toHaveBeenCalledWith("APP-12");
+    expect(forbidden).not.toHaveBeenCalled();
+    expect(readFileSync(join(root, "projects/app/areas.json"), "utf8")).toBe(
+      before,
+    );
+    await expect(
+      preparation.validate({
+        type: "developer",
+        project: "app",
+        ticket: "APP-12",
+        runOnce: true,
+      }),
+    ).rejects.toThrow("Verify connections");
+  });
+
+  it("does not resolve history against a replacement project created during the Linear lookup", async () => {
+    const preparation = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket: async () => {
+          edit("project.json", (raw) => {
+            raw.instanceId = "11111111-1111-4111-8111-111111111111";
+          });
+          return ticket;
+        },
+        listTickets: async () => [],
+      }),
+    });
+    await expect(
+      preparation.resolveDeveloperIdentity({
+        type: "developer",
+        project: "app",
+        ticket: "APP-12",
+      }),
+    ).rejects.toThrow("identity or Linear connection changed");
+  });
+
   it("runs a saved Grumblin on the real selected test app without Linear, full-doctor setup, telemetry, or publication", async () => {
     edit("project.json", (raw) => {
       raw.verified = null;

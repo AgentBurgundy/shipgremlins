@@ -53,7 +53,7 @@ interface Operation {
   message?: string;
 }
 interface Callbacks {
-  api: (...args: unknown[]) => Promise<{ job?: Job }>;
+  api: (...args: unknown[]) => Promise<{ job?: Job; reused?: boolean }>;
   getProject: (name: string) => Project | undefined;
   isLocked: () => boolean;
   onState: () => void;
@@ -117,6 +117,59 @@ function fixture() {
 }
 
 describe("coding agent launcher", () => {
+  it("keeps the manual ticket's reused-run message when the follow-up refresh fails", async () => {
+    const source = readFileSync(
+      new URL("../../dashboard/app.js", import.meta.url),
+      "utf8",
+    );
+    const start = source.indexOf("  async function queueManualJob(input) {");
+    const end = source.indexOf(
+      '  $("job-form").addEventListener("submit",',
+      start,
+    );
+    const fields = new Map<string, Element>();
+    const $ = (id: string) => {
+      if (!fields.has(id)) fields.set(id, new Element("div"));
+      return fields.get(id)!;
+    };
+    const job = {
+      id: "existing-run",
+      type: "developer",
+      project: "app",
+      ticket: "APP-1",
+      status: "running",
+    };
+    const api = vi.fn(async () => ({ job, reused: true })),
+      selectJob = vi.fn();
+    const messages: { text: string; error: boolean }[] = [];
+    const queue = runInNewContext(
+      source.slice(start, end) + "\nqueueManualJob",
+      {
+        $,
+        formsLocked: false,
+        runnerRequestBusy: false,
+        sessionToken: "session",
+        jobHistory: [],
+        api,
+        selectJob,
+        message: (_node: Element, text: string, error = false) =>
+          messages.push({ text, error }),
+        updateRunnerControls() {},
+        scheduleRunnerPoll() {},
+        refreshRunners: async () => {
+          throw new Error("Refresh unavailable");
+        },
+      },
+    ) as (input: object) => Promise<void>;
+    await queue({ type: "developer", project: "app", ticket: "APP-1" });
+    expect(api).toHaveBeenCalledOnce();
+    expect(selectJob).toHaveBeenCalledWith("existing-run");
+    expect(messages.at(-1)).toEqual({
+      text: expect.stringContaining("No duplicate run was started"),
+      error: false,
+    });
+  });
+
   it("offers one direct launch and delegates ticket choice and approval checks to the server", async () => {
     const f = fixture();
     const card = f.render(f.project);
@@ -204,6 +257,37 @@ describe("coding agent launcher", () => {
     expect(f.callbacks.onJob).not.toHaveBeenCalled();
     expect(f.actions.isBusy()).toBe(false);
   });
+
+  it.each(["queued", "running", "succeeded"])(
+    "opens existing %s work instead of showing a failed launch",
+    async (status) => {
+      const f = fixture();
+      f.job.status = status;
+      f.callbacks.api.mockResolvedValue({ job: f.job, reused: true });
+      await f.actions.run(f.project.name);
+      const card = f.render(f.project, {
+        operation: f.actions.getState(f.project.name),
+        jobs: [f.job],
+      });
+      expect(card.dataset.state).toBe(
+        status === "succeeded" ? "completed" : "active",
+      );
+      expect(
+        card.all().some((element) => element.href === "/activity?run=job-123"),
+      ).toBe(true);
+      expect(
+        card
+          .all()
+          .some((element) => element.attributes.get("role") === "alert"),
+      ).toBe(false);
+      if (status === "succeeded") {
+        expect(card.textContent).toContain("No duplicate run was started");
+        expect(card.textContent).toContain("Review existing run");
+      }
+      expect(f.callbacks.onJob).toHaveBeenCalledWith(f.job);
+      expect(f.callbacks.api).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     undefined,

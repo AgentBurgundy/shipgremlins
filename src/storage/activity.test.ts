@@ -373,6 +373,42 @@ describe("durable safe run activity", () => {
     ]);
     await store.close();
   });
+  it("preserves small usage metadata in history even when ordinary artifacts fill their quota", async () => {
+    const { store } = setup();
+    await store.ensure();
+    const png = Buffer.alloc(10 * 1024 * 1024);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png);
+    const usage = Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        source: "claude-code",
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        complete: true,
+        reportedAt: "2026-10-05T00:00:00.000Z",
+      }),
+    );
+    const files = [
+      ...Array.from({ length: 4 }, (_, index) => ({
+        name: `${index}.png`,
+        size: png.length,
+      })),
+      { name: "usage.json", size: usage.length },
+    ];
+    const docker = {
+      inspectJob: async () => ({ exists: true }),
+      logs: async () => "",
+      artifacts: async () => ({ result: {}, files }),
+      readArtifact: async (_id: string, name: string) =>
+        name === "usage.json" ? usage : png,
+    } as unknown as DockerRunners;
+    await store.captureRun(job, docker);
+    expect(await store.artifacts(job.id)).toHaveLength(5);
+    expect(await store.readArtifact(job.id, "usage.json")).toEqual(usage);
+    await store.close();
+  });
 
   it("bounds logs and refuses traversal or unexpected binary artifacts", async () => {
     const { store, fake } = setup();

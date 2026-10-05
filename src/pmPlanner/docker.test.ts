@@ -1,4 +1,8 @@
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createUsage } from "../usage/index.ts";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -84,6 +88,79 @@ function wrapper(options: {
 }
 
 describe("isolated planner diagnostic boundary", () => {
+  it("keeps whole-tree provider metrics outside the structured draft and records even measured failures", async () => {
+    const result = {
+      type: "result",
+      subtype: "success",
+      structured_output: { answer: "Useful setup guidance" },
+      usage: { input_tokens: 1, output_tokens: 2 },
+      modelUsage: {
+        "claude-sonnet-4-5": {
+          inputTokens: 10,
+          outputTokens: 20,
+          cacheReadInputTokens: 30,
+          cacheCreationInputTokens: 40,
+        },
+      },
+    };
+    const wrapped = wrapper({ result });
+    expect(wrapped.output).toMatchObject({
+      plannerOutput: { answer: "Useful setup guidance" },
+      plannerUsage: { inputTokens: 10, outputTokens: 20, complete: true },
+    });
+    const failed = wrapper({
+      result: { ...result, subtype: "error_max_turns", is_error: true },
+      code: 1,
+    });
+    expect(failed.output).toMatchObject({
+      plannerError: "turn_limit",
+      plannerUsage: { inputTokens: 10, complete: true },
+    });
+    const root = mkdtempSync(join(tmpdir(), "planner-usage-"));
+    try {
+      let current = wrapped,
+        owner = "";
+      const run: PlannerDockerRun = async (args) => {
+        if (args[0] === "create")
+          owner = args[args.indexOf("--label") + 1]!.split("=")[1]!;
+        return {
+          code: args[0] === "start" ? current.code : 0,
+          stdout:
+            args[0] === "start"
+              ? JSON.stringify(current.output)
+              : args[0] === "inspect"
+                ? owner
+                : "",
+          stderr: "",
+        };
+      };
+      const execute = createDockerPlanner({
+        root,
+        packageRoot: root,
+        run,
+        ensureImage: async () => "shipgremlins-local:0123456789abcdef",
+      });
+      await expect(
+        execute({
+          ...input(),
+          usageContext: { kind: "setup-guidance", project: "app" },
+        }),
+      ).resolves.toEqual({ answer: "Useful setup guidance" });
+      current = failed;
+      await expect(
+        execute({ ...input(), usageContext: { kind: "idea-planning" } }),
+      ).rejects.toMatchObject({ code: "turn_limit" });
+      expect(createUsage({ root }).summary()).toMatchObject({
+        totals: { totalTokens: 200 },
+        coverage: { measuredOperations: 2, unavailableOperations: 0 },
+      });
+      expect(
+        createUsage({ root }).summary({ project: "app" }).totals.totalTokens,
+      ).toBe(100);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it.each([
     [{ subtype: "error_max_turns", errors: [credential] }, "", "turn_limit"],
     [
@@ -143,7 +220,11 @@ describe("isolated planner diagnostic boundary", () => {
         structured_output: { summary: "Ready for review" },
       },
     });
-    expect(result.output).toEqual({ summary: "Ready for review" });
+    expect(result.output).toEqual({
+      plannerEnvelope: 1,
+      plannerOutput: { summary: "Ready for review" },
+      plannerUsage: null,
+    });
     const args = result.spawn.mock.calls[0] as unknown as [
       string,
       string[],

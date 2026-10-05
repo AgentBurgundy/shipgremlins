@@ -2521,7 +2521,9 @@
         : api("/api/jobs", body));
       message(
         $("job-message"),
-        `${type === "developer" && result.job?.ticket ? `${result.job.ticket} queued for coding.` : "Job queued."} Opening Activity so you can follow its progress. Automation is unchanged.`,
+        result.reused
+          ? `${result.job?.ticket || "This ticket"} ${result.job?.status === "succeeded" ? "already has completed work. Opening its existing run so you can review the changes and any draft pull request." : "is already queued or running. Opening its progress."} No duplicate run was started.`
+          : `${type === "developer" && result.job?.ticket ? `${result.job.ticket} queued for coding.` : "Job queued."} Opening Activity so you can follow its progress. Automation is unchanged.`,
       );
       if (type === "developer") {
         $("job-ticket").value = "";
@@ -2534,7 +2536,8 @@
         ];
         selectJob(result.job.id);
       }
-      await refreshRunners();
+      // Acceptance is durable even if the follow-up status request fails.
+      await refreshRunners().catch(() => {});
     } catch (error) {
       message($("job-message"), error.message, true);
       if (
@@ -5538,6 +5541,11 @@
     pages,
     isLocked: () => formsLocked || !sessionToken || restarting,
     onRestore: (target) => openDeletion(target),
+  });
+  window.createWorkspaceUsage?.($("usage"), {
+    api,
+    pages,
+    canRead: () => Boolean(sessionToken) && !restarting,
   });
   projectOperations = window.createProjectOperations({
     getCodingAction: (name) => codingActions?.getState(name),

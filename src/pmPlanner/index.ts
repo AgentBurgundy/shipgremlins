@@ -490,6 +490,7 @@ export function createPmPlanner(options: PmPlannerOptions) {
   const execute =
     options.execute ??
     createDockerPlanner({
+      root: options.root,
       packageRoot: options.packageRoot,
       run: options.dockerRun,
     });
@@ -589,6 +590,11 @@ export function createPmPlanner(options: PmPlannerOptions) {
         });
         const output = await bounded(
           execute({
+            usageContext: {
+              kind: "pm-planning",
+              project: project.config.name,
+              projectInstanceId: project.config.instanceId,
+            },
             credential,
             prompt,
             system: SYSTEM,
