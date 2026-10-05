@@ -1205,7 +1205,10 @@
         overview.replaceChildren();
         for (const project of globalProjects) {
           const card = el("article", "workspace-project-summary"),
-            identity = el("div");
+            identity = el("div"),
+            status = getProject(project.project),
+            pmCount =
+              status?.areas?.length ?? project.knowledge?.areas?.length ?? 0;
           identity.append(
             anchor(
               project.project,
@@ -1225,16 +1228,11 @@
               project.inbox?.length ? "has-reviews" : "",
               `${project.inbox?.length || 0} to review`,
             ),
-            el(
-              "span",
-              "",
-              `${project.knowledge?.areas?.length || 0} ${project.knowledge?.areas?.length === 1 ? "PM" : "PMs"}`,
-            ),
+            el("span", "", `${pmCount} ${pmCount === 1 ? "PM" : "PMs"}`),
             anchor("Open project →", route(project.project)),
           );
           card.append(identity, detail);
-          const status = getProject(project.project);
-          if (status)
+          if (status && (status.foundation?.needed || status.areas?.length))
             card.append(
               status.foundation?.needed
                 ? window.renderFoundationLauncher(status)

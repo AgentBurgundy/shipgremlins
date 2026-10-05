@@ -76,7 +76,7 @@
         ],
         repository: [
           "Which app are we joining?",
-          "Choose an existing repository your crew can work in.",
+          "Choose a repository with application code to explore. Starting from an empty repository? Go back and choose “I have an idea” to build a foundation in a new repository.",
         ],
         visibility: [
           "Who can see your code?",
@@ -105,7 +105,7 @@
       [
         "existing",
         "I have an app",
-        "Bring your repository. Give your development a crew.",
+        "Bring an app with code. Adopt a gremlin to help it grow.",
         "↗",
       ],
     ]) {
@@ -315,7 +315,7 @@
         summary.append(node("dt", key), node("dd", value));
       expectation.textContent = isIdea()
         ? "We’ll create your repository, add the product brief, and save the crew. Next, review and start the foundation build. We'll set up Linear and check your connections when you do. PM schedules stay paused."
-        : "A Setup Gremlin will inspect your app when source and Claude access are ready. Next you’ll choose its environment and shape its crew. Workflow, commands, and Linear can be adjusted in project settings.";
+        : "Next, adopt your first gremlin and give it a useful job. A Setup Gremlin may inspect the code when source and Claude access are ready. You’ll set up testing when a mission needs it.";
     }
     function update() {
       const ready = crew()?.ready();

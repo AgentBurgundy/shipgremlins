@@ -169,6 +169,7 @@
   let pmCreating = false;
   let pmPlanning = false;
   let pmDraft = null;
+  let pmAdoption = null;
   const pmCreateDialog = $("pm-create-drawer");
   document.body.append(pmCreateDialog);
   let pmCreateTrigger = null;
@@ -537,45 +538,9 @@
         ? `${running} running · ${queued} queued`
         : "Current job status has not loaded.",
     );
-    text("setup-title", "Workspace status");
-    const setup = $("setup-title")?.closest(".setup-status");
-    if (setup) {
-      setup.hidden = Boolean(
-        projects.length &&
-        verified.length &&
-        currentStatus?.connections?.length,
-      );
-      setup.setAttribute("aria-label", "Workspace status");
-      const eyebrow = setup.querySelector(".eyebrow");
-      if (eyebrow) eyebrow.textContent = "YOUR WORKSPACE";
-    }
-    if (!currentStatus) return;
-    text(
-      "welcome-title",
-      projects.length
-        ? "Your crew, at a glance."
-        : "Meet your new product crew.",
-    );
-    text(
-      "welcome-description",
-      projects.length
-        ? "See your projects, PM mandates, and current jobs. Launch a gremlin, then follow its work in Activity."
-        : "Connect your tools. Add your app. PM Gremlins find the gaps. Coding Gremlins build the fixes.",
-    );
-    const action = $("overview-primary-action");
-    if (action) {
-      action.href = projects.length
-        ? `/projects/${encodeURIComponent(projects[0].name)}`
-        : "/connections#source-control";
-      const arrow = element("span", "", "↗");
-      arrow.setAttribute("aria-hidden", "true");
-      action.replaceChildren(
-        document.createTextNode(
-          projects.length ? "Open your project " : "Set up your crew ",
-        ),
-        arrow,
-      );
-    }
+    window.renderFirstRunOverview?.(currentStatus, runnerStatus, {
+      locked: formsLocked,
+    });
   }
   function renderStatus(status) {
     currentStatus = status;
@@ -1004,6 +969,7 @@
   if (sessionToken) void ideaCrew.restore();
   $("project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    let adoptionProject = "";
     const fromIdea = $("project-start").value === "idea";
     if (fromIdea && !ideaCrew.ready()) {
       message(
@@ -1114,7 +1080,7 @@
       linearModeEdited = false;
       renderProjectProvider();
       renderLinearSetup();
-      await refreshRepositories();
+      await refreshRepositories().catch(() => {});
       const created = Array.isArray(result.result?.created)
         ? result.result.created.length
         : null;
@@ -1122,15 +1088,21 @@
         $("project-message"),
         fromIdea
           ? `${result.message} ${linearResultMessage(result.linear)}`
-          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, choose and test the environment for your crew.`,
+          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, adopt a PM Gremlin and choose its job.`,
         result.linear?.status === "error",
       );
       try {
         await refreshStatus();
         await refreshConfigFiles();
         pages.navigate(
-          `/projects/${encodeURIComponent(data.project)}?tab=environment`,
+          `/projects/${encodeURIComponent(data.project)}${fromIdea ? "?tab=environment" : ""}`,
         );
+        if (
+          !fromIdea &&
+          !currentStatus?.projects?.find((item) => item.name === data.project)
+            ?.areas?.length
+        )
+          adoptionProject = data.project;
       } catch {
         message(
           $("global-message"),
@@ -1144,6 +1116,7 @@
       lockForms(!sessionToken);
       restoreButton("add-project", "Add project", "+");
       renderStartingPoint();
+      if (adoptionProject) openPmCreation(adoptionProject);
     }
   });
 
@@ -3356,6 +3329,8 @@
       select.append(new Option("Add an app first", ""));
     else if ([...select.options].some((option) => option.value === previous))
       select.value = previous;
+    if (pmCreationProject && pmCreationProject !== select.value)
+      changePmCreationProject(select.value);
     renderLinearSetup();
   }
   function renderLinearSetup() {
@@ -3433,6 +3408,7 @@
       project?.linear?.teamId
         ? "Creates a Linear project in this app’s team, or uses the project you select."
         : "The PM is saved locally first. Its first run sets up missing Linear mappings when a connection is available.";
+    pmAdoption?.setBusy(pmCreating || pmPlanning);
   }
   async function refreshLinearResources() {
     if (!sessionToken) return;
@@ -3501,26 +3477,74 @@
     refreshLinearResources,
   );
   const pmEditedFields = new Set();
+  let pmValidationField = null;
+  const pmCreationDrafts = new Map();
+  let pmCreationProject = "";
+  let pmGeneratedValues = null;
+  function changePmCreationProject(project) {
+    if (pmCreationProject === project) return;
+    if (pmCreationProject && !pmAdoption?.accepted)
+      pmCreationDrafts.set(pmCreationProject, {
+        ...readPmDraft(),
+        keyEdited: pmKeyEdited,
+        mixpanelReport: $("pm-mixpanel-report").value,
+        linearProject: $("pm-linear-project").value,
+        generated: pmGeneratedValues,
+      });
+    const saved = pmCreationDrafts.get(project);
+    for (const [id, key] of Object.entries(pmInputKeys))
+      $(id).value =
+        saved?.[key] ??
+        ({ schedule: "0 13 * * 1-5", metric: "/", wipLimit: "3" }[key] || "");
+    $("pm-mandate").value = saved?.mandate || "";
+    $("pm-mixpanel-report").value = saved?.mixpanelReport || "";
+    $("pm-linear-project").value = saved?.linearProject || "";
+    pmCharter.fill(saved?.charter || {});
+    pmEditedFields.clear();
+    for (const key of saved?.editedFields || []) pmEditedFields.add(key);
+    pmKeyEdited = saved?.keyEdited || false;
+    pmGeneratedValues = saved?.generated || null;
+    pmCreationProject = project;
+    $("pm-project").value = project;
+    pmDraft?.reset();
+    pmAdoption?.contextChanged();
+    message($("pm-create-message"), "");
+  }
   function openPmCreation(project = "", trigger = document.activeElement) {
     if (formsLocked || pmCreating) return;
-    if (project && $("pm-project").value !== project) {
-      $("pm-project").value = project;
-      pmDraft?.reset();
+    if (!currentStatus?.projects?.length) {
+      pages.navigate("/projects#new-project-drawer");
+      return;
     }
+    changePmCreationProject(project || $("pm-project").value);
     pmCreateTrigger = trigger;
     pendingPmCreate = false;
     if (!pmCreateDialog.open) pmCreateDialog.showModal();
     renderLinearSetup();
     updatePmCreationReview();
-    window.revealDashboardSetting?.($("pm-mandate"));
-    $("pm-mandate").focus();
+    if (pmAdoption) pmAdoption.open({ preselected: Boolean(project) });
+    else $("pm-mandate").focus();
     refreshLinearResources();
   }
+  window.openGremlinAdoption = openPmCreation;
   function closePmCreation() {
     if (pmCreating) return;
     pmCreateDialog.close();
-    if (pmCreateTrigger?.isConnected)
-      pmCreateTrigger.focus({ preventScroll: true });
+    const visible = (element) =>
+      element?.isConnected &&
+      element.getClientRects().length &&
+      !element.disabled;
+    const fallback =
+      [...document.querySelectorAll("[data-create-pm-project]")].find(
+        (element) =>
+          element.dataset.createPmProject === $("pm-project").value &&
+          visible(element),
+      ) || [...document.querySelectorAll("main h1, main h2")].find(visible);
+    const target = visible(pmCreateTrigger) ? pmCreateTrigger : fallback;
+    if (target) {
+      if (target.matches("h1, h2")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
   }
   $("close-pm-create").addEventListener("click", closePmCreation);
   pmCreateDialog.addEventListener("cancel", (event) => {
@@ -3550,6 +3574,10 @@
   $("pm-create-form").addEventListener(
     "input",
     (event) => {
+      if (pmValidationField === event.target) {
+        pmValidationField = null;
+        message($("pm-create-message"), "");
+      }
       const key = pmInputKeys[event.target.id];
       if (key) pmEditedFields.add(key);
       updatePmCreationReview();
@@ -3569,8 +3597,9 @@
       ? `Area label: pm:${$("pm-key").value}`
       : "The area label is generated from this ID.";
     $("pm-creation-readiness").textContent = missing.length
-      ? `Still needed: ${missing.join(", ")}. Choose an app and write the mandate; Fill with AI can complete the PM details.`
-      : "Required details are filled. Review your setup, then create the PM. It stays paused; no run starts unless you select discovery below.";
+      ? `Still needed: ${missing.join(", ")}. AI can help turn your goal into a working brief.`
+      : "Their brief is ready to review. Adoption saves it with automation off.";
+    pmAdoption?.refresh();
   }
   const readPmDraft = () => ({
     editedFields: [...pmEditedFields].sort(),
@@ -3592,16 +3621,15 @@
       pmPlanning = busy;
       renderLinearSetup();
     },
-    onError: (error) =>
-      message(
-        $("pm-create-message"),
-        typeof error === "string" ? error : error.message,
-        true,
-      ),
+    onError: () => message($("pm-create-message"), ""),
     onApply: (draft, snapshot) => {
       if (JSON.stringify(snapshot) !== JSON.stringify(readPmDraft()))
         return false;
-      const { values, kept } = window.mergePmDraft(snapshot, draft);
+      const { values, kept } = window.mergePmDraft(
+        snapshot,
+        draft,
+        pmGeneratedValues,
+      );
       for (const [key, id] of Object.entries({
         name: "pm-name",
         key: "pm-key",
@@ -3615,18 +3643,86 @@
           ? values[key].join("\n")
           : String(values[key]);
       pmCharter.fill(values.charter);
+      pmGeneratedValues = readPmDraft();
+      for (const key of kept) {
+        if (key.startsWith("charter."))
+          delete pmGeneratedValues.charter[key.slice(8)];
+        else delete pmGeneratedValues[key];
+      }
       pmKeyEdited = true;
       message($("pm-create-message"), "");
       updatePmCreationReview();
-      window.revealDashboardSetting?.($("pm-name"));
-      $("pm-name").focus();
+      if (pmAdoption) pmAdoption.review();
+      else $("pm-name").focus();
       return {
-        message: `Draft filled.${kept.length ? " Your edits were kept." : ""} Review the brief, then Create PM.`,
+        message: `Brief drafted.${kept.length ? " Your edits were kept." : ""} Review your gremlin before adoption.`,
       };
     },
   });
+  pmAdoption = window.createGremlinAdoption?.({
+    dialog: pmCreateDialog,
+    getInput: readPmDraft,
+    getProject: (name) =>
+      currentStatus?.projects?.find((project) => project.name === name),
+    getJobs: mergedJobs,
+    isLocked: () =>
+      formsLocked ||
+      !sessionToken ||
+      restarting ||
+      !currentStatus?.projects?.length,
+    onDraft: () => {
+      message($("pm-create-message"), "");
+      return pmDraft.generate();
+    },
+    onRefreshReadiness: async () => {
+      await refreshStatus();
+    },
+    onOpenHome: (adopted) => {
+      closePmCreation();
+      pages.navigate(
+        `/projects/${encodeURIComponent(adopted.project)}?pm=${encodeURIComponent(adopted.key)}`,
+      );
+    },
+    onFirstTask: async (adopted, trigger) => {
+      const project = currentStatus?.projects?.find(
+        (item) => item.name === adopted.project,
+      );
+      if (!project?.areas?.some((area) => area.key === adopted.key)) {
+        await refreshStatus();
+        return;
+      }
+      closePmCreation();
+      if (project.foundation?.needed) {
+        pages.navigate(
+          `/projects/${encodeURIComponent(adopted.project)}?tab=environment`,
+        );
+        return;
+      }
+      const active = mergedJobs().find(
+        (job) =>
+          job.type === "pm" &&
+          job.project === adopted.project &&
+          job.area === adopted.key &&
+          (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
+          ["queued", "running"].includes(job.status),
+      );
+      if (active) {
+        selectJob(active.id);
+        return;
+      }
+      pages.navigate(
+        `/projects/${encodeURIComponent(adopted.project)}?pm=${encodeURIComponent(adopted.key)}&tab=discovery`,
+      );
+      const readiness = project.readiness?.areas?.find(
+        (area) => area.key === adopted.key,
+      )?.discovery;
+      if (readiness?.canRun)
+        await projectWorkspace.discover(adopted.project, adopted.key, trigger);
+    },
+  });
+  window.gremlinAdoption = pmAdoption;
   $("pm-project").addEventListener("change", () => {
-    pmDraft.reset();
+    changePmCreationProject($("pm-project").value);
     refreshLinearResources();
     updatePmCreationReview();
   });
@@ -3757,6 +3853,7 @@
   $("pm-create-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (pmCreating || pmPlanning || formsLocked) return;
+    if (pmAdoption && !pmAdoption.prepareSubmit()) return;
     const project = $("pm-project").value;
     const input = {
       key: $("pm-key").value.trim(),
@@ -3776,6 +3873,9 @@
       return;
     }
     if (input.schedule.split(/\s+/).length !== 5) {
+      pmValidationField = $("pm-schedule");
+      pmAdoption?.reveal($("pm-schedule"));
+      $("pm-schedule").focus();
       message(
         $("pm-create-message"),
         "Use a five-field UTC cron schedule, such as 0 13 * * 1-5.",
@@ -3798,12 +3898,14 @@
     if ($("pm-linear-project").value)
       input.linearProjectId = $("pm-linear-project").value;
     pmCreating = true;
+    pmValidationField = null;
     renderLinearSetup();
-    $("create-pm").textContent = "Creating PM…";
+    $("create-pm").textContent = "Adopting…";
     message(
       $("pm-create-message"),
       "Saving the mandate and setting up its Linear project when available…",
     );
+    let accepted = false;
     try {
       const result = await api(
         `/api/projects/${encodeURIComponent(project)}/areas`,
@@ -3811,47 +3913,76 @@
         "POST",
         90000,
       );
-      const startDiscovery = $("pm-discover-after-create").checked;
+      accepted = true;
+      pmAdoption?.adopted({
+        ...input,
+        project,
+        setupMessage: ["needs-connection", "skipped"].includes(
+          result.linear?.status,
+        )
+          ? "Linear can be connected when you’re ready to propose work."
+          : linearResultMessage(result.linear),
+      });
       $("pm-create-form").reset();
       pmCharter.reset();
       pmDraft?.reset();
       pmKeyEdited = false;
       pmEditedFields.clear();
+      pmCreationDrafts.delete(project);
+      pmGeneratedValues = null;
       updatePmCreationReview();
       $("pm-project").value = project;
       message(
         $("pm-create-message"),
-        `${input.name} is saved with automation off. ${linearResultMessage(result.linear)} Choose Run now to try it, or turn Automation on for scheduled work.`,
+        `${input.name} is adopted with automation off. ${linearResultMessage(result.linear)}`,
         result.linear?.status === "error",
       );
-      await refreshStatus();
-      await refreshConfigFiles();
-      await refreshLinearResources();
       areaActions.set(`${project}/${input.key}`, {
         message: `${input.name} is ready to set up. ${linearResultMessage(result.linear)}`,
         error: result.linear?.status === "error",
       });
-      pmCreateDialog.close();
-      pages.navigate(
-        `/projects/${encodeURIComponent(project)}?pm=${encodeURIComponent(input.key)}${startDiscovery ? "&tab=discovery" : ""}`,
-      );
-      if (startDiscovery)
-        await projectWorkspace.discover(project, input.key).catch(() => {});
+      const refreshed = await Promise.allSettled([
+        refreshStatus(),
+        refreshConfigFiles(),
+        refreshLinearResources(),
+      ]);
+      if (refreshed.some((result) => result.status === "rejected"))
+        pmAdoption?.setWelcomeWarning(
+          `${input.name} is adopted. Some setup information could not refresh. Refresh readiness before starting their first task.`,
+        );
+      if (!pmAdoption) {
+        pmCreateDialog.close();
+        pages.navigate(
+          `/projects/${encodeURIComponent(project)}?pm=${encodeURIComponent(input.key)}`,
+        );
+      }
     } catch (error) {
-      message(
-        $("pm-create-message"),
-        `${error.message} Your draft is still here.`,
-        true,
-      );
+      if (accepted)
+        pmAdoption?.setWelcomeWarning(
+          `${input.name} is adopted. ${error.message} Refresh readiness to continue.`,
+        );
+      else
+        message(
+          $("pm-create-message"),
+          `${error.message} Your draft is still here.`,
+          true,
+        );
     } finally {
       pmCreating = false;
       renderLinearSetup();
-      $("create-pm").textContent = "Create PM";
+      pmAdoption?.refresh();
+      if (accepted) pmAdoption?.focusWelcome();
     }
   });
   $("pm-create-form").addEventListener(
     "invalid",
     (event) => {
+      const first = $("pm-create-form").querySelector(
+        ":invalid:not(fieldset):not(form)",
+      );
+      if (first && first !== event.target) return;
+      pmValidationField = event.target;
+      pmAdoption?.reveal(event.target);
       for (
         let section = event.target.closest("details");
         section;

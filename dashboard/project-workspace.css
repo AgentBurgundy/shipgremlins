@@ -277,6 +277,53 @@ body:has(.pm-create-dialog[open]) {
   display: grid;
   gap: 10px;
 }
+.adoption-project-empty {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 32px;
+  border: 1px solid #dce6d8;
+  border-radius: 20px;
+  background: linear-gradient(120deg, #f0f5e9, #fff 75%);
+  text-align: left;
+}
+.adoption-project-empty > img {
+  flex: 0 0 132px;
+  width: 132px;
+  height: 148px;
+  object-fit: contain;
+}
+.adoption-project-empty > div {
+  min-width: 0;
+  max-width: 500px;
+}
+.adoption-project-empty h3 {
+  margin: 10px 0;
+  font-size: 25px;
+  letter-spacing: -0.7px;
+}
+.adoption-project-empty p {
+  font-size: 14px;
+  line-height: 1.75;
+  color: #607167;
+  margin: 0 0 20px;
+}
+@media (max-width: 560px) {
+  .adoption-project-empty {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 22px;
+  }
+  .adoption-project-empty > img {
+    flex-basis: auto;
+    width: 100px;
+    height: 112px;
+  }
+  .adoption-project-empty h3 {
+    font-size: 22px;
+  }
+}
 .project-workspace .project-pm-row {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr) auto;

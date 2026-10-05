@@ -80,6 +80,7 @@ function fixture(api: (...args: unknown[]) => unknown = async () => plan()) {
     mergePmDraft: (
       input: unknown,
       draft: unknown,
+      previousGenerated?: unknown,
     ) => {
       values: ReturnType<typeof plan>["draft"];
       kept: string[];
@@ -90,6 +91,7 @@ function fixture(api: (...args: unknown[]) => unknown = async () => plan()) {
       options: object,
     ) => {
       refresh: () => void;
+      generate: () => Promise<void>;
       reset: () => void;
       isBusy: () => boolean;
       hasDraft: () => boolean;
@@ -153,6 +155,68 @@ function deferred() {
 }
 
 describe("PM draft suggestions", () => {
+  it("refreshes untouched AI suggestions for a changed mission while retaining human edits", () => {
+    const f = fixture();
+    const previous = {
+      ...input(),
+      ...plan().draft,
+      paths: "src/import/",
+      sharedTouchpoints: "src/shared/",
+      wipLimit: "1",
+    };
+    const current = {
+      ...previous,
+      mandate: "Focus on export recovery instead.",
+      name: "Moss",
+      editedFields: ["name"],
+      charter: {
+        ...previous.charter,
+        guardrails: ["Keep my synthetic-only rule"],
+      },
+    };
+    const next = {
+      ...plan().draft,
+      name: "Export quality",
+      key: "exports",
+      paths: ["src/export/"],
+      charter: { ...plan().draft.charter, goal: "Reduce failed exports." },
+    };
+    const result = f.merge(current, next, previous);
+    expect(result.values.name).toBe("Moss");
+    expect(result.values.key).toBe("exports");
+    expect(result.values.paths).toEqual(["src/export/"]);
+    expect(result.values.charter.goal).toBe("Reduce failed exports.");
+    expect(result.values.charter.guardrails).toEqual([
+      "Keep my synthetic-only rule",
+    ]);
+    expect(current.mandate).toBe("Focus on export recovery instead.");
+  });
+
+  it("does not discard fields authored before the first AI plan when regenerating", () => {
+    const f = fixture();
+    const current = {
+      ...input(),
+      name: "Moss",
+      charter: { goal: "My own product direction" },
+    };
+    const generated = {
+      key: "imports",
+      charter: { ambition: "An AI-generated ambition" },
+    };
+    const result = f.merge(current, plan().draft, generated);
+    expect(result.values.name).toBe("Moss");
+    expect(result.values.charter.goal).toBe("My own product direction");
+  });
+  it("lets adoption invoke the same guarded draft action without a duplicate request", async () => {
+    const request = deferred();
+    const f = fixture(() => request.promise);
+    const first = f.helper.generate();
+    await f.helper.generate();
+    expect(f.requests).toHaveBeenCalledTimes(1);
+    request.resolve(plan());
+    await first;
+    expect(f.apply).toHaveBeenCalledWith(plan().draft, input());
+  });
   it("fills the complete setup from one action and never creates the PM", async () => {
     const f = fixture();
     expect(f.requests).not.toHaveBeenCalled();

@@ -22,7 +22,7 @@
       "small-button setup-action",
       label ||
         ((code === "mapping" || code === "mandate") && !project.areas?.length
-          ? "Create your first PM"
+          ? "Adopt your first gremlin"
           : labels[code]) ||
         "Review setup",
     );
@@ -215,7 +215,7 @@
     const root = el("section", "project-crew");
     const heading = el("div", "project-crew-heading");
     heading.append(el("h3", "", "PM Gremlins"));
-    const add = el("button", "small-button", "+ Add PM");
+    const add = el("button", "small-button", "Adopt a gremlin");
     add.type = "button";
     add.dataset.createPmProject = project.name;
     add.disabled = locked;
@@ -227,14 +227,15 @@
         el(
           "p",
           "setup-help",
-          "Give your first PM a mandate. It starts paused so you can review its setup.",
+          "Adopt a PM Gremlin and give it a focused job. You choose its first assignment when it is ready.",
         ),
       );
     for (const area of areas) {
       const operation = areaActions.get(`${project.name}/${area.key}`);
       const card = el("article", "project-pm-row");
       const image = el("img", "");
-      image.src = "/assets/gremlin-security.webp";
+      image.src =
+        window.gremlinIdentity?.(area)?.image || "/assets/gremlin.webp";
       image.alt = "";
       image.width = image.height = 48;
       image.loading = "lazy";

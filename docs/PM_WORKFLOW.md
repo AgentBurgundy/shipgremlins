@@ -7,21 +7,18 @@ for repository verification.
 
 ## The flow at a glance
 
-Project onboarding and a PM's own discovery are separate steps. The Setup Gremlin recommends how to run the application; PM discovery learns one mandate's part of that codebase.
+Project onboarding and a PM’s own discovery are separate steps. Existing apps can adopt a PM and begin repository discovery before browser setup. The Setup Gremlin recommends how to run the application; PM discovery learns one mandate’s part of that codebase. A new idea builds its reviewed foundation before either investigates source.
 
 ```mermaid
 flowchart TD
-  Repo[Connect repository] --> Setup[Setup Gremlin analyzes source]
-  Setup --> Strategy{Choose how to test}
-  Strategy --> Hosted[Existing hosted staging]
-  Strategy --> Docker[Disposable Docker app]
-  Strategy --> Code[Repository checks only]
-  Hosted --> Access[Test browser access and configured logins]
-  Docker --> Access
-  Access --> PM[Create PM with mandate and boundaries]
-  Code --> PM
+  Repo[Connect existing repository] --> PM[Adopt PM with a goal and boundaries]
   PM --> Discovery[Optional read-only PM discovery]
   Discovery --> Memory[Code map, features, ranked queue and memory]
+  Repo --> Setup[Setup Gremlin recommends how to test]
+  Setup --> Strategy{Need browser testing?}
+  Strategy -->|No| Code[Repository checks]
+  Strategy -->|Yes| Hosted[Hosted staging or disposable Docker app]
+  Hosted --> Access[Test browser access and configured logins]
 ```
 
 ```mermaid
@@ -93,7 +90,12 @@ revision guard. The **Product brief**, **Discovery**, **Features**, **Ranked que
 **Memory** and **Activity** tabs keep each PM's context together. A direct discovery
 link is `/projects/<project>?pm=<area>&tab=discovery`.
 
-**Run discovery** queues a codebase investigation. **Run now** queues one normal
+The adoption welcome screen offers **Explore the codebase** for the first
+Discovery mission, or **Prepare first mission** when its setup is incomplete.
+Discovery needs source access, Claude Code, and a ready worker; no Linear or
+browser environment is required. Fresh ideas offer **Build the foundation** first.
+
+**Run discovery** queues a later codebase investigation. **Run now** queues one normal
 patrol without enabling automation. The **Automation** switch controls scheduled
 patrols and automatic pickup of approved Coding tickets. Turning it off does not
 cancel work already running. Each action shows its own missing setup requirements
@@ -154,12 +156,13 @@ Review a proposed milestone before approving its Linear ticket. **Start coding**
 then finds eligible approved work on your runners. Exploration itself does not
 approve the idea, start implementation, contact customers, or enable automation.
 
-On the creation form, **Fill with AI** fills blank operational settings and all
-eight product-brief fields from the mandate, repository paths, and existing PM
-ownership. It preserves the original mandate and user-entered values; review
-the suggestions before choosing **Create PM**. Suggested users, priorities, and
-measurement still need owner confirmation. This form assistant does not replace
-discovery of the checked-out repository or create learned knowledge.
+During adoption, **Meet my gremlin** proposes a name, product brief, and
+operational settings from your goal, repository paths, and existing PM ownership.
+The original goal stays its mandate. Use **Review full brief** and **Advanced
+settings** before choosing **Adopt [name]**. Suggested users, priorities, and
+measurement still need owner confirmation. Drafting does not replace discovery
+of the checked-out repository or create learned knowledge. Adoption saves the
+PM with automation paused; starting an investigation is a separate action.
 
 ## Discover before patrolling
 

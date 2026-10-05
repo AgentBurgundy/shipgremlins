@@ -17,6 +17,32 @@ This installs from the official GitHub repository; an npm registry package is no
 
 **On a homelab server, use `gremlins setup --lan`.** Open a printed session link from your laptop or phone. Workers, configuration, and connections stay on the server. See [server use](#server-use).
 
+## Your first adoption
+
+The browser that opens is your private dashboard. Start with **Projects → Add
+project**, then choose the path that fits your app:
+
+1. **Give your gremlin a home.** For an existing app, connect GitHub or GitLab and
+   choose its repository. For a new idea, describe the first useful version and
+   review the proposed crew. New repositories are private unless you explicitly
+   choose public.
+2. **Choose its job.** On an existing project, choose **Adopt a PM Gremlin**. Explain
+   who it helps, what should get better, and what it should leave alone. Review
+   its proposed name and product brief with **Meet my gremlin** before adopting. One focused gremlin is
+   a good start; you can grow the crew later.
+3. **Give it a first assignment.** Choose **Explore the codebase** to run
+   **Discovery**, or **Prepare first mission** if source access, Claude Code, or
+   a ready worker is missing. Linear and a browser environment are not required. A new idea instead
+   starts with the reviewed **foundation build**: a Coding Gremlin creates the
+   initial app and tests. Review and merge that work before asking PMs to explore.
+
+Adoption saves the PM and its brief. It does not start a job or turn on automation.
+Connect only what the next assignment needs. Linear is needed for proposals and
+approved coding work; a browser environment is needed for a runnable app's browser
+walkthroughs. Slack and product signals can wait.
+
+[Build from an idea →](IDEA_TO_APP.md) · [Prepare a browser environment →](PROJECT_ONBOARDING.md)
+
 ## Your setup dashboard
 
 The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your gremlins**,
@@ -24,11 +50,10 @@ The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your g
 browser Back/Forward and reload. Moving between pages keeps unfinished forms in
 memory; save them before closing or restarting the dashboard.
 
-Projects appear individually in the sidebar. The project page leads with your
-PM crew: each row has **Run now** and an **Automation** switch. Coding Gremlins and
-recent runs follow; repository and setup details are collapsed below. Open a PM
-for its brief, Learning, Features, Queue, Memory, and run history. **Learning**
-contains the discovery controls.
+Projects appear individually in the sidebar. Each project leads with its next
+useful action and crew; focused pages keep Environment, Review, Knowledge,
+Delivery, and Run limits separate. Open a PM for its brief, Learning, Features,
+Queue, Memory, and run history. **Learning** contains the discovery controls.
 
 Overview shows your projects, PM mandates, verified workers, and active jobs.
 Connections has category tabs; mobile navigation opens from the menu button.
@@ -49,11 +74,11 @@ dashboard checks periodically for new releases; updates are never installed
 automatically.
 
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Claude Code in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
-2. In **Projects → Add project**, choose **I have an idea**. Answer one question at a time, describe a product, review its proposed PMs, and create a new repository and crew together. Repositories are private by default; public access requires an explicit choice. The repository gets a README; PMs start paused and coding requires approved tickets. See [idea onboarding](IDEA_TO_APP.md). For an existing app, choose **I have an app**, add the **app repository** and a short local ID such as `my-app`. The dashboard opens **Environment** and starts source analysis when source/Claude access is available. This step creates no PM and needs no Linear mapping. Connect or reuse a Linear team later when creating your PM crew. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
-3. Choose **hosted staging** or a **disposable Docker app**, review missing inputs and any proposed setup PR files, then **Test environment** in Chromium. Saved targets can use Railway, Vercel, Cloud Run, or a direct URL. Docker supports an existing image or repository Dockerfile with optional PostgreSQL/Redis. Keep actual test-account and app-input values in Connections. Repository-only projects can skip browser setup. See [project onboarding](PROJECT_ONBOARDING.md) and review install/test commands in **Edit settings**.
+2. In **Projects → Add project**, choose **I have an idea** or **I have an app**. Idea setup proposes a crew and creates a private-by-default repository. Its next action is the reviewed foundation build, before environment setup or repository analysis. Existing apps connect their repository and can adopt a PM immediately; adding the repository itself creates no PM. Source access and Claude Code may trigger a bounded Setup Gremlin analysis on import, but no PM or coding job starts and automation stays off. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
+3. **When browser testing is useful**, open Environment. Choose **hosted staging** or a **disposable Docker app**, review proposed settings, then **Test environment**. Repository-only projects can skip this step. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
 4. Choose **Create local worker**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
-5. Give the PM a mandate and optional structured **Product brief**. Choose **Discovery** to build its codebase context using source access, Claude Code, and a ready worker. Then follow the project's remaining setup steps and choose **Verify connections**, or run `gremlins doctor my-app`. Check the PM's Linear mapping and ownership. New PMs start with automation paused; you do not need to edit JSON to try one.
-6. Choose **Run now** on the PM card or workspace for one PM investigation. Missing setup opens that PM's checklist with direct remedies. Inspect Activity and its evidence. When ready, turn **Automation** on for recurring patrols and automatic pickup of approved tickets. A manual Coding run requires an open, approved ticket in the matching Linear project; approval is checked again before launch, even when automation is off.
+5. Adopt a PM with a focused **Product brief**. When application code exists, choose **Discovery** to build its context. New PMs start with automation paused; you do not need to edit JSON or configure hosting to try repository discovery.
+6. Choose **Run now** for one investigation. The action explains missing prerequisites and can complete missing Linear setup and required connection verification using your selected accounts. It preserves existing mappings and repairs missing PM labels. Inspect Activity and its evidence. Choose **Automation** only when you want recurring patrols and automatic pickup of approved tickets. Manual Coding can find the next ready approved ticket without turning automation on.
 
 Approval uses `pm-approved`; proposals use `pm-proposal`. Area labels remain `pm:core`, `pm:security`, and similar. Project Review lets you inspect a proposal and explicitly approve its bounded scope. The controller removes the proposal hold and re-checks the current scope before approving. After configured checks, the worker publishes its unique branch as a **draft** PR/MR. Repository-only projects leave merges to you. Explicit promotion projects target their integration branch and can advance eligible fixes for owning-PM verification; see [selective delivery](DELIVERY_WORKFLOW.md).
 
@@ -106,10 +131,10 @@ for eligible capacity. Turning automation off remains possible when connections
 need repair. Configured product-signal connections are checked during project
 verification; remove an unwanted configuration rather than leaving it broken.
 
-### Fill a PM draft with AI
+### Meet a PM before adopting it
 
-Choose **+ PM** on your project to open a focused creation dialog. Describe the
-investigation in your own words. **Fill with AI** combines that brief with a bounded view of the
+Choose **Adopt a PM Gremlin** on your project. Describe what it should take care
+of and choose **Meet my gremlin**, or **Write the brief myself**. AI combines that goal with a bounded view of the
 repository's paths and existing PM ownership to suggest a name, mandate ID,
 ownership paths, shared touchpoints, metric, UTC schedule, and WIP limit. It also
 fills all eight **Product brief** fields: ambition, goal, measurement, users,
@@ -119,7 +144,8 @@ especially when the repository view was truncated or a business assumption needs
 confirmation. Success metrics are proposals, not invented baselines or verified
 telemetry. Shared project permission tiers are unchanged.
 
-Product brief, ownership, and schedule settings expand when you need them. Close
+The flow introduces the gremlin before its detailed controls. Review the product
+brief, with ownership and schedule available when you need them. Close
 or Escape keeps the unfinished draft for your next visit during the same dashboard
 session. Saving opens the new PM's workspace; automation starts off.
 
@@ -128,12 +154,15 @@ Docker container on your controller. The first request may need to build the
 worker image. It reads repository paths, not source-file contents. The first PM
 patrol follows the configuration you saved; it does not fill or rewrite ownership.
 
-**Fill with AI** copies suggestions into blank fields and default controls in one
+AI fills suggestions into blank fields and default controls in one
 step, preserving the original mandate and values you already entered. Changes to
 the selected project or form while generation is pending make the response stale;
 your newer edits win. It does not save configuration, create Linear resources,
-enable automation, or start work. Review the filled form and choose **Create PM**
-separately. Provider selections, credentials, and optional Mixpanel report IDs
+enable automation, or start work. Review the filled form and adopt the named
+gremlin separately. The welcome screen offers **Explore the codebase** for
+Discovery, or **Prepare first mission** when its setup is incomplete. Discovery
+needs source access, Claude Code, and a ready worker; no Linear or browser
+environment is required. Fresh ideas offer **Build the foundation** first. Provider selections, credentials, and optional Mixpanel report IDs
 remain yours to configure; AI never invents them. You can always fill in the form
 manually.
 

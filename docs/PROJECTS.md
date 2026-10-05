@@ -17,22 +17,27 @@ project ready for a new crew. [Removal and recovery details](RESOURCE_LIFECYCLE.
 
 ## Get one PM ready, then automate
 
-New projects first open **Environment**. A Setup Gremlin reads source and recommends existing hosted staging or a disposable Docker application. You can review proposed setup files as a draft PR/MR, configure named test accounts, and test access in Chromium before creating a PM. Analysis and successful verification are separate states. See [project onboarding](PROJECT_ONBOARDING.md).
+A new idea starts with a reviewed **foundation build**, before PM analysis or browser setup. An existing app can adopt a PM and use repository discovery immediately. Importing its repository may start Setup Gremlin analysis when source access and Claude Code are ready; this does not start a PM or coding job. Open **Environment** when browser work is useful to review hosted staging or a disposable Docker application, proposed setup files, and test accounts. Analysis and successful verification are separate states. See [project onboarding](PROJECT_ONBOARDING.md).
 
 Start from the selected project's guided setup actions. Source control selects
 the app repository; Connections supplies Claude Code and the chosen Linear
 account; Edit settings holds commands, optional browser targets, and Linear
-mappings. Verify the project, then create or resume a verified Docker worker.
+mappings. Create or resume a ready Docker worker; the requested action explains
+any required verification.
 Each action addresses a specific missing requirement instead of treating every
 optional integration as mandatory.
 
-Create a PM with a clear brief and ownership boundaries. **Fill with AI** proposes
-a draft using that brief and repository paths. Review its rationale, scope, and
-warnings, then **Apply suggestions** if useful. The original mandate remains
-unchanged. Applying a draft only fills the form; **Create PM** is the separate
-save/provisioning action, and the new PM starts with automation paused.
+Choose **Adopt a PM Gremlin** and describe what it should take care of. **Meet my
+gremlin** proposes a name, product brief, and settings using your goal and
+repository paths. Review its rationale, scope, and uncertainty before choosing
+**Adopt [name]**. The original goal remains its mandate. Generating a draft does
+not save a PM or provision Linear. Adoption saves it with automation paused; its
+welcome step offers **Explore the codebase** for Discovery, or **Prepare first
+mission** when source access, Claude Code, or a ready worker is missing. Linear
+and a browser environment are not required for Discovery. Fresh ideas use
+**Build the foundation** first. **Write the brief myself** is available for manual entry.
 
-Expand **Product brief** to describe ambition, the outcome and metric, users,
+Open **Review full brief** during adoption to describe ambition, the outcome and metric, users,
 expected capabilities, priorities, guardrails, and non-goals. These are owner
 instructions, not learned memory. Existing PMs can edit the same brief with
 conflict protection; saving it preserves their Linear mapping and automation state.
@@ -42,9 +47,10 @@ Discovery needs source access, Claude Code, and a ready worker, but does not nee
 Linear or a hosted app. It records a codebase map, feature inventory, ranked queue,
 and memory with run and commit provenance. Later patrols consume that context.
 It does not file issues or change your saved ownership or instructions. See the
-[PM workflow](PM_WORKFLOW.md) for the distinction between discovery and AI form fill.
+[PM workflow](PM_WORKFLOW.md) for the distinction between discovery and AI drafting.
 
-Use **Run once** to test a mapped PM after verification. Paused automation does
+Use **Run now** for one supervised patrol. It can prepare missing Linear mappings
+and required connection verification using the selected account. Paused automation does
 not prevent an explicit run. Inspect its Activity before selecting **Enable
 automation**. That control enables both the PM's UTC patrol schedule and automatic
 pickup of approved Coding tickets for its area. **Pause automation** stops new

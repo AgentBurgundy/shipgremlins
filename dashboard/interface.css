@@ -743,6 +743,27 @@ dialog::backdrop {
   overflow-y: auto;
   min-height: 0;
 }
+.connection-onboarding-next {
+  display: none;
+}
+.is-first-run .connection-onboarding-next {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+  background: #f6f8f3;
+}
+.connection-onboarding-next p {
+  flex: 1 1 180px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
 #connections .connection-detail-panel {
   padding: 0;
   margin: 0;

@@ -11,16 +11,17 @@ the **Default connection**; manual-token fallback belongs only to that default.
 
 ## One app team, one project per PM
 
-When you add an app while Linear is connected, ShipGremlins creates a Linear team for that app and a Linear project for its initial PM mandate. Choose **Reuse an existing team** to keep your existing organization, or **Set up later** to save local configuration without creating anything in Linear.
+Connect Linear when the chosen assignment needs proposals or coding. Adoption, a foundation build, or a PM run can prepare missing team and PM-project mappings using the app’s selected account. Choose an existing team in **Edit settings → Linear mappings** before starting if you want to keep your current organization. Connecting an account or importing a repository alone creates no Linear resources.
 
-Add another PM with a name, mandate, ownership paths, schedule, and WIP limit.
-**Fill with AI** can suggest the form fields from your brief and repository paths;
-review and **Apply suggestions** before the separate **Create PM** action. The
-original mandate is never replaced, and generating or applying a draft creates
-no Linear resources.
+Choose **Adopt a PM Gremlin** and describe its job. **Meet my gremlin** proposes
+a name and brief from that goal and repository paths. Use **Review full brief**
+and **Advanced settings** to inspect direction, ownership, schedule, work limit,
+and Linear choices before **Adopt [name]**. The original goal stays its mandate,
+and generating the draft creates no Linear resources.
 
-Creating the PM saves it with automation paused and creates its Linear project
-under the app's team. **Run once** prepares any missing mapping for that PM and
+Adoption saves the PM with automation paused. When Linear provisioning is
+selected, it creates the PM’s Linear project under the app’s team, or reuses the
+project you explicitly chose. **Run now** prepares any missing mapping for that PM and
 verifies the project's selected connections before queuing a supervised result.
 **Enable automation** opts into UTC
 patrols and automatic approved-ticket pickup; **Pause automation** stops new

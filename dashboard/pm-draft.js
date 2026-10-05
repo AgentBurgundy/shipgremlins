@@ -23,7 +23,7 @@
     guardrails: "Guardrails",
     standingPriorities: "Standing priorities",
   };
-  window.mergePmDraft = (input, draft) => {
+  window.mergePmDraft = (input, draft, previousGenerated = null) => {
     const values = copy(draft),
       filled = [],
       kept = [];
@@ -32,6 +32,10 @@
       const existing = input[key];
       const preserve =
         String(existing ?? "").trim() &&
+        (!previousGenerated ||
+          input.editedFields?.includes(key) ||
+          JSON.stringify(existing) !==
+            JSON.stringify(previousGenerated[key])) &&
         (input.editedFields?.includes(key) ||
           String(existing) !== defaults[key]);
       if (preserve) {
@@ -47,7 +51,12 @@
       } else filled.push(key);
     }
     for (const [key, value] of Object.entries(input.charter || {})) {
-      if (value?.length) {
+      if (
+        value?.length &&
+        (!previousGenerated ||
+          JSON.stringify(value) !==
+            JSON.stringify(previousGenerated.charter?.[key]))
+      ) {
         values.charter[key] = copy(value);
         kept.push(`charter.${key}`);
       }
@@ -151,9 +160,9 @@
     const discard = node("button", "small-button", "Hide AI summary");
     discard.type = "button";
     actions.append(discard);
-    const details = node("details", "pm-ai-review");
+    const details = node("section", "pm-ai-review");
     details.append(
-      node("summary", "", "Why these settings?"),
+      node("h3", "", "Why these settings?"),
       context,
       values,
       rationale,
@@ -209,7 +218,7 @@
       setBusy(false);
       render();
     }
-    fill.addEventListener("click", async () => {
+    async function generateDraft() {
       if (locked || busy) return;
       let input;
       try {
@@ -307,13 +316,15 @@
       } finally {
         if (request === generation) setBusy(false);
       }
-    });
+    }
+    fill.addEventListener("click", generateDraft);
     discard.addEventListener("click", reset);
     const form = container.closest?.("form");
     form?.addEventListener("input", refresh);
     form?.addEventListener("change", refresh);
     render();
     return {
+      generate: generateDraft,
       refresh,
       reset,
       isBusy: () => busy,

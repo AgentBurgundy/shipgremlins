@@ -87,38 +87,10 @@
     const shortcut = runners.querySelector(".panel-heading a");
     if (shortcut) shortcut.hidden = true;
   }
-  const pmFields = document.getElementById("pm-create-fields");
-  if (pmFields) {
-    const basics = node("section", "pm-creation-basics");
-    const review = node("section", "pm-creation-review");
-    const execution = document.getElementById("pm-advanced");
-    let reviewing = false;
-    for (const child of [...pmFields.children]) {
-      if (child === execution) break;
-      if (child.classList.contains("pm-review-heading")) reviewing = true;
-      if (child.tagName !== "LEGEND")
-        (reviewing ? review : basics).append(child);
-    }
-    pmFields.insertBefore(basics, execution);
-    pmFields.insertBefore(review, execution);
-    review.prepend(document.getElementById("pm-creation-readiness"));
-    const discovery = pmFields.querySelector(".discovery-after-create");
-    if (discovery) execution.append(discovery);
-    surface(pmFields, "New PM settings", [
-      { key: "mission", label: "Mission", panel: basics },
-      { key: "brief", label: "Review brief", panel: review },
-      { key: "execution", label: "Ownership & schedule", panel: execution },
-    ]);
-    const next = node("button", "small-button", "Write the brief myself →");
-    next.type = "button";
-    next.addEventListener("click", () => {
-      window.revealDashboardSetting(review);
-      document.getElementById("pm-name").focus();
-    });
-    basics.append(next);
-  }
-  window.revealDashboardSetting = (target) =>
+  window.revealDashboardSetting = (target) => {
     surfaces.forEach((surface) => surface.reveal(target));
+    window.gremlinAdoption?.reveal(target);
+  };
   window.addEventListener("dashboard:pagechange", (event) => {
     const hash = new URL(event.detail.path, location.origin).hash.slice(1);
     const target = document.getElementById(
@@ -231,7 +203,15 @@
   close.setAttribute("aria-label", "Close connection settings");
   header.append(title, close);
   const body = node("div", "surface-dialog-body");
-  dialog.append(header, body);
+  const continuation = node("footer", "connection-onboarding-next");
+  const continueSetup = node("a", "small-button", "Continue setup →");
+  continueSetup.href = "/overview";
+  continueSetup.addEventListener("click", () => dialog.close());
+  continuation.append(
+    node("p", "", "Saved your connection? See what your gremlin needs next."),
+    continueSetup,
+  );
+  dialog.append(header, body, continuation);
   const entries = new Map();
   let trigger = null;
   const select = (category) => {

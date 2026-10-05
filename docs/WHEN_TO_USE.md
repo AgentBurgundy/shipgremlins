@@ -71,13 +71,15 @@ mandate for an existing import feature:
 > with reproducible evidence and acceptance criteria. Leave billing and account
 > permissions alone.
 
-1. **Connect the app and create one PM.** Follow [setup](SETUP.md). Give the PM
+1. **Connect the app and adopt one gremlin.** Follow [setup](SETUP.md#your-first-adoption). Choose its job and give the PM
    the goal, boundaries, and expected behavior in its product brief. Keep
    automation paused.
-2. **Run Discovery.** Review the feature inventory, opportunities, and source
-   evidence. Correct the PM's understanding before asking it to investigate more.
-3. **Try one supervised patrol.** Finish the PM's Linear mapping and project
-   checks. For browser work, configure and test its environment first. Choose
+2. **Explore the codebase.** This starts Discovery with source access, Claude
+   Code, and a ready worker; choose **Prepare first mission** if setup is missing.
+   Linear and browser setup can wait. Review the feature inventory, opportunities,
+   and source evidence. Correct the PM’s understanding before asking it to investigate more.
+3. **Try one supervised patrol.** Connect Linear; the run can prepare missing
+   mappings and required verification with your selected account. For browser work, configure and test its environment first. Choose
    **Run now** and inspect the findings and evidence in Activity.
 4. **Approve one bounded ticket.** Confirm that the scope and acceptance criteria
    are useful. Run Coding on that approved ticket, then review the draft PR or

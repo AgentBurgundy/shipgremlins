@@ -25,6 +25,7 @@
     <script src="/connection-profiles.js" defer></script>
     <script src="/linear-settings.js" defer></script>
     <script src="/pm-draft.js" defer></script>
+    <script src="/gremlin-adoption.js" defer></script>
     <script src="/pm-actions.js" defer></script>
     <script src="/coding-launch.js" defer></script>
     <script src="/crew-guidance.js" defer></script>
@@ -46,6 +47,7 @@
     <script src="/idea-crew.js" defer></script>
     <link rel="stylesheet" href="/project-wizard.css" />
     <script src="/project-wizard.js" defer></script>
+    <script src="/first-run.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
     <script src="/interface.js" defer></script>
@@ -55,6 +57,8 @@
     <link rel="stylesheet" href="/project-settings.css" />
     <link rel="stylesheet" href="/signals-settings.css" />
     <link rel="stylesheet" href="/grumblins.css" />
+    <link rel="stylesheet" href="/first-run.css" />
+    <link rel="stylesheet" href="/gremlin-adoption.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -215,18 +219,32 @@
             aria-labelledby="welcome-title"
           >
             <div class="hero-copy">
-              <span class="eyebrow">YOUR WORKSPACE</span>
-              <h1 id="welcome-title">Meet your new<br />product crew.</h1>
+              <span class="eyebrow" id="overview-eyebrow"
+                >YOUR FIRST GREMLIN</span
+              >
+              <h1 id="welcome-title">Your first gremlin starts here.</h1>
               <p id="welcome-description">
-                Connect your tools. Add your app.<br class="desktop-break" />
-                PM Gremlins find the gaps. Coding Gremlins build the fixes.
+                A project to call home. A purpose to care about. A first mission
+                you can follow from start to finish.
               </p>
               <a
                 id="overview-primary-action"
                 class="button button-dark"
                 href="#source-control"
-                >Set up your crew <span aria-hidden="true">↗</span></a
+                >Connect source control <span aria-hidden="true">→</span></a
               >
+              <button
+                id="overview-adopt-action"
+                type="button"
+                class="button button-dark"
+                hidden
+              >
+                Adopt a PM Gremlin →
+              </button>
+              <p id="first-run-note" class="first-run-note">
+                Adoption keeps automation off. You choose the first PM or coding
+                mission.
+              </p>
             </div>
             <div class="hero-art">
               <div class="hero-orbit" aria-hidden="true"></div>
@@ -279,15 +297,19 @@
             >
           </section>
           <section
-            class="setup-status"
+            class="setup-status first-run-path"
             data-page="overview"
-            aria-label="Setup progress"
+            aria-label="Your path to a first mission"
           >
-            <div>
-              <span class="eyebrow muted">GETTING STARTED</span>
-              <h2 id="setup-title">Make yourself at home.</h2>
+            <div class="sr-only">
+              <h2 id="setup-title">Your first mission</h2>
             </div>
-            <ol class="steps">
+            <ol
+              id="first-run-progress"
+              class="first-run-progress"
+              aria-label="First mission progress"
+            ></ol>
+            <ol class="steps" hidden>
               <li id="connection-step">
                 <span class="step-number">1</span
                 ><span
@@ -1764,14 +1786,16 @@
               <header class="pm-create-dialog-header">
                 <div>
                   <p class="eyebrow muted">GROW YOUR CREW</p>
-                  <h2 id="pm-create-title">Add a PM Gremlin</h2>
-                  <p>Give it a mission. AI helps with the rest.</p>
+                  <h2 id="pm-create-title">Adopt a PM Gremlin.</h2>
+                  <p id="pm-adoption-subtitle">
+                    Give your gremlin an app to call home.
+                  </p>
                 </div>
                 <button
                   id="close-pm-create"
                   class="small-button"
                   type="button"
-                  aria-label="Close PM creation"
+                  aria-label="Close gremlin adoption"
                 >
                   Close ×
                 </button>
@@ -1817,7 +1841,7 @@
                         type="text"
                         required
                         maxlength="100"
-                        placeholder="Checkout quality"
+                        placeholder="Your gremlin’s name"
                         autocomplete="off"
                       />
                     </div>

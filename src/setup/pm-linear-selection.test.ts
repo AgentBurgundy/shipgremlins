@@ -47,6 +47,7 @@ function fixture() {
     pmPlanning: false,
     pendingPmCreate: false,
     pmDraft: null,
+    pmAdoption: null,
     pmLinearContext: "",
     currentStatus: { projects },
     linearResourceCache: new Map([

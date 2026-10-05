@@ -691,11 +691,11 @@
       const settings = action("Settings", { editProject: project.name });
       settings.setAttribute("aria-label", `Settings for ${project.name}`);
       const add = button(
-        "+ PM",
+        "Adopt a gremlin",
         () => onCreatePm(project.name),
         "button button-dark",
       );
-      add.setAttribute("aria-label", `Create a PM for ${project.name}`);
+      add.setAttribute("aria-label", `Adopt a PM Gremlin for ${project.name}`);
       add.disabled = locked;
       actions.append(settings, add);
       return actions;
@@ -771,7 +771,7 @@
     function home(project) {
       if (project.foundation?.needed)
         root.append(window.renderFoundationLauncher(project));
-      else
+      else if (project.areas?.length)
         root.append(
           window.renderCodingLauncher(project, {
             locked,
@@ -779,32 +779,7 @@
             operation: options.getCodingAction?.(project.name),
           }),
         );
-      if (
-        !project.foundation?.needed &&
-        project.verification?.mode !== "browser" &&
-        !project.areas?.length
-      ) {
-        const setup = node("section", "onboarding-setup-callout"),
-          copy = node("div");
-        copy.append(
-          node("strong", "", "Give your crew a safe place to test."),
-          node(
-            "p",
-            "",
-            "Analyze the repository or connect a test URL. You can also keep this project repository-only.",
-          ),
-        );
-        setup.append(
-          copy,
-          link(
-            "Set up environment",
-            path(project.name, "", "environment"),
-            "small-button",
-          ),
-        );
-        root.append(setup);
-      }
-      if (window.renderGrumblinsLauncher)
+      if (project.areas?.length && window.renderGrumblinsLauncher)
         root.append(window.renderGrumblinsLauncher(project));
       const crew = node("section", "project-crew-section");
       const title = node("div", "project-section-title");
@@ -817,7 +792,8 @@
       for (const area of project.areas || []) {
         const card = node("article", "project-pm-row"),
           image = node("img");
-        image.src = "/assets/gremlin-security.webp";
+        image.src =
+          window.gremlinIdentity?.(area)?.image || "/assets/gremlin.webp";
         image.alt = "";
         image.width = image.height = 48;
         const copy = node("div", "project-pm-copy"),
@@ -847,22 +823,31 @@
         cards.append(card);
       }
       if (!project.areas?.length) {
-        const empty = node("div", "project-crew-empty");
-        empty.append(
-          node("h3", "", "What should your first PM investigate?"),
+        const empty = node("div", "project-crew-empty adoption-project-empty"),
+          portrait = node("img"),
+          invitation = node("div");
+        portrait.src = "/assets/gremlin.webp";
+        portrait.alt =
+          "A green gremlin holding a checked report, ready for its first assignment";
+        portrait.width = 132;
+        portrait.height = 148;
+        invitation.append(
+          node("span", "eyebrow muted", "A LITTLE CREATURE. A REAL JOB."),
+          node("h3", "", "Who will be your first gremlin?"),
           node(
             "p",
             "",
-            "Give it a mandate. You can run it once before turning on automation.",
+            "Choose something you want taken care of. We’ll help you give your PM a name, a focused job, and a first assignment.",
           ),
         );
         const add = button(
-          "Create your first PM",
+          "Adopt your first gremlin",
           () => onCreatePm(project.name),
           "button button-dark",
         );
         add.disabled = locked;
-        empty.append(add);
+        invitation.append(add);
+        empty.append(portrait, invitation);
         cards.append(empty);
       }
       crew.append(cards);
@@ -969,7 +954,8 @@
       const main = node("div", "pm-workspace-body"),
         heading = node("div", "pm-workspace-heading"),
         image = node("img");
-      image.src = "/assets/gremlin-security.webp";
+      image.src =
+        window.gremlinIdentity?.(area)?.image || "/assets/gremlin.webp";
       image.alt = "";
       const title = node("div");
       title.append(

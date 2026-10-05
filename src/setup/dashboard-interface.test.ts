@@ -279,6 +279,7 @@ function fixture(path = "/overview") {
     dashboardPages: { current: location.pathname.slice(1) },
     dashboardShell: { releaseConnections: vi.fn() },
     revealDashboardSetting: (_target: Element) => {},
+    gremlinAdoption: { reveal: vi.fn() },
   });
   const observers: (() => void)[] = [];
   const context = {
@@ -344,16 +345,12 @@ describe("dashboard interface surfaces", () => {
       expect(f.body.all().filter((item) => item === original)).toHaveLength(1);
     expect(f.get("job-form").parentElement?.id).toBe("runner-workbench");
     expect(f.get("job-ticket").value).toBe("APP-12");
-    expect(f.get("pm-mandate").parentElement?.className).toBe(
-      "pm-creation-basics",
-    );
-    expect(f.get("pm-name").parentElement?.className).toBe(
-      "pm-creation-review",
-    );
+    expect(f.get("pm-mandate").parentElement?.id).toBe("pm-create-fields");
+    expect(f.get("pm-name").parentElement?.id).toBe("pm-create-fields");
     expect(f.get("pm-schedule").parentElement?.id).toBe("pm-advanced");
     expect(
       f.body.querySelector(".discovery-after-create")?.parentElement?.id,
-    ).toBe("pm-advanced");
+    ).toBe("pm-create-fields");
     const draft = f.get("vercel-connection-draft");
     draft.value = "unsaved provider draft";
     const save = vi.fn();
@@ -398,29 +395,14 @@ describe("dashboard interface surfaces", () => {
     expect(f.get("workers").hidden).toBe(false);
   });
 
-  it("preserves PM fields across all three tabs and reveals only the first invalid section", () => {
-    const f = fixture(),
-      nav = f.nav("New PM settings");
-    expect(nav.children.map((item) => item.textContent)).toEqual([
-      "Mission",
-      "Review brief",
-      "Ownership & schedule",
-    ]);
-    f.button(nav, "Ownership & schedule").emit("click");
-    expect(f.get("pm-advanced").hidden).toBe(false);
-    f.get("pm-name").invalid = true;
-    f.get("pm-create-fields").emit("invalid", { target: f.get("pm-name") });
-    expect(f.get("pm-name").parentElement?.hidden).toBe(false);
-    expect(f.get("pm-advanced").hidden).toBe(true);
-    f.button(nav, "Mission").emit("click");
-    f.get("pm-mandate").invalid = true;
-    f.get("pm-create-fields").emit("invalid", { target: f.get("pm-name") });
-    expect(f.get("pm-mandate").parentElement?.hidden).toBe(false);
-    expect(f.get("pm-name").parentElement?.hidden).toBe(true);
-    f.button(f.get("pm-create-fields"), "Write the brief myself →").emit(
-      "click",
+  it("leaves PM control ownership to adoption and delegates hidden field reveal", () => {
+    const f = fixture();
+    expect(f.nav("New PM settings")).toBeUndefined();
+    expect(f.get("pm-mandate").parentElement).toBe(f.get("pm-create-fields"));
+    f.window.revealDashboardSetting(f.get("pm-name"));
+    expect(f.window.gremlinAdoption.reveal).toHaveBeenCalledWith(
+      f.get("pm-name"),
     );
-    expect(f.focused()).toBe(f.get("pm-name"));
     expect(f.get("pm-name").value).toBe("Checkout PM");
     expect(f.get("pm-mandate").value).toBe("Protect checkout");
   });
