@@ -7,7 +7,12 @@
     ["railway", "Railway service"],
     ["cloud-run", "Google Cloud Run service"],
   ];
-  window.createProjectSettings = (container, prefix, original = {}) => {
+  window.createProjectSettings = (
+    container,
+    prefix,
+    original = {},
+    options = {},
+  ) => {
     let config = structuredClone(original);
     let environments = structuredClone(config.environments || {});
     // Legacy Vercel settings remain opt-in promotion settings until explicitly edited.
@@ -103,7 +108,7 @@
       "Environment name",
       "A reusable name, such as preview or staging.",
     );
-    fields.environment.pattern = "[a-z][a-z0-9-]*";
+    fields.environment.pattern = "[a-z][a-z0-9\\-]*";
     field(
       identity,
       "role",
@@ -254,10 +259,18 @@
     }
     commands.append(commandGrid);
     root.append(commands);
+    const signalsContainer = node("div", "project-signals-settings");
+    const signals = window.createSignalsSettings(
+      signalsContainer,
+      `${prefix}-signals`,
+      config.telemetry,
+      options,
+    );
+    root.append(signalsContainer);
     const advanced = node(
       "p",
       "runner-guidance settings-advanced-note",
-      "Other saved environments are kept. Manage additional production targets, remove environments, or edit advanced sign-in and telemetry settings in Configuration.",
+      "Other saved environments are kept. Manage additional production targets, remove environments, or edit advanced sign-in settings in Configuration.",
     );
     root.append(advanced);
     container.replaceChildren(root);
@@ -367,7 +380,9 @@
       );
     let baseline = signature();
     return {
-      isDirty: () => signature() !== baseline,
+      isDirty: () => signature() !== baseline || signals.isDirty(),
+      setProjectName: (name) => signals.setProjectName(name),
+      focusProvider: (provider) => signals.focusProvider(provider),
       setDefaultBranch(value) {
         if (!branchEdited && value) {
           fields.baseBranch.value = value;
@@ -409,6 +424,10 @@
           );
           result.verification = { mode: "browser", environment: name };
         }
+        // Omit untouched, absent telemetry; keep an explicit empty object when the
+        // user disables the last provider so the config merge removes it.
+        if (config.telemetry || signals.isDirty())
+          result.telemetry = signals.read();
         return result;
       },
     };

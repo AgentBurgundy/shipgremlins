@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
+import { fileURLToPath } from "node:url";
 import { generateKeyPairSync } from "node:crypto";
 import {
   readConnections,
@@ -19,6 +20,7 @@ import {
   projectConnections,
 } from "./connections.ts";
 import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
+import { initializeSetup } from "./files.ts";
 
 const directories: string[] = [];
 function temporary(): string {
@@ -31,6 +33,230 @@ function temporary(): string {
 afterEach(() => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
+});
+
+function configure(
+  root: string,
+  project: string,
+  values: Record<string, unknown>,
+): void {
+  // fileURLToPath handles Windows drive letters and spaces in source checkouts.
+  initializeSetup(root, fileURLToPath(new URL("../../", import.meta.url)), {
+    project,
+    repo: `owner/${project}`,
+  });
+  const path = join(root, "projects", project, "project.json");
+  writeFileSync(
+    path,
+    JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), ...values }),
+  );
+}
+
+describe("project connection descriptors", () => {
+  it("gives selected credentials scoped purposes while optional Slack remains separate and private", () => {
+    const root = temporary();
+    configure(root, "shop", {
+      verification: { mode: "browser", environment: "qa" },
+      environments: {
+        qa: {
+          kind: "vercel",
+          role: "preview",
+          projectId: "prj_shop",
+          bypassSecret: "SHOP_PREVIEW",
+        },
+        old: {
+          kind: "railway",
+          role: "staging",
+          projectId: "p",
+          environmentId: "e",
+          serviceId: "s",
+          tokenSecret: "SHOP_RAILWAY",
+        },
+      },
+      signIn: {
+        kind: "neon-auth-otp",
+        email: "test@example.com",
+        path: "/login",
+        databaseUrlSecret: "SHOP_TEST_DATABASE",
+      },
+    });
+    saveConnections(root, {
+      SHOP_PREVIEW: "do-not-disclose-preview",
+      SHOP_TEST_DATABASE: "postgres://test:private-db@db.example/test",
+      SLACK_WEBHOOK_SHOP:
+        "https://hooks.slack.com/services/T/B/do-not-disclose-webhook",
+    });
+    const descriptors = projectConnections(root);
+    expect(
+      descriptors.find((entry) => entry.name === "SHOP_PREVIEW"),
+    ).toMatchObject({
+      label: "Vercel preview access",
+      group: "preview",
+      provider: "vercel",
+      purpose: "preview-bypass",
+      project: "shop",
+      optional: false,
+      usages: [
+        expect.objectContaining({
+          project: "shop",
+          targetName: "qa",
+          targetType: "vercel",
+          optional: false,
+        }),
+      ],
+    });
+    expect(
+      descriptors.find((entry) => entry.name === "SHOP_RAILWAY"),
+    ).toMatchObject({
+      label: "Railway environment",
+      group: "hosting",
+      optional: true,
+    });
+    expect(
+      descriptors.find((entry) => entry.name === "SHOP_TEST_DATABASE"),
+    ).toMatchObject({
+      label: "Test sign-in database",
+      group: "sign-in",
+      optional: false,
+    });
+    expect(
+      descriptors.find((entry) => entry.name === "SLACK_WEBHOOK_SHOP"),
+    ).toMatchObject({
+      label: "Slack report override",
+      group: "notifications",
+      provider: "slack",
+      optional: true,
+    });
+    expect(
+      descriptors.every((entry) => !entry.label.includes(entry.name)),
+    ).toBe(true);
+    expect(JSON.stringify(descriptors)).not.toMatch(
+      /do-not-disclose|private-db|test@example\.com|postgres:\/\//,
+    );
+    expect(descriptors.some((entry) => entry.group === "telemetry")).toBe(
+      false,
+    );
+  });
+
+  it("deduplicates shared credentials deterministically without losing JSON format or required usages", () => {
+    const root = temporary();
+    const googleTarget = {
+      kind: "cloud-run",
+      role: "staging",
+      projectId: "sample-project",
+      region: "us-central1",
+      service: "app",
+      credentialsSecret: "SHARED_GOOGLE",
+    };
+    configure(root, "zeta", {
+      verification: { mode: "repository" },
+      environments: { archive: googleTarget },
+    });
+    configure(root, "alpha", {
+      verification: { mode: "browser", environment: "qa" },
+      environments: { backup: googleTarget, qa: googleTarget },
+    });
+    const descriptors = projectConnections(root);
+    const shared = descriptors.filter(
+      (entry) => entry.name === "SHARED_GOOGLE",
+    );
+    expect(shared).toHaveLength(1);
+    expect(shared[0]).toMatchObject({
+      format: "json",
+      group: "hosting",
+      provider: "cloud-run",
+      optional: false,
+    });
+    expect(shared[0]).not.toHaveProperty("project");
+    expect(shared[0]!.usages).toHaveLength(3);
+    expect(
+      shared[0]!.usages.map((usage) => `${usage.project}/${usage.targetName}`),
+    ).toEqual(["alpha/qa", "alpha/backup", "zeta/archive"]);
+    const path = join(root, "projects", "alpha", "project.json");
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    raw.environments = { qa: googleTarget, backup: googleTarget };
+    writeFileSync(path, JSON.stringify(raw));
+    expect(projectConnections(root)).toEqual(descriptors);
+  });
+
+  it("marks default Google JSON optional for ADC and unused browser credentials optional", () => {
+    const root = temporary();
+    configure(root, "server", {
+      verification: { mode: "browser", environment: "qa" },
+      environments: {
+        qa: {
+          kind: "cloud-run",
+          role: "preview",
+          projectId: "sample-project",
+          region: "us-central1",
+          service: "app",
+        },
+      },
+    });
+    expect(
+      projectConnections(root).find(
+        (entry) => entry.name === "GCP_SERVICE_ACCOUNT_JSON",
+      ),
+    ).toMatchObject({ optional: true, format: "json", provider: "cloud-run" });
+    configure(root, "library", {
+      signIn: {
+        kind: "neon-auth-otp",
+        email: "test@example.com",
+        path: "/login",
+        databaseUrlSecret: "LIBRARY_TEST_DATABASE",
+      },
+    });
+    expect(
+      projectConnections(root).find(
+        (entry) => entry.name === "LIBRARY_TEST_DATABASE",
+      ),
+    ).toMatchObject({ optional: true });
+  });
+
+  it("describes only configured telemetry and preserves legacy Slack overrides unchanged", () => {
+    const root = temporary();
+    configure(root, "legacy", {
+      telemetry: {
+        sentry: {
+          host: "sentry.io",
+          organization: "org",
+          project: "app",
+          environment: "staging",
+          tokenSecret: "SENTRY_AUTH_TOKEN_LEGACY",
+        },
+      },
+      slackWebhookSecret: "OLD_REPORT_WEBHOOK",
+    });
+    const original = "https://hooks.slack.com/services/T/B/legacy-fixture";
+    saveConnections(root, {
+      OLD_REPORT_WEBHOOK: original,
+      SENTRY_AUTH_TOKEN_LEGACY: "sentry-fixture",
+    });
+    const before = readFileSync(join(root, ".env"), "utf8");
+    expect(
+      projectConnections(root).find(
+        (entry) => entry.name === "SENTRY_AUTH_TOKEN_LEGACY",
+      ),
+    ).toMatchObject({
+      group: "telemetry",
+      provider: "sentry",
+      purpose: "telemetry-read",
+      project: "legacy",
+      optional: false,
+      label: "Sentry token",
+    });
+    expect(
+      projectConnections(root).find(
+        (entry) => entry.name === "OLD_REPORT_WEBHOOK",
+      ),
+    ).toMatchObject({ group: "notifications", optional: true });
+    expect(readFileSync(join(root, ".env"), "utf8")).toBe(before);
+    saveConnections(root, {
+      OLD_REPORT_WEBHOOK: "",
+      GITHUB_TOKEN: "fixture-token",
+    });
+    expect(readConnections(root).OLD_REPORT_WEBHOOK).toBe(original);
+  });
 });
 
 describe("dashboard connection storage", () => {

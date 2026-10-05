@@ -12,11 +12,12 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { assertNoSymlinks } from "./files.ts";
-import { TELEMETRY_SECRET_RE } from "../telemetry/config.ts";
+import { TELEMETRY_SECRET_RE, telemetrySecrets } from "../telemetry/config.ts";
 import { listProjectNames, loadProject } from "../config.ts";
 import {
-  projectSecretNames,
+  effectiveVerification,
   validProjectSecretName,
+  type EnvironmentTarget,
 } from "../projectCapabilities.ts";
 import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
 
@@ -64,49 +65,218 @@ export const CONNECTIONS = [
 ] as const;
 
 const allowed = new Set<string>(CONNECTIONS.map(({ name }) => name));
+
+export interface ProjectConnectionUsage {
+  project: string;
+  group: "hosting" | "preview" | "sign-in" | "notifications" | "telemetry";
+  provider:
+    | "vercel"
+    | "railway"
+    | "cloud-run"
+    | "neon"
+    | "slack"
+    | "sentry"
+    | "datadog"
+    | "mixpanel";
+  purpose:
+    | "deployment-access"
+    | "preview-bypass"
+    | "test-sign-in"
+    | "slack-override"
+    | "telemetry-read";
+  label: string;
+  description: string;
+  optional: boolean;
+  targetName?: string;
+  targetType?: "vercel" | "railway" | "cloud-run";
+}
+export interface ProjectConnectionDescriptor extends Omit<
+  ProjectConnectionUsage,
+  "project" | "targetName" | "targetType"
+> {
+  /** Stable storage reference; render the friendly label as the primary text. */
+  name: string;
+  format?: "json";
+  /** Present only when all usages belong to one project. */
+  project?: string;
+  usages: ProjectConnectionUsage[];
+}
+
+/** Pure configuration metadata. Never read, include, or inspect credential values. */
 export function projectConnections(
   root: string,
-): { name: string; label: string; description: string; format?: "json" }[] {
-  return listProjectNames(root).flatMap((name) => {
+): ProjectConnectionDescriptor[] {
+  const references: Array<
+    ProjectConnectionUsage & { name: string; format?: "json" }
+  > = [];
+  for (const project of listProjectNames(root).sort()) {
     try {
-      const { config } = loadProject(root, name);
-      return [
-        ...projectSecretNames(config).map((secret) => {
-          const google = Object.values(config.environments ?? {}).some(
-            (target) =>
-              target.kind === "cloud-run" &&
-              (target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON") ===
-                secret,
-          );
-          return {
-            name: secret,
-            label: `${name} · Environment connection`,
-            description: google
-              ? "Google service-account JSON for this environment. Kept on the controller."
-              : "Credential for this project's hosting or preview environment.",
-            ...(google ? { format: "json" as const } : {}),
-          };
-        }),
-        ...(config.signIn
-          ? [
-              {
-                name: config.signIn.databaseUrlSecret,
-                label: `${name} · Test sign-in`,
-                description:
-                  "Preview database connection for the configured test account.",
-              },
-            ]
-          : []),
-        {
-          name: config.slackWebhookSecret,
-          label: `${name} · Slack (optional)`,
-          description: "Optional report webhook.",
-        },
-      ].filter((entry) => validProjectSecretName(entry.name));
+      const { config } = loadProject(root, project);
+      const verification = effectiveVerification(config);
+      const addTarget = (
+        target: EnvironmentTarget,
+        targetName: string,
+        active: boolean,
+      ) => {
+        const context = { project, targetName };
+        if (target.kind === "vercel" && target.bypassSecret) {
+          references.push({
+            ...context,
+            name: target.bypassSecret,
+            group: "preview",
+            provider: "vercel",
+            targetType: "vercel",
+            purpose: "preview-bypass",
+            label: "Vercel preview access",
+            description:
+              "Lets the browser enter a protected Vercel test deployment. Use a dedicated preview bypass credential.",
+            optional: !active,
+          });
+        } else if (target.kind === "railway") {
+          references.push({
+            ...context,
+            name: target.tokenSecret ?? "RAILWAY_TOKEN",
+            group: "hosting",
+            provider: "railway",
+            targetType: "railway",
+            purpose: "deployment-access",
+            label: "Railway environment",
+            description:
+              target.tokenType === "project"
+                ? "Project token for the selected Railway environment. Deployment checks stay on the controller."
+                : "Account or workspace token for Railway deployment readiness and app domains. Kept on the controller.",
+            optional: !active,
+          });
+        } else if (target.kind === "cloud-run") {
+          references.push({
+            ...context,
+            name: target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON",
+            group: "hosting",
+            provider: "cloud-run",
+            targetType: "cloud-run",
+            purpose: "deployment-access",
+            format: "json",
+            label: "Google Cloud Run access",
+            description: target.credentialsSecret
+              ? "Google service-account JSON for this Cloud Run environment. Kept on the controller."
+              : "Optional service-account JSON. Without it, deployment checks use the controller's Application Default Credentials.",
+            optional: !active || !target.credentialsSecret,
+          });
+        }
+      };
+      for (const [targetName, target] of Object.entries(
+        config.environments ?? {},
+      ).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+        addTarget(
+          target,
+          targetName,
+          verification.mode === "browser" &&
+            verification.environment === targetName,
+        );
+      if (config.vercel)
+        addTarget(
+          { kind: "vercel", role: "preview", ...config.vercel },
+          "Legacy preview",
+          !config.verification,
+        );
+      if (config.signIn)
+        references.push({
+          project,
+          name: config.signIn.databaseUrlSecret,
+          group: "sign-in",
+          provider: "neon",
+          purpose: "test-sign-in",
+          label: "Test sign-in database",
+          description:
+            "Preview database connection used to sign in as the configured test account. Use a dedicated test database.",
+          optional: verification.mode !== "browser",
+        });
+      references.push({
+        project,
+        name: config.slackWebhookSecret,
+        group: "notifications",
+        provider: "slack",
+        purpose: "slack-override",
+        label: "Slack report override",
+        description:
+          "Optional app-specific webhook that overrides the connected Slack channel for this project's reports.",
+        optional: true,
+      });
+      for (const secret of telemetrySecrets(config.telemetry)) {
+        const provider =
+          config.telemetry?.sentry?.tokenSecret === secret.name
+            ? "sentry"
+            : [
+                  config.telemetry?.datadog?.apiKeySecret,
+                  config.telemetry?.datadog?.appKeySecret,
+                ].includes(secret.name)
+              ? "datadog"
+              : "mixpanel";
+        references.push({
+          project,
+          ...secret,
+          provider,
+          group: "telemetry",
+          purpose: "telemetry-read",
+          optional: false,
+        });
+      }
     } catch {
-      return [];
+      // The dashboard reports malformed projects separately; never surface raw JSON.
     }
-  });
+  }
+  const groups = new Map<
+    string,
+    { format?: "json"; usages: ProjectConnectionUsage[] }
+  >();
+  for (const { name, format, ...usage } of references) {
+    if (!validProjectSecretName(name)) continue;
+    const entry = groups.get(name) ?? { usages: [] };
+    if (format === "json") entry.format = "json";
+    if (
+      !entry.usages.some(
+        (existing) => JSON.stringify(existing) === JSON.stringify(usage),
+      )
+    )
+      entry.usages.push(usage);
+    groups.set(name, entry);
+  }
+  const priority: Record<ProjectConnectionUsage["group"], number> = {
+    hosting: 0,
+    preview: 1,
+    "sign-in": 2,
+    telemetry: 3,
+    notifications: 4,
+  };
+  return [...groups]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, { format, usages }]) => {
+      usages.sort(
+        (a, b) =>
+          priority[a.group] - priority[b.group] ||
+          Number(a.optional) - Number(b.optional) ||
+          (JSON.stringify(a) < JSON.stringify(b)
+            ? -1
+            : JSON.stringify(a) > JSON.stringify(b)
+              ? 1
+              : 0),
+      );
+      const first = usages[0]!;
+      return {
+        name,
+        label: first.label,
+        description: first.description,
+        group: first.group,
+        provider: first.provider,
+        purpose: first.purpose,
+        optional: usages.every((usage) => usage.optional),
+        ...(format ? { format } : {}),
+        ...(usages.every((usage) => usage.project === first.project)
+          ? { project: first.project }
+          : {}),
+        usages,
+      };
+    });
 }
 const isAllowed = (name: string, root: string): boolean =>
   allowed.has(name) ||

@@ -13,6 +13,17 @@ This installs from the official GitHub repository; an npm registry package is no
 
 ## Your setup dashboard
 
+The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your gremlins**,
+**Activity**, and **Settings** pages. Each page has its own address and supports
+browser Back/Forward and reload. Moving between pages keeps unfinished forms in
+memory; save them before closing or restarting the dashboard.
+
+An update banner appears across the dashboard when a release is available. You
+can install from that banner, see installation progress, and restart once the new
+runtime is ready. Update details and rollback remain in Settings. A visible open
+dashboard checks periodically for new releases; updates are never installed
+automatically.
+
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Linear and Claude Code in Connections. Hosting connections are optional. See [source-control setup](SOURCE_CONTROL.md).
 2. Add the **app repository** and a short local ID such as `my-app`. When Linear is connected, setup creates an app team and a project for its first PM. Reuse an existing team or choose setup later when needed. [Linear and Vercel connections](LINEAR_VERCEL.md) explains mappings and retry recovery. Local Docker execution is the default. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
 3. Review the PR base branch, install/test commands, and PM mandate. New projects default to repository-only verification. For browser work, add a named preview/staging target using a direct URL, Vercel, Railway, or Cloud Run. Keep credentials in Connections. Existing projects have **Edit settings**. See [project and hosting settings](PROJECTS.md).
@@ -26,11 +37,19 @@ The dashboard provides pause/resume, browser verification, repair, idle-worker r
 
 Optional [project telemetry](TELEMETRY.md) lets PMs read scoped Sentry logs/errors, Datadog logs, and Mixpanel Insights reports. Provider accounts still require live validation.
 
-Connect an optional [Slack channel](SLACK.md) for PM patrol results, coding drafts ready for review, and blockers. Choose Add to Slack in Connections, or save an incoming webhook when the OAuth broker is unavailable. Browser readiness checks do not post messages.
+Connect an optional [Slack channel](SLACK.md) once for PM patrol results, coding drafts ready for review, and blockers from every project. Choose Add to Slack in Connections, or save an incoming webhook when the OAuth broker is unavailable. Projects inherit that channel; leave optional project overrides empty unless a project needs a different channel. Slack is not required to run gremlins. Browser readiness checks do not post messages.
 
 The local runtime prepares a PostgreSQL activity store before launching work. This adds a local Docker service and persistent volume; it is managed on the CLI/dashboard server. Visible tool activity, result summaries, checks, redacted logs, and bounded artifacts appear in the dashboard. Private model reasoning is not stored or displayed. Activity storage failures are separate from the recorded outcome of an already-running job; Docker output remains available.
 
 ## Connections and configuration
+
+Connections shows compact service cards with setup instructions when opened. The
+Claude Code card explains how to run `claude setup-token` in a terminal with Claude
+Code installed and a Claude subscription, then paste the resulting token. You can
+generate it on your laptop and save it in your server's dashboard. Hosting cards
+link directly to token creation; project-specific fields explain their purpose,
+such as Vercel preview access. A saved credential is not proof of live access:
+finish with **Verify connections** on the project.
 
 Supported tokens are saved in the configuration directory's `.env`. Existing values are not returned to the browser. Blank fields preserve saved values; exported variables take precedence. Files use owner-only permissions where supported. The file is not encrypted: keep the directory private and out of Git.
 

@@ -418,11 +418,13 @@ code {
   color: #fff;
   background: #29382b;
 }
-.nav-item[aria-current="location"] {
+.nav-item[aria-current="location"],
+.nav-item[aria-current="page"] {
   background: #293d28;
   color: var(--lime);
 }
-.nav-item[aria-current="location"] > span:first-child {
+.nav-item[aria-current="location"] > span:first-child,
+.nav-item[aria-current="page"] > span:first-child {
   color: var(--lime);
 }
 .nav-count {
@@ -3756,4 +3758,617 @@ main {
   .slack-card {
     padding: 16px 14px;
   }
+}
+/* Connections is a directory: short summaries first, focused setup on demand. */
+[data-page][hidden] {
+  display: none !important;
+}
+#connections {
+  padding: 32px;
+}
+#connections .panel-heading {
+  margin-bottom: 22px;
+}
+#connections > .panel-heading h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  letter-spacing: -1.2px;
+}
+#connections .connection-categories {
+  padding-bottom: 23px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid var(--line);
+  gap: 7px;
+}
+#connections .connection-categories a {
+  background: #f7f9f2;
+  font-size: 11px;
+  padding: 8px 12px;
+}
+.integration-group + .integration-group {
+  margin-top: 34px;
+}
+.integration-heading {
+  margin-bottom: 16px;
+}
+.integration-heading h3,
+#connections .source-panel .panel-heading h3 {
+  font-size: 18px;
+  letter-spacing: -0.45px;
+  margin: 0 0 6px;
+}
+.integration-heading p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.integration-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 14px;
+}
+#connections .service-card {
+  min-width: 0;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid #dfe5d7;
+  border-radius: 13px;
+  background: #fbfcf8;
+  box-shadow: 0 2px 0 #172d1203;
+}
+#connections .service-heading,
+#connections .slack-heading {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  margin: 0 0 16px;
+}
+#connections .service-mark,
+#connections .slack-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e6e8e0;
+  display: grid;
+  place-items: center;
+  padding: 7px;
+}
+#connections .service-mark img,
+#connections .slack-mark img {
+  width: 23px;
+  height: 23px;
+  object-fit: contain;
+}
+#connections .service-heading .eyebrow,
+#connections .slack-heading .eyebrow {
+  display: none;
+}
+#connections .service-heading h3,
+#connections .slack-heading h3 {
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  margin: 0 0 7px;
+  line-height: 1.3;
+}
+#connections .service-heading p,
+#connections .slack-heading p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.65;
+  margin: 0;
+}
+#connections .service-status-row,
+#connections .slack-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 15px 0;
+  border: 0;
+  background: transparent;
+}
+#connections .service-status-row p,
+#connections .slack-status-row p {
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+#connections .service-actions,
+#connections .slack-actions {
+  margin: 0 0 12px;
+}
+#connections .service-actions .button,
+#connections .slack-actions .button {
+  padding: 10px 13px;
+  min-height: 38px;
+  font-size: 11px;
+  width: auto;
+}
+#connections .saved-state,
+#connections .runtime-badge {
+  font-size: 9px;
+  padding: 5px 7px;
+  white-space: normal;
+  line-height: 1.4;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+#connections .saved-state:not(.configured) {
+  color: #6b7463;
+  background: #eef1e8;
+}
+#connections .saved-state.configured,
+#connections .runtime-badge.ready,
+#connections .is-connected .runtime-badge {
+  background: #e9f2dc;
+  color: #3e631e;
+}
+#connections .service-advanced,
+#connections .slack-advanced,
+.connection-management {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid #e3e8dc;
+  padding: 11px 0 0;
+}
+#connections .service-advanced,
+#connections .slack-advanced {
+  margin-top: 10px;
+}
+#connections summary {
+  cursor: pointer;
+}
+#connections .service-advanced > summary,
+#connections .slack-advanced > summary,
+.connection-management > summary {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: #3f5634;
+}
+#connections details[open] > summary {
+  margin-bottom: 14px;
+}
+#connections .connection-management .runner-guidance {
+  font-size: 11px;
+  margin: 10px 0;
+}
+#connections .connection-management .button-row {
+  gap: 7px;
+  margin-top: 12px;
+}
+#connections .small-button {
+  font-size: 10px;
+  padding: 8px 10px;
+  min-height: 34px;
+}
+#connections .setup-help,
+#connections .field p,
+#connections .token-field p {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 10px 0;
+}
+#connections .setup-steps {
+  font-size: 11px;
+  line-height: 1.7;
+  padding-left: 19px;
+  margin: 14px 0;
+  color: #55604c;
+}
+#connections .setup-steps li + li {
+  margin-top: 8px;
+}
+#connections .setup-steps a,
+#connections .setup-doc-link,
+#connections .setup-link a {
+  color: #355c28;
+  text-underline-offset: 3px;
+  font-weight: 550;
+}
+#connections .setup-doc-link {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1.7;
+  margin-bottom: 10px;
+}
+#connections .setup-command {
+  padding: 9px 10px;
+  gap: 8px;
+  margin: 12px 0;
+  border-radius: 7px;
+}
+#connections .setup-command code {
+  font-size: 11px;
+  white-space: nowrap;
+}
+#connections .setup-command button {
+  padding: 6px;
+  font-size: 10px;
+}
+#connections .token-grid {
+  display: block;
+}
+#connections .token-field {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+#connections .field-heading {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+#connections .field label,
+#connections .field-heading label,
+.credential-input-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 15px 0 8px;
+}
+#connections .field-heading label {
+  margin: 0;
+}
+#connections .password-wrap {
+  min-width: 0;
+}
+#connections .password-wrap input,
+#connections .field input {
+  font-size: 11px;
+  padding: 10px;
+  min-width: 0;
+  width: 100%;
+}
+#connections .password-wrap button {
+  font-size: 9px;
+}
+#connections .form-bottom {
+  margin-top: 13px;
+  padding-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+#connections .form-bottom p {
+  font-size: 10px;
+}
+#save-connections {
+  margin-top: 12px;
+}
+#connections .form-message {
+  font-size: 11px;
+  padding: 10px;
+  line-height: 1.7;
+}
+#connections .source-panel {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+#connections .source-panel .panel-heading {
+  margin-bottom: 16px;
+}
+#connections .source-panel .panel-heading .eyebrow,
+#connections .source-panel .section-symbol {
+  display: none;
+}
+#connections .source-panel .panel-heading p {
+  font-size: 12px;
+}
+#connections .source-grid {
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+#connections .source-card {
+  background: #fbfcf8;
+  border-color: #dfe5d7;
+  padding: 20px;
+  border-radius: 13px;
+}
+#connections .source-footer {
+  margin: 12px 0;
+}
+#connections .source-footer p {
+  font-size: 10px;
+}
+#connections .source-advanced {
+  padding-top: 12px;
+  margin-top: 14px;
+}
+#connections .source-advanced > summary {
+  font-size: 11px;
+}
+.inline-count {
+  color: #65844a;
+  background: #eaf0e2;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 10px;
+  vertical-align: middle;
+  margin-left: 5px;
+}
+.signal-state {
+  font-size: 10px;
+  margin: 15px 0;
+  color: #6c7665;
+}
+.signal-project {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 6px;
+  font-size: 11px;
+  margin: 12px 0;
+}
+.provider-credentials:not(:empty) {
+  margin-top: 16px;
+  border-top: 1px solid #dde5d3;
+  padding-top: 10px;
+}
+.credential-list {
+  display: grid;
+  gap: 10px;
+}
+.credential-row {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #e0e6d9;
+  border-radius: 8px;
+  padding: 12px;
+}
+.credential-row + .credential-row {
+  margin-top: 8px;
+}
+.credential-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  justify-content: space-between;
+}
+.credential-summary::before {
+  content: "+";
+  color: #6f8659;
+  font-size: 15px;
+  line-height: 1;
+  margin-top: 2px;
+}
+.credential-row[open] > .credential-summary::before {
+  content: "−";
+}
+.credential-summary-copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.credential-summary strong {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.credential-summary small {
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: #73816a;
+  overflow-wrap: anywhere;
+}
+.credential-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+}
+.credential-reference {
+  margin-top: 13px;
+  font-size: 9px;
+  color: #7c8773;
+}
+.credential-reference > summary {
+  font-size: 9px;
+}
+.credential-reference code {
+  display: block;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.notification-overrides {
+  margin-top: 18px;
+  border-top: 1px dashed #d9e1cf;
+  padding-top: 15px;
+}
+.notification-overrides > summary {
+  font-size: 11px;
+  color: #69785e;
+  font-weight: 500;
+  line-height: 1.7;
+}
+#connections .privacy-note {
+  margin-top: 28px;
+  padding: 16px;
+  border-radius: 9px;
+  background: #f4f7ef;
+}
+#connections .privacy-note p {
+  font-size: 10px;
+  line-height: 1.8;
+}
+.signals-settings {
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+  padding-top: 22px;
+}
+.signal-provider-settings {
+  border: 1px solid var(--line);
+  background: #f9fbf5;
+  border-radius: 9px;
+  padding: 16px;
+  margin-top: 12px;
+}
+.signal-provider-settings > summary {
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.signal-provider-settings[open] > summary {
+  margin-bottom: 17px;
+}
+.signal-enable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin: 14px 0;
+}
+.signal-enable input {
+  width: auto;
+}
+.signal-provider-fields {
+  display: grid;
+  gap: 15px;
+}
+.signal-secret-references {
+  margin-top: 15px;
+  font-size: 11px;
+}
+.signal-secret-references summary {
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.pm-mixpanel-field {
+  margin: 20px 0;
+}
+@media (max-width: 1200px) {
+  .integration-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 800px) {
+  #connections {
+    padding: 23px;
+  }
+}
+@media (max-width: 600px) {
+  #connections {
+    padding: 18px 14px;
+  }
+  .integration-grid,
+  #connections .source-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #connections .service-card,
+  #connections .source-card {
+    padding: 17px 14px;
+  }
+  #connections .panel-heading {
+    gap: 8px;
+  }
+  #connections .section-symbol {
+    display: none;
+  }
+  #connections .connection-categories {
+    gap: 6px;
+  }
+  #connections .connection-categories a {
+    font-size: 10px;
+    padding: 8px 10px;
+  }
+  #connections .service-actions .button,
+  #connections .slack-actions .button {
+    min-height: 42px;
+  }
+  #connections .small-button {
+    min-height: 40px;
+  }
+  .integration-group + .integration-group {
+    margin-top: 28px;
+  }
+  #connections .source-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .credential-summary {
+    flex-wrap: wrap;
+  }
+  .credential-summary .saved-state {
+    margin-left: 18px;
+  }
+  #connections .credential-summary-copy {
+    flex-basis: calc(100% - 22px);
+  }
+}
+
+#connections .service-heading p,
+#connections .slack-heading p,
+#connections .setup-help,
+#connections .setup-steps,
+#connections .field p,
+#connections .token-field p {
+  font-size: 12px;
+}
+#connections .service-status-row p,
+#connections .slack-status-row p,
+#connections .manual-connection-label,
+#connections .signal-state {
+  font-size: 11px;
+}
+#connections .saved-state,
+#connections .runtime-badge {
+  font-size: 10px;
+}
+body:has(#global-update-banner:not([hidden])) main [id] {
+  scroll-margin-top: 150px;
+}
+.mixpanel-report-settings {
+  margin-top: 15px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.mixpanel-report-settings > summary {
+  font-size: 11px;
+  color: #455c37;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mixpanel-report-settings .project-form-grid {
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin: 15px 0;
+}
+.mixpanel-report-settings .field select {
+  width: 100%;
+  min-width: 0;
+  font-size: 11px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+@media (max-width: 600px) {
+  body:has(#global-update-banner:not([hidden])) main [id] {
+    scroll-margin-top: 220px;
+  }
+}
+
+main h1[tabindex="-1"]:focus,
+main h2[tabindex="-1"]:focus,
+main h3[tabindex="-1"]:focus {
+  outline: none;
+}
+main [tabindex="-1"]:not(#job-detail):focus {
+  outline: none;
+}
+
+#connections .password-wrap input {
+  padding-right: 54px;
 }

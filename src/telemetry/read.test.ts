@@ -122,7 +122,9 @@ describe("project telemetry configuration", () => {
           expect.objectContaining({
             name,
             configured: true,
-            label: expect.stringContaining("shop"),
+            project: "shop",
+            group: "telemetry",
+            label: expect.any(String),
           }),
         );
         expect(JSON.stringify(status)).not.toContain(value);

@@ -13,6 +13,7 @@ import {
 import { join, dirname, resolve, parse } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { loadProject } from "../config.ts";
+import { ID_RE } from "../telemetry/config.ts";
 import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
 import { validateName } from "./files.ts";
 import type {
@@ -444,6 +445,7 @@ export function createLinearProvisioning(options: {
       "schedule",
       "wipLimit",
       "linearProjectId",
+      "mixpanelReportId",
     ];
     if (
       Object.keys(input).some((key) => !allowed.includes(key)) ||
@@ -459,6 +461,14 @@ export function createLinearProvisioning(options: {
         "Provide a PM key, name (1–100 characters), and mandate (1–12000 characters).",
       );
     validateName(input.key, "area");
+    if (
+      input.mixpanelReportId !== undefined &&
+      (typeof input.mixpanelReportId !== "string" ||
+        !ID_RE.test(input.mixpanelReportId))
+    )
+      throw new LinearProvisioningError(
+        "Use a positive numeric Mixpanel saved-report ID, or leave it empty.",
+      );
     const strings = (value: unknown) =>
       Array.isArray(value) &&
       value.length <= 100 &&
@@ -504,6 +514,13 @@ export function createLinearProvisioning(options: {
     }
     await locked(project, async () => {
       const config = loadProject(root, project);
+      if (
+        input.mixpanelReportId !== undefined &&
+        !config.config.telemetry?.mixpanel
+      )
+        throw new LinearProvisioningError(
+          "Configure Mixpanel for this project before assigning a PM saved-report ID.",
+        );
       if (config.areas.some((area) => area.key === input.key))
         throw new LinearProvisioningError(
           "That PM key already exists. Use Retry Linear setup for an incomplete mapping.",
@@ -542,6 +559,9 @@ export function createLinearProvisioning(options: {
           metric: input.metric ?? "/",
           schedule,
           enabled: false,
+          ...(input.mixpanelReportId === undefined
+            ? {}
+            : { mixpanelReportId: input.mixpanelReportId }),
         };
       });
     });

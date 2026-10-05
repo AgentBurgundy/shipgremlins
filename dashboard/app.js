@@ -36,6 +36,12 @@
   }
 
   const $ = (id) => document.getElementById(id);
+  const pages = window.createDashboardPages({
+    initialPage:
+      slackEnvelope || serviceEnvelopes.linear || serviceEnvelopes.vercel
+        ? "connections"
+        : undefined,
+  });
   let currentStatus = null;
   let projectNameEdited = false;
   let loading = false;
@@ -110,6 +116,35 @@
   let repositoryLoading = false;
   let repositoryRevision = 0;
 
+  const connectionsView = window.createConnectionsView({
+    api,
+    message,
+    onSaved: async () => {
+      await refreshStatus();
+      await refreshRunners();
+    },
+    onConfigure: async (provider, project, trigger) => {
+      await openProjectSettings(project, trigger);
+      projectEditor.form?.focusProvider(provider);
+    },
+  });
+  const updateBanner = window.createUpdateBanner($("global-update-banner"), {
+    onApply: () => runUpdateAction("apply"),
+    onRestart: () => restartDashboard(),
+    onDetails: () => pages.navigate("/settings#updates"),
+    onCheck: () => runUpdateAction("check"),
+  });
+  const mixpanelReports = window.createMixpanelReports?.(
+    $("mixpanel-reports"),
+    {
+      api,
+      onSaved: async (project) => {
+        projectChecks.delete(project);
+        await refreshStatus();
+      },
+    },
+  );
+
   function message(element, text, error = false) {
     element.replaceChildren();
     element.textContent = text;
@@ -121,6 +156,7 @@
   function lockForms(locked) {
     formsLocked = locked;
     $("connections-fields").disabled = locked;
+    connectionsView.setLocked(locked);
     $("source-token-fields").disabled = locked;
     $("railway-token-fields").disabled = locked;
     $("cloud-run-token-fields").disabled = locked;
@@ -209,33 +245,34 @@
 
   function renderConnectionSummary() {
     if (!currentStatus) return;
-    const configured = new Map(
-      (currentStatus.connections || []).map((item) => [
-        item.name,
-        item.configured,
-      ]),
-    );
-    for (const item of currentStatus.sourceConnections || sourceConnections) {
-      configured.set(
-        item.provider === "github" ? "GITHUB_TOKEN" : "GITLAB_TOKEN",
-        item.connected && !item.needsReconnect,
-      );
-    }
-    for (const [provider, config] of Object.entries(serviceProviders)) {
+    const services = new Set();
+    const providerFor = {
+      GITHUB_TOKEN: "github",
+      GITLAB_TOKEN: "gitlab",
+      LINEAR_API_KEY: "linear",
+      VERCEL_TOKEN: "vercel",
+      CLAUDE_CODE_OAUTH_TOKEN: "claude",
+      RAILWAY_TOKEN: "railway",
+      GCP_SERVICE_ACCOUNT_JSON: "cloud-run",
+    };
+    for (const item of currentStatus.connections || [])
+      if (item.configured) {
+        const provider = item.provider || providerFor[item.name];
+        if (provider) services.add(provider);
+      }
+    for (const item of currentStatus.sourceConnections || sourceConnections)
+      if (item.connected && !item.needsReconnect) services.add(item.provider);
+    for (const provider of Object.keys(serviceProviders)) {
       const item =
         serviceStatuses.get(provider) ||
         currentStatus.serviceConnections?.find(
           (item) => item.provider === provider,
         );
-      if (item)
-        configured.set(config.token, item.connected && !item.needsReconnect);
+      if (item?.connected && !item.needsReconnect) services.add(provider);
     }
-    if (slackStatus)
-      configured.set(
-        "SLACK_WEBHOOK_URL",
-        Boolean(slackStatus.connected || slackStatus.webhookConfigured),
-      );
-    const count = [...configured.values()].filter(Boolean).length;
+    if (slackStatus?.connected || slackStatus?.webhookConfigured)
+      services.add("slack");
+    const count = services.size;
     $("connection-count").textContent = String(count);
     $("connections-summary").textContent =
       `${count} ${count === 1 ? "connection" : "connections"} configured`;
@@ -278,73 +315,13 @@
         ? `Some settings need attention. You can repair them in the editor below. ${warnings.join(" ")}`
         : "",
     );
-    const telemetryFields = $("telemetry-connections");
-    const telemetryNames = new Set(
-      connections.map((connection) => connection.name),
-    );
-    for (const field of [...telemetryFields.children]) {
-      if (!telemetryNames.has(field.dataset.secret)) field.remove();
-    }
-    const fixedConnections = new Set([
-      "GITHUB_TOKEN",
-      "GITLAB_TOKEN",
-      "LINEAR_API_KEY",
-      "VERCEL_TOKEN",
-      "CLAUDE_CODE_OAUTH_TOKEN",
-      "RAILWAY_TOKEN",
-      "GCP_SERVICE_ACCOUNT_JSON",
-    ]);
-    for (const connection of connections.filter(
-      (connection) => !fixedConnections.has(connection.name),
-    )) {
-      if (document.getElementById(`telemetry-${connection.name}`)) continue;
-      const field = document.createElement("div");
-      field.className = "token-field";
-      field.dataset.secret = connection.name;
-      const heading = document.createElement("div");
-      heading.className = "field-heading";
-      const label = document.createElement("label");
-      label.htmlFor = `telemetry-${connection.name}`;
-      label.textContent = connection.label;
-      const badge = document.createElement("span");
-      badge.className = "saved-state";
-      badge.dataset.connection = connection.name;
-      const help = document.createElement("p");
-      help.id = `help-${connection.name}`;
-      help.textContent = `${connection.description} Variable: ${connection.name}.`;
-      const input = document.createElement(
-        connection.format === "json" ? "textarea" : "input",
-      );
-      input.id = label.htmlFor;
-      input.name = connection.name;
-      if (connection.format === "json") {
-        input.className = "secret-json";
-        input.rows = 3;
-        input.dataset.secretJson = "true";
-      } else input.type = "password";
-      input.autocomplete = "off";
-      input.spellcheck = false;
-      input.placeholder = "Paste credential (optional)";
-      input.setAttribute("aria-describedby", help.id);
-      heading.append(label, badge);
-      const wrap = document.createElement("div");
-      wrap.className = "password-wrap";
-      wrap.append(input);
-      if (connection.format === "json") {
-        const reveal = element("button", "small-button", "Show JSON");
-        reveal.type = "button";
-        reveal.setAttribute("aria-pressed", "false");
-        reveal.setAttribute("aria-label", `Show ${connection.label} JSON`);
-        reveal.addEventListener("click", () => {
-          const showing = input.classList.toggle("revealed");
-          reveal.textContent = showing ? "Hide JSON" : "Show JSON";
-          reveal.setAttribute("aria-pressed", String(showing));
-        });
-        wrap.append(reveal);
-      }
-      field.append(heading, help, wrap);
-      telemetryFields.append(field);
-    }
+    connectionsView.render(connections, projects, {
+      locked: formsLocked,
+      slackConnected: Boolean(
+        slackStatus?.connected || slackStatus?.webhookConfigured,
+      ),
+    });
+    mixpanelReports?.setProjects(projects);
     for (const badge of document.querySelectorAll("[data-connection]")) {
       const configured = connections.some(
         (connection) =>
@@ -369,7 +346,7 @@
         ? "Browser connected"
         : configured
           ? "✓ Saved"
-          : "Not configured";
+          : "Not connected";
       badge.classList.toggle("configured", configured);
       const input = document.querySelector(
         `[name="${badge.dataset.connection}"]`,
@@ -572,7 +549,7 @@
     if (!Object.keys(values).length) {
       message(
         $("connections-message"),
-        "Paste at least one new token to save. Existing connections stay as they are.",
+        "Paste the token from claude setup-token. Your saved token stays unchanged until you save a new one.",
         true,
       );
       $("claude-token").focus();
@@ -600,7 +577,7 @@
       }
       message(
         $("connections-message"),
-        "Connections saved on your ShipGremlins server. Blank fields were left unchanged. Use Verify connections on your project to check live access.",
+        "Claude token saved on your server. Your local workers can use it for PM and coding jobs.",
       );
       try {
         await refreshStatus();
@@ -617,12 +594,13 @@
     } finally {
       for (const key of Object.keys(values)) delete values[key];
       lockForms(!sessionToken);
-      restoreButton("save-connections", "Save connections", "↗");
+      $("save-connections").textContent = "Save Claude token";
     }
   });
 
   $("project-name").addEventListener("input", () => {
     projectNameEdited = Boolean($("project-name").value);
+    newProjectSettings.setProjectName?.($("project-name").value);
   });
   function suggestProjectName() {
     if (projectNameEdited) return;
@@ -634,6 +612,7 @@
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
+    newProjectSettings.setProjectName?.($("project-name").value);
   }
   $("project-repo").addEventListener("input", suggestProjectName);
   $("project-form").addEventListener("submit", async (event) => {
@@ -1420,7 +1399,7 @@
       $("job-project").value = launch.dataset.launchProject;
       $("job-type").value = launch.dataset.launchCrew;
       renderJobAreas();
-      $("job-form").scrollIntoView({ behavior: "smooth", block: "center" });
+      pages.navigate("/runners#job-form");
       (launch.dataset.launchCrew === "pm"
         ? $("job-area")
         : $("job-ticket")
@@ -2159,7 +2138,7 @@
     if (!button) return;
     jobDetailTrigger = button;
     selectJob(button.dataset.jobId);
-    $("job-detail").scrollIntoView({ behavior: "smooth", block: "start" });
+    pages.navigate("/activity#job-detail");
   });
   $("refresh-job-output").addEventListener("click", refreshJobOutput);
   function closeJobDetail() {
@@ -2517,6 +2496,8 @@
         .filter(Boolean);
       if (paths.length) input[key] = paths;
     }
+    if ($("pm-mixpanel-report").value.trim())
+      input.mixpanelReportId = $("pm-mixpanel-report").value.trim();
     if ($("pm-linear-project").value)
       input.linearProjectId = $("pm-linear-project").value;
     pmCreating = true;
@@ -2564,13 +2545,18 @@
       const busy = serviceBusy.has(provider);
       const locked = formsLocked || !sessionToken || busy || restarting;
       const connected = status?.connected && !status.needsReconnect;
+      $(`${provider}-connection`).classList.toggle(
+        "is-connected",
+        Boolean(connected),
+      );
+
       $(`${provider}-connect`).disabled = locked || !status?.available;
       $(`${provider}-connect`).textContent = busy
         ? "Working…"
         : status?.needsReconnect
           ? `Reconnect ${config.name} ↗`
           : connected && status.method === "oauth"
-            ? `Change ${config.name} connection ↗`
+            ? `Change account ↗`
             : `Connect ${config.name} ↗`;
       $(`${provider}-refresh`).disabled = locked;
       $(`${provider}-token-fields`).disabled = locked;
@@ -2792,11 +2778,12 @@
     renderConnectionSummary();
     const locked = formsLocked || !sessionToken || slackBusy || restarting;
     const connected = slackStatus?.connected || slackStatus?.webhookConfigured;
+    $("slack-connection").classList.toggle("is-connected", Boolean(connected));
     $("slack-connect").disabled = locked || !slackStatus?.available;
     $("slack-connect").textContent = slackBusy
       ? "Connecting…"
       : connected
-        ? "Change Slack connection ↗"
+        ? "Change channel ↗"
         : "Add to Slack ↗";
     $("slack-refresh").disabled = locked;
     $("slack-webhook-fields").disabled = locked;
@@ -2826,6 +2813,12 @@
       (connected
         ? "Notifications use your saved incoming webhook."
         : "No Slack workspace connected yet.");
+    if (currentStatus)
+      connectionsView.render(
+        currentStatus.connections || [],
+        currentStatus.projects || [],
+        { locked: formsLocked, slackConnected: Boolean(connected) },
+      );
     $("slack-guidance").textContent =
       slackStatus.message ||
       (slackStatus.available
@@ -3031,16 +3024,15 @@
       button.hidden = !canOpen || !paths[button.dataset.openFolder];
   }
 
-  function updateNavigation() {
-    const section = window.location.hash || "#overview";
-    for (const link of document.querySelectorAll(".navigation a")) {
-      if (link.getAttribute("href") === section)
-        link.setAttribute("aria-current", "location");
-      else link.removeAttribute("aria-current");
+  $("copy-claude-command").addEventListener("click", async () => {
+    try {
+      await copyText("claude setup-token");
+      copiedButton($("copy-claude-command"));
+      $("claude-copy-status").textContent = "Claude setup command copied.";
+    } catch (error) {
+      $("claude-copy-status").textContent = error.message;
     }
-  }
-  window.addEventListener("hashchange", updateNavigation);
-  updateNavigation();
+  });
 
   for (const button of document.querySelectorAll("[data-copy-path]")) {
     button.addEventListener("click", async () => {
@@ -3184,6 +3176,7 @@
           ? `You have unsaved changes in ${editor.path}. Save them first, keep editing, or discard them to open ${path}.`
           : "Reloading replaces your draft with the latest file on the server. Save or copy your draft first if you want to keep it.";
       $("discard-prompt").hidden = false;
+      pages.navigate("/settings#discard-prompt");
       $("keep-editing").focus();
       return;
     }
@@ -3212,12 +3205,33 @@
   $("keep-editing").addEventListener("click", () => {
     clearDiscardPrompt();
     const pendingToken = [
-      ...document.querySelectorAll(".password-wrap input"),
+      ...document.querySelectorAll(
+        ".password-wrap input, textarea[data-secret-json], #gcp-credentials, #slack-webhook",
+      ),
     ].find((input) => input.value);
-    if (isEditorDirty()) $("config-content").focus();
-    else if (pendingToken) pendingToken.focus();
-    else if ($("project-repo").value) $("project-repo").focus();
-    else $("config-content").focus();
+    const target = isEditorDirty()
+      ? $("config-content")
+      : pendingToken ||
+        (mixpanelReports?.isDirty()
+          ? $("mixpanel-reports").querySelector("input")
+          : null) ||
+        (newProjectSettings.isDirty() ? $("project-name") : null) ||
+        ["project-repo", "project-name", "pm-name", "pm-mandate", "job-ticket"]
+          .map($)
+          .find((input) => input.value) ||
+        $("config-content");
+    for (
+      let parent = target.parentElement;
+      parent;
+      parent = parent.parentElement
+    )
+      if (parent.tagName === "DETAILS") parent.open = true;
+    const page = target.closest("[data-page]")?.dataset.page;
+    if (page) pages.navigate(`/${page}`);
+    requestAnimationFrame(() => {
+      target.focus();
+      target.scrollIntoView({ block: "center" });
+    });
   });
   $("discard-changes").addEventListener("click", async () => {
     const action = pendingEditorAction;
@@ -3352,6 +3366,11 @@
     $("update-restart-note").textContent = status.canRestart
       ? "The staged runtime is ready. Restart this dashboard to use it. Your saved configuration and credentials stay in place."
       : "The staged runtime is ready. Restart the ShipGremlins process on your server to use it. For a CLI session, stop the current process and run gremlins dashboard again.";
+    updateBanner.render(status, {
+      busy,
+      authenticated: Boolean(sessionToken),
+      restarting,
+    });
   }
 
   function updateFailure(error) {
@@ -3423,6 +3442,18 @@
     } catch (error) {
       updateFailure(error);
     }
+    resumeBackgroundChecks();
+  }
+  function resumeBackgroundChecks() {
+    if (!sessionToken || restarting) return;
+    updateBanner.startRefresh({
+      check: () => runUpdateAction("check"),
+      getStatus: () => updateStatus,
+      canCheck: () =>
+        Boolean(sessionToken) && !updateRequestBusy && !restarting,
+    });
+    scheduleUpdatePoll();
+    scheduleRunnerPoll();
   }
 
   async function openProjectSettings(name, trigger) {
@@ -3446,6 +3477,7 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
+        { projectName: projectEditor.name },
       );
       $("project-settings-repo").textContent =
         projectEditor.config.repo || "Project configuration";
@@ -3479,11 +3511,11 @@
     }
     $("project-settings-dialog").close();
     if (action === "connections") {
-      $("connections").scrollIntoView({ behavior: "smooth", block: "start" });
+      pages.navigate("/connections");
       return;
     }
     if (action === "advanced") {
-      $("configuration").scrollIntoView({ behavior: "smooth", block: "start" });
+      pages.navigate("/settings#configuration");
       await requestEditorAction("switch", projectEditor.path);
       return;
     }
@@ -3553,6 +3585,7 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
+        { projectName: projectEditor.name },
       );
       $("project-settings-discard").hidden = true;
       projectChecks.delete(projectEditor.name);
@@ -3638,6 +3671,7 @@
   function hasUnsavedInputs() {
     return (
       isEditorDirty() ||
+      Boolean(mixpanelReports?.isDirty()) ||
       newProjectSettings.isDirty() ||
       (projectEditor.form?.isDirty() && $("project-settings-dialog").open) ||
       Boolean($("gcp-credentials").value) ||
@@ -3657,6 +3691,7 @@
         "pm-mandate",
         "pm-paths",
         "pm-shared-paths",
+        "pm-mixpanel-report",
       ].some((id) => $(id).value)
     );
   }
@@ -3675,10 +3710,12 @@
         "Restarting reloads this page and clears unsaved configuration and form entries. Save your changes or copy your draft before restarting.";
       $("discard-changes").textContent = "Restart and discard";
       $("discard-prompt").hidden = false;
+      pages.navigate("/settings#discard-prompt");
       $("keep-editing").focus();
       return;
     }
     restarting = true;
+    updateBanner.stopRefresh();
     clearTimeout(updatePollTimer);
     clearTimeout(runnerPollTimer);
     lockForms(true);
@@ -3711,6 +3748,7 @@
       restarting = false;
       lockForms(!sessionToken);
       updateFailure(error);
+      resumeBackgroundChecks();
     }
   }
 
@@ -3726,6 +3764,7 @@
       restartReloadApproved ||
       !(
         isEditorDirty() ||
+        Boolean(mixpanelReports?.isDirty()) ||
         newProjectSettings.isDirty() ||
         (projectEditor.form?.isDirty() && $("project-settings-dialog").open)
       )
@@ -3736,6 +3775,7 @@
   });
 
   window.addEventListener("pagehide", () => {
+    updateBanner.stopRefresh();
     clearTimeout(updatePollTimer);
     clearTimeout(runnerPollTimer);
     clearArtifactBlobs();
@@ -3747,6 +3787,17 @@
       ".password-wrap input, textarea[data-secret-json]",
     ))
       input.value = "";
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted || !sessionToken || restarting) return;
+    resumeBackgroundChecks();
+    Promise.allSettled([
+      refreshStatus(),
+      refreshRunners(),
+      refreshSources(),
+      refreshSlack(),
+      ...Object.keys(serviceProviders).map(refreshService),
+    ]);
   });
   initialize();
 })();

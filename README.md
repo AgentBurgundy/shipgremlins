@@ -30,6 +30,9 @@ Datadog logs, and Mixpanel analytics so each PM can investigate its project's
 failures and usage alongside browser evidence. Optional connections use scoped
 reads and per-project credentials. [Connect project telemetry →](docs/TELEMETRY.md)
 
+Sentry, Datadog, and Mixpanel have their own Connections cards. Configure project
+scopes and each PM's Mixpanel report in the dashboard, then save credentials there.
+
 **Keep the crew in your Slack channel.** PMs report their patrols; Coding Gremlins announce drafts ready for review and flag blockers. Updates carry the project, mandate or ticket, and run number. [Connect Slack →](docs/SLACK.md)
 
 > [!NOTE]
@@ -87,9 +90,17 @@ gremlins setup
 
 The dashboard opens in your browser with gremlins, project setup, official GitHub/GitLab sign-in, and local connection-token entry. The `gremlins` CLI works from any directory; `shipgremlins` and `hub` remain compatibility aliases. Everyday commands do not need a source checkout or an `npm run` wrapper. [Connect source control →](docs/SOURCE_CONTROL.md)
 
+Separate pages keep Connections, Projects, Your gremlins, Activity, and Settings
+focused. Provider cards contain setup instructions and token creation links.
+Connect Slack once for the workspace; every project inherits that channel unless
+you deliberately configure an override.
+
 On a homelab server, run `gremlins setup --lan` and open the printed private-network link from your laptop or phone. Edit configuration in the dashboard and find both installation and settings folders under File locations. LAN mode uses HTTP on your trusted network; see the [server guide](docs/SETUP.md#server-use) for firewall and encrypted SSH-tunnel access.
 
 Install future updates from the dashboard's **Updates** panel or with `gremlins update`. New code is staged and checked before activation; your existing projects, PM mandates, and credentials stay in place. The previous runtime remains available for rollback.
+
+An update banner appears on every dashboard page when a release is available,
+with installation and restart controls. Update details and rollback live in Settings.
 
 ```bash
 gremlins --help

@@ -78,6 +78,67 @@ function fixture() {
 }
 
 describe("Linear app and mandate provisioning", () => {
+  it("persists an optional PM Mixpanel report through idempotent Linear mapping", async () => {
+    const f = fixture();
+    const file = join(f.root, "projects/demo/project.json");
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    config.telemetry = {
+      mixpanel: {
+        region: "us",
+        projectId: "123",
+        usernameSecret: "MIXPANEL_USERNAME_DEMO",
+        passwordSecret: "MIXPANEL_PASSWORD_DEMO",
+      },
+    };
+    writeFileSync(file, JSON.stringify(config));
+    await f.create().addArea("demo", {
+      key: "growth",
+      name: "Growth",
+      mandate: "Review activation friction.",
+      mixpanelReportId: "456",
+    });
+    await f.create().provision("demo");
+    await f.create().provision("demo");
+    expect(
+      loadProject(f.root, "demo").areas.find((area) => area.key === "growth"),
+    ).toMatchObject({ mixpanelReportId: "456", enabled: false });
+    expect(f.client.createProject).toHaveBeenCalledTimes(2);
+  });
+  it.each([null, 7, "", "0", "-1", "1x", "https://mixpanel.com/report/1"])(
+    "rejects invalid PM Mixpanel report %s without changing configuration or calling Linear",
+    async (mixpanelReportId) => {
+      const f = fixture();
+      const file = join(f.root, "projects/demo/areas.json");
+      const before = readFileSync(file, "utf8");
+      await expect(
+        f.create().addArea("demo", {
+          key: "growth",
+          name: "Growth",
+          mandate: "Review activation.",
+          mixpanelReportId,
+        }),
+      ).rejects.toThrow("positive numeric Mixpanel");
+      expect(readFileSync(file, "utf8")).toBe(before);
+      expect(f.client.getProject).not.toHaveBeenCalled();
+      expect(f.client.createProject).not.toHaveBeenCalled();
+    },
+  );
+  it("requires project Mixpanel configuration before adding a PM report mapping", async () => {
+    const f = fixture();
+    const file = join(f.root, "projects/demo/areas.json");
+    const before = readFileSync(file, "utf8");
+    await expect(
+      f.create().addArea("demo", {
+        key: "growth",
+        name: "Growth",
+        mandate: "Review activation.",
+        mixpanelReportId: "456",
+        linearProjectId: randomUUID(),
+      }),
+    ).rejects.toThrow("Configure Mixpanel");
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(f.client.getProject).not.toHaveBeenCalled();
+  });
   it("does not adopt an unrelated team with the same name", async () => {
     const f = fixture();
     const unrelated = { id: randomUUID(), name: "demo", key: "DEMO" };

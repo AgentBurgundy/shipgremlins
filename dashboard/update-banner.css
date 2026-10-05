@@ -1,0 +1,87 @@
+.global-update-banner {
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 24px;
+  padding: 16px 20px;
+  border: 1px solid #c7dcbc;
+  border-radius: 16px;
+  background: #eef6e8;
+  color: #24352b;
+}
+.global-update-banner[hidden] {
+  display: none;
+}
+.update-banner-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 10px;
+  background: #d9edc5;
+  font-size: 22px;
+  font-weight: 700;
+}
+.update-banner-copy {
+  min-width: 0;
+  flex: 1;
+}
+.update-banner-copy strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.update-banner-copy p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #4d6253;
+}
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.update-banner-actions .primary-button {
+  padding: 9px 13px;
+  font-size: 12px;
+  min-height: 38px;
+  white-space: nowrap;
+}
+.update-banner-actions .small-button {
+  text-decoration: none;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.global-update-banner[data-tone="attention"] {
+  background: #fff8e9;
+  border-color: #ead9b0;
+}
+.global-update-banner[data-tone="attention"] .update-banner-icon {
+  background: #f5e9c7;
+}
+@media (max-width: 760px) {
+  .global-update-banner {
+    flex-wrap: wrap;
+    padding: 14px;
+    gap: 10px;
+  }
+  .update-banner-copy {
+    flex-basis: calc(100% - 50px);
+  }
+  .update-banner-actions {
+    width: 100%;
+    padding-left: 44px;
+  }
+}
+@media (max-width: 380px) {
+  .update-banner-actions {
+    padding-left: 0;
+  }
+}

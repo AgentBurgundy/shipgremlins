@@ -20,6 +20,7 @@ import {
 } from "../config.ts";
 import { fillTemplate, templateVars } from "../commands/addProject.ts";
 import { projectSecretNames } from "../projectCapabilities.ts";
+import { telemetrySecrets } from "../telemetry/config.ts";
 
 const PORTABLE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const RESERVED_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
@@ -168,11 +169,12 @@ export function initializeSetup(
           "environments",
           "branches",
           "commands",
+          "telemetry",
         ].includes(key),
     )
   )
     throw new Error(
-      "Unsupported project settings. Use workflow, verification, environments, branches, and commands.",
+      "Unsupported project settings. Use workflow, verification, environments, branches, commands, and telemetry.",
     );
   if (
     input.serverUrl !== undefined &&
@@ -298,6 +300,9 @@ export function initializeSetup(
     secrets = [
       project.config.slackWebhookSecret,
       ...projectSecretNames(project.config),
+      ...telemetrySecrets(project.config.telemetry).map(
+        (secret) => secret.name,
+      ),
       ...(project.config.signIn
         ? [project.config.signIn.databaseUrlSecret]
         : []),
@@ -356,6 +361,7 @@ export function initializeSetup(
       secrets = [
         config.slackWebhookSecret,
         ...projectSecretNames(config),
+        ...telemetrySecrets(config.telemetry).map((secret) => secret.name),
         ...(config.signIn ? [config.signIn.databaseUrlSecret] : []),
       ];
     } catch {

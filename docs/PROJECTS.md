@@ -87,6 +87,14 @@ Connect Vercel in **Connections**, or use its advanced manual token field. The t
 
 Save `RAILWAY_TOKEN` in its Connections card. Use the narrowest account, workspace, or project access available. Account/workspace tokens use `tokenType: "account"`; a Railway project token requires `tokenType: "project"`. This is manual token setup, not Railway OAuth. A custom `tokenSecret` selects a different saved variable for this target.
 
+The Railway card links to [Railway Tokens](https://railway.com/account/tokens).
+Create a token named ShipGremlins and select the workspace containing your apps,
+then paste it into the card and save. Choose **Account/workspace** in the project's
+token type. For one environment, create a token in Railway's **Project Settings →
+Tokens**, select that environment, and choose **Project** in ShipGremlins instead.
+The field is named `RAILWAY_TOKEN` in ShipGremlins for either token type. See
+[Railway's token guide](https://docs.railway.com/integrations/api#creating-a-token).
+
 Discovery reads the selected service and deployment state. It does not provision environments or deploy code. A service without a usable URL needs a domain or a reachable direct URL target.
 
 ### Google Cloud Run

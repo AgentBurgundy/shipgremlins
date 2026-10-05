@@ -29,7 +29,6 @@ import {
   validSourceRepository,
   validSourceServer,
 } from "../config.ts";
-import { telemetrySecrets } from "../telemetry/config.ts";
 import {
   CONNECTIONS,
   readConnections,
@@ -108,6 +107,15 @@ const TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 const MAX_BODY = 32 * 1024;
+const HTML_ROUTES = new Set([
+  "/",
+  "/overview",
+  "/connections",
+  "/projects",
+  "/runners",
+  "/activity",
+  "/settings",
+]);
 
 /** Advertise private LAN/Tailscale IPv4 interfaces, never public or loopback addresses. */
 export function lanAddresses(
@@ -921,11 +929,6 @@ export function createDashboardServer(
             vercelConnection.status({ checkAvailability: false }),
           ]);
           const configWarnings: string[] = [];
-          const projectConnections: {
-            name: string;
-            label: string;
-            description: string;
-          }[] = [];
           let hubRepo: string | null = null;
           if (existsSync(join(root, "hub.json"))) {
             try {
@@ -945,14 +948,6 @@ export function createDashboardServer(
             try {
               const project = loadProject(root, name);
               const verification = effectiveVerification(project.config);
-              projectConnections.push(
-                ...telemetrySecrets(project.config.telemetry).map(
-                  (connection) => ({
-                    ...connection,
-                    label: `${name} · ${connection.label}`,
-                  }),
-                ),
-              );
               return {
                 name,
                 repo: project.config.repo,
@@ -969,6 +964,7 @@ export function createDashboardServer(
                     ? { [verification.environment]: verification.target }
                     : {}),
                 commands: project.config.commands,
+                telemetry: project.config.telemetry ?? {},
                 branches: project.config.branches,
                 verified: project.config.verified,
                 linear: linearProvisioning.status(name),
@@ -982,6 +978,7 @@ export function createDashboardServer(
                     paths,
                     schedule,
                     wipLimit,
+                    mixpanelReportId,
                   }) => ({
                     key,
                     name: areaName,
@@ -991,6 +988,7 @@ export function createDashboardServer(
                     paths,
                     schedule,
                     wipLimit,
+                    mixpanelReportId,
                   }),
                 ),
               };
@@ -1011,11 +1009,9 @@ export function createDashboardServer(
             serviceConnections,
             connections: [
               ...new Map(
-                [
-                  ...CONNECTIONS,
-                  ...projectConnections,
-                  ...projectConnectionDefinitions(root),
-                ].map((connection) => [connection.name, connection]),
+                [...CONNECTIONS, ...projectConnectionDefinitions(root)].map(
+                  (connection) => [connection.name, connection],
+                ),
               ).values(),
             ].map((connection) => ({
               ...connection,
@@ -1143,6 +1139,7 @@ export function createDashboardServer(
                   "environments",
                   "commands",
                   "branches",
+                  "telemetry",
                 ].includes(key),
             ) ||
             typeof input.project !== "string" ||
@@ -1243,6 +1240,7 @@ export function createDashboardServer(
                   "environments",
                   "commands",
                   "branches",
+                  "telemetry",
                 ]
                   .filter((key) => input[key] !== undefined)
                   .map((key) => [key, input[key]]),
@@ -1378,7 +1376,10 @@ export function createDashboardServer(
           throw new Error();
         const directory = await realpath(join(packageRoot, "dashboard"));
         const file = await realpath(
-          join(directory, pathname === "/" ? "index.html" : pathname.slice(1)),
+          join(
+            directory,
+            HTML_ROUTES.has(pathname) ? "index.html" : pathname.slice(1),
+          ),
         );
         const rel = relative(directory, file);
         if (

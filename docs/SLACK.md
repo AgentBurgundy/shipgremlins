@@ -2,6 +2,10 @@
 
 PM Gremlins and Coding Gremlins post compact updates with their role, project, mandate or ticket, and run number. Coding updates link to the draft for review. **A draft is not Done: Done means merged into production.**
 
+**Connect Slack once for the workspace. Every project uses that channel by
+default.** You do not need a webhook per project, and Slack is optional: PMs and
+coding jobs still run when no Slack connection is configured.
+
 ## Connect a channel
 
 1. Open your dashboard with `gremlins setup`, or `gremlins setup --lan` on a homelab server.
@@ -34,7 +38,7 @@ Known saved credentials and common credential formats are redacted before local 
 
 ## Optional per-project channels
 
-A project's `slackWebhookSecret` names an environment variable, for example `SLACK_WEBHOOK_MY_APP`. Save its incoming webhook in Connections, or export that variable on the controller. Do not put the URL directly in `project.json`.
+A project's `slackWebhookSecret` names an environment variable, for example `SLACK_WEBHOOK_MY_APP`. Only set a value if this project should post to a different channel. The dashboard keeps these optional overrides in an expandable advanced section; an empty override inherits the workspace channel. Save its incoming webhook there, or export that variable on the controller. Do not put the URL directly in `project.json`.
 
 Precedence is: exported project variable, saved project connection, then the instance-wide channel selected above. An invalid configured override fails that notification rather than silently posting to a different channel. Disconnecting the instance-wide connection does not remove a per-project override; clear that override separately if you want to stop its messages.
 

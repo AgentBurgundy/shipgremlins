@@ -7,3 +7,5 @@ GitLab full-color Tanuki logomark: [official GitLab press kit SVG](https://about
 Slack mark: [gilbarbara/logos](https://github.com/gilbarbara/logos/blob/main/logos/slack-icon.svg), logo belongs to Slack.
 
 Brand guidance: [GitHub](https://brand.github.com/foundations/logo), [GitLab](https://about.gitlab.com/press/press-kit/), [Vercel](https://vercel.com/geist/brands), [Linear](https://linear.app/brand), [Slack](https://slack.com/media-kit).
+
+Sentry, Datadog, and Mixpanel: Simple Icons (CC0), retrieved from https://github.com/simple-icons/simple-icons/tree/develop/icons on 2026-10-04. Brand names and marks belong to their owners.

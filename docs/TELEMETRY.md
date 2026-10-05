@@ -7,9 +7,27 @@ already sends to the providers; they do not install SDKs or ingest events.
 
 ## Connect a project
 
-Merge the providers you use into `projects/my-app/project.json`. Keep its other
-settings. Omit unused providers, or leave `telemetry` as `{}`. Existing projects
-need no changes to keep using Vercel logs and analytics.
+1. Open **Connections** and find Sentry, Datadog, or Mixpanel under product signals.
+2. Choose your project and open its configuration from that card. Enable the
+   provider and enter its project/service scope, environment, or region. The form
+   supplies credential names and preserves any custom names already configured.
+3. Save the project, then enter credentials in that provider's project access
+   fields in Connections. Stored values are never returned to the browser.
+4. For Mixpanel, open **Choose a saved report for each PM** in its card. Select the
+   project, enter each PM's numeric saved Insights report ID, and save. New PMs
+   can also set their report ID during creation. At least one report mapping is
+   needed for Mixpanel verification.
+5. Run **Verify connections** on the project before relying on scheduled work.
+
+The same provider forms are available from **Projects → Edit settings**. Switching
+pages preserves drafts. Concurrent configuration edits are rejected rather than
+overwritten; reload the latest settings and reapply your changes. Disabling a
+provider removes its project configuration but keeps saved credentials.
+
+For advanced file-based setup, merge the providers you use into
+`projects/my-app/project.json`. Keep its other settings. Omit unused providers, or
+leave `telemetry` as `{}`. Existing projects need no changes to keep using Vercel
+logs and analytics.
 
 ```json
 {
@@ -43,8 +61,8 @@ Use the provider prefixes shown above and an uppercase project suffix. Scope
 values cannot contain wildcards or query syntax; log connections require an
 explicit environment.
 
-After saving in the dashboard's Configuration editor, project-specific credential
-fields appear under Connections. Values stay in the local `.env` and are loaded
+After saving the project, its credential fields appear in that provider's
+Connections card. Values stay in the local `.env` and are loaded
 by the CLI; exported variables take precedence. Alternatively populate those
 names in your local environment. Do not pass credentials on the command line.
 
@@ -89,8 +107,9 @@ with read access to the target project and report. Supply its username and
 secret, not an ingestion token. Regions: `us` (default), `eu`, `in`.
 Add `workspaceId` as a numeric string to `telemetry.mixpanel` when needed.
 
-Create a saved Insights report for each PM's metric. Add its bookmark ID as a
-string to the existing area in `areas.json`, for example:
+Create a saved Insights report for each PM's metric. Assign its bookmark ID using
+the Mixpanel card's PM report form, or set it as a string in the existing area in
+`areas.json`, for example:
 
 ```json
 "mixpanelReportId": "987654"

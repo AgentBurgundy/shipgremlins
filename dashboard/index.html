@@ -9,14 +9,19 @@
     <title>Your crew · ShipGremlins</title>
     <link rel="icon" type="image/svg+xml" href="/assets/mark.svg" />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/update-banner.css" />
+    <script src="/signals-settings.js" defer></script>
     <script src="/project-settings.js" defer></script>
+    <script src="/pages.js" defer></script>
+    <script src="/connections-view.js" defer></script>
+    <script src="/update-banner.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to setup</a>
     <div class="workspace">
       <aside class="sidebar" aria-label="Workspace navigation">
-        <a class="brand" href="#overview" aria-label="ShipGremlins overview">
+        <a class="brand" href="/overview" aria-label="ShipGremlins overview">
           <span class="brand-mark" aria-hidden="true">{g}</span>
           <span
             >Ship<span class="brand-light">Gremlins</span
@@ -25,30 +30,27 @@
         </a>
         <div class="workspace-label">WORKSPACE</div>
         <nav class="navigation" aria-label="Main">
-          <a class="nav-item" href="#overview"
+          <a class="nav-item" href="/overview"
             ><span aria-hidden="true">◈</span> Overview</a
           >
-          <a class="nav-item" href="#source-control"
-            ><span aria-hidden="true">⑂</span> Source control
-            <span class="nav-count" id="source-count">—</span></a
-          >
-          <a class="nav-item" href="#connections"
+
+          <a class="nav-item" href="/connections"
             ><span aria-hidden="true">⌘</span> Connections
             <span class="nav-count" id="connection-count">—</span></a
           >
-          <a class="nav-item" href="#projects"
+          <a class="nav-item" href="/projects"
             ><span aria-hidden="true">▤</span> Projects
             <span class="nav-count" id="project-count">—</span></a
           >
-          <a class="nav-item" href="#runners"
+          <a class="nav-item" href="/runners"
             ><span aria-hidden="true">◉</span> Your gremlins
             <span class="nav-count" id="runner-count">—</span></a
           >
-          <a class="nav-item" href="#activity"
+          <a class="nav-item" href="/activity"
             ><span aria-hidden="true">↗</span> Activity</a
           >
-          <a class="nav-item" href="#configuration"
-            ><span aria-hidden="true">⚙</span> Configuration</a
+          <a class="nav-item" href="/settings"
+            ><span aria-hidden="true">⚙</span> Settings</a
           >
         </nav>
         <div class="sidebar-bottom">
@@ -69,14 +71,20 @@
         <header class="topbar">
           <span
             >Mission control <span class="topbar-separator">/</span>
-            <strong>Your crew</strong></span
+            <strong data-page-title>Overview</strong></span
           ><span class="local-pill"
             ><span aria-hidden="true"></span> SELF-HOSTED</span
           >
         </header>
         <main id="main" tabindex="-1">
+          <div id="global-update-banner" hidden></div>
           <div id="global-message" class="notice" role="status" hidden></div>
-          <section class="hero" id="overview" aria-labelledby="welcome-title">
+          <section
+            class="hero"
+            data-page="overview"
+            id="overview"
+            aria-labelledby="welcome-title"
+          >
             <div class="hero-copy">
               <span class="eyebrow"
                 ><span aria-hidden="true">✦</span> A LITTLE CHAOS. A LOT OF
@@ -109,7 +117,11 @@
             </div>
           </section>
 
-          <section class="setup-status" aria-label="Setup progress">
+          <section
+            class="setup-status"
+            data-page="overview"
+            aria-label="Setup progress"
+          >
             <div>
               <span class="eyebrow muted">GETTING STARTED</span>
               <h2 id="setup-title">Make yourself at home.</h2>
@@ -143,177 +155,18 @@
           </section>
 
           <section
-            class="panel source-panel"
-            id="source-control"
-            aria-labelledby="source-title"
-          >
-            <div class="panel-heading">
-              <div>
-                <span class="eyebrow muted">01 / THE SOURCE</span>
-                <h2 id="source-title">Let the crew into your code.</h2>
-                <p>
-                  Connect GitHub or GitLab, choose a repository, and keep your
-                  gremlins working on your machine.
-                </p>
-              </div>
-              <span class="section-symbol" aria-hidden="true">⑂</span>
-            </div>
-            <div
-              id="source-cards"
-              class="source-grid"
-              aria-label="Source control providers"
-            ></div>
-            <div class="source-footer">
-              <p class="runner-guidance">
-                You choose the account and repository access. Source sign-in
-                opens in a separate tab; keep this dashboard open to finish
-                connecting.
-              </p>
-              <button
-                class="small-button"
-                id="source-refresh"
-                type="button"
-                disabled
-              >
-                Refresh connections
-              </button>
-            </div>
-            <div
-              class="form-message"
-              id="source-message"
-              role="status"
-              hidden
-            ></div>
-            <details class="source-advanced" id="source-manual">
-              <summary>Advanced: use a personal access token</summary>
-              <p class="runner-guidance">
-                Use this fallback if browser sign-in is unavailable, or for a
-                self-hosted GitLab server. Paste a token with access to your app
-                repository. Blank fields keep existing tokens.
-              </p>
-              <form id="source-token-form">
-                <fieldset id="source-token-fields" disabled>
-                  <legend class="sr-only">Manual source credentials</legend>
-                  <div class="token-grid">
-                    <div class="token-field">
-                      <div class="field-heading">
-                        <label for="github-token"
-                          ><span class="provider-icon" aria-hidden="true"
-                            ><img
-                              src="/assets/brands/github.svg"
-                              width="18"
-                              height="18"
-                              alt="" /></span
-                          >GitHub</label
-                        ><span
-                          class="saved-state"
-                          data-connection="GITHUB_TOKEN"
-                          >Checking…</span
-                        >
-                      </div>
-                      <p id="github-help">
-                        Repositories, branches, and pull requests.
-                      </p>
-                      <div class="password-wrap">
-                        <input
-                          id="github-token"
-                          name="GITHUB_TOKEN"
-                          type="password"
-                          autocomplete="off"
-                          spellcheck="false"
-                          autocapitalize="none"
-                          placeholder="Paste your GitHub token"
-                          aria-describedby="github-help"
-                        /><button
-                          class="reveal-button"
-                          type="button"
-                          data-reveal="github-token"
-                          aria-label="Show GitHub token"
-                          aria-pressed="false"
-                        >
-                          Show
-                        </button>
-                      </div>
-                    </div>
-                    <div class="token-field">
-                      <div class="field-heading">
-                        <label for="gitlab-token"
-                          ><span
-                            class="provider-icon gitlab-icon"
-                            aria-hidden="true"
-                            ><img
-                              src="/assets/brands/gitlab.svg"
-                              width="18"
-                              height="18"
-                              alt="" /></span
-                          >GitLab</label
-                        ><span
-                          class="saved-state"
-                          data-connection="GITLAB_TOKEN"
-                          >Checking…</span
-                        >
-                      </div>
-                      <p id="gitlab-help">
-                        Repositories, branches, and merge requests.
-                      </p>
-                      <div class="password-wrap">
-                        <input
-                          id="gitlab-token"
-                          name="GITLAB_TOKEN"
-                          type="password"
-                          autocomplete="off"
-                          spellcheck="false"
-                          autocapitalize="none"
-                          placeholder="Paste your GitLab token"
-                          aria-describedby="gitlab-help"
-                        /><button
-                          class="reveal-button"
-                          type="button"
-                          data-reveal="gitlab-token"
-                          aria-label="Show GitLab token"
-                          aria-pressed="false"
-                        >
-                          Show
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="form-bottom">
-                    <p>
-                      Tokens stay in this server’s .env file. Saved values are
-                      never returned to your browser.
-                    </p>
-                    <button
-                      class="button button-dark"
-                      id="save-source-tokens"
-                      type="submit"
-                    >
-                      Save source tokens
-                    </button>
-                  </div>
-                </fieldset>
-                <div
-                  class="form-message"
-                  id="source-token-message"
-                  role="status"
-                  hidden
-                ></div>
-              </form>
-            </details>
-          </section>
-
-          <section
             class="panel connections-panel"
+            data-page="connections"
             id="connections"
             aria-labelledby="connections-title"
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">02 / THE CONNECTIONS</span>
-                <h2 id="connections-title">Connect the rest of your tools.</h2>
+                <span class="eyebrow muted">THE CONNECTIONS</span>
+                <h2 id="connections-title">Your crew’s toolkit.</h2>
                 <p>
-                  Linear, Claude Code, deployments, telemetry, and Slack. Your
-                  source connections live in their own section above.
+                  Connect once. Choose what each project can use. Your
+                  credentials stay on your server.
                 </p>
               </div>
               <span class="section-symbol" aria-hidden="true">⌘</span>
@@ -322,693 +175,1184 @@
               class="connection-categories"
               aria-label="Connection categories"
             >
-              <a href="#source-control"
-                >GitHub &amp; GitLab <span aria-hidden="true">↗</span></a
-              ><a href="#linear-connection">Planning</a
-              ><a href="#vercel-connection">Hosting</a
-              ><a href="#model-connections">AI &amp; project signals</a
-              ><a href="#slack-connection">Slack</a>
+              <a href="#crew-connections">AI &amp; teamwork</a
+              ><a href="#source-control">Source control</a
+              ><a href="#hosting-connections">Hosting</a
+              ><a href="#signals-connections">Product signals</a
+              ><a href="#project-access">Project access</a>
             </nav>
-            <div class="service-grid">
-              <section
-                class="service-card linear-card"
-                id="linear-connection"
-                aria-labelledby="linear-title"
-              >
-                <div class="service-heading">
-                  <span class="service-mark" aria-hidden="true"
-                    ><img
-                      src="/assets/brands/linear.svg"
-                      width="26"
-                      height="26"
-                      alt=""
-                  /></span>
-                  <div>
-                    <span class="eyebrow muted">A HOME FOR EVERY MANDATE</span>
-                    <h3 id="linear-title">Keep the work in Linear.</h3>
-                    <p>
-                      Connect your workspace. Apps get teams; PM Gremlins get
-                      projects for their proposals and approved work.
-                    </p>
-                  </div>
-                </div>
-                <div class="service-status-row">
-                  <span class="runtime-badge" id="linear-state"
-                    >Checking Linear…</span
-                  >
-                  <p id="linear-account">Loading connection status.</p>
-                </div>
-                <p class="runner-guidance" id="linear-guidance">
-                  Your credentials stay on the ShipGremlins server.
+            <div class="integration-group" id="crew-connections">
+              <div class="integration-heading">
+                <h3>AI &amp; teamwork</h3>
+                <p>
+                  The brains, the backlog, and one place to hear from your crew.
                 </p>
-                <div class="button-row service-actions">
-                  <button
-                    class="button button-dark"
-                    id="linear-connect"
-                    type="button"
-                    disabled
-                  >
-                    Connect Linear ↗</button
-                  ><button
-                    class="small-button"
-                    id="linear-refresh"
-                    type="button"
-                    disabled
-                  >
-                    Refresh status</button
-                  ><button
-                    class="small-button"
-                    id="linear-disconnect"
-                    type="button"
-                    hidden
-                  >
-                    Disconnect
-                  </button>
-                </div>
-                <div
-                  class="form-message"
-                  id="linear-message"
-                  role="status"
-                  hidden
-                ></div>
-                <div
-                  class="service-disconnect-prompt"
-                  id="linear-disconnect-prompt"
-                  hidden
+              </div>
+              <div class="integration-grid">
+                <section
+                  class="service-card claude-card"
+                  id="model-connections"
+                  aria-labelledby="claude-title"
                 >
-                  <p>
-                    Disconnect this instance’s Linear authorization? Existing
-                    configuration and work will be kept. New jobs may need you
-                    to reconnect.
-                  </p>
-                  <div class="button-row">
-                    <button class="small-button" id="linear-keep" type="button">
-                      Keep connected</button
-                    ><button
-                      class="small-button danger-button"
-                      id="linear-confirm-disconnect"
-                      type="button"
-                    >
-                      Disconnect
-                    </button>
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/claude.svg"
+                        width="26"
+                        height="26"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">THE BRAINS</span>
+                      <h3 id="claude-title">Claude Code</h3>
+                      <p>The AI behind your PM and Coding Gremlins.</p>
+                    </div>
                   </div>
-                </div>
-                <details class="service-advanced">
-                  <summary>Advanced: use a personal Linear token</summary>
-                  <p class="runner-guidance">
-                    Use a token you manage when browser authorization is
-                    unavailable. Blank input keeps the current saved value.
-                  </p>
-                  <form id="linear-token-form">
-                    <fieldset id="linear-token-fields" disabled>
-                      <legend class="sr-only">Manual Linear credential</legend>
-                      <div class="token-grid">
-                        <div class="token-field">
-                          <div class="field-heading">
-                            <label for="linear-token"
-                              ><span
-                                class="provider-icon linear-icon"
-                                aria-hidden="true"
-                                ><img
-                                  src="/assets/brands/linear.svg"
-                                  width="18"
-                                  height="18"
-                                  alt="" /></span
-                              >Linear</label
-                            ><span
-                              class="saved-state"
-                              data-connection="LINEAR_API_KEY"
-                              >Checking…</span
-                            >
-                          </div>
-                          <p id="linear-help">
-                            Approved tickets and delivery status.
+                  <div class="service-status-row">
+                    <span
+                      class="saved-state"
+                      data-connection="CLAUDE_CODE_OAUTH_TOKEN"
+                      >Checking…</span
+                    ><span class="manual-connection-label"
+                      >Claude subscription</span
+                    >
+                  </div>
+                  <details class="service-advanced">
+                    <summary>Set up Claude Code</summary>
+                    <ol class="setup-steps">
+                      <li>In a terminal with Claude Code installed, run:</li>
+                    </ol>
+                    <div class="command-line setup-command">
+                      <code>claude setup-token</code
+                      ><button
+                        type="button"
+                        class="copy-button"
+                        id="copy-claude-command"
+                        aria-label="Copy Claude setup command"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <p
+                      id="claude-copy-status"
+                      class="sr-only"
+                      role="status"
+                    ></p>
+                    <ol class="setup-steps" start="2">
+                      <li>
+                        Sign in with your Claude subscription when the browser
+                        opens.
+                      </li>
+                      <li>
+                        Copy the long-lived token from your terminal and paste
+                        it below.
+                      </li>
+                    </ol>
+                    <a
+                      class="setup-doc-link"
+                      href="https://code.claude.com/docs/en/env-vars"
+                      target="_blank"
+                      rel="noreferrer"
+                      >Claude Code authentication guide ↗</a
+                    >
+                    <form id="connections-form">
+                      <fieldset id="connections-fields" disabled>
+                        <legend class="sr-only">Claude Code access</legend>
+                        <div class="field">
+                          <label for="claude-token">Claude Code token</label>
+                          <p id="claude-help">
+                            Used for local PM and coding jobs. Your normal
+                            browser login is not enough for background workers.
                           </p>
                           <div class="password-wrap">
                             <input
-                              id="linear-token"
-                              name="LINEAR_API_KEY"
+                              id="claude-token"
+                              name="CLAUDE_CODE_OAUTH_TOKEN"
                               type="password"
                               autocomplete="off"
                               spellcheck="false"
                               autocapitalize="none"
-                              placeholder="Paste your Linear API key"
-                              aria-describedby="linear-help"
+                              placeholder="Paste the token from your terminal"
+                              aria-describedby="claude-help"
                             /><button
                               class="reveal-button"
                               type="button"
-                              data-reveal="linear-token"
-                              aria-label="Show Linear API key"
+                              data-reveal="claude-token"
+                              aria-label="Show Claude Code token"
                               aria-pressed="false"
                             >
                               Show
                             </button>
                           </div>
                         </div>
-                      </div>
-                      <div class="form-bottom">
-                        <p>The token stays in your server’s .env file.</p>
                         <button
-                          class="small-button"
-                          id="save-linear-token"
                           type="submit"
+                          class="small-button"
+                          id="save-connections"
                         >
-                          Save Linear token
+                          Save Claude token
                         </button>
-                      </div>
-                    </fieldset>
-                    <div
-                      class="form-message"
-                      id="linear-token-message"
-                      role="status"
-                      hidden
-                    ></div>
-                  </form>
-                </details>
-              </section>
-
-              <section
-                class="service-card vercel-card"
-                id="vercel-connection"
-                aria-labelledby="vercel-title"
-              >
-                <div class="service-heading">
-                  <span class="service-mark" aria-hidden="true"
-                    ><img
-                      src="/assets/brands/vercel.svg"
-                      width="26"
-                      height="26"
-                      alt=""
-                  /></span>
-                  <div>
-                    <span class="eyebrow muted">SEE WHAT ACTUALLY SHIPPED</span>
-                    <h3 id="vercel-title">Connect your deployments.</h3>
-                    <p>
-                      Authorize access to your Vercel projects and deployments
-                      so the crew can check previews and delivery.
-                    </p>
-                  </div>
-                </div>
-                <div class="service-status-row">
-                  <span class="runtime-badge" id="vercel-state"
-                    >Checking Vercel…</span
-                  >
-                  <p id="vercel-account">Loading connection status.</p>
-                </div>
-                <p class="runner-guidance" id="vercel-guidance">
-                  Your credentials stay on the ShipGremlins server.
-                </p>
-                <div class="button-row service-actions">
-                  <button
-                    class="button button-dark"
-                    id="vercel-connect"
-                    type="button"
-                    disabled
-                  >
-                    Connect Vercel ↗</button
-                  ><button
-                    class="small-button"
-                    id="vercel-refresh"
-                    type="button"
-                    disabled
-                  >
-                    Refresh status</button
-                  ><button
-                    class="small-button"
-                    id="vercel-disconnect"
-                    type="button"
-                    hidden
-                  >
-                    Disconnect
-                  </button>
-                </div>
-                <div
-                  class="form-message"
-                  id="vercel-message"
-                  role="status"
-                  hidden
-                ></div>
-                <div
-                  class="service-disconnect-prompt"
-                  id="vercel-disconnect-prompt"
-                  hidden
+                      </fieldset>
+                      <div
+                        class="form-message"
+                        id="connections-message"
+                        role="status"
+                        hidden
+                      ></div>
+                    </form>
+                  </details>
+                </section>
+                <section
+                  class="service-card linear-card"
+                  id="linear-connection"
+                  aria-labelledby="linear-title"
                 >
-                  <p>
-                    Disconnect this instance’s Vercel authorization? Existing
-                    configuration and work will be kept. New jobs may need you
-                    to reconnect.
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/linear.svg"
+                        width="26"
+                        height="26"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">PLANNING</span>
+                      <h3 id="linear-title">Linear</h3>
+                      <p>
+                        Proposals, approved tickets, and a home for every PM
+                        mandate.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="service-status-row">
+                    <span class="runtime-badge" id="linear-state"
+                      >Checking Linear…</span
+                    >
+                    <p id="linear-account">Loading connection status.</p>
+                  </div>
+                  <p class="runner-guidance" id="linear-guidance">
+                    Your credentials stay on the ShipGremlins server.
                   </p>
-                  <div class="button-row">
-                    <button class="small-button" id="vercel-keep" type="button">
-                      Keep connected</button
-                    ><button
-                      class="small-button danger-button"
-                      id="vercel-confirm-disconnect"
+                  <div class="button-row service-actions">
+                    <button
+                      class="button button-dark"
+                      id="linear-connect"
                       type="button"
+                      disabled
+                    >
+                      Connect Linear ↗</button
+                    ><button
+                      class="small-button"
+                      id="linear-refresh"
+                      type="button"
+                      disabled
+                    >
+                      Refresh status</button
+                    ><button
+                      class="small-button"
+                      id="linear-disconnect"
+                      type="button"
+                      hidden
                     >
                       Disconnect
                     </button>
                   </div>
-                </div>
-                <details class="service-advanced">
-                  <summary>Advanced: use a personal Vercel token</summary>
-                  <p class="runner-guidance">
-                    Use a token you manage when browser authorization is
-                    unavailable. Blank input keeps the current saved value.
-                  </p>
-                  <form id="vercel-token-form">
-                    <fieldset id="vercel-token-fields" disabled>
-                      <legend class="sr-only">Manual Vercel credential</legend>
-                      <div class="token-grid">
-                        <div class="token-field">
-                          <div class="field-heading">
-                            <label for="vercel-token"
+                  <div
+                    class="form-message"
+                    id="linear-message"
+                    role="status"
+                    hidden
+                  ></div>
+                  <div
+                    class="service-disconnect-prompt"
+                    id="linear-disconnect-prompt"
+                    hidden
+                  >
+                    <p>
+                      Disconnect this instance’s Linear authorization? Existing
+                      configuration and work will be kept. New jobs may need you
+                      to reconnect.
+                    </p>
+                    <div class="button-row">
+                      <button
+                        class="small-button"
+                        id="linear-keep"
+                        type="button"
+                      >
+                        Keep connected</button
+                      ><button
+                        class="small-button danger-button"
+                        id="linear-confirm-disconnect"
+                        type="button"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  </div>
+                  <details class="service-advanced">
+                    <summary>Use an API key instead</summary>
+                    <p class="runner-guidance">
+                      Use a token you manage when browser authorization is
+                      unavailable. Blank input keeps the current saved value.
+                    </p>
+                    <p class="setup-link">
+                      <a
+                        href="https://linear.app/settings/account/security"
+                        target="_blank"
+                        rel="noreferrer"
+                        >Create a Linear API key ↗</a
+                      >
+                    </p>
+                    <p class="setup-help">
+                      In Linear, open Settings → Security &amp; access →
+                      Personal API keys. Create a key with access to the
+                      workspace you want your crew to use.
+                    </p>
+                    <form id="linear-token-form">
+                      <fieldset id="linear-token-fields" disabled>
+                        <legend class="sr-only">
+                          Manual Linear credential
+                        </legend>
+                        <div class="token-grid">
+                          <div class="token-field">
+                            <div class="field-heading">
+                              <label for="linear-token"
+                                ><span
+                                  class="provider-icon linear-icon"
+                                  aria-hidden="true"
+                                  ><img
+                                    src="/assets/brands/linear.svg"
+                                    width="18"
+                                    height="18"
+                                    alt="" /></span
+                                >Linear</label
                               ><span
-                                class="provider-icon vercel-icon"
-                                aria-hidden="true"
-                                ><img
-                                  src="/assets/brands/vercel.svg"
-                                  width="18"
-                                  height="18"
-                                  alt="" /></span
-                              >Vercel</label
-                            ><span
-                              class="saved-state"
-                              data-connection="VERCEL_TOKEN"
-                              >Checking…</span
-                            >
-                          </div>
-                          <p id="vercel-help">
-                            Deployment checks for your web app.
-                          </p>
-                          <div class="password-wrap">
-                            <input
-                              id="vercel-token"
-                              name="VERCEL_TOKEN"
-                              type="password"
-                              autocomplete="off"
-                              spellcheck="false"
-                              autocapitalize="none"
-                              placeholder="Paste your Vercel token"
-                              aria-describedby="vercel-help"
-                            /><button
-                              class="reveal-button"
-                              type="button"
-                              data-reveal="vercel-token"
-                              aria-label="Show Vercel token"
-                              aria-pressed="false"
-                            >
-                              Show
-                            </button>
+                                class="saved-state"
+                                data-connection="LINEAR_API_KEY"
+                                >Checking…</span
+                              >
+                            </div>
+                            <p id="linear-help">
+                              Approved tickets and delivery status.
+                            </p>
+                            <div class="password-wrap">
+                              <input
+                                id="linear-token"
+                                name="LINEAR_API_KEY"
+                                type="password"
+                                autocomplete="off"
+                                spellcheck="false"
+                                autocapitalize="none"
+                                placeholder="Paste your Linear API key"
+                                aria-describedby="linear-help"
+                              /><button
+                                class="reveal-button"
+                                type="button"
+                                data-reveal="linear-token"
+                                aria-label="Show Linear API key"
+                                aria-pressed="false"
+                              >
+                                Show
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div class="form-bottom">
-                        <p>The token stays in your server’s .env file.</p>
-                        <button
-                          class="small-button"
-                          id="save-vercel-token"
-                          type="submit"
-                        >
-                          Save Vercel token
-                        </button>
-                      </div>
-                    </fieldset>
-                    <div
-                      class="form-message"
-                      id="vercel-token-message"
-                      role="status"
-                      hidden
-                    ></div>
-                  </form>
-                </details>
-              </section>
-            </div>
-            <div class="hosting-connection-grid">
-              <section class="service-card" aria-labelledby="railway-title">
-                <div class="service-heading">
-                  <span class="service-mark" aria-hidden="true"
-                    ><img
-                      src="/assets/brands/railway.svg"
-                      width="23"
-                      height="23"
-                      alt=""
-                  /></span>
-                  <div>
-                    <span class="eyebrow muted">OPTIONAL HOSTING</span>
-                    <h3 id="railway-title">Railway</h3>
-                    <p>
-                      Read a service’s deployment state and discover its test
-                      URL.
-                    </p>
+                        <div class="form-bottom">
+                          <p>The token stays in your server’s .env file.</p>
+                          <button
+                            class="small-button"
+                            id="save-linear-token"
+                            type="submit"
+                          >
+                            Save Linear token
+                          </button>
+                        </div>
+                      </fieldset>
+                      <div
+                        class="form-message"
+                        id="linear-token-message"
+                        role="status"
+                        hidden
+                      ></div>
+                    </form>
+                  </details>
+                </section>
+                <section
+                  class="slack-card service-card"
+                  id="slack-connection"
+                  aria-labelledby="slack-title"
+                >
+                  <div class="slack-heading">
+                    <span class="slack-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/slack.svg"
+                        width="26"
+                        height="26"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">WORKSPACE NOTIFICATIONS</span>
+                      <h3 id="slack-title">Slack</h3>
+                      <p>
+                        One workspace connection covers every project. PM
+                        findings and coding updates, together.
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div class="service-status-row">
-                  <span class="saved-state" data-connection="RAILWAY_TOKEN"
-                    >Not configured</span
-                  ><span class="manual-connection-label">Manual token</span>
-                </div>
-                <details class="service-advanced">
-                  <summary>Add or update Railway token</summary>
-                  <form id="railway-token-form">
-                    <fieldset id="railway-token-fields" disabled>
-                      <legend class="sr-only">Railway credential</legend>
-                      <div class="field">
-                        <label for="railway-token">Railway API token</label>
-                        <div class="password-wrap">
-                          <input
-                            id="railway-token"
-                            name="RAILWAY_TOKEN"
+                  <div class="slack-status-row">
+                    <span class="runtime-badge" id="slack-state"
+                      >Checking Slack…</span
+                    >
+                    <p id="slack-workspace">Loading connection status.</p>
+                  </div>
+                  <p class="runner-guidance" id="slack-guidance">
+                    Choose your workspace and channel when connecting.
+                  </p>
+                  <div class="button-row slack-actions">
+                    <button
+                      class="button button-dark"
+                      id="slack-connect"
+                      type="button"
+                      disabled
+                    >
+                      Add to Slack <span aria-hidden="true">↗</span></button
+                    ><button
+                      class="small-button"
+                      id="slack-refresh"
+                      type="button"
+                      disabled
+                    >
+                      Refresh status</button
+                    ><button
+                      class="small-button"
+                      id="slack-disconnect"
+                      type="button"
+                      hidden
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                  <div
+                    class="form-message"
+                    id="slack-message"
+                    role="status"
+                    hidden
+                  ></div>
+                  <div
+                    class="slack-disconnect-prompt"
+                    id="slack-disconnect-prompt"
+                    hidden
+                  >
+                    <p>
+                      Disconnect this workspace’s Slack notifications? Your
+                      projects and jobs will stay in place.
+                    </p>
+                    <div class="button-row">
+                      <button
+                        class="small-button"
+                        id="slack-keep"
+                        type="button"
+                      >
+                        Keep connected</button
+                      ><button
+                        class="small-button danger-button"
+                        id="slack-confirm-disconnect"
+                        type="button"
+                      >
+                        Disconnect Slack
+                      </button>
+                    </div>
+                  </div>
+                  <details class="slack-advanced">
+                    <summary>Use an incoming webhook instead</summary>
+                    <p>
+                      Use a Slack incoming webhook you already manage. This is
+                      saved on your server and never shown again.
+                    </p>
+                    <form id="slack-webhook-form">
+                      <fieldset id="slack-webhook-fields" disabled>
+                        <legend class="sr-only">Slack incoming webhook</legend>
+                        <div class="field">
+                          <label for="slack-webhook">Webhook URL</label
+                          ><input
+                            id="slack-webhook"
                             type="password"
                             autocomplete="off"
                             spellcheck="false"
-                            placeholder="Paste a Railway token"
+                            autocapitalize="none"
+                            placeholder="https://hooks.slack.com/services/…"
+                            required
+                          />
+                        </div>
+                        <button
+                          class="small-button"
+                          id="save-slack-webhook"
+                          type="submit"
+                        >
+                          Save webhook
+                        </button>
+                      </fieldset>
+                    </form>
+                  </details>
+                </section>
+              </div>
+            </div>
+            <section
+              class="integration-group source-panel"
+              id="source-control"
+              aria-labelledby="source-title"
+            >
+              <div class="panel-heading">
+                <div>
+                  <span class="eyebrow muted">SOURCE CONTROL</span>
+                  <h3 id="source-title">
+                    Code &amp; repositories
+                    <span class="inline-count" id="source-count">—</span>
+                  </h3>
+                  <p>
+                    Connect GitHub or GitLab, choose a repository, and keep your
+                    gremlins working on your machine.
+                  </p>
+                </div>
+                <span class="section-symbol" aria-hidden="true">⑂</span>
+              </div>
+              <div
+                id="source-cards"
+                class="source-grid"
+                aria-label="Source control providers"
+              ></div>
+              <div class="source-footer">
+                <p class="runner-guidance">
+                  You choose the account and repository access. Source sign-in
+                  opens in a separate tab; keep this dashboard open to finish
+                  connecting.
+                </p>
+                <button
+                  class="small-button"
+                  id="source-refresh"
+                  type="button"
+                  disabled
+                >
+                  Refresh connections
+                </button>
+              </div>
+              <div
+                class="form-message"
+                id="source-message"
+                role="status"
+                hidden
+              ></div>
+              <details class="source-advanced" id="source-manual">
+                <summary>Advanced: use a personal access token</summary>
+                <p class="runner-guidance">
+                  Use this fallback if browser sign-in is unavailable, or for a
+                  self-hosted GitLab server. Paste a token with access to your
+                  app repository. Blank fields keep existing tokens.
+                </p>
+                <form id="source-token-form">
+                  <fieldset id="source-token-fields" disabled>
+                    <legend class="sr-only">Manual source credentials</legend>
+                    <div class="token-grid">
+                      <div class="token-field">
+                        <div class="field-heading">
+                          <label for="github-token"
+                            ><span class="provider-icon" aria-hidden="true"
+                              ><img
+                                src="/assets/brands/github.svg"
+                                width="18"
+                                height="18"
+                                alt="" /></span
+                            >GitHub</label
+                          ><span
+                            class="saved-state"
+                            data-connection="GITHUB_TOKEN"
+                            >Checking…</span
+                          >
+                        </div>
+                        <p id="github-help">
+                          Repositories, branches, and pull requests.
+                        </p>
+                        <div class="password-wrap">
+                          <input
+                            id="github-token"
+                            name="GITHUB_TOKEN"
+                            type="password"
+                            autocomplete="off"
+                            spellcheck="false"
+                            autocapitalize="none"
+                            placeholder="Paste your GitHub token"
+                            aria-describedby="github-help"
                           /><button
+                            class="reveal-button"
                             type="button"
-                            data-reveal="railway-token"
-                            aria-label="Show Railway token"
+                            data-reveal="github-token"
+                            aria-label="Show GitHub token"
                             aria-pressed="false"
                           >
                             Show
                           </button>
                         </div>
-                        <p>
-                          Use the narrowest account, workspace, or project
-                          access available. Choose project-token authentication
-                          in the app settings when using a Railway project
-                          token.
+                      </div>
+                      <div class="token-field">
+                        <div class="field-heading">
+                          <label for="gitlab-token"
+                            ><span
+                              class="provider-icon gitlab-icon"
+                              aria-hidden="true"
+                              ><img
+                                src="/assets/brands/gitlab.svg"
+                                width="18"
+                                height="18"
+                                alt="" /></span
+                            >GitLab</label
+                          ><span
+                            class="saved-state"
+                            data-connection="GITLAB_TOKEN"
+                            >Checking…</span
+                          >
+                        </div>
+                        <p id="gitlab-help">
+                          Repositories, branches, and merge requests.
                         </p>
+                        <div class="password-wrap">
+                          <input
+                            id="gitlab-token"
+                            name="GITLAB_TOKEN"
+                            type="password"
+                            autocomplete="off"
+                            spellcheck="false"
+                            autocapitalize="none"
+                            placeholder="Paste your GitLab token"
+                            aria-describedby="gitlab-help"
+                          /><button
+                            class="reveal-button"
+                            type="button"
+                            data-reveal="gitlab-token"
+                            aria-label="Show GitLab token"
+                            aria-pressed="false"
+                          >
+                            Show
+                          </button>
+                        </div>
                       </div>
-                      <div class="form-bottom">
-                        <p>
-                          Saved on this server. Verify each project’s live
-                          access separately.
-                        </p>
-                        <button
-                          type="submit"
-                          class="small-button"
-                          id="save-railway-token"
-                        >
-                          Save token
-                        </button>
-                      </div>
-                    </fieldset>
-                    <div
-                      id="railway-token-message"
-                      class="form-message"
-                      role="status"
-                      hidden
-                    ></div>
-                  </form>
-                </details>
-              </section>
-              <section class="service-card" aria-labelledby="cloud-run-title">
-                <div class="service-heading">
-                  <span class="service-mark" aria-hidden="true"
-                    ><img
-                      src="/assets/brands/googlecloud.svg"
-                      width="23"
-                      height="23"
-                      alt=""
-                  /></span>
-                  <div>
-                    <span class="eyebrow muted">OPTIONAL HOSTING</span>
-                    <h3 id="cloud-run-title">Google Cloud Run</h3>
-                    <p>
-                      Use server identity or a service account to discover a
-                      service URL.
-                    </p>
-                  </div>
-                </div>
-                <div class="service-status-row">
-                  <span
-                    class="saved-state"
-                    data-connection="GCP_SERVICE_ACCOUNT_JSON"
-                    >Not configured</span
-                  ><span class="manual-connection-label"
-                    >JSON or machine identity</span
-                  >
-                </div>
-                <details class="service-advanced">
-                  <summary>Service account or machine identity</summary>
-                  <p class="runner-guidance">
-                    Leave the key blank to use Application Default Credentials
-                    on the controller. Identity availability is checked during
-                    project verification. Grant only the read access needed for
-                    the Cloud Run service; this does not configure browser
-                    access to a private service.
-                  </p>
-                  <form id="cloud-run-token-form">
-                    <fieldset id="cloud-run-token-fields" disabled>
-                      <legend class="sr-only">Google Cloud credential</legend>
-                      <div class="field">
-                        <label for="gcp-credentials"
-                          >Service-account JSON (optional)</label
-                        ><textarea
-                          id="gcp-credentials"
-                          class="secret-json"
-                          name="GCP_SERVICE_ACCOUNT_JSON"
-                          rows="4"
-                          autocomplete="off"
-                          spellcheck="false"
-                          placeholder="Paste service-account JSON only if needed"
-                        ></textarea
-                        ><button
-                          type="button"
-                          class="small-button"
-                          id="reveal-gcp-credentials"
-                          aria-pressed="false"
-                        >
-                          Show JSON
-                        </button>
-                        <p>
-                          The key stays on the controller. Blank keeps an
-                          existing saved key.
-                        </p>
-                      </div>
-                      <div class="form-bottom">
-                        <button
-                          type="submit"
-                          class="small-button"
-                          id="save-cloud-run-token"
-                        >
-                          Save credential
-                        </button>
-                      </div>
-                    </fieldset>
-                    <div
-                      id="cloud-run-token-message"
-                      class="form-message"
-                      role="status"
-                      hidden
-                    ></div>
-                  </form>
-                </details>
-              </section>
-            </div>
-            <form id="connections-form" aria-labelledby="model-connections">
-              <fieldset id="connections-fields" disabled>
-                <legend class="sr-only">Model and telemetry credentials</legend>
-                <h3 class="connection-group-title" id="model-connections">
-                  Model &amp; product signals
-                </h3>
-                <div class="token-grid">
-                  <div class="token-field">
-                    <div class="field-heading">
-                      <label for="claude-token"
-                        ><span
-                          class="provider-icon claude-icon"
-                          aria-hidden="true"
-                          ><img
-                            src="/assets/brands/claude.svg"
-                            width="18"
-                            height="18"
-                            alt="" /></span
-                        >Claude Code</label
-                      ><span
-                        class="saved-state"
-                        data-connection="CLAUDE_CODE_OAUTH_TOKEN"
-                        >Checking…</span
-                      >
                     </div>
-                    <p id="claude-help">
-                      AI access for your local PM and developer jobs.
-                    </p>
-                    <div class="password-wrap">
-                      <input
-                        id="claude-token"
-                        name="CLAUDE_CODE_OAUTH_TOKEN"
-                        type="password"
-                        autocomplete="off"
-                        spellcheck="false"
-                        autocapitalize="none"
-                        placeholder="Paste your Claude Code OAuth token"
-                        aria-describedby="claude-help"
-                      /><button
-                        class="reveal-button"
-                        type="button"
-                        data-reveal="claude-token"
-                        aria-label="Show Claude Code token"
-                        aria-pressed="false"
+                    <div class="form-bottom">
+                      <p>
+                        Tokens stay in this server’s .env file. Saved values are
+                        never returned to your browser.
+                      </p>
+                      <button
+                        class="button button-dark"
+                        id="save-source-tokens"
+                        type="submit"
                       >
-                        Show
+                        Save source tokens
+                      </button>
+                    </div>
+                  </fieldset>
+                  <div
+                    class="form-message"
+                    id="source-token-message"
+                    role="status"
+                    hidden
+                  ></div>
+                </form>
+              </details>
+            </section>
+            <div class="integration-group" id="hosting-connections">
+              <div class="integration-heading">
+                <h3>Hosting</h3>
+                <p>
+                  Optional. Only connect the host your project uses.
+                  Repository-only projects need none.
+                </p>
+              </div>
+              <div class="integration-grid">
+                <section
+                  class="service-card vercel-card"
+                  id="vercel-connection"
+                  aria-labelledby="vercel-title"
+                >
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/vercel.svg"
+                        width="26"
+                        height="26"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">PREVIEW DEPLOYMENTS</span>
+                      <h3 id="vercel-title">Vercel</h3>
+                      <p>
+                        Find preview deployments and verify your app’s test URL.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="service-status-row">
+                    <span class="runtime-badge" id="vercel-state"
+                      >Checking Vercel…</span
+                    >
+                    <p id="vercel-account">Loading connection status.</p>
+                  </div>
+                  <p class="runner-guidance" id="vercel-guidance">
+                    Your credentials stay on the ShipGremlins server.
+                  </p>
+                  <div class="button-row service-actions">
+                    <button
+                      class="button button-dark"
+                      id="vercel-connect"
+                      type="button"
+                      disabled
+                    >
+                      Connect Vercel ↗</button
+                    ><button
+                      class="small-button"
+                      id="vercel-refresh"
+                      type="button"
+                      disabled
+                    >
+                      Refresh status</button
+                    ><button
+                      class="small-button"
+                      id="vercel-disconnect"
+                      type="button"
+                      hidden
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                  <div
+                    class="form-message"
+                    id="vercel-message"
+                    role="status"
+                    hidden
+                  ></div>
+                  <div
+                    class="service-disconnect-prompt"
+                    id="vercel-disconnect-prompt"
+                    hidden
+                  >
+                    <p>
+                      Disconnect this instance’s Vercel authorization? Existing
+                      configuration and work will be kept. New jobs may need you
+                      to reconnect.
+                    </p>
+                    <div class="button-row">
+                      <button
+                        class="small-button"
+                        id="vercel-keep"
+                        type="button"
+                      >
+                        Keep connected</button
+                      ><button
+                        class="small-button danger-button"
+                        id="vercel-confirm-disconnect"
+                        type="button"
+                      >
+                        Disconnect
                       </button>
                     </div>
                   </div>
-                </div>
-                <p class="field-help">
-                  Project credentials appear below after you save named hosting,
-                  preview-access, sign-in, or telemetry settings. Add Sentry,
-                  Datadog, or Mixpanel in the project’s full configuration.
+                  <details class="service-advanced">
+                    <summary>Use an access token instead</summary>
+                    <p class="runner-guidance">
+                      Use a token you manage when browser authorization is
+                      unavailable. Blank input keeps the current saved value.
+                    </p>
+                    <ol class="setup-steps">
+                      <li>
+                        <a
+                          href="https://vercel.com/account/tokens"
+                          target="_blank"
+                          rel="noreferrer"
+                          >Create a Vercel token ↗</a
+                        >
+                        in Account settings → Tokens.
+                      </li>
+                      <li>
+                        Name it ShipGremlins and choose the team that owns your
+                        app.
+                      </li>
+                      <li>Copy the token once, then paste it below.</li>
+                    </ol>
+                    <p class="setup-help">
+                      This discovers deployments. Protected previews may also
+                      need a separate automation bypass in Project access below.
+                    </p>
+                    <form id="vercel-token-form">
+                      <fieldset id="vercel-token-fields" disabled>
+                        <legend class="sr-only">
+                          Manual Vercel credential
+                        </legend>
+                        <div class="token-grid">
+                          <div class="token-field">
+                            <div class="field-heading">
+                              <label for="vercel-token"
+                                ><span
+                                  class="provider-icon vercel-icon"
+                                  aria-hidden="true"
+                                  ><img
+                                    src="/assets/brands/vercel.svg"
+                                    width="18"
+                                    height="18"
+                                    alt="" /></span
+                                >Vercel</label
+                              ><span
+                                class="saved-state"
+                                data-connection="VERCEL_TOKEN"
+                                >Checking…</span
+                              >
+                            </div>
+                            <p id="vercel-help">
+                              Deployment checks for your web app.
+                            </p>
+                            <div class="password-wrap">
+                              <input
+                                id="vercel-token"
+                                name="VERCEL_TOKEN"
+                                type="password"
+                                autocomplete="off"
+                                spellcheck="false"
+                                autocapitalize="none"
+                                placeholder="Paste your Vercel token"
+                                aria-describedby="vercel-help"
+                              /><button
+                                class="reveal-button"
+                                type="button"
+                                data-reveal="vercel-token"
+                                aria-label="Show Vercel token"
+                                aria-pressed="false"
+                              >
+                                Show
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="form-bottom">
+                          <p>The token stays in your server’s .env file.</p>
+                          <button
+                            class="small-button"
+                            id="save-vercel-token"
+                            type="submit"
+                          >
+                            Save Vercel token
+                          </button>
+                        </div>
+                      </fieldset>
+                      <div
+                        class="form-message"
+                        id="vercel-token-message"
+                        role="status"
+                        hidden
+                      ></div>
+                    </form>
+                  </details>
+                </section>
+                <section
+                  id="railway-connection"
+                  class="service-card"
+                  aria-labelledby="railway-title"
+                >
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/railway.svg"
+                        width="23"
+                        height="23"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">DEPLOYMENT DISCOVERY</span>
+                      <h3 id="railway-title">Railway</h3>
+                      <p>
+                        Read a service’s deployment state and discover its test
+                        URL.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="service-status-row">
+                    <span class="saved-state" data-connection="RAILWAY_TOKEN"
+                      >Not configured</span
+                    ><span class="manual-connection-label">Manual token</span>
+                  </div>
+                  <details class="service-advanced">
+                    <summary>Set up Railway access</summary>
+                    <ol class="setup-steps">
+                      <li>
+                        <a
+                          href="https://railway.com/account/tokens"
+                          target="_blank"
+                          rel="noreferrer"
+                          >Create a Railway token ↗</a
+                        >
+                        and select your workspace.
+                      </li>
+                      <li>
+                        For access to one environment, use Project settings →
+                        Tokens instead.
+                      </li>
+                      <li>
+                        Paste the token and select its matching token type in
+                        your project’s hosting settings.
+                      </li>
+                    </ol>
+                    <form id="railway-token-form">
+                      <fieldset id="railway-token-fields" disabled>
+                        <legend class="sr-only">Railway credential</legend>
+                        <div class="field">
+                          <label for="railway-token">Railway API token</label>
+                          <div class="password-wrap">
+                            <input
+                              id="railway-token"
+                              name="RAILWAY_TOKEN"
+                              type="password"
+                              autocomplete="off"
+                              spellcheck="false"
+                              placeholder="Paste a Railway token"
+                            /><button
+                              type="button"
+                              class="reveal-button"
+                              data-reveal="railway-token"
+                              aria-label="Show Railway token"
+                              aria-pressed="false"
+                            >
+                              Show
+                            </button>
+                          </div>
+                          <p>
+                            Use the narrowest account, workspace, or project
+                            access available. Choose project-token
+                            authentication in the app settings when using a
+                            Railway project token.
+                          </p>
+                        </div>
+                        <div class="form-bottom">
+                          <p>
+                            Saved on this server. Verify each project’s live
+                            access separately.
+                          </p>
+                          <button
+                            type="submit"
+                            class="small-button"
+                            id="save-railway-token"
+                          >
+                            Save token
+                          </button>
+                        </div>
+                      </fieldset>
+                      <div
+                        id="railway-token-message"
+                        class="form-message"
+                        role="status"
+                        hidden
+                      ></div>
+                    </form>
+                  </details>
+                </section>
+                <section
+                  id="cloud-run-connection"
+                  class="service-card"
+                  aria-labelledby="cloud-run-title"
+                >
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/googlecloud.svg"
+                        width="23"
+                        height="23"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">DEPLOYMENT DISCOVERY</span>
+                      <h3 id="cloud-run-title">Google Cloud Run</h3>
+                      <p>
+                        Use server identity or a service account to discover a
+                        service URL.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="service-status-row">
+                    <span
+                      class="saved-state"
+                      data-connection="GCP_SERVICE_ACCOUNT_JSON"
+                      >Not configured</span
+                    ><span class="manual-connection-label"
+                      >JSON or machine identity</span
+                    >
+                  </div>
+                  <details class="service-advanced">
+                    <summary>Set up Google Cloud access</summary>
+                    <p class="runner-guidance">
+                      Leave the key blank to use Application Default Credentials
+                      on the controller. Identity availability is checked during
+                      project verification. Grant only the read access needed
+                      for the Cloud Run service; this does not configure browser
+                      access to a private service.
+                    </p>
+                    <form id="cloud-run-token-form">
+                      <fieldset id="cloud-run-token-fields" disabled>
+                        <legend class="sr-only">Google Cloud credential</legend>
+                        <div class="field">
+                          <label for="gcp-credentials"
+                            >Service-account JSON (optional)</label
+                          ><textarea
+                            id="gcp-credentials"
+                            class="secret-json"
+                            name="GCP_SERVICE_ACCOUNT_JSON"
+                            rows="4"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Paste service-account JSON only if needed"
+                          ></textarea
+                          ><button
+                            type="button"
+                            class="small-button"
+                            id="reveal-gcp-credentials"
+                            aria-pressed="false"
+                          >
+                            Show JSON
+                          </button>
+                          <p>
+                            The key stays on the controller. Blank keeps an
+                            existing saved key.
+                          </p>
+                        </div>
+                        <div class="form-bottom">
+                          <button
+                            type="submit"
+                            class="small-button"
+                            id="save-cloud-run-token"
+                          >
+                            Save credential
+                          </button>
+                        </div>
+                      </fieldset>
+                      <div
+                        id="cloud-run-token-message"
+                        class="form-message"
+                        role="status"
+                        hidden
+                      ></div>
+                    </form>
+                  </details>
+                </section>
+              </div>
+            </div>
+            <div class="integration-group" id="signals-connections">
+              <div class="integration-heading">
+                <h3>Product signals</h3>
+                <p>
+                  Give your PMs useful context from real usage, errors, and
+                  logs.
                 </p>
-                <div class="token-grid" id="telemetry-connections"></div>
-                <div class="form-bottom">
-                  <p>
-                    Already saved? Leave a field blank to keep its current
-                    token.
+              </div>
+              <div class="integration-grid">
+                <section
+                  class="service-card signal-card"
+                  id="sentry-connection"
+                >
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/sentry.svg"
+                        width="26"
+                        height="26"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">ERRORS & PERFORMANCE</span>
+                      <h3>Sentry</h3>
+                      <p>
+                        Give PMs real errors and performance signals to
+                        investigate.
+                      </p>
+                    </div>
+                  </div>
+                  <p class="signal-state" id="sentry-scope-state">
+                    No projects configured
                   </p>
-                  <button
-                    class="button button-dark"
-                    type="submit"
-                    id="save-connections"
-                  >
-                    Save connections <span aria-hidden="true">↗</span>
-                  </button>
-                </div>
-              </fieldset>
-              <div
-                class="form-message"
-                id="connections-message"
-                role="status"
-                hidden
-              ></div>
-            </form>
+                  <details class="service-advanced">
+                    <summary>Configure a project</summary>
+                    <p class="setup-help">
+                      Choose which app’s signals your PMs can read. Access stays
+                      scoped to that project.
+                    </p>
+                    <label class="sr-only" for="sentry-scope-project"
+                      >Project for Sentry</label
+                    ><select
+                      id="sentry-scope-project"
+                      class="signal-project"
+                    ></select
+                    ><button
+                      type="button"
+                      class="small-button"
+                      data-configure-signal="sentry"
+                    >
+                      Choose Sentry scope ↗
+                    </button>
+                    <p class="setup-help signal-empty" hidden>
+                      <a href="/projects#new-project-drawer"
+                        >Add an app first ↗</a
+                      >
+                    </p>
+                  </details>
+                  <div
+                    data-credential-provider="sentry"
+                    class="provider-credentials"
+                  ></div>
+                </section>
+                <section
+                  class="service-card signal-card"
+                  id="datadog-connection"
+                >
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/datadog.svg"
+                        width="26"
+                        height="26"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">LOGS & OBSERVABILITY</span>
+                      <h3>Datadog</h3>
+                      <p>Read scoped logs, monitors, and runtime signals.</p>
+                    </div>
+                  </div>
+                  <p class="signal-state" id="datadog-scope-state">
+                    No projects configured
+                  </p>
+                  <details class="service-advanced">
+                    <summary>Configure a project</summary>
+                    <p class="setup-help">
+                      Choose which app’s signals your PMs can read. Access stays
+                      scoped to that project.
+                    </p>
+                    <label class="sr-only" for="datadog-scope-project"
+                      >Project for Datadog</label
+                    ><select
+                      id="datadog-scope-project"
+                      class="signal-project"
+                    ></select
+                    ><button
+                      type="button"
+                      class="small-button"
+                      data-configure-signal="datadog"
+                    >
+                      Choose Datadog scope ↗
+                    </button>
+                    <p class="setup-help signal-empty" hidden>
+                      <a href="/projects#new-project-drawer"
+                        >Add an app first ↗</a
+                      >
+                    </p>
+                  </details>
+                  <div
+                    data-credential-provider="datadog"
+                    class="provider-credentials"
+                  ></div>
+                </section>
+                <section
+                  class="service-card signal-card"
+                  id="mixpanel-connection"
+                >
+                  <div class="service-heading">
+                    <span class="service-mark" aria-hidden="true"
+                      ><img
+                        src="/assets/brands/mixpanel.svg"
+                        width="26"
+                        height="26"
+                        alt=""
+                    /></span>
+                    <div>
+                      <span class="eyebrow muted">PRODUCT ANALYTICS</span>
+                      <h3>Mixpanel</h3>
+                      <p>Use saved reports to investigate product behavior.</p>
+                    </div>
+                  </div>
+                  <p class="signal-state" id="mixpanel-scope-state">
+                    No projects configured
+                  </p>
+                  <details class="service-advanced">
+                    <summary>Configure a project</summary>
+                    <p class="setup-help">
+                      Choose which app’s signals your PMs can read. Access stays
+                      scoped to that project.
+                    </p>
+                    <label class="sr-only" for="mixpanel-scope-project"
+                      >Project for Mixpanel</label
+                    ><select
+                      id="mixpanel-scope-project"
+                      class="signal-project"
+                    ></select
+                    ><button
+                      type="button"
+                      class="small-button"
+                      data-configure-signal="mixpanel"
+                    >
+                      Choose Mixpanel scope ↗
+                    </button>
+                    <p class="setup-help signal-empty" hidden>
+                      <a href="/projects#new-project-drawer"
+                        >Add an app first ↗</a
+                      >
+                    </p>
+                  </details>
+                  <div
+                    data-credential-provider="mixpanel"
+                    class="provider-credentials"
+                  ></div>
+                  <div id="mixpanel-reports"></div>
+                </section>
+              </div>
+            </div>
+            <div class="integration-group" id="project-access">
+              <div class="integration-heading">
+                <h3>Project access</h3>
+                <p>
+                  Only the extra access your app asks for. Saved credentials are
+                  never shown here.
+                </p>
+              </div>
+              <p id="project-access-empty" class="setup-help">
+                Hosting and product-signal credentials live with their provider
+                above. Other project access appears here when configured.
+              </p>
+              <div id="telemetry-connections" class="credential-list"></div>
+              <details class="notification-overrides" id="slack-overrides">
+                <summary>
+                  Optional: use a different Slack channel for a project
+                  <span id="slack-override-count"></span>
+                </summary>
+                <p class="setup-help">
+                  Your workspace Slack connection already covers every project.
+                  Add an override only to send one app’s reports to a different
+                  channel. Leaving these blank does not block jobs.
+                </p>
+                <div
+                  id="notification-connections"
+                  class="credential-list"
+                ></div>
+              </details>
+            </div>
             <div class="privacy-note">
               <span class="privacy-icon" aria-hidden="true">⌑</span>
               <p>
                 <strong>Your server. Your credentials.</strong> Manual tokens
                 stay in the server’s .env file; OAuth credentials use encrypted
-                local files. Saved values are never sent back to the dashboard.
-                “Saved” means configured; live access still needs verification.
+                local files. “Saved” means stored, not verified. Use Verify
+                connections on a project to check live access.
               </p>
             </div>
-            <section
-              class="slack-card"
-              id="slack-connection"
-              aria-labelledby="slack-title"
-            >
-              <div class="slack-heading">
-                <span class="slack-mark" aria-hidden="true"
-                  ><img
-                    src="/assets/brands/slack.svg"
-                    width="26"
-                    height="26"
-                    alt=""
-                /></span>
-                <div>
-                  <span class="eyebrow muted">KEEP THE CREW CLOSE</span>
-                  <h3 id="slack-title">Meet them in Slack.</h3>
-                  <p>
-                    PM findings. Coding updates. One channel for the useful
-                    stuff.
-                  </p>
-                </div>
-              </div>
-              <div class="slack-status-row">
-                <span class="runtime-badge" id="slack-state"
-                  >Checking Slack…</span
-                >
-                <p id="slack-workspace">Loading connection status.</p>
-              </div>
-              <p class="runner-guidance" id="slack-guidance">
-                Choose your workspace and channel when connecting.
-              </p>
-              <div class="button-row slack-actions">
-                <button
-                  class="button button-dark"
-                  id="slack-connect"
-                  type="button"
-                  disabled
-                >
-                  Add to Slack <span aria-hidden="true">↗</span></button
-                ><button
-                  class="small-button"
-                  id="slack-refresh"
-                  type="button"
-                  disabled
-                >
-                  Refresh status</button
-                ><button
-                  class="small-button"
-                  id="slack-disconnect"
-                  type="button"
-                  hidden
-                >
-                  Disconnect
-                </button>
-              </div>
-              <div
-                class="form-message"
-                id="slack-message"
-                role="status"
-                hidden
-              ></div>
-              <div
-                class="slack-disconnect-prompt"
-                id="slack-disconnect-prompt"
-                hidden
-              >
-                <p>
-                  Disconnect this workspace’s Slack notifications? Your projects
-                  and jobs will stay in place.
-                </p>
-                <div class="button-row">
-                  <button class="small-button" id="slack-keep" type="button">
-                    Keep connected</button
-                  ><button
-                    class="small-button danger-button"
-                    id="slack-confirm-disconnect"
-                    type="button"
-                  >
-                    Disconnect Slack
-                  </button>
-                </div>
-              </div>
-              <details class="slack-advanced">
-                <summary>Advanced: use an incoming webhook</summary>
-                <p>
-                  Use a Slack incoming webhook you already manage. This is saved
-                  on your server and never shown again.
-                </p>
-                <form id="slack-webhook-form">
-                  <fieldset id="slack-webhook-fields" disabled>
-                    <legend class="sr-only">Slack incoming webhook</legend>
-                    <div class="field">
-                      <label for="slack-webhook">Webhook URL</label
-                      ><input
-                        id="slack-webhook"
-                        type="password"
-                        autocomplete="off"
-                        spellcheck="false"
-                        autocapitalize="none"
-                        placeholder="https://hooks.slack.com/services/…"
-                        required
-                      />
-                    </div>
-                    <button
-                      class="small-button"
-                      id="save-slack-webhook"
-                      type="submit"
-                    >
-                      Save webhook
-                    </button>
-                  </fieldset>
-                </form>
-              </details>
-            </section>
           </section>
 
-          <section class="panel" id="projects" aria-labelledby="projects-title">
+          <section
+            class="panel"
+            data-page="projects"
+            id="projects"
+            aria-labelledby="projects-title"
+          >
             <div class="panel-heading">
               <div>
                 <span class="eyebrow muted">03 / THE PLAYGROUND</span>
@@ -1303,6 +1647,21 @@
                         </p>
                       </div>
                     </div>
+                    <div class="field pm-mixpanel-field">
+                      <label for="pm-mixpanel-report"
+                        >Mixpanel saved report ID (optional)</label
+                      ><input
+                        id="pm-mixpanel-report"
+                        inputmode="numeric"
+                        pattern="[1-9][0-9]*"
+                        placeholder="12345678"
+                      />
+                      <p>
+                        For a project with Mixpanel configured, enter this PM’s
+                        saved Insights report ID. Configure Mixpanel in
+                        Connections first.
+                      </p>
+                    </div>
                     <div class="pm-settings-grid">
                       <div class="field">
                         <label for="pm-schedule">Schedule (UTC)</label
@@ -1364,6 +1723,7 @@
 
           <section
             class="panel runners-panel"
+            data-page="runners"
             id="runners"
             aria-labelledby="runners-title"
           >
@@ -1574,6 +1934,7 @@
 
           <section
             class="panel activity-panel"
+            data-page="activity"
             id="activity"
             aria-labelledby="activity-title"
           >
@@ -1698,6 +2059,7 @@
 
           <section
             class="panel configuration-panel"
+            data-page="settings"
             id="configuration"
             aria-labelledby="configuration-title"
           >
@@ -1946,7 +2308,11 @@
             </section>
           </section>
 
-          <section class="next-card" aria-labelledby="next-title">
+          <section
+            class="next-card"
+            data-page="overview"
+            aria-labelledby="next-title"
+          >
             <img
               src="/assets/gremlin-security.webp"
               width="512"

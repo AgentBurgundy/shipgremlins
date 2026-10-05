@@ -135,6 +135,39 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it("serves only the known dashboard page routes on direct reload with API protection intact", async () => {
+    const { url } = await start();
+    for (const route of [
+      "/overview",
+      "/connections",
+      "/projects",
+      "/runners",
+      "/activity",
+      "/settings",
+    ]) {
+      const response = await fetch(url + route);
+      expect(response.status, route).toBe(200);
+      expect(response.headers.get("Content-Type")).toBe(
+        "text/html; charset=utf-8",
+      );
+      expect(response.headers.get("Content-Security-Policy")).toContain(
+        "script-src 'self'",
+      );
+      expect(await response.text()).toContain("Gremlin dashboard");
+      expect(await (await fetch(url + route, { method: "HEAD" })).text()).toBe(
+        "",
+      );
+    }
+    for (const route of [
+      "/unknown-page",
+      "/settings/private",
+      "/projects/demo",
+      "/connections/secret.json",
+    ])
+      expect((await fetch(url + route)).status, route).toBe(404);
+    expect((await fetch(`${url}/api/status`)).status).toBe(401);
+    expect((await fetch(`${url}/api/projects`)).status).toBe(401);
+  });
   it.each(["linear", "vercel"] as const)(
     "authenticates %s OAuth routes and derives the return URL server-side",
     async (provider) => {
@@ -326,6 +359,14 @@ describe("local dashboard HTTP boundary", () => {
       typecheck: null,
       build: "npm run build",
     };
+    const telemetry = {
+      mixpanel: {
+        region: "us",
+        projectId: "123",
+        usernameSecret: "MIXPANEL_USERNAME_DEMO",
+        passwordSecret: "MIXPANEL_PASSWORD_DEMO",
+      },
+    };
     const response = await post(`${url}/api/projects`, {
       project: "demo",
       repo: "org/app",
@@ -334,6 +375,7 @@ describe("local dashboard HTTP boundary", () => {
       verification: { mode: "repository" },
       environments: {},
       commands,
+      telemetry,
     });
     expect(response.status).toBe(200);
     const path = "projects/demo/project.json";
@@ -343,10 +385,11 @@ describe("local dashboard HTTP boundary", () => {
       environments: {},
       commands,
       verified: null,
+      telemetry,
     });
     const status = (await (
       await fetch(`${url}/api/status`, { headers: auth })
-    ).json()) as { projects: unknown[] };
+    ).json()) as { projects: unknown[]; connections: unknown[] };
     expect(status.projects).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -355,8 +398,24 @@ describe("local dashboard HTTP boundary", () => {
           verification: { mode: "repository" },
           environments: {},
           commands,
+          telemetry,
         }),
       ]),
+    );
+    expect(status.connections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "MIXPANEL_USERNAME_DEMO",
+          project: "demo",
+          group: "telemetry",
+          provider: "mixpanel",
+          purpose: "telemetry-read",
+          usages: expect.any(Array),
+        }),
+      ]),
+    );
+    expect(readFileSync(join(root, ".env.example"), "utf8")).toContain(
+      "MIXPANEL_PASSWORD_DEMO=",
     );
     const document = (await (
       await fetch(`${url}/api/config?path=${encodeURIComponent(path)}`, {
@@ -403,6 +462,33 @@ describe("local dashboard HTTP boundary", () => {
       },
     });
     expect(response.status).toBe(400);
+    expect(() =>
+      readFileSync(join(root, "projects/demo/project.json")),
+    ).toThrow();
+  });
+
+  it("validates initial telemetry settings before writing project files without echoing credential values", async () => {
+    const { url, root } = await start(
+      fileURLToPath(new URL("../..", import.meta.url)),
+    );
+    const response = await post(`${url}/api/projects`, {
+      project: "demo",
+      repo: "org/demo",
+      linearMode: "later",
+      telemetry: {
+        sentry: {
+          host: "sentry.io",
+          organization: "org",
+          project: "demo",
+          environment: "staging",
+          tokenSecret: "never-store-this-credential-value",
+        },
+      },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain(
+      "never-store-this-credential-value",
+    );
     expect(() =>
       readFileSync(join(root, "projects/demo/project.json")),
     ).toThrow();

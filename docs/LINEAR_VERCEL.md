@@ -20,9 +20,23 @@ Creating teams depends on your Linear workspace's permissions and limits. Choose
 
 ## Vercel preview access
 
+For a manual token, open the Vercel card in Connections and use its link to
+[Vercel Tokens](https://vercel.com/account/tokens). Name the token ShipGremlins,
+select the team or project you need, choose an expiration, and save it in the
+card's personal-token form. Vercel's [token guide](https://vercel.com/kb/guide/how-do-i-use-a-vercel-api-access-token)
+explains the available scopes. You do not need to copy an environment-variable
+assignment or edit a file.
+
 Choose the Vercel account/team and projects available to the integration. In Edit settings, select Vercel and enter its project ID and optional team ID. New targets are stored in named `environments`; legacy `vercel` settings remain supported. An OAuth installation's team is used when no team ID is configured. Set the target's preview branch separately from the PR base when needed. Verify connections checks the selected project, and browser jobs look up its ready preview before launching.
 
 Connecting Vercel does not create deployments or test accounts. The selected branch must already have a ready preview deployment; a production deployment is not a preview. Vercel is optional: repository verification requires no hosting, and browser targets also support Railway, Cloud Run, or a direct test URL. Provider discovery does not provision or deploy your app.
+
+**Vercel preview access is a separate credential from the account token.** If your
+preview uses Deployment Protection, generate a secret in that Vercel project's
+**Settings → Deployment Protection → Protection Bypass for Automation**. In
+ShipGremlins, select its secret name in the browser target settings, then save the
+value in the project's Vercel preview access field in Connections. Public previews
+need no bypass secret. See [Vercel's automation bypass guide](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation).
 
 ## Credentials and recovery
 

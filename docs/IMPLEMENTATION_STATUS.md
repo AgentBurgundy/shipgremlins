@@ -29,6 +29,13 @@ Connections holds shared and named credentials; hosting account credentials stay
 on the controller. Existing Vercel promotion configurations remain supported.
 See [project settings and hosting](PROJECTS.md).
 
+Version 0.7 separates dashboard navigation into addressable pages, adds a shared
+update banner with periodic release checks, and presents integrations as compact
+cards with setup guidance. Sentry, Datadog and Mixpanel scopes can be edited in
+project forms; saved Mixpanel report IDs can be assigned to individual PMs without
+editing JSON. Project Slack overrides remain optional and inherit the workspace
+connection when unset. Existing credentials and unrelated settings are preserved.
+
 | Capability       | Current state                                                                                                                                                                                                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |
