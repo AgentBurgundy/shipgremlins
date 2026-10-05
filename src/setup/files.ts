@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmdirSync,
   realpathSync,
   rmSync,
   unlinkSync,
@@ -21,7 +22,12 @@ import {
 import { fillTemplate, templateVars } from "../commands/addProject.ts";
 import { projectSecretNames } from "../projectCapabilities.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
-import { assertResourceAvailable } from "./resourceDeletion.ts";
+import {
+  assertResourceAvailable,
+  prepareProjectRecreation,
+  completeProjectRecreation,
+  withProjectLifecycleLock,
+} from "./resourceDeletion.ts";
 
 const PORTABLE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const RESERVED_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
@@ -160,12 +166,38 @@ export function initializeSetup(
   input: InitInput,
 ): InitResult {
   validateName(input.project, "project");
+  // Ordinary first-time setup stays side-effect-free through validation. A
+  // deleted name needs the same cross-process lock as archive restoration.
+  if (
+    existsSync(
+      join(
+        root,
+        ".run",
+        "deleted",
+        "reservations",
+        "projects",
+        `${input.project}.json`,
+      ),
+    )
+  )
+    return withProjectLifecycleLock(root, { project: input.project }, () =>
+      initializeLocked(root, templatesRoot, input),
+    );
+  return initializeLocked(root, templatesRoot, input);
+}
+function initializeLocked(
+  root: string,
+  templatesRoot: string,
+  input: InitInput,
+): InitResult {
   validateName(input.area ?? "core", "area");
-  assertResourceAvailable(
-    root,
-    input.project,
-    input.createInitialPm === false ? undefined : (input.area ?? "core"),
-  );
+  const replacementId = prepareProjectRecreation(root, input.project);
+  if (!replacementId)
+    assertResourceAvailable(
+      root,
+      input.project,
+      input.createInitialPm === false ? undefined : (input.area ?? "core"),
+    );
   validateRepo(input.repo, input.provider);
   if (
     input.settings &&
@@ -346,6 +378,40 @@ export function initializeSetup(
         config.provider = input.provider ?? "github";
         if (input.serverUrl) config.serverUrl = input.serverUrl;
         Object.assign(config, input.settings);
+        if (replacementId) {
+          config.instanceId = replacementId;
+          config.verified = null;
+          const projectSuffix = input.project.toUpperCase().replace(/-/g, "_");
+          const identitySuffix = replacementId.replace(/-/g, "").toUpperCase();
+          config.slackWebhookSecret = `SLACK_WEBHOOK_${projectSuffix}_${identitySuffix}`;
+          // Generated defaults for a reused display name must not select its
+          // previous project's saved credentials. Explicit custom refs survive.
+          const defaults = [
+            "SENTRY_AUTH_TOKEN",
+            "DD_API_KEY",
+            "DD_APP_KEY",
+            "MIXPANEL_USERNAME",
+            "MIXPANEL_PASSWORD",
+            "DATABASE_URL",
+            "NEON_DATABASE_URL",
+          ].map((prefix) => `${prefix}_${projectSuffix}`);
+          const remapDefaults = (value: unknown): unknown => {
+            if (typeof value === "string" && defaults.includes(value))
+              return `${value}_${identitySuffix}`;
+            if (Array.isArray(value)) return value.map(remapDefaults);
+            if (value && typeof value === "object")
+              return Object.fromEntries(
+                Object.entries(value).map(([key, item]) => [
+                  key,
+                  remapDefaults(item),
+                ]),
+              );
+            return value;
+          };
+          if (config.telemetry)
+            config.telemetry = remapDefaults(config.telemetry);
+          if (config.signIn) config.signIn = remapDefaults(config.signIn);
+        }
         content = JSON.stringify(config, null, 2) + "\n";
       }
       if (filename === "areas.json") {
@@ -408,10 +474,40 @@ export function initializeSetup(
     }
   } catch {
     for (const path of created.reverse()) unlinkSync(join(target, path));
+    // Only remove empty directories created for this project. Never recurse or
+    // touch a pre-existing project when another writer caused a conflict.
+    if (!preserved.includes(projectPath.replace(/\\/g, "/") + "/")) {
+      const directories = [
+        ...new Set(
+          created
+            .map((path) => dirname(join(target, path)))
+            .filter(
+              (path) =>
+                path === projectDir ||
+                path.startsWith(projectDir + "/") ||
+                path.startsWith(projectDir + "\\"),
+            ),
+        ),
+      ].sort((a, b) => b.length - a.length);
+      for (const directory of directories) {
+        try {
+          rmdirSync(directory);
+        } catch {
+          /* Concurrent or retained contents must survive. */
+        }
+      }
+      try {
+        rmdirSync(projectDir);
+      } catch {
+        /* Keep anything not owned by this failed setup. */
+      }
+    }
     throw new Error(
       "Setup could not write every file; newly written files were removed. Existing files were preserved.",
     );
   }
+  if (replacementId)
+    completeProjectRecreation(root, input.project, replacementId);
   return {
     directory: target,
     created,

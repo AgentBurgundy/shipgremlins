@@ -64,7 +64,12 @@ function fixture() {
     clearTimeout,
     setTimeout,
   };
-  for (const name of ["crew-guidance", "project-workspace", "pm-charter"])
+  for (const name of [
+    "crew-guidance",
+    "patrol-flow",
+    "project-workspace",
+    "pm-charter",
+  ])
     runInNewContext(
       readFileSync(
         new URL(`../../dashboard/${name}.js`, import.meta.url),
@@ -254,6 +259,37 @@ describe("focused project crew workspace", () => {
     expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
       "View run",
     );
+  });
+  it("does not attach old project runs to a replacement with the same visible name", () => {
+    const { root, state, view, jobs, project } = workspace();
+    jobs.push({
+      id: "old",
+      runId: 1,
+      project: project.name,
+      area: project.areas[0]!.key,
+      type: "pm",
+      status: "running",
+    });
+    Object.assign(project, { instanceId: "fresh-project" });
+    view.setStatus(state, false);
+    expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
+      "Run now",
+    );
+    expect(text(root)).not.toContain("Run 1");
+    jobs.push({
+      id: "new",
+      runId: 2,
+      project: project.name,
+      projectInstanceId: "fresh-project",
+      area: project.areas[0]!.key,
+      type: "pm",
+      status: "running",
+    });
+    view.setStatus(state, false);
+    expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
+      "View run",
+    );
+    expect(text(root)).toContain("Run 2");
   });
   it("keeps direct PM switching when the project has more than one PM", () => {
     const { root, pages, project, view } = workspace();

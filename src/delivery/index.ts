@@ -1,3 +1,4 @@
+import { projectRuntimeKey } from "../projectIdentity.ts";
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
@@ -190,7 +191,12 @@ export function createDeliveryService(options: {
     repo = project.config.repo,
     now = () => (options.now?.() ?? new Date()).toISOString();
   validateName(name, "project");
-  const directory = join(options.root, ".run", "delivery", name),
+  const directory = join(
+      options.root,
+      ".run",
+      "delivery",
+      projectRuntimeKey(project.config),
+    ),
     file = join(directory, "state.json"),
     lock = join(directory, "write.lock");
   const config = (area: string) => deliveryConfiguration(project, area);

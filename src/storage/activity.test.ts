@@ -128,6 +128,17 @@ function setup() {
 }
 
 describe("durable safe run activity", () => {
+  it("retains project incarnation identity in archived history", async () => {
+    const { store } = setup();
+    const projectInstanceId = "a1b2c3d4-1111-2222-3333-444444444444";
+    await store.ensure();
+    await store.recordRun({ ...job, projectInstanceId });
+    expect(await store.getRun(job.id)).toMatchObject({ projectInstanceId });
+    expect(await store.listRuns()).toContainEqual(
+      expect.objectContaining({ projectInstanceId }),
+    );
+    await store.close();
+  });
   it("writes a live event snapshot in one bounded query rather than one query per event", async () => {
     const { store, fake } = setup();
     await store.ensure();

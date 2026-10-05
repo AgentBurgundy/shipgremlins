@@ -76,12 +76,16 @@
     const original = structuredClone(initialTelemetry || {});
     const state = {};
     let projectName = options.projectName || "";
+    const projectSuffix = (name) =>
+      suffix(
+        `${name || "PROJECT"}${options.instanceId ? `_${options.instanceId.replace(/-/g, "")}` : ""}`,
+      );
     for (const [provider, definition] of Object.entries(providers)) {
       const values = { ...original[provider] };
       for (const [key, , pattern] of definition.fields)
         values[key] ??= Array.isArray(pattern) ? pattern[0] : "";
       for (const [key, , prefix] of definition.secrets)
-        values[key] ??= `${prefix}_${suffix(projectName)}`;
+        values[key] ??= `${prefix}_${projectSuffix(projectName)}`;
       state[provider] = { enabled: !!original[provider], values };
     }
     const snapshot = () =>
@@ -106,9 +110,10 @@
           for (const [key, , prefix] of definition.secrets)
             if (
               !original[provider]?.[key] &&
-              state[provider].values[key] === `${prefix}_${suffix(projectName)}`
+              state[provider].values[key] ===
+                `${prefix}_${projectSuffix(projectName)}`
             )
-              state[provider].values[key] = `${prefix}_${suffix(name)}`;
+              state[provider].values[key] = `${prefix}_${projectSuffix(name)}`;
         projectName = name;
       },
       read() {

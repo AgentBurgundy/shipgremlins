@@ -282,7 +282,7 @@
       signalsContainer,
       `${prefix}-signals`,
       config.telemetry,
-      options,
+      { ...options, instanceId: config.instanceId },
     );
     root.append(signalsContainer);
     const advanced = node(

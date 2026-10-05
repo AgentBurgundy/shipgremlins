@@ -18,6 +18,7 @@ import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { readConnections } from "../setup/connections.ts";
 import { redactHistory } from "../storage/activity.ts";
 import type { LocalJob } from "../localRunners/types.ts";
+import { projectRuntimeKey } from "../projectIdentity.ts";
 
 export class ProjectKnowledgeError extends Error {
   constructor(
@@ -57,12 +58,12 @@ export function createProjectKnowledge(options: {
   const pm = createPmKnowledge(options);
   function location(project: string) {
     validateName(project, "project");
-    loadProject(options.root, project);
+    const current = loadProject(options.root, project);
     const file = join(
       options.root,
       ".run",
       "project-knowledge",
-      project,
+      projectRuntimeKey(current.config),
       "decisions.json",
     );
     assertNoSymlinks(file);

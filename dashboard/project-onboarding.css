@@ -280,6 +280,20 @@
   border: 1px solid #dce4db;
   border-radius: 8px;
 }
+.onboarding-recommendation > p {
+  white-space: pre-line;
+}
+.onboarding-source-files {
+  max-height: 320px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.onboarding-source-files li {
+  padding: 4px 0;
+}
+.onboarding-source-files span {
+  color: #617468;
+}
 .onboarding-setup-callout {
   display: flex;
   align-items: center;

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { loadProject } from "../config.ts";
 import {
   closeSync,
   existsSync,
@@ -64,6 +65,7 @@ const TERMINAL = new Set(["succeeded", "failed", "canceled"]);
 const INPUT_KEYS = [
   "type",
   "project",
+  "projectInstanceId",
   "area",
   "ticket",
   "attempt",
@@ -160,6 +162,14 @@ function validInput(value: unknown): value is LocalJobInput {
   )
     return false;
   if (Object.keys(value).some((key) => !INPUT_KEYS.includes(key))) return false;
+  if (
+    value.projectInstanceId !== undefined &&
+    (typeof value.projectInstanceId !== "string" ||
+      !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(
+        value.projectInstanceId,
+      ))
+  )
+    return false;
   if (
     value.pmMode !== undefined &&
     (value.type !== "pm" ||
@@ -1119,6 +1129,9 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       (state.usage ??= {}),
       state.jobs.filter((job) => job.id !== ignoreId),
       clock(),
+      existsSync(join(options.root, "projects", project, "project.json"))
+        ? loadProject(options.root, project).config.instanceId
+        : undefined,
     );
   }
   function canLaunch(state: State, job: LocalJob): boolean {
@@ -1456,6 +1469,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           (state.usage ??= {}),
           state.jobs.filter((item) => item.id !== job.id),
           clock(),
+          job.projectInstanceId,
         ) ?? undefined;
       if (!job.budget) {
         job.status = "queued";

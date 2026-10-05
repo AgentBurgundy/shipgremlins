@@ -21,6 +21,7 @@ import type { LocalJob } from "../localRunners/types.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import { PM_KNOWLEDGE_FILES, PM_KNOWLEDGE_MAX_BYTES } from "./prompts.ts";
 import { baseBranch, inspectionBranch } from "../projectCapabilities.ts";
+import { jobBelongsToProject } from "../projectIdentity.ts";
 
 type Document = { name: string; content: string };
 interface Snapshot {
@@ -148,7 +149,7 @@ export function createPmKnowledge(options: {
         (job) =>
           job.type === "pm" &&
           job.pmMode === "discovery" &&
-          job.project === project &&
+          jobBelongsToProject(current.project.config, job) &&
           job.area === area &&
           (!current.area.instanceId ||
             job.discoveryRevision ===

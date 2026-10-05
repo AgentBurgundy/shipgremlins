@@ -179,6 +179,7 @@
           (job) =>
             job.type === "pm" &&
             job.project === projectName &&
+            (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
             job.area === areaKey &&
             ["queued", "running"].includes(job.status),
         );

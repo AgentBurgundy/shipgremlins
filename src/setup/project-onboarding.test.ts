@@ -131,6 +131,81 @@ const docker = (): Draft => ({
 });
 
 describe("guided environment target review", () => {
+  it("shows source selection reasons, excerpt ranges and unresolved coverage without claiming a whole-repository review", async () => {
+    const api = vi.fn(async () => ({
+      ...state(),
+      report: {
+        recommendation: "docker",
+        summary: "A real dashboard",
+        rationale: "Use its fixture.",
+        repository: {
+          repo: "owner/shop",
+          branch: "main",
+          sha: "a".repeat(40),
+          filesRead: ["src/server.ts"],
+          inspection: {
+            totalFiles: 300,
+            treeTruncated: true,
+            sourceBytes: 4096,
+            limits: { files: 80, sourceBytes: 524288 },
+            files: [
+              {
+                path: "src/server.ts",
+                reason: "manifest entrypoint",
+                excerpt: true,
+                ranges: [{ start: 1, end: 45 }],
+              },
+            ],
+            criticalMissing: ["src/private-loader.ts"],
+            unresolved: ["Dynamic import could not be followed"],
+          },
+        },
+      },
+    }));
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(root)).toContain(
+      "Reviewed 1 files · Entrypoints & dependencies",
+    );
+    expect(text(root)).toContain(
+      "300 files listed (repository listing incomplete)",
+    );
+    expect(text(root)).toContain("manifest entrypoint · excerpt, lines 1–45");
+    expect(text(root)).toContain("Important source is still missing");
+    expect(text(root)).toContain("not a complete repository audit");
+    expect(text(root)).toContain("Dynamic import could not be followed");
+    f.panel.destroy();
+  });
+  it("uses a fresh test-credential namespace for a recreated project", async () => {
+    const f = fixture(),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      instanceId: "a1b2c3",
+      repo: "owner/shop",
+    });
+    await settle();
+    const access = walk(root).find(
+      (item) =>
+        item.tagName === "SELECT" &&
+        item.children.some((option) => option.value === "password"),
+    )!;
+    access.value = "password";
+    access.fire("change");
+    expect(
+      walk(root).find(
+        (item) => item.id === "onboarding-shop-account-0-usernameSecret",
+      )?.value,
+    ).toBe("APP_SHOP_A1B2C3_TEST_ADMIN_USERNAME");
+    expect(
+      walk(root).find(
+        (item) => item.id === "onboarding-shop-account-0-passwordSecret",
+      )?.value,
+    ).toBe("APP_SHOP_A1B2C3_TEST_ADMIN_PASSWORD");
+    f.panel.destroy();
+  });
   it("never treats repository analysis or saved settings as verified browser access", () => {
     const { window } = fixture();
     expect(window.onboardingStep(state())).toBe(0);

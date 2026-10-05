@@ -34,8 +34,12 @@ flowchart TD
   Mode -->|Hosted| Staging[Resolve selected staging URL]
   Mode -->|Docker| App[Start private app and services; check health]
   Mode -->|Repository| Inspect[Inspect code and configured checks]
-  Staging --> Patrol[Observe, research, rank and investigate]
-  App --> Patrol
+  Staging --> Browser[Launch Chromium through Playwright MCP]
+  App --> Browser
+  Browser --> Visit[Navigate to the app and sign in with configured test accounts]
+  Visit --> Exercise[Click through workflows; test relevant roles, devices and failure cases]
+  Exercise --> Capture[Capture real screenshots and reproducible observations]
+  Capture --> Patrol[Correlate behavior with code; research, rank and investigate]
   Inspect --> Patrol
   Patrol --> Evidence[Reproduce findings; collect test output and browser evidence when applicable]
   Evidence --> Findings{Supported new work?}
@@ -64,6 +68,10 @@ flowchart TD
 ```
 
 The diagram describes distinct agent instructions and controller checks. Investigation quality, prioritization, deduplication and proposal wording are prompt-directed behavior. Job admission, approved coding scope, delivery verification, and promotion gates are enforced by the controller. A successful process exit is not proof that every feature or security boundary was tested.
+
+The project overview and PM brief show a **Patrol plan** with the selected environment, configured test-account names, and a direct **Environment & accounts** link. Its numbered steps describe the intended work, not live progress. Repository-only projects explicitly say that opening an app is not required. Discovery remains in **Learning** and does not open an application or file tickets.
+
+Each PM run's Summary separates worker completion from **Run evidence**: recorded Playwright calls, saved image files and reported checks. Select a card to open Activity or Evidence. Calls show attempts, not successful navigation or sign-in; images can also be generated fixtures. A completed run without recorded browser calls says so. Missing or partial activity stays unavailable/incomplete, and an old run is never described using the project's newly edited environment. This display does not introduce a browser-proof completion gate for ordinary patrols.
 
 The owning PM does not itself publish or merge promotion PRs. In the optional promotion workflow, its review feeds a separately verified candidate. Candidate promotion waits for the configured trusted signer; a PM's own review is insufficient. Owners retain staging and production merge decisions. Linear completion requires an explicit complete-scope declaration and an exact production-merge/content audit; it does not assert that a live production deployment is healthy. Ordinary pull-request mode ends with reviewed drafts, and Docker/direct-URL/Cloud Run environments do not qualify for the current Vercel/Railway promotion-review route.
 

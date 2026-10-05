@@ -5,6 +5,8 @@ export type WorkerAction = "verify" | "pause" | "resume" | "repair" | "remove";
 export interface LocalJobInput {
   type: JobType;
   project?: string;
+  /** Bound by the controller; omitted only for legacy project incarnations. */
+  projectInstanceId?: string;
   area?: string;
   ticket?: string;
   attempt?: number;

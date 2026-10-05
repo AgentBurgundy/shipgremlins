@@ -343,6 +343,12 @@ export function saveEditableConfig(
       const previous = parseJson(original.content),
         next = parseJson(content);
       if (object(previous) && object(next)) {
+        if (next.instanceId !== previous.instanceId)
+          throw new ConfigEditorError(
+            "conflict",
+            "A project's identity cannot be changed. Delete and recreate it to start fresh.",
+            409,
+          );
         const executionFields = [
           "repo",
           "provider",

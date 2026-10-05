@@ -4,6 +4,8 @@ Start with `gremlins setup`, or `gremlins setup --lan` on a homelab server. Conn
 
 You can also skip analysis and configure an environment yourself. Existing projects use the same Environment page; choosing a setup path preserves their PMs, accounts, workflow, commands, and other named environments.
 
+Source selection follows manifests, executable entrypoints, relative imports, web assets and relevant test fixtures rather than taking the first files alphabetically. It can inspect up to 80 files and provide up to 512 KiB of selected source to Claude. Large files are explicitly marked as excerpts with line ranges. Expand **Reviewed files** to see why each file was selected, listing limits and unread references. This remains a bounded investigation, not a complete repository audit or an agent freely browsing every file. Earlier saved reports retain their earlier coverage; choose **Analyze again** to use the improved investigation.
+
 ## Two ways to test a web app
 
 |             | Deployed staging                                                      | Disposable Docker app                                                                 |
@@ -33,6 +35,12 @@ The Setup Gremlin may propose a Dockerfile, synthetic seed scripts, smoke helper
 Merge reviewed setup changes yourself, reanalyze, and run the environment test against the resulting branch. The draft is not auto-merged, does not enable automation, and does not provision paid cloud resources. Retrying an interrupted publication checks for its existing branch and draft before creating another.
 
 Some applications need changes outside the allowed setup files, proprietary services, additional containers, or a non-Linux toolchain. Analysis should name those gaps. This version supports one application container plus optional PostgreSQL and Redis; arbitrary Compose stacks, host mounts, custom service images, and cloud environment creation are not supported.
+
+## Testing ShipGremlins itself
+
+Use the [disposable dashboard fixture](../examples/dashboard-test/README.md) for PM browser patrols against ShipGremlins. It runs the real dashboard and HTTP handlers with a disposable workspace and explicitly simulated providers, workers and activity. It needs no hosting service, Docker socket or real integration credentials. Its Dockerfile is `examples/dashboard-test/Dockerfile`, build context `.`, port `3000`, health path `/fixture/health`, with public test access. Each managed run gets a fresh container.
+
+The fixture can exercise dashboard flows and configuration validation. It does not verify real OAuth, Claude execution, worker containers or production RBAC. Those need separate integration tests. A controller's need to launch Docker workers is not a reason to require hosted staging for every UI patrol; the setup recommendation must distinguish the test surface from the complete production stack. For another application without an existing fixture, the Setup Gremlin can propose reviewed setup files and clearly explain the remaining limits.
 
 ## Test accounts
 

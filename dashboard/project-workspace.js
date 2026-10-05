@@ -593,6 +593,7 @@
       const state = (getJobs?.() || []).some(
         (job) =>
           job.project === project.name &&
+          (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
           job.area === area.key &&
           job.pmMode === "discovery" &&
           ["queued", "running"].includes(job.status),
@@ -632,7 +633,9 @@
       const jobs = (getJobs?.() || [])
         .filter(
           (job) =>
-            job.project === project.name && (!area || job.area === area.key),
+            job.project === project.name &&
+            (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
+            (!area || job.area === area.key),
         )
         .slice()
         .sort((a, b) => b.runId - a.runId)
@@ -693,6 +696,7 @@
         );
     }
     function home(project) {
+      root.append(window.renderPatrolPlan(project, { compact: true }));
       if (project.verification?.mode !== "browser" && !project.areas?.length) {
         const setup = node("section", "onboarding-setup-callout"),
           copy = node("div");
@@ -923,6 +927,7 @@
         }),
       );
       const tab = tabs.some(([key]) => key === pages.tab) ? pages.tab : "brief";
+      if (tab === "brief") main.append(window.renderPatrolPlan(project));
       const nav = node("nav", "pm-workspace-tabs");
       nav.setAttribute("aria-label", "PM workspace sections");
       for (const [key, label] of tabs) {
@@ -1031,7 +1036,7 @@
             node(
               "div",
               "",
-              "Read-only discovery maps the codebase and saves what this PM learns.",
+              "Discovery reads code and saves knowledge. It does not open the app or file tickets. Use Run now for a patrol.",
             ),
             discoveryButton(project, area),
           );
@@ -1149,7 +1154,11 @@
         project?.areas?.map((item) =>
           options.getAreaAction?.(project.name, item.key),
         ),
-        (getJobs?.() || []).filter((job) => job.project === project?.name),
+        (getJobs?.() || []).filter(
+          (job) =>
+            job.project === project?.name &&
+            (job.projectInstanceId ?? null) === (project?.instanceId ?? null),
+        ),
       ]);
       if (signature === next) return;
       const currentRoute = `${pages.project}/${pages.pm}/${pages.tab}`;
@@ -1239,6 +1248,16 @@
     window.addEventListener("pagehide", stopKnowledge);
     return {
       setStatus(value, disabled) {
+        for (const previous of status?.projects || []) {
+          const next = value.projects?.find(
+            (project) => project.name === previous.name,
+          );
+          if (
+            !next ||
+            (previous.instanceId ?? null) !== (next.instanceId ?? null)
+          )
+            this.forget(previous.name);
+        }
         status = value;
         locked = disabled;
         editorLock(editor.busy);
@@ -1262,6 +1281,7 @@
           }
         setupSuggestions?.forget(project, area);
         if (!area) options.onboarding?.forget(project);
+        if (!area) options.operations?.forget(project);
         if (editor.project === project && (!area || editor.area === area)) {
           finishClose();
           editor.original = "";

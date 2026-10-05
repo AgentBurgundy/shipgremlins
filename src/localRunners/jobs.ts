@@ -361,6 +361,13 @@ export function createJobPreparation(options: JobPreparationOptions) {
     discoveryRevision?: string;
   }> {
     const project = projectFor(input);
+    if (
+      requireQueuedBinding &&
+      input.projectInstanceId !== project.config.instanceId
+    )
+      throw new JobReadinessError(
+        "This project was replaced after the job was queued. Review the new project and start a fresh run.",
+      );
     if (input.pmMode === "discovery") {
       if (
         input.type !== "pm" ||
@@ -846,6 +853,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
           jobs.push({
             type: "pm",
             project: name,
+            ...(project.config.instanceId
+              ? { projectInstanceId: project.config.instanceId }
+              : {}),
             area: area.key,
             discoveryRevision: knowledgeRevision(project, area),
             idempotencyKey: `pm:${name}:${area.key}:${area.instanceId ? `${area.instanceId}:` : ""}${minute}`,
@@ -865,6 +875,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
           jobs.push({
             type: "developer",
             project: name,
+            ...(project.config.instanceId
+              ? { projectInstanceId: project.config.instanceId }
+              : {}),
             area: area.key,
             ticket: ticket.identifier,
             linearBinding: {
@@ -874,7 +887,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
                 : {}),
               ticketId: ticket.id,
             },
-            idempotencyKey: `developer:${name}:${ticket.id}`,
+            idempotencyKey: `developer:${name}:${project.config.instanceId ? `${project.config.instanceId}:` : ""}${ticket.id}`,
           });
       }
     }

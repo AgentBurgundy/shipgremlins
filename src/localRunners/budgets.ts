@@ -54,7 +54,9 @@ export function validLedger(value: unknown): value is UsageLedger {
     return false;
   return Object.entries(value).every(
     ([key, item]) =>
-      /^\d{4}-\d{2}-\d{2}:[a-z][a-z0-9-]{0,62}$/.test(key) &&
+      /^\d{4}-\d{2}-\d{2}:[a-z][a-z0-9-]{0,62}(?:~[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})?$/.test(
+        key,
+      ) &&
       item &&
       typeof item === "object" &&
       Object.keys(item).every((key) => ["runs", "runtimeMs"].includes(key)) &&
@@ -95,12 +97,19 @@ export function usageFor(
   ledger: UsageLedger,
   jobs: LocalJob[],
   now: Date,
+  instanceId?: string,
 ): ProjectExecutionUsage {
   limits = validateLimits(limits);
   const day = now.toISOString().slice(0, 10),
-    used = ledger[`${day}:${project}`] ?? { runs: 0, runtimeMs: 0 };
+    used = ledger[`${day}:${project}${instanceId ? `~${instanceId}` : ""}`] ?? {
+      runs: 0,
+      runtimeMs: 0,
+    };
   const active = jobs.filter(
-    (job) => job.project === project && job.status === "running",
+    (job) =>
+      job.project === project &&
+      job.projectInstanceId === instanceId &&
+      job.status === "running",
   );
   const reserved = active
     .filter((job) => job.budget?.day === day && !job.budget.settledAt)
@@ -136,8 +145,9 @@ export function reserveBudget(
   ledger: UsageLedger,
   jobs: LocalJob[],
   now: Date,
+  instanceId?: string,
 ): JobBudget | null {
-  const usage = usageFor(project, limits, ledger, jobs, now);
+  const usage = usageFor(project, limits, ledger, jobs, now, instanceId);
   if (usage.blockedReason) return null;
   const remaining =
     limits.maxDailyRuntimeMinutes === undefined
@@ -152,7 +162,7 @@ export function reserveBudget(
     startedAt: now.toISOString(),
     maxMinutes: Math.min(limits.maxJobMinutes ?? 45, remaining),
   };
-  const key = `${budget.day}:${project}`;
+  const key = `${budget.day}:${project}${instanceId ? `~${instanceId}` : ""}`;
   ledger[key] ??= { runs: 0, runtimeMs: 0 };
   ledger[key].runs++;
   return budget;
@@ -165,7 +175,7 @@ export function settleBudget(
 ): void {
   if (!job.project || !job.budget || job.budget.settledAt) return;
   const budget = job.budget,
-    key = `${budget.day}:${job.project}`;
+    key = `${budget.day}:${job.project}${job.projectInstanceId ? `~${job.projectInstanceId}` : ""}`;
   ledger[key] ??= { runs: 1, runtimeMs: 0 };
   const elapsed = Math.max(
     0,

@@ -517,7 +517,9 @@ describe("source and output boundaries", () => {
         });
       return response({
         encoding: "base64",
-        content: Buffer.from('"'.repeat(22000)).toString("base64"),
+        content: Buffer.from(('"'.repeat(200) + "\n").repeat(110)).toString(
+          "base64",
+        ),
       });
     });
     const result = await readRepository(
@@ -537,7 +539,7 @@ describe("source and output boundaries", () => {
         paths: result.paths,
       }),
     });
-    expect(Buffer.byteLength(payload)).toBeLessThan(480 * 1024);
+    expect(Buffer.byteLength(payload)).toBeLessThan(2 * 1024 * 1024);
     expect(result.files.length).toBeGreaterThan(0);
     expect(result.repository.truncated).toBe(true);
     expect(result.repository.filesRead).toEqual(
@@ -577,6 +579,45 @@ describe("source and output boundaries", () => {
       ),
     ).toThrow();
     expect(SETUP_SYSTEM).toContain("UNTRUSTED DATA");
+  });
+  it("normalizes accidental literal paragraphs only in prose and refuses hosted certainty when entrypoints were omitted", () => {
+    const value = suggestion();
+    value.summary = "A real dashboard.\\n\\nIts providers are synthetic.";
+    value.rationale = "Observed package.json.\\r\\n\\r\\nTest it before use.";
+    value.proposedFiles[0]!.content = "RUN printf 'a\\n\\nb'";
+    const result = validateSetupAnalysis(value, snapshot(), []);
+    expect(result.summary).toContain("dashboard.\n\nIts providers");
+    expect(result.rationale).toContain("package.json.\n\nTest");
+    expect(result.proposedFiles[0]!.content).toBe(
+      value.proposedFiles[0]!.content,
+    );
+    const incomplete = snapshot();
+    incomplete.repository.inspection = {
+      strategy: "entrypoints-and-dependencies",
+      totalFiles: 3,
+      treeTruncated: false,
+      requests: 2,
+      sourceBytes: 200,
+      fetchedBytes: 200,
+      limits: {
+        files: 80,
+        sourceBytes: 524288,
+        fileBytes: 1048576,
+        fetchedBytes: 8388608,
+        depth: 7,
+      },
+      files: [],
+      unresolved: ["src/server.ts"],
+      criticalMissing: ["src/server.ts"],
+    };
+    expect(() =>
+      validateSetupAnalysis(
+        { ...suggestion(), recommendation: "hosted", docker: null },
+        incomplete,
+        [],
+      ),
+    ).toThrow("hosted-only recommendation is not grounded");
+    expect(SETUP_SYSTEM).toContain("NOT mean its actual dashboard cannot run");
   });
   it("does not fetch private paths or symlink blobs; omits secret-bearing source content", async () => {
     const fetcher = vi.fn(async (url: string | URL | Request) => {

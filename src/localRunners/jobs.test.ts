@@ -49,6 +49,7 @@ function edit(
   file: string,
   mutate: (raw: {
     verified: string | null;
+    instanceId?: string;
     workflow?: unknown;
     verification?: unknown;
     environments?: unknown;
@@ -117,6 +118,24 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("rejects queued work from a previous project incarnation before resolving a ticket", async () => {
+    const prepared = setup();
+    edit("project.json", (raw) => {
+      raw.instanceId = "a1b2c3d4-1111-2222-3333-444444444444";
+    });
+    await expect(prepared.prepareJob(job)).rejects.toThrow(
+      "project was replaced",
+    );
+    expect(prepared.getTicket).not.toHaveBeenCalled();
+    const jobs = await prepared.scheduledJobs();
+    expect(jobs.length).toBeGreaterThan(0);
+    expect(
+      jobs.every(
+        (item) =>
+          item.projectInstanceId === "a1b2c3d4-1111-2222-3333-444444444444",
+      ),
+    ).toBe(true);
+  });
   it("pins Docker builds to the admitted checkout and separates app secrets from browser credentials", async () => {
     const target = {
       kind: "docker",

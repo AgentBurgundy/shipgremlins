@@ -20,7 +20,7 @@ export const PLANNER_PROGRAM = String.raw`
 const { spawn } = require('node:child_process');
 const { mkdirSync } = require('node:fs');
 let text = '';
-process.stdin.on('data', data => { text += data; if (Buffer.byteLength(text) > 524288) process.exit(2); });
+process.stdin.on('data', data => { text += data; if (Buffer.byteLength(text) > 2097152) process.exit(2); });
 process.stdin.on('end', () => {
   let input;
   try { input = JSON.parse(text); } catch { process.exit(2); }
@@ -114,6 +114,8 @@ export function createDockerPlanner(options: {
   packageRoot: string;
   run?: PlannerDockerRun;
   ensureImage?: () => Promise<string>;
+  /** Setup investigation can opt into larger bounded source context; PM drafts retain 512 KiB. */
+  maxInputBytes?: number;
 }): PlannerExecutor {
   const run = options.run ?? runPlannerDocker;
   return async (input) => {
@@ -123,7 +125,11 @@ export function createDockerPlanner(options: {
       system: input.system,
       schema: input.schema,
     });
-    if (Buffer.byteLength(payload) > 512 * 1024)
+    const maximum = Math.max(
+      512 * 1024,
+      Math.min(options.maxInputBytes ?? 512 * 1024, 2 * 1024 * 1024),
+    );
+    if (!Number.isFinite(maximum) || Buffer.byteLength(payload) > maximum)
       throw new Error("Planner context exceeds its bounded input limit.");
     const id = randomUUID();
     const name = `gremlins-plan-${id}`;

@@ -1,3 +1,4 @@
+import { projectRuntimeKey } from "../projectIdentity.ts";
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
@@ -45,7 +46,7 @@ export function createProductionDeclarations(options: {
       options.root,
       ".run",
       "delivery",
-      options.project.config.name,
+      projectRuntimeKey(options.project.config),
     ),
     file = join(directory, "production.json"),
     lock = join(directory, "production.lock");

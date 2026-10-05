@@ -1,4 +1,5 @@
 import { loadProject } from "../config.ts";
+import { jobBelongsToProject } from "../projectIdentity.ts";
 import { effectiveWorkflow } from "../projectCapabilities.ts";
 import {
   readEditableConfig,
@@ -67,7 +68,7 @@ export function projectOperations(
           href: `/projects/${name}?pm=${area.key}&tab=discovery`,
         },
       });
-  const own = jobs.filter((j) => j.project === name);
+  const own = jobs.filter((j) => jobBelongsToProject(config, j));
   for (const job of own
     .filter((j) => j.status === "failed")
     .sort((a, b) => b.runId - a.runId)

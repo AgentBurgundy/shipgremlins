@@ -49,7 +49,7 @@ This permits only literal private IPv4 or Tailscale addresses. Public HTTP and a
 
 ## Scope, cancellation, and recovery
 
-- Enrollment binds a worker to the selected projects. A different project's queued job cannot send credentials to that worker. Each worker has one execution slot; the workspace currently supports four logical worker slots total.
+- Enrollment binds a worker to the selected projects, including their internal identities. Deleting a project and creating another with the same name does not transfer worker access: enroll a worker for the replacement project. A different project's queued job cannot send credentials to that worker. Each worker has one execution slot; the workspace currently supports four logical worker slots total.
 - Jobs receive the same scoped, short-lived credentials and isolated Docker limits as local jobs. The worker credential stays on the host and is never provided to the job container. Pending payloads are encrypted in the controller's `.run/remote-workers` registry; retained logs and text evidence are sanitized before storage.
 - Every assignment has a random job lease. Authenticated polling renews it. A separate watchdog inside the container checks a root-owned lease file, so losing the worker process or controller connection stops execution without relying on the dashboard to remain online. The lease lasts at most two minutes, with a short forced-stop grace period. A late report cannot revive an expired lease.
 - Cancel records the request first and stops only that job's owned container. The UI remains pending until the controller has confirmation, or the independent lease has expired. Revoking a worker prevents further polling and new jobs; an already running container is bounded by that lease.

@@ -19,6 +19,24 @@ const job = (project: string, budget: LocalJob["budget"]): LocalJob => ({
   budget,
 });
 describe("bounded execution accounting", () => {
+  it("isolates a recreated project's daily counters and active jobs while retaining old accounting", () => {
+    const id = "a1b2c3d4-1111-2222-3333-444444444444";
+    const ledger: UsageLedger = {};
+    const limits = { maxDailyRuns: 1, maxConcurrentJobs: 1 };
+    const old = job("app", reserveBudget("app", limits, ledger, [], now)!);
+    expect(
+      usageFor("app", limits, ledger, [old], now, id).blockedReason,
+    ).toBeUndefined();
+    const replacement = {
+      ...job("app", reserveBudget("app", limits, ledger, [old], now, id)!),
+      projectInstanceId: id,
+    };
+    settleBudget(replacement, ledger, new Date(now.getTime() + 60_000));
+    expect(usageFor("app", limits, ledger, [], now, id).runtimeMinutes).toBe(1);
+    expect(usageFor("app", limits, ledger, [], now).runtimeMinutes).toBe(0);
+    expect(ledger["2026-10-05:app"]?.runs).toBe(1);
+    expect(validLedger(ledger)).toBe(true);
+  });
   it("reserves daily capacity before execution and settles once without fabricated costs", () => {
     const ledger: UsageLedger = {};
     const limits = {

@@ -1,0 +1,12 @@
+{
+  "kind": "docker",
+  "role": "preview",
+  "recipe": {
+    "kind": "dockerfile",
+    "dockerfile": "examples/dashboard-test/Dockerfile",
+    "context": "."
+  },
+  "port": 3000,
+  "healthPath": "/fixture/health",
+  "access": { "kind": "public" }
+}

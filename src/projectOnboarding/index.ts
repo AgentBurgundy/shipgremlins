@@ -70,7 +70,10 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
   const fetcher = options.fetch ?? fetch,
     execute =
       options.execute ??
-      createDockerPlanner({ packageRoot: options.packageRoot });
+      createDockerPlanner({
+        packageRoot: options.packageRoot,
+        maxInputBytes: 2 * 1024 * 1024,
+      });
   const env = () => ({
     ...readConnections(root),
     ...(options.env ?? process.env),

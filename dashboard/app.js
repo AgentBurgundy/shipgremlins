@@ -72,6 +72,12 @@
   const outputErrors = new Map();
   const outputNotices = new Map();
   const outputCompleted = new Set();
+  let patrolOutput = {
+    activity: {},
+    artifacts: [],
+    activityState: "loading",
+    artifactState: "loading",
+  };
   const artifactBlobs = new Set();
   const projectChecks = new Map();
   let activityFilter = "all";
@@ -2644,6 +2650,38 @@
         Boolean(error),
       );
     }
+    renderPatrolOutput();
+  }
+  function renderPatrolOutput() {
+    const root = $("run-patrol-evidence"),
+      job = mergedJobs().find((item) => item.id === selectedJobId);
+    root.hidden = job?.type !== "pm";
+    if (root.hidden) return;
+    const state = {
+      ...patrolOutput,
+      job,
+      activityState: outputErrors.has("activity")
+        ? "error"
+        : patrolOutput.activityState,
+      artifactState: outputErrors.has("artifacts")
+        ? "error"
+        : patrolOutput.artifactState,
+    };
+    const signature = JSON.stringify(state);
+    if (root.dataset.signature === signature) return;
+    // Do not replace a focused evidence button during background polling.
+    const focused = root.contains(document.activeElement)
+      ? [...root.querySelectorAll("button")].indexOf(document.activeElement)
+      : -1;
+    root.replaceChildren(
+      window.renderPatrolEvidence({
+        ...state,
+        onTab: (tab) => runViewer.selectTab(tab, { focus: true }),
+      }),
+    );
+    root.dataset.signature = signature;
+    if (focused >= 0)
+      root.querySelectorAll("button")[focused]?.focus({ preventScroll: true });
   }
   const runViewer = window.createRunViewer($("job-detail"), {
     onClose: () => closeJobDetail(),
@@ -2666,6 +2704,26 @@
             : "";
       if (notice) outputNotices.set(resource, notice);
       else outputNotices.delete(resource);
+      if (resource === "activity") {
+        patrolOutput.activityState =
+          value.partial || value.pending ? "partial" : "ready";
+        if (
+          !value.partial ||
+          value.events?.length ||
+          !patrolOutput.activity.events?.length
+        )
+          patrolOutput.activity = value;
+      } else if (resource === "artifacts") {
+        patrolOutput.artifactState =
+          value.partial || value.pending ? "partial" : "ready";
+        if (
+          !value.partial ||
+          value.files?.length ||
+          !patrolOutput.artifacts.length
+        )
+          patrolOutput.artifacts = value.files || [];
+      }
+      renderPatrolOutput();
       if (resource === "logs") {
         $("worker-output-count").textContent = value.lines?.length
           ? ` · ${value.lines.length} ${value.lines.length === 1 ? "line" : "lines"}`
@@ -2748,6 +2806,13 @@
       outputErrors.clear();
       outputNotices.clear();
       outputCompleted.clear();
+      patrolOutput = {
+        activity: {},
+        artifacts: [],
+        activityState: "loading",
+        artifactState: "loading",
+      };
+      delete $("run-patrol-evidence").dataset.signature;
       clearArtifactBlobs();
       $("job-artifacts").replaceChildren();
       $("activity-timeline").replaceChildren();
@@ -2777,9 +2842,12 @@
   }
   function renderRunIdentity() {
     if (!selectedJobId) return;
+    renderPatrolOutput();
     const job = mergedJobs().find((item) => item.id === selectedJobId);
     const project = currentStatus?.projects?.find(
-      (item) => item.name === job?.project,
+      (item) =>
+        item.name === job?.project &&
+        (item.instanceId ?? null) === (job?.projectInstanceId ?? null),
     );
     const area = project?.areas?.find((item) => item.key === job?.area);
     const role =
@@ -2796,6 +2864,9 @@
       job?.project || "Worker verification",
       area?.name || job?.area,
       job?.ticket,
+      currentStatus?.projects && job?.project && !project
+        ? "Earlier or removed project"
+        : "",
     ]
       .filter(Boolean)
       .join(" / ");
@@ -2883,6 +2954,23 @@
       );
     if (!["pm", "developer"].includes(job.type)) return;
     const active = ["queued", "running"].includes(job.status);
+    if (
+      !active &&
+      !currentStatus?.projects?.some(
+        (project) =>
+          project.name === job.project &&
+          (project.instanceId ?? null) === (job.projectInstanceId ?? null),
+      )
+    ) {
+      root.append(
+        element(
+          "p",
+          "runner-guidance",
+          "This run belongs to a removed or earlier project. Its history is preserved; start new work from the current project.",
+        ),
+      );
+      return;
+    }
     if (!active && !["failed", "canceled"].includes(job.status)) return;
     const action = element(
       "button",

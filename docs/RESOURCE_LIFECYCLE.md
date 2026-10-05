@@ -17,7 +17,9 @@ Dashboard removal actions change this ShipGremlins workspace. They do not delete
 
 Delete previews describe what will move and which operations must finish first. Queued/running jobs and ongoing setup or delivery work block conflicting deletion. Cancel or finish that work, then refresh the preview. Revision checks prevent a stale confirmation from deleting newly edited settings.
 
-Recovery files live under `.run/deleted/`. Deleted project identifiers remain reserved so worker scopes and historical jobs cannot silently attach to a different project. Use **Settings → Recently deleted** to restore an archived project or PM. Restoration preserves the original recovery copy, leaves restored PMs paused, and requires project verification again. It never overwrites a different resource occupying the same location.
+Recovery files live under `.run/deleted/`. Use **Settings → Recently deleted** to restore an archived project or PM. Restoration preserves the original recovery copy, leaves restored PMs paused, and requires project verification again. It never overwrites a different resource occupying the same location.
+
+After deletion completes, you can create a fresh project with the same name from the dashboard or CLI. It receives a new internal identity: old jobs, learned memory, delivery records, setup analysis, and default project credential names do not become the new project's state. Shared provider connections remain available. The previous project and its history stay recoverable; first free its name before restoring it. A failed creation keeps the recovery copy and can be retried. Remote workers enrolled for the deleted project must be enrolled again for its replacement.
 
 After a PM deletion completes, **Create PM** can reuse its visible mandate ID for
 a fresh PM. The new PM receives a separate internal identity and memory branch;

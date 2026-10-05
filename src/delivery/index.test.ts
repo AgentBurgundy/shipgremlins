@@ -23,6 +23,21 @@ afterEach(() => {
 const HEAD = "a".repeat(40),
   MERGE = "b".repeat(40),
   DEPLOY = "c".repeat(40);
+it("does not attach a deleted project's delivery ledger to its same-name replacement", async () => {
+  const w = world();
+  await w.service.register(w.input);
+  expect(w.service.list()).toHaveLength(1);
+  const original = readFileSync(
+    join(w.root, ".run/delivery", w.project.config.name, "state.json"),
+  );
+  w.project.config.instanceId = "a1b2c3d4-1111-2222-3333-444444444444";
+  expect(w.create().list()).toEqual([]);
+  expect(
+    readFileSync(
+      join(w.root, ".run/delivery", w.project.config.name, "state.json"),
+    ),
+  ).toEqual(original);
+});
 function world() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gremlins-delivery-")));
   roots.push(root);

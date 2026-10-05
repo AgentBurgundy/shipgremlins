@@ -357,6 +357,7 @@ export function createActivityStore(options: {
           "pmMode",
           "discoveryRevision",
           "project",
+          "projectInstanceId",
           "area",
           "ticket",
           "workerId",

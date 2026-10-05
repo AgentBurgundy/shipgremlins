@@ -33,6 +33,8 @@ export interface HubConfig {
 }
 
 export interface ProjectConfig extends ProjectCapabilities {
+  /** Controller-issued incarnation when a deleted project name is reused. */
+  instanceId?: string;
   execution?: ExecutionLimits;
   /** The Linear team for this app; existing area project IDs remain authoritative. */
   linear?: {
@@ -330,6 +332,19 @@ export function loadProject(root: string, name: string): Project {
     throw new ConfigError(pf, (error as Error).message);
   }
   const config: ProjectConfig = {
+    ...(raw.instanceId === undefined
+      ? {}
+      : {
+          instanceId: need(
+            pf,
+            raw,
+            "instanceId",
+            (value): value is string =>
+              typeof value === "string" &&
+              /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value),
+            "a controller-issued project identity",
+          ),
+        }),
     ...capabilities,
     ...(raw.vercel === undefined && capabilities.workflow === undefined
       ? { workflow }
@@ -526,7 +541,7 @@ export function loadProject(root: string, name: string): Project {
     }
     const instanceId =
       a.instanceId === undefined
-        ? undefined
+        ? config.instanceId
         : need(
             af,
             a,

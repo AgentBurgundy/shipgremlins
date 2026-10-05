@@ -9,12 +9,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  readdirSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { loadProject, listProjectNames } from "../config.ts";
+import { projectRuntimeKey } from "../projectIdentity.ts";
 import {
   ProjectOnboardingError,
   type OnboardingReport,
@@ -102,10 +103,19 @@ export function createOnboardingStore(root: string) {
   const directory = join(resolve(root), ".run", "project-onboarding");
   function file(project: string) {
     validProject(project);
-    return join(directory, `${project}.json`);
+    return join(
+      directory,
+      `${projectRuntimeKey(loadProject(root, project).config)}.json`,
+    );
   }
   function read(project: string): StoredOnboarding | undefined {
     try {
+      if (
+        !lstatSync(join(root, "projects", project, "project.json"), {
+          throwIfNoEntry: false,
+        })
+      )
+        return undefined;
       const data = readPrivate(file(project));
       if (data === undefined) return undefined;
       const value = JSON.parse(data) as StoredOnboarding;
@@ -247,15 +257,13 @@ export function createOnboardingStore(root: string) {
   function list() {
     safe(join(directory, ".probe"));
     if (!lstatSync(directory, { throwIfNoEntry: false })) return [];
-    const names = readdirSync(directory).filter((name) =>
-      name.endsWith(".json"),
-    );
+    const names = listProjectNames(root);
     if (names.length > 200)
       throw new ProjectOnboardingError(
         "Setup history exceeds its project limit.",
         503,
       );
-    return names.map((name) => read(name.slice(0, -5))!).filter(Boolean);
+    return names.map((name) => read(name)!).filter(Boolean);
   }
   return { read, change, list };
 }

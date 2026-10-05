@@ -1,3 +1,4 @@
+import { projectRuntimeKey } from "../projectIdentity.ts";
 import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -167,7 +168,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         options.root,
         ".run",
         "delivery",
-        project.config.name,
+        projectRuntimeKey(project.config),
         "candidate-handoffs",
         `${area.key}${area.instanceId ? `-${area.instanceId}` : ""}.json`,
       );
@@ -230,7 +231,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         options.root,
         ".run",
         "delivery",
-        project.config.name,
+        projectRuntimeKey(project.config),
         "candidate-handoffs",
       ),
       file = join(
@@ -313,7 +314,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       options.root,
       ".run",
       "delivery",
-      project,
+      projectRuntimeKey(projectFor(project).config),
       "admissions",
       `${jobId}.json`,
     );
@@ -913,7 +914,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         options.root,
         ".run",
         "delivery",
-        project.config.name,
+        projectRuntimeKey(project.config),
         "checks",
       ),
       file = join(directory, `${sha}-${commandHash}.json`);

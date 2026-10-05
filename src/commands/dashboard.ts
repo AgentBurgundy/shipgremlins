@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { projectRuntimeKey } from "../projectIdentity.ts";
 import { spawn } from "node:child_process";
 import {
   existsSync,
@@ -568,9 +569,11 @@ export function createDashboardServer(
   const automaticPromotions = createAutomaticPromotions({ root });
   function continuePromotions(name: string) {
     if (configurationMutation) return;
-    if (deliveryOperations.get(name)?.phase === "running") return;
+    let key = name;
     try {
       const project = loadProject(root, name);
+      key = projectRuntimeKey(project.config);
+      if (deliveryOperations.get(key)?.phase === "running") return;
       if (!project.config.verified) return;
       for (const item of automaticPromotions.pending()) {
         if (item.project !== name) continue;
@@ -592,7 +595,7 @@ export function createDashboardServer(
         return;
       }
     } catch {
-      deliveryOperations.set(name, {
+      deliveryOperations.set(key, {
         phase: "error",
         message:
           "Automatic promotion could not resume. Existing verified deliveries are preserved. Review Delivery and retry Prepare promotion; check controller storage if this persists.",
@@ -625,8 +628,12 @@ export function createDashboardServer(
             role: target.role,
           })),
       },
-      operation: deliveryOperations.get(name) ?? { phase: "idle", message: "" },
-      productionReports: productionReports.get(name) ?? [],
+      operation: deliveryOperations.get(projectRuntimeKey(project.config)) ?? {
+        phase: "idle",
+        message: "",
+      },
+      productionReports:
+        productionReports.get(projectRuntimeKey(project.config)) ?? [],
     };
   }
   function preparePromotion(
@@ -634,12 +641,13 @@ export function createDashboardServer(
     area?: string,
     automatic?: { item: AutomaticPromotion; token: string },
   ) {
-    if (deliveryOperations.get(name)?.phase === "running")
+    const key = projectRuntimeKey(loadProject(root, name).config);
+    if (deliveryOperations.get(key)?.phase === "running")
       throw new RequestError(
         409,
         "A delivery operation is already running for this project.",
       );
-    deliveryOperations.set(name, {
+    deliveryOperations.set(key, {
       phase: "running",
       message:
         "Preparing a selective candidate and running its checks in Docker. No staging PR is opened without matching candidate evidence.",
@@ -647,14 +655,14 @@ export function createDashboardServer(
     void delivery
       .preparePromotion(name, { area, docker: localDocker })
       .then((rows) => {
-        deliveryOperations.set(name, {
+        deliveryOperations.set(key, {
           phase: "idle",
           message: rows.map((row) => row.text).join("\n"),
           rows,
         });
       })
       .catch(() => {
-        deliveryOperations.set(name, {
+        deliveryOperations.set(key, {
           phase: "error",
           message:
             "Promotion could not finish. Check source access, worker Docker, deployment metadata and trusted candidate verification. Existing deliveries remain available for review.",
@@ -665,7 +673,7 @@ export function createDashboardServer(
           try {
             automaticPromotions.finish(automatic.item, automatic.token);
           } catch {
-            deliveryOperations.set(name, {
+            deliveryOperations.set(key, {
               phase: "error",
               message:
                 "Promotion finished, but its automatic continuation could not be recorded. Existing delivery evidence is preserved; check controller storage before retrying.",
@@ -677,12 +685,13 @@ export function createDashboardServer(
       });
   }
   function advanceIntegration(name: string) {
-    if (deliveryOperations.get(name)?.phase === "running")
+    const key = projectRuntimeKey(loadProject(root, name).config);
+    if (deliveryOperations.get(key)?.phase === "running")
       throw new RequestError(
         409,
         "A delivery operation is already running for this project.",
       );
-    deliveryOperations.set(name, {
+    deliveryOperations.set(key, {
       phase: "running",
       message:
         "Checking the approved implementation and integration health. Eligible work may merge into integration; staging and production remain owner-controlled.",
@@ -690,7 +699,7 @@ export function createDashboardServer(
     void delivery
       .advanceIntegration(name)
       .then((record) => {
-        deliveryOperations.set(name, {
+        deliveryOperations.set(key, {
           phase: "idle",
           message:
             record?.message ??
@@ -698,7 +707,7 @@ export function createDashboardServer(
         });
       })
       .catch(() => {
-        deliveryOperations.set(name, {
+        deliveryOperations.set(key, {
           phase: "error",
           message:
             "Integration advancement could not finish. Check source access, configured checks and deployment health. Existing drafts remain available for review.",
@@ -714,6 +723,7 @@ export function createDashboardServer(
       for (const name of listProjectNames(root)) {
         if (configurationMutation) break;
         try {
+          const key = projectRuntimeKey(loadProject(root, name).config);
           const status = delivery.deliveryStatus(name);
           if (!status.enabled || !loadProject(root, name).config.verified)
             continue;
@@ -723,12 +733,12 @@ export function createDashboardServer(
               (item) => item.status === "awaiting-merge",
             ) &&
             loadProject(root, name).config.verified &&
-            deliveryOperations.get(name)?.phase !== "running"
+            deliveryOperations.get(key)?.phase !== "running"
           )
             advanceIntegration(name);
           if (status.declarations.length)
             productionReports.set(
-              name,
+              key,
               await withProjectOperation(name, () =>
                 delivery.reconcileProduction(name),
               ),
@@ -801,7 +811,11 @@ export function createDashboardServer(
         "Project setup, editing, or provider work is still running. Wait for it to finish.",
       );
     if (
-      deliveryOperations.get(target.project)?.phase === "running" ||
+      [...deliveryOperations.entries()].some(
+        ([key, operation]) =>
+          (key === target.project || key.startsWith(target.project + "~")) &&
+          operation.phase === "running",
+      ) ||
       automaticPromotions
         .pending()
         .some(
@@ -1102,6 +1116,7 @@ export function createDashboardServer(
           );
         const destructiveConfiguration =
           resourceDelete ||
+          (url.pathname === "/api/projects" && req.method === "POST") ||
           /^\/api\/deleted\/[a-f0-9-]+\/restore$/.test(url.pathname) ||
           url.pathname === "/api/connections/clear" ||
           (url.pathname === "/api/service-connections" &&
@@ -2075,13 +2090,18 @@ export function createDashboardServer(
             );
           }
           jobInput.linearBinding = validated.linearBinding;
+          jobInput.projectInstanceId = validated.project.config.instanceId;
           if (jobInput.type === "pm")
             jobInput.discoveryRevision = validated.discoveryRevision;
           if (validated.ticket) {
             jobInput.area = validated.area.key;
             jobInput.ticket = validated.ticket.identifier;
             const previous = (await runners().jobs()).filter((job) => {
-              if (job.type !== "developer" || job.project !== jobInput.project)
+              if (
+                job.type !== "developer" ||
+                job.project !== jobInput.project ||
+                job.projectInstanceId !== jobInput.projectInstanceId
+              )
                 return false;
               const oldBinding = job.linearBinding,
                 currentBinding = jobInput.linearBinding;
@@ -2103,7 +2123,7 @@ export function createDashboardServer(
                 409,
                 "This ticket already has active or completed work. Review its job and draft PR/MR before requesting another implementation.",
               );
-            jobInput.idempotencyKey = `developer:${jobInput.project}:${validated.ticket.id}${previous.length ? `:retry:${randomBytes(8).toString("hex")}` : ""}`;
+            jobInput.idempotencyKey = `developer:${jobInput.project}:${jobInput.projectInstanceId ? jobInput.projectInstanceId + ":" : ""}${validated.ticket.id}${previous.length ? `:retry:${randomBytes(8).toString("hex")}` : ""}`;
           }
           const job = await runners().enqueue(jobInput);
           runners().start();
@@ -2354,6 +2374,7 @@ export function createDashboardServer(
               return {
                 name,
                 repo: project.config.repo,
+                instanceId: project.config.instanceId,
                 provider: project.config.provider ?? "github",
                 serverUrl: project.config.serverUrl,
                 workflow: effectiveWorkflow(project.config),
@@ -2901,29 +2922,39 @@ export function createDashboardServer(
             args.push("--server-url", input.serverUrl);
           const existed = listProjectNames(root).includes(input.project);
           const output: string[] = [];
-          const code = await runSetup(
-            root,
-            args,
-            { log: (line) => output.push(line), error: () => {} },
-            {
-              env: {},
-              templatesRoot: packageRoot,
-              ...(input.onboarding === true ? { createInitialPm: false } : {}),
-              projectSettings: Object.fromEntries(
-                [
-                  "workflow",
-                  "verification",
-                  "environments",
-                  "commands",
-                  "branches",
-                  "telemetry",
-                  "linear",
-                ]
-                  .filter((key) => input[key] !== undefined)
-                  .map((key) => [key, input[key]]),
+          const code = await withConfigurationMutation(
+            { project: input.project },
+            () =>
+              runSetup(
+                root,
+                args,
+                { log: (line) => output.push(line), error: () => {} },
+                {
+                  env: {},
+                  templatesRoot: packageRoot,
+                  ...(input.onboarding === true
+                    ? { createInitialPm: false }
+                    : {}),
+                  projectSettings: Object.fromEntries(
+                    [
+                      "workflow",
+                      "verification",
+                      "environments",
+                      "commands",
+                      "branches",
+                      "telemetry",
+                      "linear",
+                    ]
+                      .filter((key) => input[key] !== undefined)
+                      .map((key) => [key, input[key]]),
+                  ),
+                },
               ),
-            },
           );
+          // The creation transaction excluded its own request from the global
+          // mutation count. Keep later provider provisioning guarded as usual.
+          activeMutationRequests++;
+          countedMutation = true;
           if (code !== 0)
             throw new RequestError(
               400,

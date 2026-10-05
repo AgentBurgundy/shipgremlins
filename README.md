@@ -92,6 +92,8 @@ The dashboard opens in your browser with gremlins, project setup, official GitHu
 
 Add a repository and the **Setup Gremlin** recommends a test environment from its actual source. Choose an existing staging URL (including Railway/Vercel) or a disposable Docker app with optional PostgreSQL/Redis. Review any proposed setup files as a draft PR/MR, then run the browser and test-account checks. Create PMs afterward; Linear is not needed for this onboarding step. [Project onboarding →](docs/PROJECT_ONBOARDING.md)
 
+The dashboard shows each crew's **Patrol plan** and separates finished runs from recorded browser activity, images and check results. To test ShipGremlins itself, use the [disposable dashboard Docker fixture](examples/dashboard-test/README.md): the real UI and configuration handlers with clearly simulated integrations, no real credentials or Docker socket.
+
 Separate pages keep Connections, Projects, Your gremlins, Activity, and Settings
 focused. Provider cards contain setup instructions and token creation links.
 Connect Slack once for the workspace; every project inherits that channel unless

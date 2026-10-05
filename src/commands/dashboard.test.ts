@@ -158,6 +158,7 @@ describe("local dashboard HTTP boundary", () => {
       stop: vi.fn(async () => {}),
     } as unknown as LocalRunners;
     const validate = vi.fn(async () => ({
+      project: { config: {} },
       area: { key: "core" },
       discoveryRevision: "f".repeat(64),
     }));
@@ -415,6 +416,7 @@ describe("local dashboard HTTP boundary", () => {
       workspaceId: randomUUID(),
     };
     const validate = vi.fn(async () => ({
+      project: { config: {} },
       area: { key: "core" },
       linearBinding,
     }));
@@ -1656,6 +1658,7 @@ describe("local dashboard HTTP boundary", () => {
       ticketId: randomUUID(),
     };
     const validate = vi.fn(async () => ({
+      project: { config: {} },
       area: { key: "core" },
       ticket: { identifier: "APP-1", id: linearBinding.ticketId },
       linearBinding,
@@ -1766,9 +1769,12 @@ describe("local dashboard HTTP boundary", () => {
       409,
     ],
     ["an unbound legacy job with the same identifier", "legacy", 409],
+    ["the same ticket from a deleted project incarnation", "replacement", 202],
   ] as const)(
     "handles completed developer history for %s",
     async (_title, scenario, expected) => {
+      const projectInstanceId =
+        scenario === "replacement" ? randomUUID() : undefined;
       const currentBinding = {
         connectionId: "current-account",
         workspaceId: randomUUID(),
@@ -1810,6 +1816,7 @@ describe("local dashboard HTTP boundary", () => {
       } as unknown as LocalRunners;
       const jobs = {
         validate: vi.fn(async () => ({
+          project: { config: { instanceId: projectInstanceId } },
           area: { key: "core" },
           ticket: { identifier: "ENG-123", id: currentBinding.ticketId },
           linearBinding: currentBinding,
@@ -1829,7 +1836,8 @@ describe("local dashboard HTTP boundary", () => {
         expect(enqueue).toHaveBeenCalledWith(
           expect.objectContaining({
             linearBinding: currentBinding,
-            idempotencyKey: `developer:app:${currentBinding.ticketId}`,
+            projectInstanceId,
+            idempotencyKey: `developer:app:${projectInstanceId ? projectInstanceId + ":" : ""}${currentBinding.ticketId}`,
           }),
         );
       else expect(enqueue).not.toHaveBeenCalled();

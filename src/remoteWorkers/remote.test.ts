@@ -6,11 +6,14 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { initializeSetup } from "../setup/files.ts";
 import type { PmReviewPlan } from "../delivery/types.ts";
 import { createRemoteWorkers } from "./index.ts";
 import {
@@ -138,6 +141,49 @@ function fixture() {
 }
 
 describe("remote worker enrollment and scope", () => {
+  it("requires new enrollment after a project name is reused for a different incarnation", async () => {
+    const f = fixture();
+    initializeSetup(
+      f.directory,
+      fileURLToPath(new URL("../..", import.meta.url)),
+      { project: "alpha", repo: "owner/old" },
+    );
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    f.hub.poll(f.worker.token);
+    expect(f.adapter.canRun!(f.worker.id, "alpha")).toBe(true);
+    const path = join(f.directory, "projects/alpha/project.json");
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    config.instanceId = "a1b2c3d4-1111-2222-3333-444444444444";
+    config.repo = "owner/replacement";
+    writeFileSync(path, JSON.stringify(config));
+    expect(f.adapter.canRun!(f.worker.id, "alpha")).toBe(false);
+    await expect(
+      f.adapter.startJob({
+        id: "job-old-scope",
+        workerId: "worker-one",
+        payload,
+      }),
+    ).rejects.toThrow("cannot accept work");
+    const invite = f.hub.createEnrollment({
+      name: "Replacement project",
+      projects: ["alpha"],
+    });
+    const enrolled = f.hub.enroll({
+      code: invite.code,
+      platform: "linux",
+      architecture: "x64",
+    });
+    f.hub.poll(enrolled.token);
+    await f.adapter.prepareWorker!("worker-two", enrolled.id);
+    expect(f.adapter.canRun!(enrolled.id, "alpha")).toBe(true);
+    await expect(
+      f.adapter.startJob({
+        id: "job-new-scope",
+        workerId: "worker-two",
+        payload,
+      }),
+    ).resolves.toBeDefined();
+  });
   it("only accepts review proof attested through the worker channel for the assigned plan", async () => {
     const f = fixture();
     await f.adapter.prepareWorker!("worker-one", f.worker.id);

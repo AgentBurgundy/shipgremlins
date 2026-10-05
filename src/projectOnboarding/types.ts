@@ -40,6 +40,29 @@ export interface OnboardingReport {
     sha: string;
     filesRead: string[];
     truncated: boolean;
+    inspection?: {
+      strategy: "entrypoints-and-dependencies";
+      totalFiles: number;
+      treeTruncated: boolean;
+      requests: number;
+      sourceBytes: number;
+      fetchedBytes: number;
+      limits: {
+        files: number;
+        sourceBytes: number;
+        fileBytes: number;
+        fetchedBytes: number;
+        depth: number;
+      };
+      files: {
+        path: string;
+        reason: string;
+        excerpt: boolean;
+        ranges?: { start: number; end: number }[];
+      }[];
+      unresolved: string[];
+      criticalMissing: string[];
+    };
   };
   missingInputs: {
     key: string;

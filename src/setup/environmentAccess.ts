@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadProject, type Project } from "../config.ts";
+import { projectRuntimeKey } from "../projectIdentity.ts";
 import {
   effectiveVerification,
   inspectionBranch,
@@ -65,7 +66,13 @@ function projectKey(project: string) {
 }
 function location(root: string, project: string, name: string) {
   return safeOAuthPath(
-    join(root, ".run", "environment-access", projectKey(project), name),
+    join(
+      root,
+      ".run",
+      "environment-access",
+      projectRuntimeKey(loadProject(root, projectKey(project)).config),
+      name,
+    ),
   );
 }
 function fingerprint(
@@ -89,6 +96,7 @@ function fingerprint(
   return createHash("sha256")
     .update(
       JSON.stringify({
+        instanceId: project.config.instanceId,
         repo: project.config.repo,
         provider: project.config.provider,
         server: project.config.serverUrl,
@@ -176,7 +184,9 @@ export function createEnvironmentAccess(options: {
   const active = new Map<string, Promise<void>>();
   const unsavedFailures = new Map<string, EnvironmentVerification>();
   const status = (name: string) =>
-    unsavedFailures.get(projectKey(name)) ??
+    unsavedFailures.get(
+      projectRuntimeKey(loadProject(root, projectKey(name)).config),
+    ) ??
     environmentVerificationStatus(
       root,
       loadProject(root, projectKey(name)),
@@ -329,10 +339,18 @@ export function createEnvironmentAccess(options: {
       access = resolveTestAccess(target.access, values);
     const job = `job-setup-${randomUUID()}`,
       lock = location(root, name, "test.lock");
-    mkdirSync(join(root, ".run", "environment-access", name), {
-      recursive: true,
-      mode: 0o700,
-    });
+    mkdirSync(
+      join(
+        root,
+        ".run",
+        "environment-access",
+        projectRuntimeKey(project.config),
+      ),
+      {
+        recursive: true,
+        mode: 0o700,
+      },
+    );
     if (existsSync(lock)) {
       const owner = Number(readFileSync(lock, "utf8"));
       if (!Number.isSafeInteger(owner) || owner < 1 || alive(owner))
@@ -342,7 +360,7 @@ export function createEnvironmentAccess(options: {
         );
       unlinkSync(lock);
     }
-    unsavedFailures.delete(name);
+    unsavedFailures.delete(projectRuntimeKey(project.config));
     let fd;
     try {
       fd = openSync(lock, "wx", 0o600);
@@ -502,7 +520,7 @@ export function createEnvironmentAccess(options: {
         try {
           save(failure);
         } catch {
-          unsavedFailures.set(name, {
+          unsavedFailures.set(projectRuntimeKey(project.config), {
             status: "failed",
             message:
               "The environment test could not save its result. Check configuration directory permissions and retry; no verification was recorded.",
@@ -514,7 +532,7 @@ export function createEnvironmentAccess(options: {
         try {
           if (existsSync(lock)) unlinkSync(lock);
         } catch {
-          unsavedFailures.set(name, {
+          unsavedFailures.set(projectRuntimeKey(project.config), {
             status: "failed",
             message:
               "The environment test lock could not be released. Check configuration directory permissions before retrying.",

@@ -10,11 +10,13 @@ const revision = (project: Project, ticket: LinearTicket) =>
   createHash("sha256")
     .update(
       JSON.stringify({
+        instanceId: project.config.instanceId,
         repo: project.config.repo,
         provider: project.config.provider,
         connection: project.config.linear,
         areas: project.areas.map((a) => ({
           key: a.key,
+          instanceId: a.instanceId,
           label: a.label,
           linearProjectId: a.linearProjectId,
         })),

@@ -30,15 +30,22 @@ const script = readFileSync(
   join(packageRoot, "dashboard/signals-settings.js"),
   "utf8",
 );
-function model(initial?: TelemetryConfig, projectName = "my-app"): Model {
+function model(
+  initial?: TelemetryConfig,
+  projectName = "my-app",
+  instanceId?: string,
+): Model {
   const window = {} as {
     createSignalsSettingsModel(
       initial?: TelemetryConfig,
-      options?: { projectName: string },
+      options?: { projectName: string; instanceId?: string },
     ): Model;
   };
   runInNewContext(script, { window, structuredClone });
-  return window.createSignalsSettingsModel(initial, { projectName });
+  return window.createSignalsSettingsModel(initial, {
+    projectName,
+    instanceId,
+  });
 }
 const sentry: NonNullable<TelemetryConfig["sentry"]> = {
   host: "de.sentry.io",
@@ -64,6 +71,19 @@ afterEach(async () => {
 });
 
 describe("dashboard signals settings model", () => {
+  it("gives a recreated project fresh default credential references while retaining explicit saved ones", () => {
+    const settings = model(undefined, "shop", "abcd-1234");
+    expect(settings.get("sentry").values.tokenSecret).toBe(
+      "SENTRY_AUTH_TOKEN_SHOP_ABCD1234",
+    );
+    settings.setProjectName("renamed");
+    expect(settings.get("sentry").values.tokenSecret).toBe(
+      "SENTRY_AUTH_TOKEN_RENAMED_ABCD1234",
+    );
+    expect(
+      model({ sentry }, "shop", "abcd-1234").get("sentry").values.tokenSecret,
+    ).toBe("SENTRY_AUTH_TOKEN_EXISTING");
+  });
   it("leaves optional providers absent until deliberately enabled", () => {
     const settings = model();
     expect(settings.read()).toEqual({});

@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/workspace.css" />
     <link rel="stylesheet" href="/project-workspace.css" />
     <link rel="stylesheet" href="/project-onboarding.css" />
+    <link rel="stylesheet" href="/patrol-flow.css" />
     <link rel="stylesheet" href="/operations.css" />
     <link rel="stylesheet" href="/deletion.css" />
     <script src="/signals-settings.js" defer></script>
@@ -27,6 +28,7 @@
     <script src="/crew-guidance.js" defer></script>
     <script src="/job-output.js" defer></script>
     <script src="/run-viewer.js" defer></script>
+    <script src="/patrol-flow.js" defer></script>
     <script src="/pm-charter.js" defer></script>
     <script src="/delivery-workflow.js" defer></script>
     <script src="/operations.js" defer></script>
@@ -2333,7 +2335,7 @@
                   aria-selected="false"
                   tabindex="-1"
                 >
-                  Artifacts
+                  Evidence
                 </button>
               </div>
               <div class="run-viewer-body">
@@ -2346,6 +2348,7 @@
                   tabindex="0"
                 >
                   <p class="run-summary-state" id="run-summary-state"></p>
+                  <div id="run-patrol-evidence" hidden></div>
                   <dl class="run-metadata" id="run-metadata"></dl>
                   <h3 class="run-section-title">Outcome</h3>
                   <p class="run-summary-empty" id="run-summary-empty">

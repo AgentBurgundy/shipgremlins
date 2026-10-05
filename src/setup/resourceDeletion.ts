@@ -39,6 +39,7 @@ export interface ResourceRecovery extends ResourceTarget {
   deletedAt: string;
 }
 interface Journal extends ResourceRecovery {
+  projectInstanceId?: string;
   schema: 1;
   revision: string;
   files: Entry[];
@@ -323,7 +324,7 @@ function reservation(root: string, input: ResourceTarget) {
         "deleted",
         "reservations",
         "areas",
-        input.project,
+        `${input.project}${liveProjectInstance(root, input.project) ? `~${liveProjectInstance(root, input.project)}` : ""}`,
         `${input.area}.json`,
       )
     : join(
@@ -340,6 +341,112 @@ interface PmReservation {
   project: string;
   area: string;
   replacementInstanceId?: string;
+}
+function projectReservation(root: string, project: string) {
+  const file = reservation(root, { project });
+  safe(file);
+  if (!stat(file)) return null;
+  const value = objectFile(file);
+  if (
+    Object.keys(value).some(
+      (key) => !["id", "project", "replacementInstanceId"].includes(key),
+    ) ||
+    typeof value.id !== "string" ||
+    !ID.test(value.id) ||
+    value.project !== project ||
+    (value.replacementInstanceId !== undefined &&
+      (typeof value.replacementInstanceId !== "string" ||
+        !ID.test(value.replacementInstanceId)))
+  )
+    fail(
+      "invalid_recovery",
+      "The deleted project's identity record needs inspection; its backup was preserved.",
+      409,
+    );
+  return {
+    file,
+    value: value as {
+      id: string;
+      project: string;
+      replacementInstanceId?: string;
+    },
+  };
+}
+function liveProjectInstance(
+  root: string,
+  project: string,
+): string | undefined {
+  const file = join(root, "projects", project, "project.json");
+  safe(file);
+  if (!stat(file)) return undefined;
+  const value = objectFile(file);
+  return typeof value.instanceId === "string" && ID.test(value.instanceId)
+    ? value.instanceId
+    : undefined;
+}
+/** Reserve a new incarnation without deleting the old recovery copy or runtime evidence. */
+export function prepareProjectRecreation(
+  root: string,
+  project: string,
+): string | undefined {
+  const marker = projectReservation(root, project);
+  if (!marker) return undefined;
+  const journal = objectFile(
+    join(root, ".run", "deleted", marker.value.id, "recovery.json"),
+    MAX_JOURNAL_BYTES,
+  );
+  if (
+    journal.schema !== 1 ||
+    journal.id !== marker.value.id ||
+    journal.kind !== "project" ||
+    journal.project !== project ||
+    journal.status !== "deleted" ||
+    !validEntries(journal.files)
+  )
+    fail(
+      "recovery_required",
+      "Finish the interrupted deletion or restoration in Settings → Recently deleted before reusing this project name.",
+      409,
+    );
+  const live = join(root, "projects", project);
+  safe(live);
+  if (stat(live)) {
+    if (
+      marker.value.replacementInstanceId &&
+      liveProjectInstance(root, project) === marker.value.replacementInstanceId
+    )
+      return marker.value.replacementInstanceId;
+    fail(
+      "conflict",
+      "A project already occupies this identifier. Its configuration will not be overwritten.",
+      409,
+    );
+  }
+  const instanceId = marker.value.replacementInstanceId ?? randomUUID();
+  if (!marker.value.replacementInstanceId)
+    atomic(
+      marker.file,
+      json({ ...marker.value, replacementInstanceId: instanceId }),
+    );
+  return instanceId;
+}
+export function completeProjectRecreation(
+  root: string,
+  project: string,
+  instanceId: string,
+): void {
+  const marker = projectReservation(root, project);
+  if (!marker) return;
+  if (
+    marker.value.replacementInstanceId !== instanceId ||
+    liveProjectInstance(root, project) !== instanceId
+  )
+    fail(
+      "conflict",
+      "Project recreation changed before it could finish. Configuration and recovery copies were preserved.",
+      409,
+    );
+  unlinkSync(marker.file);
 }
 function pmReservation(root: string, project: string, area: string) {
   const file = reservation(root, { project, area });
@@ -468,6 +575,15 @@ export function assertResourceAvailable(
     const file = reservation(root, input);
     safe(file);
     if (stat(file)) {
+      if (!input.area) {
+        const marker = projectReservation(root, project);
+        if (
+          marker?.value.replacementInstanceId &&
+          liveProjectInstance(root, project) ===
+            marker.value.replacementInstanceId
+        )
+          continue;
+      }
       if (input.area) {
         const marker = pmReservation(root, project, input.area);
         if (
@@ -485,6 +601,97 @@ export function assertResourceAvailable(
     }
   }
 }
+function provisioningBusy(lock: string): boolean {
+  safe(lock);
+  const original = stat(lock);
+  if (!original) return false;
+  if (
+    !original.isFile() ||
+    original.nlink !== 1 ||
+    original.size < 1 ||
+    original.size > 64
+  )
+    return true;
+  try {
+    const content = bytes(lock, 64),
+      text = content.toString("utf8");
+    if (!/^[1-9][0-9]{0,9}$/.test(text)) return true;
+    const pid = Number(text);
+    if (!Number.isSafeInteger(pid)) return true;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") return true;
+    }
+    // Never clear a replacement owner or a lock changed while probing its PID.
+    safe(lock);
+    const current = stat(lock);
+    if (!current) return false;
+    if (
+      !current.isFile() ||
+      current.nlink !== 1 ||
+      current.dev !== original.dev ||
+      current.ino !== original.ino ||
+      current.size !== original.size ||
+      current.mtimeMs !== original.mtimeMs ||
+      current.ctimeMs !== original.ctimeMs ||
+      !bytes(lock, 64).equals(content)
+    )
+      return true;
+    unlinkSync(lock);
+    return false;
+  } catch {
+    return true;
+  }
+}
+export function withProjectLifecycleLock<T>(
+  root: string,
+  input: ResourceTarget,
+  operation: () => T,
+): T {
+  target(input);
+  const lock = join(
+    root,
+    ".run",
+    "linear",
+    "provisioning",
+    `${input.project}.lock`,
+  );
+  safe(lock);
+  mkdirSync(dirname(lock), { recursive: true, mode: 0o700 });
+  if (provisioningBusy(lock))
+    fail(
+      "blocked",
+      "Linear setup or mapping repair holds this project. Wait for it to finish before deletion/restoration.",
+      409,
+    );
+  let fd: number;
+  try {
+    fd = openSync(lock, "wx", 0o600);
+  } catch {
+    fail(
+      "blocked",
+      "Linear setup started while this operation was being reviewed. Wait for it to finish and retry.",
+      409,
+    );
+  }
+  try {
+    writeFileSync(fd, String(process.pid));
+    return operation();
+  } finally {
+    const owned = fstatSync(fd),
+      current = stat(lock);
+    closeSync(fd);
+    if (current?.ino === owned.ino && current?.dev === owned.dev)
+      unlinkSync(lock);
+  }
+}
+const retained = [
+  "External Git repositories, Linear teams/projects/tickets and hosting resources.",
+  "Shared connections and credentials, worker registrations and historical runs.",
+  "A private local recovery copy. Deleted names can be reused for fresh projects or PMs without inheriting their previous configuration or learned history.",
+];
 export function createResourceDeletion(options: {
   root: string;
   withConfigurationMutation: ConfigurationMutation;
@@ -540,11 +747,14 @@ export function createResourceDeletion(options: {
             "restoredTree",
             "restoreBeforeTree",
             "restoreStage",
+            "projectInstanceId",
           ].includes(k),
       ) ||
       value.schema !== 1 ||
       value.id !== id ||
       value.kind !== (value.area ? "pm" : "project") ||
+      (value.projectInstanceId !== undefined &&
+        !ID.test(value.projectInstanceId)) ||
       !["preparing", "deleted", "restoring", "restored", "failed"].includes(
         value.status,
       ) ||
@@ -598,50 +808,6 @@ export function createResourceDeletion(options: {
       name: typeof row.name === "string" ? row.name.slice(0, 100) : input.area,
     };
   }
-  function provisioningBusy(lock: string): boolean {
-    safe(lock);
-    const original = stat(lock);
-    if (!original) return false;
-    if (
-      !original.isFile() ||
-      original.nlink !== 1 ||
-      original.size < 1 ||
-      original.size > 64
-    )
-      return true;
-    try {
-      const content = bytes(lock, 64),
-        text = content.toString("utf8");
-      if (!/^[1-9][0-9]{0,9}$/.test(text)) return true;
-      const pid = Number(text);
-      if (!Number.isSafeInteger(pid)) return true;
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") return true;
-      }
-      // Never clear a replacement owner or a lock changed while probing its PID.
-      safe(lock);
-      const current = stat(lock);
-      if (!current) return false;
-      if (
-        !current.isFile() ||
-        current.nlink !== 1 ||
-        current.dev !== original.dev ||
-        current.ino !== original.ino ||
-        current.size !== original.size ||
-        current.mtimeMs !== original.mtimeMs ||
-        current.ctimeMs !== original.ctimeMs ||
-        !bytes(lock, 64).equals(content)
-      )
-        return true;
-      unlinkSync(lock);
-      return false;
-    } catch {
-      return true;
-    }
-  }
   async function blockers(input: ResourceTarget) {
     const values = [...((await options.blockers?.(input)) ?? [])];
     const lock = join(
@@ -657,51 +823,6 @@ export function createResourceDeletion(options: {
       );
     return values;
   }
-  function withProvisioningLock<T>(
-    input: ResourceTarget,
-    operation: () => T,
-  ): T {
-    const lock = join(
-      root,
-      ".run",
-      "linear",
-      "provisioning",
-      `${input.project}.lock`,
-    );
-    safe(lock);
-    mkdirSync(dirname(lock), { recursive: true, mode: 0o700 });
-    if (provisioningBusy(lock))
-      fail(
-        "blocked",
-        "Linear setup or mapping repair holds this project. Wait for it to finish before deletion/restoration.",
-        409,
-      );
-    let fd: number;
-    try {
-      fd = openSync(lock, "wx", 0o600);
-    } catch {
-      fail(
-        "blocked",
-        "Linear setup started while this operation was being reviewed. Wait for it to finish and retry.",
-        409,
-      );
-    }
-    try {
-      writeFileSync(fd, String(process.pid));
-      return operation();
-    } finally {
-      const owned = fstatSync(fd),
-        current = stat(lock);
-      closeSync(fd);
-      if (current?.ino === owned.ino && current?.dev === owned.dev)
-        unlinkSync(lock);
-    }
-  }
-  const retained = [
-    "External Git repositories, Linear teams/projects/tickets and hosting resources.",
-    "Shared connections and credentials, worker registrations and historical runs.",
-    "A private local recovery copy. A deleted PM ID can be reused for a fresh PM; deleted project IDs stay reserved until restored.",
-  ];
   async function preview(input: ResourceTarget): Promise<DeletionPreview> {
     const current = snapshot(input);
     return {
@@ -745,7 +866,7 @@ export function createResourceDeletion(options: {
           409,
         );
       assertResourceAvailable(root, input.project, input.area);
-      return withProvisioningLock(input, () => {
+      return withProjectLifecycleLock(root, input, () => {
         const id = randomUUID(),
           destination = folder(id),
           marker = reservation(root, input),
@@ -757,6 +878,9 @@ export function createResourceDeletion(options: {
           id,
           kind: plan.kind,
           project: input.project,
+          ...(input.area && liveProjectInstance(root, input.project)
+            ? { projectInstanceId: liveProjectInstance(root, input.project) }
+            : {}),
           ...(input.area ? { area: input.area } : {}),
           name: plan.name,
           status: "preparing",
@@ -955,11 +1079,39 @@ export function createResourceDeletion(options: {
     const file = reservation(root, journal);
     safe(file);
     if (!journal.area) {
-      const value = objectFile(file);
-      if (value.id !== journal.id)
-        fail("conflict", "Another recovery record owns this identifier.", 409);
-      return { file, transfer: false };
+      const marker = projectReservation(root, journal.project);
+      if (!marker)
+        fail(
+          "conflict",
+          "A replacement project occupies this name, or its deletion has not completed. Recovery will not overwrite it.",
+          409,
+        );
+      if (marker.value.id === journal.id) return { file, transfer: false };
+      const owner = readJournal(marker.value.id);
+      if (
+        journal.status !== "deleted" ||
+        owner.status !== "deleted" ||
+        owner.kind !== "project" ||
+        owner.project !== journal.project ||
+        marker.value.replacementInstanceId ||
+        stat(projectDir(journal))
+      )
+        fail(
+          "conflict",
+          "Another project deletion, recreation or restoration is unfinished. Resolve it before restoring this archive.",
+          409,
+        );
+      return { file, transfer: true };
     }
+    if (
+      stat(projectDir(journal)) &&
+      liveProjectInstance(root, journal.project) !== journal.projectInstanceId
+    )
+      fail(
+        "conflict",
+        "This PM belongs to a different project incarnation. Restore its original parent project before restoring the PM.",
+        409,
+      );
     const marker = pmReservation(root, journal.project, journal.area);
     if (!marker)
       fail(
@@ -1103,7 +1255,7 @@ export function createResourceDeletion(options: {
           "Recovery or current configuration changed. Review restoration again.",
           409,
         );
-      return withProvisioningLock(journal, () => {
+      return withProjectLifecycleLock(root, journal, () => {
         const directory = folder(input.id),
           staged = join(directory, `restore-${randomUUID()}`),
           live = projectDir(journal),

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadProject } from "../config.ts";
+import { createResourceDeletion } from "../setup/resourceDeletion.ts";
 import {
   CHECKLIST,
   addProject,
@@ -33,6 +34,20 @@ beforeEach(() => {
   );
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+it("uses fresh incarnation setup when the legacy CLI recreates a deleted project", async () => {
+  addProject(root, { name: "app", repo: "owner/original" });
+  const removal = createResourceDeletion({
+    root,
+    withConfigurationMutation: async (_target, operation) => operation(),
+  });
+  await removal.remove(await removal.preview({ project: "app" }));
+  addProject(root, { name: "app", repo: "owner/replacement" });
+  const current = loadProject(root, "app");
+  expect(current.config.instanceId).toMatch(/^[a-f0-9-]{36}$/);
+  expect(current.config.repo).toBe("owner/replacement");
+  expect(current.areas.every((area) => !area.enabled)).toBe(true);
+});
 
 describe("templateVars / fillTemplate", () => {
   it("derives NAME and Area from name and area", () => {

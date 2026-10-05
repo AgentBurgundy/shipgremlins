@@ -155,8 +155,8 @@
     const dirty = (s) =>
       Boolean(s.draft && JSON.stringify(s.draft) !== s.baseline);
     const disabled = (s) => isLocked() || s.busy || ongoing(s.data);
-    function accessDraft(target, legacy = false, project = "APP") {
-      const prefix = `APP_${project.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}`;
+    function accessDraft(target, legacy = false, project = "APP", instanceId) {
+      const prefix = `APP_${project.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}${instanceId ? `_${instanceId.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}` : ""}`;
       const access = target?.access;
       return {
         accessKind: access?.kind || (legacy ? "legacy" : "public"),
@@ -192,6 +192,7 @@
           target,
           s.data?.environment?.legacySignIn,
           s.project.name,
+          s.project.instanceId,
         ),
         existingTarget: target,
         profile,
@@ -437,6 +438,7 @@
                 s.draft.existingTarget,
                 Boolean(select.value && s.data?.environment?.legacySignIn),
                 s.project.name,
+                s.project.instanceId,
               ),
             );
             s.formSignature = "";
@@ -770,7 +772,7 @@
         node("h3", "Let a Setup Gremlin look first."),
         node(
           "p",
-          "It reads repository files and suggests a setup. Analysis does not prove the app runs.",
+          "It follows application entrypoints, dependencies and test fixtures to suggest a setup. Analysis does not prove the app runs.",
         ),
       );
       intro.append(image, text);
@@ -841,8 +843,8 @@
               ? "Try a disposable local app."
               : "Start with hosted staging.",
           ),
-          node("p", report.summary),
-          node("p", report.rationale),
+          node("p", String(report.summary || "").replace(/\\n\\n/g, "\n\n")),
+          node("p", String(report.rationale || "").replace(/\\n\\n/g, "\n\n")),
         );
         if (report.stack?.length)
           recommendation.append(
@@ -866,24 +868,68 @@
         if (report.warnings?.length)
           recommendation.append(list(report.warnings, "onboarding-help"));
         const evidence = node("details", undefined, "onboarding-advanced");
+        const inspection = report.repository?.inspection;
         evidence.append(
           node(
             "summary",
-            `Inspected ${report.repository?.filesRead?.length || 0} repository files`,
+            `Reviewed ${report.repository?.filesRead?.length || 0} files${inspection ? " · Entrypoints & dependencies" : " · Earlier source scan"}`,
           ),
           node(
             "p",
             `${report.repository?.repo || s.project.repo} · ${report.repository?.branch || ""} · ${(report.repository?.sha || "").slice(0, 12)}`,
           ),
-          list(report.repository?.filesRead || []),
         );
-        if (report.repository?.truncated)
+        if (inspection) {
           evidence.append(
             node(
               "p",
-              "The repository review was bounded; more files may need manual review.",
+              `${inspection.totalFiles} files listed${inspection.treeTruncated ? " (repository listing incomplete)" : ""} · ${Math.ceil(inspection.sourceBytes / 1024)} KiB of selected source · ${inspection.files.filter((file) => file.excerpt).length} files read in excerpts.`,
+              "onboarding-help",
             ),
           );
+          const reviewed = node("ul", undefined, "onboarding-source-files");
+          for (const file of inspection.files) {
+            const item = node("li");
+            item.append(
+              node("code", file.path),
+              node(
+                "span",
+                ` — ${file.reason}${file.excerpt ? ` · excerpt${file.ranges?.length ? `, lines ${file.ranges.map((range) => `${range.start}–${range.end}`).join(", ")}` : ""}` : ""}`,
+              ),
+            );
+            reviewed.append(item);
+          }
+          evidence.append(reviewed);
+          if (inspection.criticalMissing?.length) {
+            evidence.append(
+              node("strong", "Important source is still missing"),
+              list(inspection.criticalMissing),
+            );
+          }
+          if (inspection.unresolved?.length) {
+            const remaining = node("details", undefined, "onboarding-advanced");
+            remaining.append(
+              node("summary", "Unread references & limits"),
+              list(inspection.unresolved),
+            );
+            evidence.append(remaining);
+          }
+          evidence.append(
+            node(
+              "p",
+              `This analysis follows selected source references; it is not a complete repository audit. Budget: up to ${inspection.limits.files} source reads and ${Math.round(inspection.limits.sourceBytes / 1024)} KiB of source context.`,
+              "onboarding-help",
+            ),
+          );
+        } else {
+          evidence.append(list(report.repository?.filesRead || []));
+          evidence.append(
+            node(
+              "p",
+              "This report used the earlier file-selection method. Analyze again to follow application entrypoints, imports and test fixtures with the expanded source budget.",
+            ),
+          );
+        }
         recommendation.append(evidence);
         s.analysis.append(recommendation);
       }

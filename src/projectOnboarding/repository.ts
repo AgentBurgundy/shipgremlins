@@ -2,6 +2,12 @@ import type { Project } from "../config.ts";
 import { inspectionBranch } from "../projectCapabilities.ts";
 import type { SourceCredential } from "../sourceControl/types.ts";
 import { ProjectOnboardingError, type OnboardingReport } from "./types.ts";
+import {
+  SOURCE_LIMITS,
+  seedPriority,
+  sourceReferences,
+  sourceExcerpt,
+} from "./investigation.ts";
 
 export const SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 export const object = (value: unknown): value is Record<string, unknown> =>
@@ -136,7 +142,7 @@ function readable(path: string) {
     )
   )
     return false;
-  return /(?:\.(?:json|md|txt|toml|ya?ml|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|sql|sh)|(?:^|\/)(?:Dockerfile(?:\.[\w-]+)?|Procfile|Gemfile|requirements\.txt|Makefile))$/i.test(
+  return /(?:\.(?:json|md|txt|toml|ya?ml|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|sql|sh|html?|css|vue|svelte|php)|(?:^|\/)(?:Dockerfile(?:\.[\w-]+)?|Procfile|Gemfile|go\.mod|requirements\.txt|Makefile|\.dockerignore))$/i.test(
     path,
   );
 }
@@ -231,7 +237,7 @@ export async function readRepository(
           size: typeof entry.size === "number" ? entry.size : undefined,
         });
   } else {
-    for (let page = 1; page <= 5; page++) {
+    for (let page = 1; page <= 20; page++) {
       const { value, headers } = await sourceRequest(
         fetcher,
         `${api}/repository/tree?ref=${sha}&recursive=true&per_page=100&page=${page}`,
@@ -254,36 +260,91 @@ export async function readRepository(
         )
           entries.push({ path: entry.path, sha: entry.id });
       if (!headers.get("x-next-page")) break;
-      if (page === 5) truncated = true;
+      if (page === 20) truncated = true;
     }
   }
-  const priority = (path: string) =>
-    /(?:^|\/)(?:package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod|Gemfile)$/.test(
-      path,
-    )
-      ? 0
-      : /Dockerfile|compose|vite\.config|next\.config|vercel\.json|railway|README/i.test(
-            path,
-          )
-        ? 1
-        : /schema|migration|server\.|app\.|main\.|auth|test|seed/i.test(path)
-          ? 2
-          : 3;
-  const selected = entries
-    .filter(
-      (entry) =>
-        readable(entry.path) &&
-        (entry.size ?? 0) <= 24000 &&
-        !containsSecret(entry.path, secrets),
-    )
-    .sort(
-      (a, b) =>
-        priority(a.path) - priority(b.path) || a.path.localeCompare(b.path),
-    )
-    .slice(0, 24);
+  const treeTruncated = truncated;
+  const available = new Map(
+    entries
+      .filter(
+        (entry) => readable(entry.path) && !containsSecret(entry.path, secrets),
+      )
+      .map((entry) => [entry.path, entry]),
+  );
+  const paths = new Set(available.keys());
+  type Candidate = {
+    path: string;
+    priority: number;
+    depth: number;
+    reason: string;
+  };
+  const queue = new Map<string, Candidate>();
+  const visited = new Set<string>();
+  const unresolved = new Set<string>(),
+    criticalMissing = new Set<string>();
+  const missing = (candidate: Candidate) => {
+    unresolved.add(candidate.path);
+    if (candidate.priority <= 5) criticalMissing.add(candidate.path);
+    truncated = true;
+  };
+  const enqueue = (candidate: Candidate) => {
+    if (visited.has(candidate.path)) return;
+    if (candidate.depth > SOURCE_LIMITS.depth) {
+      missing(candidate);
+      return;
+    }
+    const prior = queue.get(candidate.path);
+    if (!prior || candidate.priority < prior.priority)
+      queue.set(candidate.path, candidate);
+  };
+  for (const path of paths) {
+    const priority = seedPriority(path);
+    if (priority !== undefined)
+      enqueue({
+        path,
+        priority,
+        depth: 0,
+        reason:
+          priority === 3
+            ? "runnable example or test fixture"
+            : "manifest, application entrypoint, or deployment configuration",
+      });
+  }
+  // Unsupported stacks still get a small, explicit source sample instead of no analysis.
+  if (!queue.size)
+    for (const path of [...paths].sort().slice(0, 8))
+      enqueue({
+        path,
+        priority: 50,
+        depth: 0,
+        reason: "fallback source sample; no recognized entrypoint",
+      });
   const files: RepositorySnapshot["files"] = [];
-  let total = 0;
-  for (const entry of selected) {
+  const inspected: NonNullable<
+    OnboardingReport["repository"]["inspection"]
+  >["files"] = [];
+  let total = 0,
+    fetchedBytes = 0,
+    requests = 0;
+  while (queue.size && requests < SOURCE_LIMITS.files) {
+    const candidate = [...queue.values()].sort(
+      (a, b) =>
+        a.priority - b.priority ||
+        a.depth - b.depth ||
+        a.path.localeCompare(b.path),
+    )[0]!;
+    queue.delete(candidate.path);
+    visited.add(candidate.path);
+    const entry = available.get(candidate.path)!;
+    if (
+      (entry.size ?? 0) > SOURCE_LIMITS.fileBytes ||
+      fetchedBytes + (entry.size ?? SOURCE_LIMITS.fileBytes) >
+        SOURCE_LIMITS.fetchedBytes
+    ) {
+      missing(candidate);
+      continue;
+    }
+    requests++;
     const { value } = await sourceRequest(
       fetcher,
       provider === "github"
@@ -297,13 +358,23 @@ export async function readRepository(
       value.encoding !== "base64" ||
       typeof value.content !== "string"
     ) {
-      truncated = true;
+      missing(candidate);
+      continue;
+    }
+    // The response is already bounded. Check encoded size before allocating decoded source.
+    if (
+      value.content.length >
+      Math.ceil(SOURCE_LIMITS.fileBytes / 3) * 4 + 32768
+    ) {
+      missing(candidate);
       continue;
     }
     const content = Buffer.from(value.content, "base64").toString("utf8");
+    const bytes = Buffer.byteLength(content);
+    fetchedBytes += bytes;
     if (
-      Buffer.byteLength(content) > 24000 ||
-      total + Buffer.byteLength(content) > 160000 ||
+      bytes > SOURCE_LIMITS.fileBytes ||
+      fetchedBytes > SOURCE_LIMITS.fetchedBytes ||
       [...content].some(
         (c) => c.charCodeAt(0) < 32 && ![9, 10, 13].includes(c.charCodeAt(0)),
       ) ||
@@ -313,12 +384,36 @@ export async function readRepository(
         content,
       )
     ) {
-      truncated = true;
+      missing(candidate);
       continue;
     }
-    files.push({ path: entry.path, content });
-    total += Buffer.byteLength(content);
+    const excerpt = sourceExcerpt(
+      content,
+      Math.min(16 * 1024, SOURCE_LIMITS.sourceBytes - total),
+    );
+    if (!excerpt.content) {
+      missing(candidate);
+      continue;
+    }
+    files.push({ path: entry.path, content: excerpt.content });
+    inspected.push({
+      path: entry.path,
+      reason: candidate.reason,
+      excerpt: !!excerpt.ranges,
+      ...(excerpt.ranges ? { ranges: excerpt.ranges } : {}),
+    });
+    total += Buffer.byteLength(excerpt.content);
+    if (excerpt.ranges) truncated = true;
+    // Traverse full safe source, not just the excerpt, so late lazy imports still expose routes.
+    for (const reference of sourceReferences(entry.path, content, paths))
+      enqueue({ ...reference, depth: candidate.depth + 1 });
+    if (
+      fetchedBytes >= SOURCE_LIMITS.fetchedBytes ||
+      total >= SOURCE_LIMITS.sourceBytes
+    )
+      break;
   }
+  for (const candidate of queue.values()) missing(candidate);
   if (!files.length)
     throw new ProjectOnboardingError(
       "No safe source files were available for setup analysis. Check the branch and repository contents.",
@@ -331,19 +426,33 @@ export async function readRepository(
       branch,
       sha,
       filesRead: files.map((file) => file.path),
-      truncated: truncated || entries.length > selected.length,
+      truncated: truncated || entries.length > files.length,
+      inspection: {
+        strategy: "entrypoints-and-dependencies",
+        totalFiles: entries.length,
+        treeTruncated,
+        requests,
+        sourceBytes: total,
+        fetchedBytes,
+        limits: { ...SOURCE_LIMITS },
+        files: inspected,
+        unresolved: [...unresolved].slice(0, 40),
+        criticalMissing: [...criticalMissing].slice(0, 40),
+      },
     },
     files,
-    paths: entries
-      .filter(
-        (entry) => readable(entry.path) && !containsSecret(entry.path, secrets),
+    paths: [...paths]
+      .sort(
+        (a, b) =>
+          (seedPriority(a) ?? 50) - (seedPriority(b) ?? 50) ||
+          a.localeCompare(b),
       )
-      .map((entry) => entry.path)
       .slice(0, 2000),
     ...(usedDefault ? { usedDefaultBranch: true } : {}),
   };
   // Count serialized text, including escaping, before the planner's own JSON envelope.
-  // Large trees and quote-heavy source must not exceed its 512 KiB transport bound.
+  // Setup alone opts into a 2 MiB planner envelope. Keep inner JSON below 768 KiB;
+  // escaping this text a second time plus system/schema still fits that bound.
   let pathBytes = 0;
   snapshot.paths = snapshot.paths.filter((path) => {
     pathBytes += Buffer.byteLength(JSON.stringify(path)) + 1;
@@ -354,10 +463,24 @@ export async function readRepository(
     return true;
   });
   while (
-    Buffer.byteLength(JSON.stringify(snapshot)) > 196 * 1024 &&
+    Buffer.byteLength(JSON.stringify(snapshot)) > 768 * 1024 &&
     snapshot.files.length > 1
   ) {
-    snapshot.files.pop();
+    const omitted = snapshot.files.pop()!;
+    const metadata = inspected.pop()!;
+    snapshot.repository.inspection!.sourceBytes -= Buffer.byteLength(
+      omitted.content,
+    );
+    snapshot.repository.inspection!.unresolved = [
+      ...new Set([...snapshot.repository.inspection!.unresolved, omitted.path]),
+    ].slice(0, 40);
+    if (/entrypoint|fixture/.test(metadata.reason))
+      snapshot.repository.inspection!.criticalMissing = [
+        ...new Set([
+          ...snapshot.repository.inspection!.criticalMissing,
+          omitted.path,
+        ]),
+      ].slice(0, 40);
     snapshot.repository.filesRead = snapshot.files.map((file) => file.path);
     snapshot.repository.truncated = true;
   }

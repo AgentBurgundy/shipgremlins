@@ -7,6 +7,7 @@ import {
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { loadProject } from "../config.ts";
 import { stripVTControlCharacters } from "node:util";
 import { publicActivityLogs } from "../storage/activity.ts";
 import { safeOAuthPath } from "../oauthConnection/storage.ts";
@@ -32,6 +33,7 @@ interface Worker {
   id: string;
   name: string;
   projects: string[];
+  projectInstances?: Record<string, string>;
   tokenHash: string;
   enrollmentHash?: string;
   enrollmentExpiresAt?: number;
@@ -102,6 +104,13 @@ export function createRemoteWorkers(options: {
   clock?: () => number;
 }) {
   const clock = options.clock ?? Date.now;
+  const projectInstance = (project: string) =>
+    existsSync(join(options.root, "projects", project, "project.json"))
+      ? loadProject(options.root, project).config.instanceId
+      : undefined;
+  const ownsProject = (worker: Worker, project: string) =>
+    worker.projects.includes(project) &&
+    worker.projectInstances?.[project] === projectInstance(project);
   const store = createPrivateStore<State>(options.root, () => ({
     schema: 1,
     workers: [],
@@ -235,6 +244,12 @@ export function createRemoteWorkers(options: {
             id: `remote-${randomUUID()}`,
             name: input.name,
             projects: [...new Set(input.projects)],
+            projectInstances: Object.fromEntries(
+              input.projects.flatMap((project) => {
+                const instance = projectInstance(project);
+                return instance ? [[project, instance]] : [];
+              }),
+            ),
             tokenHash: "",
             enrollmentHash: hash(code),
             enrollmentExpiresAt: clock() + 600000,
@@ -493,7 +508,7 @@ export function createRemoteWorkers(options: {
             !!worker.tokenHash &&
             !!worker.lastSeenAt &&
             clock() - worker.lastSeenAt < 60000 &&
-            (!project || worker.projects.includes(project))
+            (!project || ownsProject(worker, project))
           );
         },
         async startJob(input) {
@@ -508,7 +523,7 @@ export function createRemoteWorkers(options: {
               !worker.tokenHash ||
               (input.payload.kind !== "verify" &&
                 (!input.payload.project ||
-                  !worker.projects.includes(input.payload.project)))
+                  !ownsProject(worker, input.payload.project)))
             )
               throw new RemoteWorkerError(
                 "This remote worker cannot accept work for this project.",

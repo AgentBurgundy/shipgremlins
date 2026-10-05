@@ -18,6 +18,7 @@ import { join, dirname, resolve, parse, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { CronExpressionParser } from "cron-parser";
 import { loadProject } from "../config.ts";
+import { projectRuntimeKey } from "../projectIdentity.ts";
 import { validConnectionId } from "../projectCapabilities.ts";
 import { ID_RE } from "../telemetry/config.ts";
 import {
@@ -167,13 +168,30 @@ export function createLinearProvisioning(options: {
 }) {
   const { root } = options;
   const directory = join(root, ".run", "linear", "provisioning");
+  function runtimeKey(project: string) {
+    validateName(project, "project");
+    // Mapping repair must also work when old Linear IDs fail typed validation.
+    // Only the immutable, controller-issued identity selects its journal.
+    const raw = JSON.parse(
+      readEditableConfig(root, `projects/${project}/project.json`).content,
+    );
+    if (
+      raw.instanceId !== undefined &&
+      (typeof raw.instanceId !== "string" || !UUID.test(raw.instanceId))
+    )
+      throw new LinearProvisioningError(
+        "Project identity is invalid. Preserve its configuration and restore the original identity before repairing mappings.",
+        409,
+      );
+    return projectRuntimeKey({ name: project, instanceId: raw.instanceId });
+  }
   function statePath(project: string) {
     validateName(project, "project");
-    return safe(join(directory, `${project}.json`));
+    return safe(join(directory, `${runtimeKey(project)}.json`));
   }
   const repairPath = (project: string) => {
     validateName(project, "project");
-    return safe(join(directory, `${project}.repair.json`));
+    return safe(join(directory, `${runtimeKey(project)}.repair.json`));
   };
   const repairFilePath = (project: string, name: RepairFile["name"]) =>
     name === "journal"

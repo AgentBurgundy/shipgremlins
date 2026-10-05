@@ -108,6 +108,69 @@ async function connectionMetadata(
 }
 
 describe("authenticated resource lifecycle HTTP routes", () => {
+  it("recreates a deleted project name as a fresh incarnation through the authenticated creation route", async () => {
+    const f = await fixture();
+    const original = loadProject(f.root, "app");
+    expect(
+      (await f.call("/api/projects/app/delivery/advance", "POST", {})).status,
+    ).toBe(202);
+    await vi.waitFor(async () => {
+      const oldDelivery = (await (
+        await f.call("/api/projects/app/delivery")
+      ).json()) as { operation: { phase: string; message: string } };
+      expect(oldDelivery.operation.phase).toBe("idle");
+      expect(oldDelivery.operation.message).not.toBe("");
+    });
+    const removed = await f.call(
+      "/api/projects/app",
+      "DELETE",
+      confirmation(await f.preview("/api/projects/app")),
+    );
+    const archive = (await removed.json()) as Deleted;
+    expect(removed.status).toBe(200);
+    const created = await f.call("/api/projects", "POST", {
+      project: "app",
+      repo: "owner/new-app",
+      linearMode: "later",
+      onboarding: true,
+    });
+    const creation = await created.text();
+    expect(created.status, creation).toBe(200);
+    const project = loadProject(f.root, "app");
+    expect(project.config.repo).toBe("owner/new-app");
+    expect(project.config.instanceId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(project.config.verified).toBeNull();
+    expect(project.config.linear).toBeUndefined();
+    expect(project.config.slackWebhookSecret).not.toBe(
+      original.config.slackWebhookSecret,
+    );
+    expect(project.areas).toEqual([]);
+    const freshDelivery = (await (
+      await f.call("/api/projects/app/delivery")
+    ).json()) as { operation: unknown; productionReports: unknown[] };
+    expect(freshDelivery.operation).toEqual({ phase: "idle", message: "" });
+    expect(freshDelivery.productionReports).toEqual([]);
+    const status = (await (await f.call("/api/status")).json()) as {
+      projects: Array<{ name: string; instanceId?: string }>;
+    };
+    expect(status.projects).toContainEqual(
+      expect.objectContaining({
+        name: "app",
+        instanceId: project.config.instanceId,
+      }),
+    );
+    const recovery = `/api/deleted/${archive.recoveryId}`;
+    const preview = (await (await f.call(recovery)).json()) as DeletionPreview;
+    expect(preview.blockers.join(" ")).toMatch(/replacement|occupies/);
+    expect(
+      (await f.call(recovery + "/restore", "POST", confirmation(preview)))
+        .status,
+    ).toBe(409);
+    expect(loadProject(f.root, "app").config.repo).toBe("owner/new-app");
+    expect(existsSync(join(archive.recoveryPath, "project/project.json"))).toBe(
+      true,
+    );
+  });
   it("requires authentication, exact confirmation and current revision, and retains private connections/history through project recovery", async () => {
     const f = await fixture(),
       endpoint = "/api/projects/app";
@@ -165,7 +228,10 @@ describe("authenticated resource lifecycle HTTP routes", () => {
     expect(listed.recoveries).toContainEqual(
       expect.objectContaining({ id: deleted.recoveryId, status: "deleted" }),
     );
-    const restore = (await (await f.call(recovery)).json()) as DeletionPreview;
+    const previewResponse = await f.call(recovery);
+    const previewText = await previewResponse.text();
+    expect(previewResponse.status, previewText).toBe(200);
+    const restore = JSON.parse(previewText) as DeletionPreview;
     expect(
       (
         await f.call(recovery + "/restore", "POST", {
@@ -213,7 +279,10 @@ describe("authenticated resource lifecycle HTTP routes", () => {
     expect(readFileSync(f.projectFile)).toEqual(original);
     expect((await f.call("/api/status")).status).toBe(200);
     const recovery = `/api/deleted/${removed.recoveryId}`;
-    const restore = (await (await f.call(recovery)).json()) as DeletionPreview;
+    const previewResponse = await f.call(recovery);
+    const previewText = await previewResponse.text();
+    expect(previewResponse.status, previewText).toBe(200);
+    const restore = JSON.parse(previewText) as DeletionPreview;
     expect(
       (await f.call(recovery + "/restore", "POST", confirmation(restore)))
         .status,

@@ -22,6 +22,9 @@ import {
   createResourceDeletion,
 } from "./resourceDeletion.ts";
 import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
+import { createProjectKnowledge } from "../projectKnowledge/index.ts";
+import { createOnboardingStore } from "../projectOnboarding/store.ts";
+import { projectRuntimeKey } from "../projectIdentity.ts";
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
@@ -438,12 +441,6 @@ describe("reversible project and PM deletion", () => {
     expect(() => assertResourceAvailable(f.root, "app")).toThrow(
       "deleted resource",
     );
-    expect(() =>
-      initializeSetup(f.root, resolve("."), {
-        project: "app",
-        repo: "owner/new",
-      }),
-    ).toThrow("deleted resource");
     const restore = await f.service.previewRestore(result.recoveryId);
     expect(restore.blockers).toEqual([]);
     await f.service.restore(restore);
@@ -690,5 +687,215 @@ describe("reversible project and PM deletion", () => {
     journal.credentials = "never returned";
     writeFileSync(path, JSON.stringify(journal));
     expect(() => f.service.listRecoveries()).toThrow("Recovery metadata");
+  });
+});
+
+describe("recreating deleted project names", () => {
+  it("keeps the archive and stable pending identity through invalid setup, retries and concurrent locks", async () => {
+    const f = fixture();
+    const removed = await f.service.remove(
+      await f.service.preview({ project: "app" }),
+    );
+    const marker = join(f.root, ".run/deleted/reservations/projects/app.json");
+    expect(() =>
+      initializeSetup(f.root, resolve("."), {
+        project: "app",
+        repo: "owner/new",
+        settings: { commands: { test: "" } },
+      }),
+    ).toThrow("settings are invalid");
+    const pending = JSON.parse(
+      readFileSync(marker, "utf8"),
+    ).replacementInstanceId;
+    expect(pending).toMatch(/^[a-f0-9-]{36}$/);
+    expect(existsSync(f.projectFile)).toBe(false);
+    expect(existsSync(join(removed.recoveryPath, "project/project.json"))).toBe(
+      true,
+    );
+    const lock = join(f.root, ".run/linear/provisioning/app.lock");
+    writeFileSync(lock, String(process.pid));
+    expect(() =>
+      initializeSetup(f.root, resolve("."), {
+        project: "app",
+        repo: "owner/new",
+      }),
+    ).toThrow("holds this project");
+    expect(JSON.parse(readFileSync(marker, "utf8")).replacementInstanceId).toBe(
+      pending,
+    );
+    rmSync(lock);
+    const telemetry = {
+      sentry: {
+        host: "sentry.io",
+        organization: "owner",
+        project: "new",
+        environment: "staging",
+        tokenSecret: "SENTRY_AUTH_TOKEN_APP",
+      },
+      datadog: {
+        site: "datadoghq.com",
+        service: "new",
+        environment: "staging",
+        apiKeySecret: "DD_API_KEY_APP",
+        appKeySecret: "DD_APP_KEY_EXPLICIT_SHARED",
+      },
+    };
+    initializeSetup(f.root, resolve("."), {
+      project: "app",
+      repo: "owner/new",
+      settings: { telemetry },
+    });
+    const current = loadProject(f.root, "app").config;
+    expect(current.instanceId).toBe(pending);
+    expect(current.telemetry?.sentry?.tokenSecret).toBe(
+      `SENTRY_AUTH_TOKEN_APP_${pending.replace(/-/g, "").toUpperCase()}`,
+    );
+    expect(current.telemetry?.datadog?.apiKeySecret).not.toBe("DD_API_KEY_APP");
+    expect(current.telemetry?.datadog?.appKeySecret).toBe(
+      "DD_APP_KEY_EXPLICIT_SHARED",
+    );
+    expect(existsSync(marker)).toBe(false);
+    initializeSetup(f.root, resolve("."), {
+      project: "app",
+      repo: "owner/new",
+    });
+    expect(loadProject(f.root, "app").config.instanceId).toBe(pending);
+    expect(readFileSync(join(f.root, ".env"), "utf8")).toBe(
+      "SECRET=private-value\n",
+    );
+  });
+  it("creates a fresh paused project, isolates retained knowledge/setup, and blocks restoring over it", async () => {
+    const f = fixture();
+    const knowledge = createProjectKnowledge({ root: f.root });
+    knowledge.add("app", {
+      revision: knowledge.read("app").revision,
+      text: "Private decision for the former app.",
+    });
+    const setup = createOnboardingStore(f.root);
+    await setup.change("app", () => ({
+      state: {
+        schema: 1,
+        project: "app",
+        configurationRevision: "a".repeat(64),
+        status: "analyzed",
+        stage: "complete",
+        message: "Old analysis",
+        updatedAt: new Date().toISOString(),
+      },
+      result: undefined,
+    }));
+    const oldConfig = loadProject(f.root, "app").config;
+    const deleted = await f.service.remove(
+      await f.service.preview({ project: "app" }),
+    );
+    initializeSetup(f.root, resolve("."), {
+      project: "app",
+      repo: "owner/replacement",
+    });
+    const fresh = loadProject(f.root, "app");
+    expect(fresh.config.repo).toBe("owner/replacement");
+    expect(fresh.config.instanceId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(fresh.config.verified).toBeNull();
+    expect(fresh.config.slackWebhookSecret).not.toBe(
+      oldConfig.slackWebhookSecret,
+    );
+    expect(fresh.config.linear).toBeUndefined();
+    expect(
+      fresh.areas.every(
+        (area) => !area.enabled && area.instanceId === fresh.config.instanceId,
+      ),
+    ).toBe(true);
+    expect(fresh.areas[0]!.memoryBranch).toContain(fresh.config.instanceId);
+    expect(knowledge.read("app").decisions).toEqual([]);
+    expect(setup.read("app")).toBeUndefined();
+    expect(setup.list()).toEqual([]);
+    expect(projectRuntimeKey(fresh.config)).not.toBe("app");
+    expect(
+      readFileSync(
+        join(f.root, ".run/project-knowledge/app/decisions.json"),
+        "utf8",
+      ),
+    ).toContain("Private decision");
+    expect(
+      readFileSync(join(f.root, ".run/project-onboarding/app.json"), "utf8"),
+    ).toContain("Old analysis");
+    const restore = await f.service.previewRestore(deleted.recoveryId);
+    expect(restore.blockers.join(" ")).toMatch(/replacement|occupies/);
+    await expect(f.service.restore(restore)).rejects.toThrow(
+      /replacement|occupies/,
+    );
+    expect(readFileSync(join(f.root, ".env"), "utf8")).toBe(
+      "SECRET=private-value\n",
+    );
+    const document = readEditableConfig(f.root, "projects/app/project.json");
+    const raw = JSON.parse(document.content);
+    delete raw.instanceId;
+    expect(() =>
+      saveEditableConfig(f.root, { ...document, content: JSON.stringify(raw) }),
+    ).toThrow(/identity/);
+  });
+  it("lets owners explicitly restore either deleted incarnation into a vacant name without losing either archive", async () => {
+    const f = fixture();
+    const old = await f.service.remove(
+      await f.service.preview({ project: "app" }),
+    );
+    initializeSetup(f.root, resolve("."), {
+      project: "app",
+      repo: "owner/new",
+      createInitialPm: false,
+    });
+    const firstIdentity = loadProject(f.root, "app").config.instanceId;
+    expect(loadProject(f.root, "app").areas).toEqual([]);
+    const next = await f.service.remove(
+      await f.service.preview({ project: "app" }),
+    );
+    const restore = await f.service.previewRestore(old.recoveryId);
+    expect(restore.blockers).toEqual([]);
+    await f.service.restore(restore);
+    expect(loadProject(f.root, "app").config.repo).toBe("owner/app");
+    expect(loadProject(f.root, "app").config.instanceId).toBeUndefined();
+    expect(
+      JSON.parse(
+        readFileSync(join(next.recoveryPath, "project/project.json"), "utf8"),
+      ).instanceId,
+    ).toBe(firstIdentity);
+    expect(f.service.listRecoveries()).toHaveLength(2);
+  });
+  it("never restores a deleted PM into a replacement parent project sharing its name", async () => {
+    const f = fixture();
+    const pm = await f.service.remove(
+      await f.service.preview({ project: "app", area: "core" }),
+    );
+    await f.service.remove(await f.service.preview({ project: "app" }));
+    initializeSetup(f.root, resolve("."), {
+      project: "app",
+      repo: "owner/new",
+      createInitialPm: false,
+    });
+    const restore = await f.service.previewRestore(pm.recoveryId);
+    expect(restore.blockers.join(" ")).toContain(
+      "different project incarnation",
+    );
+    await expect(f.service.restore(restore)).rejects.toThrow(
+      "different project incarnation",
+    );
+    expect(loadProject(f.root, "app").areas).toEqual([]);
+  });
+  it("does not reuse an identity while its prior deletion is incomplete", async () => {
+    const f = fixture();
+    const removed = await f.service.remove(
+      await f.service.preview({ project: "app" }),
+    );
+    const path = join(removed.recoveryPath, "recovery.json");
+    const journal = JSON.parse(readFileSync(path, "utf8"));
+    journal.status = "preparing";
+    writeFileSync(path, JSON.stringify(journal));
+    expect(() =>
+      initializeSetup(f.root, resolve("."), {
+        project: "app",
+        repo: "owner/new",
+      }),
+    ).toThrow(/interrupted deletion/);
+    expect(existsSync(join(f.root, "projects/app"))).toBe(false);
   });
 });

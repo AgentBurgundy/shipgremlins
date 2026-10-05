@@ -58,6 +58,30 @@ function fixture() {
   };
 }
 describe("review inbox approvals", () => {
+  it.each(["project", "pm"])(
+    "requires fresh review after the owning %s is recreated with unchanged repo and Linear mappings",
+    async (kind) => {
+      const f = fixture();
+      const prior = (await f.store.list("app")).items[0]!;
+      const file = join(
+        root,
+        "projects/app",
+        kind === "project" ? "project.json" : "areas.json",
+      );
+      const raw = JSON.parse(readFileSync(file, "utf8"));
+      if (kind === "project")
+        raw.instanceId = "a1b2c3d4-1111-4222-8333-444444444444";
+      else raw.areas.core.instanceId = "a1b2c3d4-1111-4222-8333-444444444444";
+      writeFileSync(file, JSON.stringify(raw));
+      await expect(
+        f.store.approve("app", prior.id, prior.revision),
+      ).rejects.toThrow(/changed/);
+      expect(f.addLabel).not.toHaveBeenCalled();
+      expect((await f.store.list("app")).items[0]!.revision).not.toBe(
+        prior.revision,
+      );
+    },
+  );
   it("cannot approve a description that the dashboard cannot show in full", async () => {
     const f = fixture();
     f.ticket.description = "A".repeat(20001);
