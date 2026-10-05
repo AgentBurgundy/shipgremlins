@@ -15,6 +15,7 @@ import { browserSmoke } from "./runner-smoke.mjs";
 import { startLeaseWatchdog } from "./lease.mjs";
 import { chromium } from "playwright";
 import { createActivityWriter } from "./activity.mjs";
+import { createUsageCollector, writeUsageArtifact } from "./usage.mjs";
 import {
   discoveryArguments,
   discoveryResult,
@@ -88,6 +89,7 @@ const activity = createActivityWriter({
     log(line);
   },
 });
+const usage = createUsageCollector();
 async function run(command, args, options = {}) {
   if (stopping) throw new Error("Job stopped.");
   if (!options.model)
@@ -120,6 +122,7 @@ async function run(command, args, options = {}) {
     current.stdout.on("data", (chunk) => {
       captured = (captured + chunk.toString("utf8")).slice(-1024 * 1024);
     });
+    const modelStream = current.stdout;
     const streams = [current.stdout, current.stderr];
     for (const stream of streams) {
       let pending = "";
@@ -136,6 +139,7 @@ async function run(command, args, options = {}) {
               if (parsed.type === "result" && parsed.is_error === true)
                 modelError = true;
               if (options.model) {
+                if (stream === modelStream) usage.modelRecord(parsed);
                 activity.modelRecord(parsed);
                 continue;
               }
@@ -154,6 +158,15 @@ async function run(command, args, options = {}) {
       });
       stream.on("end", () => {
         if (pending && !dropping && !options.model) log(pending);
+        else if (pending && !dropping && options.model) {
+          try {
+            const parsed = JSON.parse(pending);
+            if (parsed.type === "result" && parsed.is_error === true)
+              modelError = true;
+            if (stream === modelStream) usage.modelRecord(parsed);
+            activity.modelRecord(parsed);
+          } catch {}
+        }
       });
     }
     current.once("error", () =>
@@ -426,6 +439,7 @@ try {
           : ["--dangerously-skip-permissions"]),
         "--output-format",
         "stream-json",
+        "--include-partial-messages",
         "--verbose",
         "--max-turns",
         "60",
@@ -566,6 +580,12 @@ try {
       )
         writeFileSync(file, redact(readFileSync(file, "utf8")));
     }
+  }
+  try {
+    writeUsageArtifact("/output", usage.snapshot());
+  } catch {
+    // Metrics are optional. Always sanitize evidence and preserve the job result
+    // even if the reserved usage artifact could not be written.
   }
   try {
     clean("/output");

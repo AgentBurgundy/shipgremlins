@@ -20,6 +20,7 @@
     <script src="/signals-settings.js" defer></script>
     <script src="/project-settings.js" defer></script>
     <script src="/pages.js" defer></script>
+    <script src="/usage.js" defer></script>
     <script src="/connections-view.js" defer></script>
     <script src="/update-banner.js" defer></script>
     <script src="/connection-profiles.js" defer></script>
@@ -59,6 +60,7 @@
     <link rel="stylesheet" href="/grumblins.css" />
     <link rel="stylesheet" href="/first-run.css" />
     <link rel="stylesheet" href="/gremlin-adoption.css" />
+    <link rel="stylesheet" href="/usage.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -136,6 +138,12 @@
             </svg>
             Activity</a
           >
+          <a class="nav-item" href="/usage"
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 20h16M6 16v-5M12 16V4M18 16V8" />
+            </svg>
+            Usage</a
+          >
           <a class="nav-item" href="/settings"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 7h2m6 0h8M4 17h8m6 0h2" />
@@ -189,6 +197,12 @@
         <main id="main" tabindex="-1">
           <div id="global-update-banner" hidden></div>
           <div id="global-message" class="notice" role="status" hidden></div>
+          <section
+            id="usage"
+            class="usage-page"
+            data-page="usage"
+            aria-labelledby="usage-title"
+          ></section>
           <section
             class="panel review-inbox-panel"
             data-page="inbox"

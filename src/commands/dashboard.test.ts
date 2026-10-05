@@ -24,7 +24,7 @@ import {
   type DashboardOptions,
 } from "./dashboard.ts";
 import type { Updater, UpdateStatus } from "../update/index.ts";
-import type { LocalRunners } from "../localRunners/engine.ts";
+import { LocalRunnerError, type LocalRunners } from "../localRunners/engine.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import {
   JobReadinessError,
@@ -1684,6 +1684,244 @@ describe("local dashboard HTTP boundary", () => {
     });
     expect(enqueue).toHaveBeenCalledOnce();
   });
+  it.each(["queued", "running"])(
+    "returns the existing %s coding run for a repeated launch without dispatching twice",
+    async (status) => {
+      const linearBinding = {
+        connectionId: "default",
+        workspaceId: randomUUID(),
+        ticketId: randomUUID(),
+      };
+      const existing = {
+        id: "existing-job",
+        type: "developer",
+        project: "app",
+        ticket: "APP-2",
+        status,
+        linearBinding,
+      };
+      const runners = {
+        jobs: vi.fn(async () => [existing]),
+        enqueue: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(async () => {}),
+      } as unknown as LocalRunners;
+      const jobs = {
+        selectDeveloperTicket: vi.fn(async (input) => ({
+          ...input,
+          ticket: "APP-2",
+        })),
+        validate: vi.fn(async () => ({
+          project: { config: {} },
+          area: { key: "core" },
+          ticket: { identifier: "APP-2", id: linearBinding.ticketId },
+          linearBinding,
+        })),
+      } as unknown as ReturnType<typeof createJobPreparation>;
+      const { url } = await start(undefined, [], {
+        runners,
+        jobs,
+        background: false,
+      });
+      vi.mocked(runners.start).mockClear();
+      for (const input of [
+        { type: "developer", project: "app", ticket: "APP-2" },
+        { type: "developer", project: "app" },
+      ]) {
+        const response = await post(`${url}/api/jobs`, input);
+        expect(response.status).toBe(202);
+        expect(await response.json()).toEqual({ job: existing, reused: true });
+      }
+      expect(runners.enqueue).not.toHaveBeenCalled();
+      expect(runners.start).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["queued", "running", "succeeded"])(
+    "opens immutable existing %s work before enforcing new-run approval or setup",
+    async (status) => {
+      const linearBinding = {
+        connectionId: "current",
+        workspaceId: randomUUID(),
+        ticketId: randomUUID(),
+      };
+      const instanceId = randomUUID();
+      const existing = {
+        id: "existing-job",
+        type: "developer",
+        project: "app",
+        projectInstanceId: instanceId,
+        ticket: "OLD-1",
+        status,
+        linearBinding,
+      };
+      const runners = {
+        jobs: vi.fn(async () => [existing]),
+        enqueue: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(async () => {}),
+      } as unknown as LocalRunners;
+      const validate = vi.fn(async () => {
+        throw new JobReadinessError(
+          "Ticket is completed and no longer approved.",
+        );
+      });
+      const resolveDeveloperIdentity = vi.fn(async () => ({
+        project: { config: { instanceId } },
+        ticket: { identifier: "NEW-1", id: linearBinding.ticketId },
+        linearBinding,
+      }));
+      const jobs = {
+        validate,
+        resolveDeveloperIdentity,
+      } as unknown as ReturnType<typeof createJobPreparation>;
+      const { url } = await start(undefined, [], {
+        runners,
+        jobs,
+        background: false,
+      });
+      vi.mocked(runners.start).mockClear();
+      const response = await post(`${url}/api/jobs`, {
+        type: "developer",
+        project: "app",
+        ticket: "NEW-1",
+      });
+      expect(response.status).toBe(status === "succeeded" ? 200 : 202);
+      expect(await response.json()).toEqual({ job: existing, reused: true });
+      expect(validate).not.toHaveBeenCalled();
+      expect(runners.enqueue).not.toHaveBeenCalled();
+      expect(runners.start).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["workspace", "issue", "incarnation"])(
+    "still requires full admission when read-only history differs by %s",
+    async (difference) => {
+      const linearBinding = {
+          connectionId: "current",
+          workspaceId: randomUUID(),
+          ticketId: randomUUID(),
+        },
+        instanceId = randomUUID();
+      const existing = {
+        id: "other-job",
+        type: "developer",
+        project: "app",
+        projectInstanceId:
+          difference === "incarnation" ? randomUUID() : instanceId,
+        ticket: "APP-1",
+        status: "succeeded",
+        linearBinding: {
+          ...linearBinding,
+          ...(difference === "workspace"
+            ? { workspaceId: randomUUID() }
+            : difference === "issue"
+              ? { ticketId: randomUUID() }
+              : {}),
+        },
+      };
+      const runners = {
+        jobs: vi.fn(async () => [existing]),
+        enqueue: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(async () => {}),
+      } as unknown as LocalRunners;
+      const validate = vi.fn(async () => {
+        throw new JobReadinessError("Approval is required for a new run.");
+      });
+      const jobs = {
+        validate,
+        resolveDeveloperIdentity: vi.fn(async () => ({
+          project: { config: { instanceId } },
+          ticket: { identifier: "APP-1", id: linearBinding.ticketId },
+          linearBinding,
+        })),
+      } as unknown as ReturnType<typeof createJobPreparation>;
+      const { url } = await start(undefined, [], {
+        runners,
+        jobs,
+        background: false,
+      });
+      const response = await post(`${url}/api/jobs`, {
+        type: "developer",
+        project: "app",
+        ticket: "APP-1",
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: "Approval is required for a new run.",
+      });
+      expect(validate).toHaveBeenCalledOnce();
+      expect(runners.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([true, false])(
+    "rechecks exact identity after a concurrent retry queue conflict (same issue: %s)",
+    async (sameIssue) => {
+      const linearBinding = {
+        connectionId: "default",
+        workspaceId: randomUUID(),
+        ticketId: randomUUID(),
+      };
+      const previous = {
+        id: "failed-attempt",
+        type: "developer",
+        project: "app",
+        ticket: "APP-1",
+        status: "failed",
+        linearBinding,
+      };
+      const existing = {
+        ...previous,
+        id: "winning-retry",
+        status: "queued",
+        linearBinding: {
+          ...linearBinding,
+          ticketId: sameIssue ? linearBinding.ticketId : randomUUID(),
+        },
+      };
+      let conflict = false;
+      const runners = {
+        jobs: vi.fn(async () => (conflict ? [previous, existing] : [previous])),
+        enqueue: vi.fn(async () => {
+          conflict = true;
+          throw new LocalRunnerError(
+            "That ticket already has a queued job.",
+            409,
+          );
+        }),
+        start: vi.fn(),
+        stop: vi.fn(async () => {}),
+      } as unknown as LocalRunners;
+      const identity = {
+        project: { config: {} },
+        area: { key: "core" },
+        ticket: { identifier: "APP-1", id: linearBinding.ticketId },
+        linearBinding,
+      };
+      const jobs = {
+        validate: vi.fn(async () => identity),
+        resolveDeveloperIdentity: vi.fn(async () => identity),
+      } as unknown as ReturnType<typeof createJobPreparation>;
+      const { url } = await start(undefined, [], {
+        runners,
+        jobs,
+        background: false,
+      });
+      vi.mocked(runners.start).mockClear();
+      const response = await post(`${url}/api/jobs`, {
+        type: "developer",
+        project: "app",
+        ticket: "APP-1",
+      });
+      expect(response.status).toBe(sameIssue ? 202 : 409);
+      if (sameIssue)
+        expect(await response.json()).toEqual({ job: existing, reused: true });
+      expect(runners.enqueue).toHaveBeenCalledOnce();
+      expect(runners.start).not.toHaveBeenCalled();
+    },
+  );
+
   it("authenticates worker mutations, validates job inputs, and serves only authorized artifacts", async () => {
     const create = vi.fn(async () => ({
       id: "worker-demo",
@@ -1827,12 +2065,12 @@ describe("local dashboard HTTP boundary", () => {
     [
       "the same ticket through another connection to its workspace",
       "same-workspace",
-      409,
+      200,
     ],
     [
       "the same immutable ticket after its identifier changed",
       "renamed-ticket",
-      409,
+      200,
     ],
     ["an unbound legacy job with the same identifier", "legacy", 409],
     ["the same ticket from a deleted project incarnation", "replacement", 202],
@@ -1889,15 +2127,12 @@ describe("local dashboard HTTP boundary", () => {
         })),
       } as unknown as ReturnType<typeof createJobPreparation>;
       const { url } = await start(undefined, [], { runners, jobs });
-      expect(
-        (
-          await post(`${url}/api/jobs`, {
-            type: "developer",
-            project: "app",
-            ticket: "ENG-123",
-          })
-        ).status,
-      ).toBe(expected);
+      const response = await post(`${url}/api/jobs`, {
+        type: "developer",
+        project: "app",
+        ticket: "ENG-123",
+      });
+      expect(response.status).toBe(expected);
       if (expected === 202)
         expect(enqueue).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1906,7 +2141,18 @@ describe("local dashboard HTTP boundary", () => {
             idempotencyKey: `developer:app:${projectInstanceId ? projectInstanceId + ":" : ""}${currentBinding.ticketId}`,
           }),
         );
-      else expect(enqueue).not.toHaveBeenCalled();
+      else if (expected === 409) {
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(await response.json()).toMatchObject({
+          error: expect.stringContaining("without a verified Linear identity"),
+        });
+      } else {
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(await response.json()).toMatchObject({
+          reused: true,
+          job: { id: "old-job", status: "succeeded" },
+        });
+      }
     },
   );
   it("keeps authentication and exact same-origin checks for explicitly allowed LAN hosts", async () => {

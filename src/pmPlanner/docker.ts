@@ -1,8 +1,12 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { parseClaudeUsage } from "../../runner-local/usage.mjs";
+import { createUsage, type UsageContext } from "../usage/index.ts";
 import { createDockerRunners, type DockerRun } from "../localRunners/docker.ts";
 
 export interface PlannerExecution {
+  /** Controller metadata only; never included in the prompt or container input. */
+  usageContext?: UsageContext;
   credential: string;
   prompt: string;
   system: string;
@@ -64,8 +68,9 @@ function failureCode(value: unknown): PlannerFailureCode | undefined {
 export const PLANNER_PROGRAM = String.raw`
 const { spawn } = require('node:child_process');
 const { mkdirSync } = require('node:fs');
-let finished = false;
-const fail = code => { if (finished) return; finished = true; process.stdout.write(JSON.stringify({plannerError:code})); process.exitCode = 2; };
+let finished = false, measured;
+const parseUsage = ${parseClaudeUsage.toString()};
+const fail = code => { if (finished) return; finished = true; process.stdout.write(JSON.stringify({plannerError:code,...(measured ? {plannerUsage:measured} : {})})); process.exitCode = 2; };
 const category = (result, diagnostic) => {
   if (result?.subtype === 'error_max_turns') return 'turn_limit';
   if (result?.subtype === 'error_max_structured_output_retries') return 'structured_output';
@@ -107,6 +112,7 @@ process.stdin.on('end', () => {
     if (finished) return;
     let result;
     try { result = JSON.parse(output); } catch { fail(category(undefined, diagnostic)); return; }
+    measured = parseUsage(result);
     if (code !== 0 || result.is_error || result.subtype !== 'success') { fail(category(result, diagnostic)); return; }
     try {
       const draft = result.structured_output ?? JSON.parse(result.result);
@@ -115,7 +121,7 @@ process.stdin.on('end', () => {
       if ([input.credential, encodeURIComponent(input.credential), JSON.stringify(input.credential).slice(1,-1)].some(token => encoded.includes(token))) { fail('unsafe_output'); return; }
       if (Buffer.byteLength(encoded) > 65536) { fail('output_limit'); return; }
       finished = true;
-      process.stdout.write(encoded);
+      process.stdout.write(JSON.stringify({plannerEnvelope:1,plannerOutput:draft,plannerUsage:measured ?? null}));
     } catch { fail('structured_output'); }
   });
   child.stdin.on('error', () => {});
@@ -176,6 +182,7 @@ export const runPlannerDocker: PlannerDockerRun = (args, options = {}) =>
   });
 
 export function createDockerPlanner(options: {
+  root?: string;
   packageRoot: string;
   run?: PlannerDockerRun;
   ensureImage?: () => Promise<string>;
@@ -183,6 +190,7 @@ export function createDockerPlanner(options: {
   maxInputBytes?: number;
 }): PlannerExecutor {
   const run = options.run ?? runPlannerDocker;
+  const usage = options.root ? createUsage({ root: options.root }) : undefined;
   return async (input) => {
     const payload = JSON.stringify({
       credential: input.credential,
@@ -197,6 +205,8 @@ export function createDockerPlanner(options: {
     if (!Number.isFinite(maximum) || Buffer.byteLength(payload) > maximum)
       throw new PlannerExecutionError("input_limit");
     const id = randomUUID();
+    let attempted = false,
+      measured: unknown;
     const name = `gremlins-plan-${id}`;
     let image: string;
     try {
@@ -259,12 +269,23 @@ export function createDockerPlanner(options: {
       );
       if (created.code !== 0)
         throw new PlannerExecutionError("runtime_unavailable");
+      attempted = true;
       const result = await run(["start", "--attach", "--interactive", name], {
         stdin: payload,
         timeoutMs: 125000,
         signal: input.signal,
-        maxBytes: 65536,
+        maxBytes: 69632,
       });
+      try {
+        const value = JSON.parse(result.stdout);
+        if (
+          value.plannerEnvelope === 1 ||
+          (result.code !== 0 && value.plannerError)
+        )
+          measured = value.plannerUsage;
+      } catch {
+        /* Provider metadata may be unavailable. */
+      }
       if (result.code !== 0) {
         let reported: PlannerFailureCode | undefined;
         try {
@@ -287,7 +308,11 @@ export function createDockerPlanner(options: {
         throw new PlannerExecutionError("model_error");
       }
       try {
-        return JSON.parse(result.stdout);
+        const value = JSON.parse(result.stdout);
+        return value.plannerEnvelope === 1 &&
+          Object.hasOwn(value, "plannerOutput")
+          ? value.plannerOutput
+          : value;
       } catch {
         throw new PlannerExecutionError("structured_output");
       }
@@ -298,6 +323,8 @@ export function createDockerPlanner(options: {
             input.signal.aborted ? "canceled" : "runtime_unavailable",
           );
     } finally {
+      if (attempted && input.usageContext)
+        usage?.operation(input.usageContext, measured, id);
       // Cancellation may occur after the daemon creates a container but before the CLI returns.
       // Check our unique label before removing it; never touch another process's containers.
       const inspected = await run(

@@ -132,6 +132,12 @@ export function selectRemoteArtifacts(
       Number(trustedNames.has(b.name)) - Number(trustedNames.has(a.name)),
   );
   for (const file of sorted) {
+    // Reserve one tiny metrics record without displacing reviewed evidence.
+    if (file.name === "usage.json") {
+      if (Number.isSafeInteger(file.size) && file.size > 0 && file.size <= 4096)
+        selected.push(file);
+      continue;
+    }
     if (
       (file.name === "pm-review-proof.json" ||
         file.name.startsWith("review-screenshots/")) &&
@@ -143,7 +149,7 @@ export function selectRemoteArtifacts(
       !Number.isSafeInteger(file.size) ||
       file.size < 0 ||
       file.size > 10 * 1024 * 1024 ||
-      selected.length >= 40 ||
+      selected.filter((entry) => entry.name !== "usage.json").length >= 40 ||
       size + file.size > 32 * 1024 * 1024
     ) {
       if (trustedNames.has(file.name)) omittedTrusted = true;

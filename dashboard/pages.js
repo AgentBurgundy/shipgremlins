@@ -8,6 +8,7 @@
     projects: "Projects",
     runners: "Your gremlins",
     activity: "Activity",
+    usage: "Usage",
     settings: "Settings",
     project: "Project",
   });
@@ -84,6 +85,20 @@
       const query = new URLSearchParams();
       const run = page === "activity" ? url.searchParams.get("run") || "" : "";
       if (run) query.set("run", run);
+      if (page === "usage") {
+        const range = url.searchParams.get("range");
+        if (["7d", "30d", "all"].includes(range)) query.set("range", range);
+        const usageProject = url.searchParams.get("project");
+        if (
+          usageProject &&
+          /^[a-zA-Z0-9_][a-zA-Z0-9._-]*$/.test(usageProject)
+        ) {
+          query.set("project", usageProject);
+          const instance = url.searchParams.get("instance");
+          if (instance && /^(?:legacy|[a-fA-F0-9-]{36})$/.test(instance))
+            query.set("instance", instance);
+        }
+      }
       if (pm) query.set("pm", pm);
       if (project && tab !== "brief" && tab !== "overview")
         query.set("tab", tab);
