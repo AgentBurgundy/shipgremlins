@@ -79,9 +79,13 @@ describe("Slack pairing", () => {
     const f = await fixture();
     await f.api.connect("http://127.0.0.1:4311/");
     const envelope = f.envelope();
-    await expect(f.api.complete(`X${envelope.slice(1)}`)).rejects.toThrow(
-      "verified",
-    );
+    // Flip an actual ciphertext byte; replacing a random character with "X"
+    // occasionally leaves the original envelope unchanged.
+    const tampered = Buffer.from(envelope, "base64url");
+    tampered[tampered.length - 1] = tampered[tampered.length - 1]! ^ 1;
+    const changedEnvelope = tampered.toString("base64url");
+    expect(changedEnvelope).not.toBe(envelope);
+    await expect(f.api.complete(changedEnvelope)).rejects.toThrow("verified");
     await expect(
       f.api.complete(f.envelope({ nonce: "other" })),
     ).rejects.toThrow("verified");
