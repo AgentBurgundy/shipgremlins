@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUsage } from "../usage/index.ts";
@@ -116,7 +116,7 @@ describe("isolated planner diagnostic boundary", () => {
       plannerError: "turn_limit",
       plannerUsage: { inputTokens: 10, complete: true },
     });
-    const root = mkdtempSync(join(tmpdir(), "planner-usage-"));
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "planner-usage-"));
     try {
       let current = wrapped,
         owner = "";

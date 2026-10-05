@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -17,7 +17,7 @@ afterEach(async () => {
     rmSync(root, { recursive: true, force: true });
 });
 async function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "usage-api-"));
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "usage-api-"));
   roots.push(root);
   const jobs = vi.fn(async () => [
     {

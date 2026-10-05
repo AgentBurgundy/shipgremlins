@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -48,7 +49,7 @@ const job = (extra: Partial<LocalJob> = {}): LocalJob => ({
   ...extra,
 });
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "gremlins-usage-"));
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-usage-"));
   roots.push(root);
   let time = new Date("2026-10-05T13:00:00.000Z");
   const options = { root, now: () => time };
