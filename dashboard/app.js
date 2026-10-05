@@ -169,12 +169,14 @@
   let pmCreating = false;
   let pmPlanning = false;
   let pmDraft = null;
+  let pmAdoption = null;
   const pmCreateDialog = $("pm-create-drawer");
   document.body.append(pmCreateDialog);
   let pmCreateTrigger = null;
   let pendingPmCreate = location.hash === "#pm-create-drawer";
   const areaActions = new Map();
   let pmActions;
+  let codingActions;
   let projectLayoutInitialized = false;
   let projectWorkspace = null;
   const pmCharter = window.createPmCharter(
@@ -536,40 +538,9 @@
         ? `${running} running · ${queued} queued`
         : "Current job status has not loaded.",
     );
-    text("setup-title", "Workspace status");
-    const setup = $("setup-title")?.closest(".setup-status");
-    if (setup) {
-      setup.setAttribute("aria-label", "Workspace status");
-      const eyebrow = setup.querySelector(".eyebrow");
-      if (eyebrow) eyebrow.textContent = "YOUR WORKSPACE";
-    }
-    if (!currentStatus) return;
-    text(
-      "welcome-title",
-      projects.length
-        ? "Your crew, at a glance."
-        : "Meet your new product crew.",
-    );
-    text(
-      "welcome-description",
-      projects.length
-        ? "See your projects, PM mandates, and current jobs. Launch a gremlin, then follow its work in Activity."
-        : "Connect your tools. Add your app. PM Gremlins find the gaps. Coding Gremlins build the fixes.",
-    );
-    const action = $("overview-primary-action");
-    if (action) {
-      action.href = projects.length
-        ? `/projects/${encodeURIComponent(projects[0].name)}`
-        : "/connections#source-control";
-      const arrow = element("span", "", "↗");
-      arrow.setAttribute("aria-hidden", "true");
-      action.replaceChildren(
-        document.createTextNode(
-          projects.length ? "Open your project " : "Set up your crew ",
-        ),
-        arrow,
-      );
-    }
+    window.renderFirstRunOverview?.(currentStatus, runnerStatus, {
+      locked: formsLocked,
+    });
   }
   function renderStatus(status) {
     currentStatus = status;
@@ -695,119 +666,40 @@
       repo.textContent = `${project.provider === "gitlab" ? "GitLab" : "GitHub"} · ${project.repo}`;
       const badge = document.createElement("span");
       badge.className = "project-row-badge";
-      badge.textContent = project.readiness?.canRun
-        ? "Ready to run"
-        : project.readiness?.blockers?.[0]?.action === "worker"
-          ? "Needs a worker"
-          : "Finish setup";
+      badge.textContent = project.foundation?.needed
+        ? "Build foundation"
+        : project.readiness?.canRun
+          ? "Ready to run"
+          : project.readiness?.blockers?.[0]?.action === "worker"
+            ? "Needs a worker"
+            : "Finish setup";
       title.append(badge);
       name.append(title, repo);
       const actions = element("div", "project-actions");
-      const verify = element("button", "small-button", "Verify connections");
-      verify.type = "button";
-      verify.dataset.verifyProject = project.name;
-      verify.dataset.projectControl = "verify";
-      const check = projectChecks.get(project.name);
-      verify.disabled = check?.busy === true;
-      if (check?.busy) verify.textContent = "Verifying…";
-      const edit = element("button", "small-button", "Edit settings");
+      const open = element(
+        "a",
+        "button button-dark",
+        project.foundation?.needed ? "Build foundation" : "Open project",
+      );
+      open.href = `/projects/${encodeURIComponent(project.name)}${project.foundation?.needed ? "?tab=environment" : ""}`;
+      open.dataset.projectControl = "open";
+      const edit = element("button", "small-button", "Settings");
       edit.type = "button";
       edit.dataset.editProject = project.name;
       edit.dataset.projectControl = "edit";
-      const secondary = element("div", "project-secondary-actions");
-      secondary.append(edit, verify);
-      actions.append(secondary);
-      const launch = element("div", "button-row project-launch");
-      for (const [type, label] of [
-        ["pm", "Run PM"],
-        ["developer", "Run Coding"],
-      ]) {
-        const needsPm = type === "pm" && !(project.areas || []).length;
-        const button = element(
-          "button",
-          `small-button launch-${type}`,
-          needsPm ? "+ Create PM" : label,
-        );
-        button.type = "button";
-        if (needsPm) button.dataset.createPmProject = project.name;
-        else {
-          button.dataset.launchProject = project.name;
-          button.dataset.launchCrew = type;
-        }
-        button.dataset.projectControl = needsPm
-          ? "create-pm-primary"
-          : `run-${type}`;
-        launch.append(button);
-      }
-      actions.append(launch);
+      actions.append(open, edit);
       row.append(name, actions);
       const card = element("div", "project-card");
       card.dataset.projectName = project.name;
       card.append(row);
-      const verification =
-        project.verification ||
-        (project.vercel
-          ? { mode: "browser", environment: "legacy Vercel" }
-          : { mode: "repository" });
-      const workflow = project.workflow || { kind: "promotion" };
+      const pmCount = project.areas?.length || 0;
       card.append(
         element(
           "p",
           "project-capabilities",
-          `${verification.mode === "repository" ? "Repository checks · no hosting required" : `Browser target: ${verification.environment}`} · ${workflow.kind === "pull-request" ? `Draft changes → ${workflow.baseBranch}` : "Staged promotion workflow"}`,
+          `${pmCount} ${pmCount === 1 ? "PM" : "PMs"}`,
         ),
       );
-      const target =
-        verification.mode === "browser"
-          ? project.environments?.[verification.environment] || project.vercel
-          : null;
-      const scopes = [];
-      if (target) {
-        const kind = target.kind || "vercel";
-        if (kind === "vercel")
-          scopes.push(
-            `Vercel project ${target.projectId} · ${target.teamId ? `team ${target.teamId}` : "connected account scope"}`,
-          );
-        else if (kind === "railway")
-          scopes.push(
-            `Railway project ${target.projectId} · environment ${target.environmentId}`,
-          );
-        else if (kind === "cloud-run")
-          scopes.push(
-            `Cloud Run ${target.projectId} · ${target.region}/${target.service}`,
-          );
-        else if (kind === "url") scopes.push(`Test app: ${target.url}`);
-      }
-      if (project.linear?.teamId)
-        scopes.push(
-          `Linear team: ${project.linear.teamName || project.linear.teamId}`,
-        );
-      if (scopes.length)
-        card.append(element("p", "project-scope", scopes.join(" · ")));
-      const projectSummary = element("div", "project-pm-actions");
-      const workspaceLink = element(
-        "a",
-        "small-button",
-        `Open workspace · ${project.areas?.length || 0} PMs →`,
-      );
-      workspaceLink.href = `/projects/${encodeURIComponent(project.name)}`;
-      projectSummary.append(workspaceLink);
-      card.append(projectSummary);
-      if (check) {
-        const result = element("div", "project-checks");
-        result.setAttribute("role", check.error ? "alert" : "status");
-        result.classList.toggle("error", Boolean(check.error));
-        result.append(element("p", "", check.message));
-        for (const item of check.checks || [])
-          result.append(
-            element(
-              "p",
-              "",
-              `${item.ok ? "✓" : "!"} ${item.name}: ${item.detail}`,
-            ),
-          );
-        card.append(result);
-      }
       list.append(card);
     }
     if (focusedProject && focusedControl) {
@@ -828,6 +720,7 @@
     projectWorkspace?.setStatus(status, formsLocked);
     projectOnboarding?.syncConnections();
     projectOperations?.resume();
+    projectOperations?.renderOverview();
     remoteWorkers?.setProjects(projects);
     if (!projectLayoutInitialized) {
       $("new-project-drawer").open =
@@ -1076,6 +969,7 @@
   if (sessionToken) void ideaCrew.restore();
   $("project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    let adoptionProject = "";
     const fromIdea = $("project-start").value === "idea";
     if (fromIdea && !ideaCrew.ready()) {
       message(
@@ -1186,7 +1080,7 @@
       linearModeEdited = false;
       renderProjectProvider();
       renderLinearSetup();
-      await refreshRepositories();
+      await refreshRepositories().catch(() => {});
       const created = Array.isArray(result.result?.created)
         ? result.result.created.length
         : null;
@@ -1194,17 +1088,21 @@
         $("project-message"),
         fromIdea
           ? `${result.message} ${linearResultMessage(result.linear)}`
-          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, choose and test the environment for your crew.`,
+          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, adopt a PM Gremlin and choose its job.`,
         result.linear?.status === "error",
       );
       try {
         await refreshStatus();
         await refreshConfigFiles();
         pages.navigate(
-          fromIdea
-            ? `/projects/${encodeURIComponent(data.project)}?pm=foundation`
-            : `/projects/${encodeURIComponent(data.project)}?tab=environment`,
+          `/projects/${encodeURIComponent(data.project)}${fromIdea ? "?tab=environment" : ""}`,
         );
+        if (
+          !fromIdea &&
+          !currentStatus?.projects?.find((item) => item.name === data.project)
+            ?.areas?.length
+        )
+          adoptionProject = data.project;
       } catch {
         message(
           $("global-message"),
@@ -1218,6 +1116,7 @@
       lockForms(!sessionToken);
       restoreButton("add-project", "Add project", "+");
       renderStartingPoint();
+      if (adoptionProject) openPmCreation(adoptionProject);
     }
   });
 
@@ -1912,7 +1811,15 @@
           );
           return;
         }
-        await pmActions.run(launch.dataset.launchProject, area, launch);
+        await (
+          launch.dataset.pmMode === "exploration"
+            ? pmActions.explore
+            : pmActions.run
+        )(launch.dataset.launchProject, area, launch);
+        return;
+      }
+      if (launch.dataset.launchCrew === "developer") {
+        await codingActions.run(launch.dataset.launchProject);
         return;
       }
       $("job-project").value = launch.dataset.launchProject;
@@ -1986,6 +1893,70 @@
   function runnerOperationBusy() {
     return runnerRequestBusy || runnerStatus?.operation?.phase === "working";
   }
+  function openRunnerManagement(runner, trigger) {
+    const dialog = element("dialog", "runner-management-dialog");
+    const header = element("header", "surface-dialog-header");
+    const title = element("h2", "", runner.name);
+    title.id = "runner-management-title";
+    dialog.setAttribute("aria-labelledby", title.id);
+    const close = element("button", "small-button", "Close");
+    close.type = "button";
+    const finish = () => {
+      dialog.close();
+      dialog.remove();
+      trigger.focus();
+    };
+    close.addEventListener("click", finish);
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish();
+    });
+    header.append(title, close);
+    const body = element("div", "surface-dialog-body");
+    body.append(
+      element(
+        "p",
+        "runner-guidance",
+        runner.message || "Manage this runner’s browser and local environment.",
+      ),
+    );
+    for (const [label, action, description] of [
+      [
+        "Verify browser",
+        "verify",
+        "Run a browser check to confirm the worker is ready.",
+      ],
+      [
+        "Repair worker",
+        "repair",
+        "Rebuild and verify this worker’s local environment.",
+      ],
+      [
+        "Remove worker",
+        "remove",
+        "Disconnect this local worker. You’ll review this action first.",
+      ],
+    ]) {
+      const row = element("section", "runner-management-action");
+      const button = actionButton(
+        label,
+        action,
+        runner.id,
+        Boolean(runner.busy),
+      );
+      button.addEventListener("click", () => {
+        dialog.close();
+        setTimeout(() => dialog.remove(), 0);
+      });
+      row.append(element("p", "", description), button);
+      body.append(row);
+    }
+    dialog.append(header, body);
+    document.body.append(dialog);
+    dialog.showModal();
+    updateRunnerControls();
+    close.focus();
+  }
   function updateRunnerControls() {
     const locked = formsLocked || !sessionToken || restarting;
     $("refresh-runners").disabled = locked || runnerLoading;
@@ -2011,13 +1982,20 @@
       (item) => item.key === $("job-area").value,
     );
     const pm = $("job-type").value === "pm";
+    const pmCanPrepare =
+      area?.canRun === true ||
+      (area?.blockers?.length > 0 &&
+        area.blockers.every((blocker) =>
+          ["linear_mapping", "verification"].includes(blocker.id),
+        ));
     $("run-job").disabled =
       locked ||
       runnerRequestBusy ||
       !workersAvailable ||
       !project ||
+      Boolean(selected?.foundation?.needed) ||
       (pm
-        ? !$("job-area").value || !area?.canRun
+        ? !$("job-area").value || !pmCanPrepare
         : !selected?.readiness?.canRun);
     $("job-ticket").required = false;
     $("job-ticket").disabled = pm;
@@ -2030,7 +2008,7 @@
         ? "Run PM once ↗"
         : $("job-ticket").value.trim()
           ? "Run this ticket ↗"
-          : "Run next approved ticket ↗";
+          : "Start coding ↗";
     for (const button of document.querySelectorAll("[data-crew-type]"))
       button.setAttribute(
         "aria-pressed",
@@ -2039,20 +2017,30 @@
     const blockers = pm
       ? area?.blockers || selected?.readiness?.blockers
       : selected?.readiness?.blockers;
-    $("job-guidance").textContent = !project
-      ? "Add a project in Projects to get started."
-      : blockers?.length
-        ? "Finish the setup steps below to start this run."
-        : pm && !$("job-area").value
-          ? "Create a PM mandate in Projects first."
-          : pm
-            ? "Investigates this mandate once. Automation stays as it is."
-            : $("job-ticket").value.trim()
-              ? "Checks this ticket’s approval and ownership, then starts one coding run. Automation stays as it is."
-              : "Finds the next ready, approved ticket in this project’s Linear queue and starts one coding run. It does not approve tickets or change automation.";
+    $("job-guidance").textContent = selected?.foundation?.needed
+      ? "Build the first milestone from this project’s Environment tab. Your PMs can explore once there is an app."
+      : !project
+        ? "Add a project in Projects to get started."
+        : pm && !area?.canRun && pmCanPrepare
+          ? "Prepares this PM’s Linear mapping and verifies connections, then runs it once. Automation stays as it is."
+          : blockers?.length
+            ? "Finish the setup steps below to start this run."
+            : pm && !$("job-area").value
+              ? "Create a PM mandate in Projects first."
+              : pm
+                ? "Investigates this mandate once. Automation stays as it is."
+                : $("job-ticket").value.trim()
+                  ? "Checks this ticket’s approval and ownership, then starts one coding run. Automation stays as it is."
+                  : "Finds the next ready, approved ticket in this project’s Linear queue and starts one coding run. It does not approve tickets or change automation.";
     $("job-setup-guide").replaceChildren(
-      ...(selected
-        ? [window.renderCrewSetup(selected, { blockers, compact: true })]
+      ...(selected &&
+      (selected.foundation?.needed ||
+        (blockers?.length && !(pm && pmCanPrepare)))
+        ? [
+            selected.foundation?.needed
+              ? window.renderFoundationLauncher(selected)
+              : window.renderCrewSetup(selected, { blockers, compact: true }),
+          ]
         : []),
     );
     for (const button of document.querySelectorAll("[data-runner-action]")) {
@@ -2069,7 +2057,10 @@
     for (const button of document.querySelectorAll(
       '[data-launch-crew="developer"]',
     ))
-      button.disabled = locked || runnerRequestBusy;
+      button.disabled =
+        locked ||
+        runnerRequestBusy ||
+        Boolean(codingActions?.getState(button.dataset.launchProject)?.busy);
     const remove = runnerStatus?.runners?.find(
       (runner) => runner.id === removeRunnerId,
     );
@@ -2167,6 +2158,7 @@
     $("runner-credentials").textContent = missing.length
       ? `Some jobs need additional connections: ${missing.join(", ")}. Save the credentials for your project above before running it.`
       : "Project credentials are loaded from this server for each job. Saving credentials does not start work.";
+    $("runner-credentials").hidden = !missing.length;
     $("runner-limitations").replaceChildren(
       ...(status.limitations || []).map((text) => element("li", "", text)),
     );
@@ -2205,7 +2197,7 @@
           ),
         );
         card.append(heading);
-        if (runner.message)
+        if (runner.message && !["ready", "busy"].includes(state))
           card.append(element("p", "runner-guidance", runner.message));
         if (runner.verifiedAt)
           card.append(
@@ -2216,15 +2208,18 @@
             ),
           );
         const actions = element("div", "button-row worker-actions");
+        const manage = element("button", "small-button", "Manage");
+        manage.type = "button";
+        manage.addEventListener("click", () =>
+          openRunnerManagement(runner, manage),
+        );
         actions.append(
-          actionButton("Verify browser job", "verify", runner.id),
-          actionButton("Repair", "repair", runner.id),
           actionButton(
             runner.status === "paused" ? "Resume" : "Pause",
             runner.status === "paused" ? "resume" : "pause",
             runner.id,
           ),
-          actionButton("Remove", "remove", runner.id),
+          manage,
         );
         card.append(actions);
         if (runner.busy)
@@ -2332,7 +2327,7 @@
           "worker-empty",
           activityFilter === "running"
             ? "Nothing running right now. Your crew’s next job will appear here."
-            : "No matching activity yet. Run a gremlin above to start its trail of actions and evidence.",
+            : "No matching activity yet. Start a run from a project or Your gremlins to see its progress here.",
         ),
       );
     for (const job of [...visible].reverse()) {
@@ -2342,14 +2337,18 @@
         element(
           "h4",
           "",
-          `${job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
+          `${job.grumblin ? `AI customer simulation · ${job.grumblin.name}` : job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : job.pmMode === "exploration" ? "PM Gremlin · Product exploration" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
         ),
       );
       text.append(
         element(
           "p",
           "",
-          [job.area || job.ticket, timestamp(job.createdAt), job.message]
+          [
+            job.type === "developer" ? job.ticket || job.area : job.area,
+            timestamp(job.createdAt),
+            job.message,
+          ]
             .filter(Boolean)
             .join(" · "),
         ),
@@ -2516,7 +2515,8 @@
         : "Queuing your job…",
     );
     try {
-      const result = await (type === "developer" && !body.ticket
+      const result = await (type === "pm" ||
+      (type === "developer" && !body.ticket)
         ? api("/api/jobs", body, "POST", 90000)
         : api("/api/jobs", body));
       message(
@@ -2735,16 +2735,6 @@
         );
       rows.push(row);
     }
-    if (!rows.length)
-      rows.push(
-        existing.get("empty") ||
-          element(
-            "li",
-            "activity-empty",
-            "No structured activity yet. Actions appear here as the worker reports them.",
-          ),
-      );
-    if (!activity.events?.length) rows[0].dataset.eventKey = "empty";
     const retained = new Set(rows);
     for (const row of [...timeline.children])
       if (!retained.has(row)) row.remove();
@@ -2787,6 +2777,11 @@
         Boolean(error),
       );
     }
+    $("run-artifact-empty").hidden = Boolean(
+      $("job-artifacts").children.length ||
+      outputErrors.get("artifacts") ||
+      outputNotices.get("artifacts"),
+    );
     renderPatrolOutput();
   }
   function renderPatrolOutput() {
@@ -2823,6 +2818,11 @@
   const runViewer = window.createRunViewer($("job-detail"), {
     onClose: () => closeJobDetail(),
   });
+  const grumblinReport = window.createGrumblinReport?.({
+    root: $("grumblin-report"),
+    fetchArtifact,
+    renderMarkdown: window.renderKnowledgeDocument,
+  });
   const jobOutput = window.createJobOutput({
     load: (resource, id, signal) =>
       api(
@@ -2836,9 +2836,7 @@
       const notice =
         (value.partial || value.pending) && typeof value.message === "string"
           ? value.message
-          : resource === "artifacts" && value.pending
-            ? "Artifacts appear after the run finishes."
-            : "";
+          : "";
       if (notice) outputNotices.set(resource, notice);
       else outputNotices.delete(resource);
       if (resource === "activity") {
@@ -2859,6 +2857,7 @@
           !patrolOutput.artifacts.length
         )
           patrolOutput.artifacts = value.files || [];
+        await grumblinReport?.render(context.id, value.files || [], context);
       }
       renderPatrolOutput();
       if (resource === "logs") {
@@ -2882,7 +2881,7 @@
           if (atEnd) log.scrollTop = log.scrollHeight;
         }
       } else if (resource === "activity") {
-        renderActivity(value);
+        renderActivity(patrolOutput.activity);
       } else if (!(
         value.partial &&
         !value.files?.length &&
@@ -2936,6 +2935,10 @@
     if (!id) return;
     const changed = id !== selectedJobId;
     selectedJobId = id;
+    grumblinReport?.select(
+      id,
+      mergedJobs().find((job) => job.id === id),
+    );
     jobOutput.select(id);
     if (changed) {
       $("job-action-confirm").hidden = true;
@@ -2981,20 +2984,24 @@
     if (!selectedJobId) return;
     renderPatrolOutput();
     const job = mergedJobs().find((item) => item.id === selectedJobId);
+    grumblinReport?.select(selectedJobId, job);
     const project = currentStatus?.projects?.find(
       (item) =>
         item.name === job?.project &&
         (item.instanceId ?? null) === (job?.projectInstanceId ?? null),
     );
     const area = project?.areas?.find((item) => item.key === job?.area);
-    const role =
-      job?.type === "verify"
+    const role = job?.grumblin
+      ? `AI customer simulation · ${job.grumblin.name}`
+      : job?.type === "verify"
         ? "Worker check"
         : job?.type === "developer"
           ? "Coding"
           : job?.pmMode === "discovery"
             ? "Discovery"
-            : "PM patrol";
+            : job?.pmMode === "exploration"
+              ? "Product exploration"
+              : "PM patrol";
     $("job-detail-title").textContent =
       `${role}${job?.runId ? ` · Run ${job.runId}` : ""}`;
     $("job-detail-context").textContent = [
@@ -3045,8 +3052,8 @@
       "running",
       "loading",
     ].includes(status)
-      ? "Artifacts appear after the worker finishes and sanitizes its output."
-      : "No artifacts have been returned for this run.";
+      ? "Evidence will appear here when the run finishes."
+      : "No screenshots or files were saved for this run.";
     const metadata = [
       ["Created", job?.createdAt],
       ["Started", job?.startedAt],
@@ -3109,6 +3116,16 @@
       return;
     }
     if (!active && !["failed", "canceled"].includes(job.status)) return;
+    if (!active && (job.grumblin || job.pmMode === "grumblin")) {
+      const review = element(
+        "a",
+        "small-button",
+        "Review Grumblin & simulate again",
+      );
+      review.href = `/projects/${encodeURIComponent(job.project)}?tab=grumblins`;
+      root.append(review);
+      return;
+    }
     const action = element(
       "button",
       "small-button",
@@ -3222,6 +3239,7 @@
   });
   function closeJobDetail({ navigate = true, restoreFocus = true } = {}) {
     selectedJobId = "";
+    grumblinReport?.clear();
     clearTimeout(jobOutputTimer);
     jobOutput.close();
     outputErrors.clear();
@@ -3311,6 +3329,8 @@
       select.append(new Option("Add an app first", ""));
     else if ([...select.options].some((option) => option.value === previous))
       select.value = previous;
+    if (pmCreationProject && pmCreationProject !== select.value)
+      changePmCreationProject(select.value);
     renderLinearSetup();
   }
   function renderLinearSetup() {
@@ -3387,7 +3407,8 @@
       linearConnected(project?.linear?.connectionId || "default") &&
       project?.linear?.teamId
         ? "Creates a Linear project in this app’s team, or uses the project you select."
-        : "The PM is saved locally first. Use Manage Linear mappings in this project's settings to finish its setup.";
+        : "The PM is saved locally first. Its first run sets up missing Linear mappings when a connection is available.";
+    pmAdoption?.setBusy(pmCreating || pmPlanning);
   }
   async function refreshLinearResources() {
     if (!sessionToken) return;
@@ -3456,25 +3477,74 @@
     refreshLinearResources,
   );
   const pmEditedFields = new Set();
+  let pmValidationField = null;
+  const pmCreationDrafts = new Map();
+  let pmCreationProject = "";
+  let pmGeneratedValues = null;
+  function changePmCreationProject(project) {
+    if (pmCreationProject === project) return;
+    if (pmCreationProject && !pmAdoption?.accepted)
+      pmCreationDrafts.set(pmCreationProject, {
+        ...readPmDraft(),
+        keyEdited: pmKeyEdited,
+        mixpanelReport: $("pm-mixpanel-report").value,
+        linearProject: $("pm-linear-project").value,
+        generated: pmGeneratedValues,
+      });
+    const saved = pmCreationDrafts.get(project);
+    for (const [id, key] of Object.entries(pmInputKeys))
+      $(id).value =
+        saved?.[key] ??
+        ({ schedule: "0 13 * * 1-5", metric: "/", wipLimit: "3" }[key] || "");
+    $("pm-mandate").value = saved?.mandate || "";
+    $("pm-mixpanel-report").value = saved?.mixpanelReport || "";
+    $("pm-linear-project").value = saved?.linearProject || "";
+    pmCharter.fill(saved?.charter || {});
+    pmEditedFields.clear();
+    for (const key of saved?.editedFields || []) pmEditedFields.add(key);
+    pmKeyEdited = saved?.keyEdited || false;
+    pmGeneratedValues = saved?.generated || null;
+    pmCreationProject = project;
+    $("pm-project").value = project;
+    pmDraft?.reset();
+    pmAdoption?.contextChanged();
+    message($("pm-create-message"), "");
+  }
   function openPmCreation(project = "", trigger = document.activeElement) {
     if (formsLocked || pmCreating) return;
-    if (project && $("pm-project").value !== project) {
-      $("pm-project").value = project;
-      pmDraft?.reset();
+    if (!currentStatus?.projects?.length) {
+      pages.navigate("/projects#new-project-drawer");
+      return;
     }
+    changePmCreationProject(project || $("pm-project").value);
     pmCreateTrigger = trigger;
     pendingPmCreate = false;
     if (!pmCreateDialog.open) pmCreateDialog.showModal();
     renderLinearSetup();
     updatePmCreationReview();
-    $("pm-mandate").focus();
+    if (pmAdoption) pmAdoption.open({ preselected: Boolean(project) });
+    else $("pm-mandate").focus();
     refreshLinearResources();
   }
+  window.openGremlinAdoption = openPmCreation;
   function closePmCreation() {
     if (pmCreating) return;
     pmCreateDialog.close();
-    if (pmCreateTrigger?.isConnected)
-      pmCreateTrigger.focus({ preventScroll: true });
+    const visible = (element) =>
+      element?.isConnected &&
+      element.getClientRects().length &&
+      !element.disabled;
+    const fallback =
+      [...document.querySelectorAll("[data-create-pm-project]")].find(
+        (element) =>
+          element.dataset.createPmProject === $("pm-project").value &&
+          visible(element),
+      ) || [...document.querySelectorAll("main h1, main h2")].find(visible);
+    const target = visible(pmCreateTrigger) ? pmCreateTrigger : fallback;
+    if (target) {
+      if (target.matches("h1, h2")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
   }
   $("close-pm-create").addEventListener("click", closePmCreation);
   pmCreateDialog.addEventListener("cancel", (event) => {
@@ -3504,6 +3574,10 @@
   $("pm-create-form").addEventListener(
     "input",
     (event) => {
+      if (pmValidationField === event.target) {
+        pmValidationField = null;
+        message($("pm-create-message"), "");
+      }
       const key = pmInputKeys[event.target.id];
       if (key) pmEditedFields.add(key);
       updatePmCreationReview();
@@ -3523,8 +3597,9 @@
       ? `Area label: pm:${$("pm-key").value}`
       : "The area label is generated from this ID.";
     $("pm-creation-readiness").textContent = missing.length
-      ? `Still needed: ${missing.join(", ")}. Choose an app and write the mandate; Fill with AI can complete the PM details.`
-      : "Required details are filled. Review your setup, then create the PM. It stays paused; no run starts unless you select discovery below.";
+      ? `Still needed: ${missing.join(", ")}. AI can help turn your goal into a working brief.`
+      : "Their brief is ready to review. Adoption saves it with automation off.";
+    pmAdoption?.refresh();
   }
   const readPmDraft = () => ({
     editedFields: [...pmEditedFields].sort(),
@@ -3546,16 +3621,15 @@
       pmPlanning = busy;
       renderLinearSetup();
     },
-    onError: (error) =>
-      message(
-        $("pm-create-message"),
-        typeof error === "string" ? error : error.message,
-        true,
-      ),
+    onError: () => message($("pm-create-message"), ""),
     onApply: (draft, snapshot) => {
       if (JSON.stringify(snapshot) !== JSON.stringify(readPmDraft()))
         return false;
-      const { values, kept } = window.mergePmDraft(snapshot, draft);
+      const { values, kept } = window.mergePmDraft(
+        snapshot,
+        draft,
+        pmGeneratedValues,
+      );
       for (const [key, id] of Object.entries({
         name: "pm-name",
         key: "pm-key",
@@ -3569,16 +3643,86 @@
           ? values[key].join("\n")
           : String(values[key]);
       pmCharter.fill(values.charter);
+      pmGeneratedValues = readPmDraft();
+      for (const key of kept) {
+        if (key.startsWith("charter."))
+          delete pmGeneratedValues.charter[key.slice(8)];
+        else delete pmGeneratedValues[key];
+      }
       pmKeyEdited = true;
       message($("pm-create-message"), "");
       updatePmCreationReview();
+      if (pmAdoption) pmAdoption.review();
+      else $("pm-name").focus();
       return {
-        message: `Draft filled.${kept.length ? " Your edits were kept." : ""} Review below, then Create PM.`,
+        message: `Brief drafted.${kept.length ? " Your edits were kept." : ""} Review your gremlin before adoption.`,
       };
     },
   });
+  pmAdoption = window.createGremlinAdoption?.({
+    dialog: pmCreateDialog,
+    getInput: readPmDraft,
+    getProject: (name) =>
+      currentStatus?.projects?.find((project) => project.name === name),
+    getJobs: mergedJobs,
+    isLocked: () =>
+      formsLocked ||
+      !sessionToken ||
+      restarting ||
+      !currentStatus?.projects?.length,
+    onDraft: () => {
+      message($("pm-create-message"), "");
+      return pmDraft.generate();
+    },
+    onRefreshReadiness: async () => {
+      await refreshStatus();
+    },
+    onOpenHome: (adopted) => {
+      closePmCreation();
+      pages.navigate(
+        `/projects/${encodeURIComponent(adopted.project)}?pm=${encodeURIComponent(adopted.key)}`,
+      );
+    },
+    onFirstTask: async (adopted, trigger) => {
+      const project = currentStatus?.projects?.find(
+        (item) => item.name === adopted.project,
+      );
+      if (!project?.areas?.some((area) => area.key === adopted.key)) {
+        await refreshStatus();
+        return;
+      }
+      closePmCreation();
+      if (project.foundation?.needed) {
+        pages.navigate(
+          `/projects/${encodeURIComponent(adopted.project)}?tab=environment`,
+        );
+        return;
+      }
+      const active = mergedJobs().find(
+        (job) =>
+          job.type === "pm" &&
+          job.project === adopted.project &&
+          job.area === adopted.key &&
+          (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
+          ["queued", "running"].includes(job.status),
+      );
+      if (active) {
+        selectJob(active.id);
+        return;
+      }
+      pages.navigate(
+        `/projects/${encodeURIComponent(adopted.project)}?pm=${encodeURIComponent(adopted.key)}&tab=discovery`,
+      );
+      const readiness = project.readiness?.areas?.find(
+        (area) => area.key === adopted.key,
+      )?.discovery;
+      if (readiness?.canRun)
+        await projectWorkspace.discover(adopted.project, adopted.key, trigger);
+    },
+  });
+  window.gremlinAdoption = pmAdoption;
   $("pm-project").addEventListener("change", () => {
-    pmDraft.reset();
+    changePmCreationProject($("pm-project").value);
     refreshLinearResources();
     updatePmCreationReview();
   });
@@ -3709,6 +3853,7 @@
   $("pm-create-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (pmCreating || pmPlanning || formsLocked) return;
+    if (pmAdoption && !pmAdoption.prepareSubmit()) return;
     const project = $("pm-project").value;
     const input = {
       key: $("pm-key").value.trim(),
@@ -3728,6 +3873,9 @@
       return;
     }
     if (input.schedule.split(/\s+/).length !== 5) {
+      pmValidationField = $("pm-schedule");
+      pmAdoption?.reveal($("pm-schedule"));
+      $("pm-schedule").focus();
       message(
         $("pm-create-message"),
         "Use a five-field UTC cron schedule, such as 0 13 * * 1-5.",
@@ -3750,12 +3898,14 @@
     if ($("pm-linear-project").value)
       input.linearProjectId = $("pm-linear-project").value;
     pmCreating = true;
+    pmValidationField = null;
     renderLinearSetup();
-    $("create-pm").textContent = "Creating PM…";
+    $("create-pm").textContent = "Adopting…";
     message(
       $("pm-create-message"),
       "Saving the mandate and setting up its Linear project when available…",
     );
+    let accepted = false;
     try {
       const result = await api(
         `/api/projects/${encodeURIComponent(project)}/areas`,
@@ -3763,47 +3913,76 @@
         "POST",
         90000,
       );
-      const startDiscovery = $("pm-discover-after-create").checked;
+      accepted = true;
+      pmAdoption?.adopted({
+        ...input,
+        project,
+        setupMessage: ["needs-connection", "skipped"].includes(
+          result.linear?.status,
+        )
+          ? "Linear can be connected when you’re ready to propose work."
+          : linearResultMessage(result.linear),
+      });
       $("pm-create-form").reset();
       pmCharter.reset();
       pmDraft?.reset();
       pmKeyEdited = false;
       pmEditedFields.clear();
+      pmCreationDrafts.delete(project);
+      pmGeneratedValues = null;
       updatePmCreationReview();
       $("pm-project").value = project;
       message(
         $("pm-create-message"),
-        `${input.name} is saved with automation off. ${linearResultMessage(result.linear)} Choose Run now to try it, or turn Automation on for scheduled work.`,
+        `${input.name} is adopted with automation off. ${linearResultMessage(result.linear)}`,
         result.linear?.status === "error",
       );
-      await refreshStatus();
-      await refreshConfigFiles();
-      await refreshLinearResources();
       areaActions.set(`${project}/${input.key}`, {
         message: `${input.name} is ready to set up. ${linearResultMessage(result.linear)}`,
         error: result.linear?.status === "error",
       });
-      pmCreateDialog.close();
-      pages.navigate(
-        `/projects/${encodeURIComponent(project)}?pm=${encodeURIComponent(input.key)}${startDiscovery ? "&tab=discovery" : ""}`,
-      );
-      if (startDiscovery)
-        await projectWorkspace.discover(project, input.key).catch(() => {});
+      const refreshed = await Promise.allSettled([
+        refreshStatus(),
+        refreshConfigFiles(),
+        refreshLinearResources(),
+      ]);
+      if (refreshed.some((result) => result.status === "rejected"))
+        pmAdoption?.setWelcomeWarning(
+          `${input.name} is adopted. Some setup information could not refresh. Refresh readiness before starting their first task.`,
+        );
+      if (!pmAdoption) {
+        pmCreateDialog.close();
+        pages.navigate(
+          `/projects/${encodeURIComponent(project)}?pm=${encodeURIComponent(input.key)}`,
+        );
+      }
     } catch (error) {
-      message(
-        $("pm-create-message"),
-        `${error.message} Your draft is still here.`,
-        true,
-      );
+      if (accepted)
+        pmAdoption?.setWelcomeWarning(
+          `${input.name} is adopted. ${error.message} Refresh readiness to continue.`,
+        );
+      else
+        message(
+          $("pm-create-message"),
+          `${error.message} Your draft is still here.`,
+          true,
+        );
     } finally {
       pmCreating = false;
       renderLinearSetup();
-      $("create-pm").textContent = "Create PM";
+      pmAdoption?.refresh();
+      if (accepted) pmAdoption?.focusWelcome();
     }
   });
   $("pm-create-form").addEventListener(
     "invalid",
     (event) => {
+      const first = $("pm-create-form").querySelector(
+        ":invalid:not(fieldset):not(form)",
+      );
+      if (first && first !== event.target) return;
+      pmValidationField = event.target;
+      pmAdoption?.reveal(event.target);
       for (
         let section = event.target.closest("details");
         section;
@@ -4466,7 +4645,7 @@
 
   async function requestEditorAction(action, path = editor.path) {
     if (editor.busy || formsLocked || !sessionToken) return;
-    if ($("advanced-settings")) $("advanced-settings").open = true;
+    window.revealDashboardSetting?.($("advanced-settings"));
     if (isEditorDirty()) {
       pendingEditorAction = { action, path };
       $("config-file").value = editor.path;
@@ -4767,16 +4946,33 @@
     refreshJobOutput();
   }
 
-  function focusProjectSection(section) {
+  function prepareProjectSections(section = "project") {
+    const signals = $("edit-project-settings").querySelector(
+      ".project-signals-settings",
+    );
+    $("edit-signals-settings").replaceChildren(...(signals ? [signals] : []));
+    focusProjectSection(section, false);
+  }
+  function focusProjectSection(section, focus = true) {
+    projectEditor.section = section;
+    $("edit-project-settings").hidden = section !== "project";
+    $("edit-signals-settings").hidden = section !== "signals";
+    $("edit-linear-settings").hidden = section !== "linear";
+    $("save-project-settings").closest(".form-bottom").hidden =
+      section === "linear";
+    for (const button of document.querySelectorAll("[data-project-section]"))
+      button.setAttribute(
+        "aria-current",
+        button.dataset.projectSection === section ? "page" : "false",
+      );
     const target =
       section === "linear"
         ? $("edit-linear-settings")
         : section === "signals"
-          ? $("edit-project-settings").querySelector(
-              ".project-signals-settings",
-            )
+          ? $("edit-signals-settings")
           : $("edit-project-settings");
     if (!target) return;
+    if (!focus) return;
     target.setAttribute("tabindex", "-1");
     target.focus({ preventScroll: true });
     target.scrollIntoView({ block: "start" });
@@ -4785,6 +4981,24 @@
     button.addEventListener("click", () =>
       focusProjectSection(button.dataset.projectSection),
     );
+  $("edit-project-form").addEventListener(
+    "invalid",
+    (event) => {
+      const first = $("edit-project-form").querySelector(
+        ":invalid:not(fieldset):not(form)",
+      );
+      if (first && first !== event.target) return;
+      focusProjectSection(
+        event.target.closest("#edit-signals-settings")
+          ? "signals"
+          : event.target.closest("#edit-linear-settings")
+            ? "linear"
+            : "project",
+        false,
+      );
+    },
+    true,
+  );
 
   async function openProjectSettings(name, trigger) {
     if (projectEditor.busy || projectLinearSettings?.isBusy()) return;
@@ -4793,6 +5007,10 @@
     projectEditor.path = `projects/${name}/project.json`;
     projectEditor.trigger = trigger || projectEditor.trigger;
     projectEditor.busy = true;
+    projectEditor.form = null;
+    $("edit-project-settings").replaceChildren();
+    $("edit-signals-settings").replaceChildren();
+    focusProjectSection("project", false);
     updateProjectEditorControls();
     $("project-settings-title").textContent = `Edit ${name}`;
     if ($("project-settings-name"))
@@ -4813,8 +5031,17 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
-        { projectName: projectEditor.name, connections: serviceProfiles },
+        {
+          projectName: projectEditor.name,
+          connections: serviceProfiles,
+          onReveal: (input) =>
+            focusProjectSection(
+              input.closest("#edit-signals-settings") ? "signals" : "project",
+              false,
+            ),
+        },
       );
+      prepareProjectSections();
       $("project-settings-repo").textContent =
         projectEditor.config.repo || "Project configuration";
       if ($("project-settings-provider"))
@@ -4825,6 +5052,8 @@
     } catch (error) {
       projectEditor.form = null;
       $("edit-project-settings").replaceChildren();
+      $("edit-signals-settings").replaceChildren();
+      focusProjectSection("project", false);
       $("project-settings-repo").textContent = "Configuration needs repair";
       if ($("project-settings-provider"))
         $("project-settings-provider").textContent = "Local project";
@@ -4896,7 +5125,7 @@
   $("close-project-settings").addEventListener("click", () =>
     projectSettingsAction("close"),
   );
-  $("edit-project-settings").addEventListener("click", (event) => {
+  $("edit-project-form").addEventListener("click", (event) => {
     if (event.target.closest('a[href="#connections"]')) {
       event.preventDefault();
       projectSettingsAction("connections");
@@ -4963,8 +5192,17 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
-        { projectName: projectEditor.name, connections: serviceProfiles },
+        {
+          projectName: projectEditor.name,
+          connections: serviceProfiles,
+          onReveal: (input) =>
+            focusProjectSection(
+              input.closest("#edit-signals-settings") ? "signals" : "project",
+              false,
+            ),
+        },
       );
+      prepareProjectSections(projectEditor.section);
       if (projectLinearSettings?.isDirty()) {
         // Rebase only against this save's exact content/revision. A later GET
         // could adopt another operator's edit without refreshing our form.
@@ -5115,7 +5353,7 @@
         "Restarting reloads this page and clears unsaved configuration and form entries. Save your changes or copy your draft before restarting.";
       $("discard-changes").textContent = "Restart and discard";
       $("discard-prompt").hidden = false;
-      if ($("advanced-settings")) $("advanced-settings").open = true;
+      window.revealDashboardSetting?.($("advanced-settings"));
       pages.navigate("/settings#discard-prompt");
       $("keep-editing").focus();
       return;
@@ -5302,6 +5540,8 @@
     onRestore: (target) => openDeletion(target),
   });
   projectOperations = window.createProjectOperations({
+    getCodingAction: (name) => codingActions?.getState(name),
+    getJobs: mergedJobs,
     api,
     pages,
     inbox: $("inbox-content"),
@@ -5376,6 +5616,7 @@
     onDelete: openDeletion,
     getCheck: (name) => projectChecks.get(name),
     getAreaAction: (project, area) => areaActions.get(`${project}/${area}`),
+    getCodingAction: (project) => codingActions?.getState(project),
     onSaved: refreshStatus,
     onCreatePm: (project) => {
       openPmCreation(project);
@@ -5415,6 +5656,19 @@
       selectJob(job.id);
       refreshRunners();
     },
+  });
+  codingActions = window.createCodingActions({
+    api,
+    getProject: (name) =>
+      currentStatus?.projects?.find((project) => project.name === name),
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onState: () => renderStatus(currentStatus),
+    onChanged: refreshRunners,
+    onJob: (job) => {
+      jobHistory = [...jobHistory.filter((item) => item.id !== job.id), job];
+      selectJob(job.id);
+    },
+    onFinished: scheduleRunnerPoll,
   });
   initialize();
 })();

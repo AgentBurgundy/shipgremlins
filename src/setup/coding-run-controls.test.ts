@@ -29,6 +29,45 @@ function elements() {
     return items.get(id)!;
   };
 }
+function controlsFixture(blockers: { id: string; message: string }[] = []) {
+  const $ = elements();
+  $("job-project").value = "shop";
+  $("job-type").value = "pm";
+  $("job-area").value = "core";
+  const area = { key: "core", canRun: blockers.length === 0, blockers };
+  const project = {
+    name: "shop",
+    foundation: { needed: false },
+    readiness: { canRun: blockers.length === 0, blockers, areas: [area] },
+  };
+  const context = {
+    $,
+    formsLocked: false,
+    sessionToken: "test",
+    restarting: false,
+    runnerLoading: false,
+    runnerRequestBusy: false,
+    removeRunnerId: "",
+    runnerStatus: {
+      runners: [{ id: "worker", status: "ready" }],
+      machine: { docker: { available: true } },
+    },
+    runnerOperationBusy: () => false,
+    currentStatus: { projects: [project] },
+    document: { querySelectorAll: () => [] },
+    window: {
+      renderCrewSetup: vi.fn(() => new Element()),
+      renderFoundationLauncher: vi.fn(() => new Element()),
+    },
+  };
+  const start = app.indexOf("  function updateRunnerControls() {"),
+    end = app.indexOf("  function renderJobProjects()", start);
+  const update = runInNewContext(
+    `(${app.slice(start, end).trim()})`,
+    context,
+  ) as () => void;
+  return { $, area, project, context, update };
+}
 function queueFixture(
   api = vi.fn(async (_path: string, _body: unknown) => ({
     job: {
@@ -72,6 +111,70 @@ function queueFixture(
   return { $, state, queue };
 }
 describe("manual coding queue controls", () => {
+  it.each([
+    ["linear_mapping"],
+    ["verification"],
+    ["linear_mapping", "verification"],
+  ])(
+    "lets a deliberate PM run prepare %j without sending the owner to manual setup",
+    (...ids) => {
+      const f = controlsFixture(ids.map((id) => ({ id, message: id })));
+      f.update();
+      expect(f.$("run-job").disabled).toBe(false);
+      expect(f.$("job-guidance").textContent).toContain("verifies connections");
+      expect(f.$("job-setup-guide").children).toHaveLength(0);
+      f.$("job-type").value = "developer";
+      f.update();
+      expect(f.$("run-job").disabled).toBe(true);
+    },
+  );
+  it.each([
+    "configuration",
+    "source_connection",
+    "ai_connection",
+    "worker",
+    "mandate",
+    "linear_connection",
+    "browser_connections",
+  ])(
+    "keeps the %s prerequisite blocked even with repairable PM setup",
+    (id) => {
+      const f = controlsFixture([
+        { id: "linear_mapping", message: "Mapping needed" },
+        { id: "verification", message: "Verification needed" },
+        { id, message: "Real prerequisite" },
+      ]);
+      f.update();
+      expect(f.$("run-job").disabled).toBe(true);
+      expect(f.context.window.renderCrewSetup).toHaveBeenCalledWith(f.project, {
+        blockers: f.area.blockers,
+        compact: true,
+      });
+    },
+  );
+  it("still requires a foundation, selected PM, session, and available worker", () => {
+    const f = controlsFixture([
+      { id: "verification", message: "Verification needed" },
+    ]);
+    f.project.foundation.needed = true;
+    f.update();
+    expect(f.$("run-job").disabled).toBe(true);
+    expect(f.context.window.renderFoundationLauncher).toHaveBeenCalledWith(
+      f.project,
+    );
+    f.project.foundation.needed = false;
+    f.$("job-area").value = "missing";
+    f.update();
+    expect(f.$("run-job").disabled).toBe(true);
+    f.$("job-area").value = "core";
+    f.context.sessionToken = "";
+    f.update();
+    expect(f.$("run-job").disabled).toBe(true);
+    f.context.sessionToken = "test";
+    f.context.runnerStatus.runners = [];
+    f.update();
+    expect(f.$("run-job").disabled).toBe(true);
+  });
   it("allows a ready coding run without a ticket identifier and explains automatic selection", () => {
     const $ = elements();
     $("job-project").value = "shop";
@@ -109,7 +212,7 @@ describe("manual coding queue controls", () => {
     update();
     expect($("run-job").disabled).toBe(false);
     expect($("job-ticket").required).toBe(false);
-    expect($("run-job").textContent).toContain("Run next approved ticket");
+    expect($("run-job").textContent).toContain("Start coding");
     expect($("job-guidance").textContent).toContain("does not approve tickets");
     $("job-ticket").value = "APP-12";
     update();
@@ -150,11 +253,16 @@ describe("manual coding queue controls", () => {
       area: "security",
       ticket: "APP-8",
     });
-    expect(f.state.api).toHaveBeenLastCalledWith("/api/jobs", {
-      type: "pm",
-      project: "shop",
-      area: "security",
-    });
+    expect(f.state.api).toHaveBeenLastCalledWith(
+      "/api/jobs",
+      {
+        type: "pm",
+        project: "shop",
+        area: "security",
+      },
+      "POST",
+      90000,
+    );
   });
   it("gives useful review and PM links when nothing approved is ready, without pretending a job started", async () => {
     const api = vi.fn(async () => {

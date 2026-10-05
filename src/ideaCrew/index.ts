@@ -581,7 +581,7 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
           crew: saved.plan.crew.map(({ key, name }) => ({ key, name })),
           initializedRepository: launch.initialized === true,
           message:
-            "Your PM crew and shared brief are saved. Complete connections and worker checks, then run the foundation PM. Coding starts from approved tickets; the other PMs remain paused until their dependencies are ready.",
+            "Your repository and crew are ready. Review the foundation build to create its Linear ticket and start a Coding Gremlin. No test environment is needed yet; PM schedules stay paused.",
         };
       } catch (error) {
         if (error instanceof IdeaCrewError) throw error;

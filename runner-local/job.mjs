@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { validateGrumblinPayload } from "./grumblin-runtime.mjs";
 import {
   appendFileSync,
   existsSync,
@@ -219,8 +220,15 @@ try {
     );
   }
   const discovery = input.pmMode === "discovery";
-  if (input.pmMode !== undefined && (!discovery || kind !== "pm"))
+  if (
+    input.pmMode !== undefined &&
+    (!["discovery", "exploration", "grumblin"].includes(input.pmMode) ||
+      kind !== "pm")
+  )
     throw new Error("Invalid PM mode.");
+  const grumblin = validateGrumblinPayload(input);
+  if (input.pmMode === "exploration" && input.delivery)
+    throw new Error("Product exploration cannot publish code changes.");
   if (
     input.browserVerification !== undefined &&
     typeof input.browserVerification !== "boolean"
@@ -229,7 +237,7 @@ try {
   activity.emit("progress", "Job started", `Starting ${kind} work.`, "running");
   if (kind === "developer") validateDelivery(input.delivery);
   if (input.reviewPlan !== undefined) {
-    if (kind !== "pm" || discovery || input.browserVerification !== true)
+    if (kind !== "pm" || input.pmMode || input.browserVerification !== true)
       throw new Error("Delivery review requires a normal browser PM patrol.");
     validateReviewPlan(input.reviewPlan);
     if (input.reviewPlan.jobId !== input.nonce)
@@ -494,7 +502,8 @@ try {
           nonce: input.nonce,
           commitSha: baseSha,
           branch: input.branch,
-          ...(discovery ? { pmMode: "discovery" } : {}),
+          ...(input.pmMode ? { pmMode: input.pmMode } : {}),
+          ...(grumblin ? { grumblin } : {}),
           ...deliveryResult,
           ...(activity.summary() ? { summary: activity.summary() } : {}),
           completedAt: new Date().toISOString(),

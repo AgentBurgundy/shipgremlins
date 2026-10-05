@@ -25,7 +25,9 @@
     <script src="/connection-profiles.js" defer></script>
     <script src="/linear-settings.js" defer></script>
     <script src="/pm-draft.js" defer></script>
+    <script src="/gremlin-adoption.js" defer></script>
     <script src="/pm-actions.js" defer></script>
+    <script src="/coding-launch.js" defer></script>
     <script src="/crew-guidance.js" defer></script>
     <script src="/job-output.js" defer></script>
     <script src="/run-viewer.js" defer></script>
@@ -37,6 +39,7 @@
     <script src="/remote-workers.js" defer></script>
     <script src="/vercel-setup.js" defer></script>
     <script src="/project-onboarding.js" defer></script>
+    <script src="/grumblins.js" defer></script>
     <script src="/project-workspace.js" defer></script>
     <script src="/deletion.js" defer></script>
     <script src="/deleted-resources.js" defer></script>
@@ -44,8 +47,18 @@
     <script src="/idea-crew.js" defer></script>
     <link rel="stylesheet" href="/project-wizard.css" />
     <script src="/project-wizard.js" defer></script>
+    <script src="/first-run.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
+    <script src="/interface.js" defer></script>
+    <link rel="stylesheet" href="/coding-launch.css" />
+    <link rel="stylesheet" href="/interface.css" />
+    <link rel="stylesheet" href="/pm-charter.css" />
+    <link rel="stylesheet" href="/project-settings.css" />
+    <link rel="stylesheet" href="/signals-settings.css" />
+    <link rel="stylesheet" href="/grumblins.css" />
+    <link rel="stylesheet" href="/first-run.css" />
+    <link rel="stylesheet" href="/gremlin-adoption.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -206,18 +219,32 @@
             aria-labelledby="welcome-title"
           >
             <div class="hero-copy">
-              <span class="eyebrow">YOUR WORKSPACE</span>
-              <h1 id="welcome-title">Meet your new<br />product crew.</h1>
+              <span class="eyebrow" id="overview-eyebrow"
+                >YOUR FIRST GREMLIN</span
+              >
+              <h1 id="welcome-title">Your first gremlin starts here.</h1>
               <p id="welcome-description">
-                Connect your tools. Add your app.<br class="desktop-break" />
-                PM Gremlins find the gaps. Coding Gremlins build the fixes.
+                A project to call home. A purpose to care about. A first mission
+                you can follow from start to finish.
               </p>
               <a
                 id="overview-primary-action"
                 class="button button-dark"
                 href="#source-control"
-                >Set up your crew <span aria-hidden="true">↗</span></a
+                >Connect source control <span aria-hidden="true">→</span></a
               >
+              <button
+                id="overview-adopt-action"
+                type="button"
+                class="button button-dark"
+                hidden
+              >
+                Adopt a PM Gremlin →
+              </button>
+              <p id="first-run-note" class="first-run-note">
+                Adoption keeps automation off. You choose the first PM or coding
+                mission.
+              </p>
             </div>
             <div class="hero-art">
               <div class="hero-orbit" aria-hidden="true"></div>
@@ -270,15 +297,19 @@
             >
           </section>
           <section
-            class="setup-status"
+            class="setup-status first-run-path"
             data-page="overview"
-            aria-label="Setup progress"
+            aria-label="Your path to a first mission"
           >
-            <div>
-              <span class="eyebrow muted">GETTING STARTED</span>
-              <h2 id="setup-title">Make yourself at home.</h2>
+            <div class="sr-only">
+              <h2 id="setup-title">Your first mission</h2>
             </div>
-            <ol class="steps">
+            <ol
+              id="first-run-progress"
+              class="first-run-progress"
+              aria-label="First mission progress"
+            ></ol>
+            <ol class="steps" hidden>
               <li id="connection-step">
                 <span class="step-number">1</span
                 ><span
@@ -1505,10 +1536,9 @@
             <div class="privacy-note">
               <span class="privacy-icon" aria-hidden="true">⌑</span>
               <p>
-                <strong>Your server. Your credentials.</strong> Manual tokens
-                stay in the server’s .env file; OAuth credentials use encrypted
-                local files. “Saved” means stored, not verified. Use Verify
-                connections on a project to check live access.
+                <strong>Your server. Your credentials.</strong> Saved access
+                stays on your server. Verify connections from a project before
+                starting work.
               </p>
             </div>
           </section>
@@ -1756,14 +1786,16 @@
               <header class="pm-create-dialog-header">
                 <div>
                   <p class="eyebrow muted">GROW YOUR CREW</p>
-                  <h2 id="pm-create-title">Add a PM Gremlin</h2>
-                  <p>Give it a mission. AI helps with the rest.</p>
+                  <h2 id="pm-create-title">Adopt a PM Gremlin.</h2>
+                  <p id="pm-adoption-subtitle">
+                    Give your gremlin an app to call home.
+                  </p>
                 </div>
                 <button
                   id="close-pm-create"
                   class="small-button"
                   type="button"
-                  aria-label="Close PM creation"
+                  aria-label="Close gremlin adoption"
                 >
                   Close ×
                 </button>
@@ -1779,15 +1811,17 @@
                   </div>
                   <div class="field">
                     <label for="pm-mandate"
-                      >What should this PM investigate?</label
+                      >What should this PM help achieve?</label
                     ><textarea
                       id="pm-mandate"
                       rows="4"
                       required
                       maxlength="12000"
-                      placeholder="Own the checkout journey from cart to confirmation. Test signed-in and guest flows, discounts, failures, and mobile layouts. Use test payments only. Propose improvements with screenshots and exact reproduction steps."
+                      placeholder="Help first-time customers find the right product and complete checkout. Explore simpler journeys and useful new features. Test your ideas against the app, explain the assumptions, and propose a small first experiment."
                     ></textarea>
-                    <p>Describe the goal, important flows, and boundaries.</p>
+                    <p>
+                      Describe the people, outcome, and boundaries that matter.
+                    </p>
                   </div>
                   <div id="pm-ai-draft"></div>
                   <p
@@ -1807,7 +1841,7 @@
                         type="text"
                         required
                         maxlength="100"
-                        placeholder="Checkout quality"
+                        placeholder="Your gremlin’s name"
                         autocomplete="off"
                       />
                     </div>
@@ -1844,22 +1878,20 @@
                     </div>
                   </div>
 
-                  <details
+                  <section
                     class="pm-charter-create"
                     aria-labelledby="new-pm-charter-title"
                   >
-                    <summary id="new-pm-charter-title">
-                      Product brief <span>Goals, users &amp; guardrails</span>
-                    </summary>
+                    <h3 id="new-pm-charter-title">Product brief</h3>
                     <p>
                       Give this PM a direction it can return to: who the product
                       serves, what it should become, and where its boundaries
                       are.
                     </p>
                     <div id="pm-charter-fields"></div>
-                  </details>
-                  <details class="pm-advanced" id="pm-advanced">
-                    <summary>Ownership, schedule &amp; work limits</summary>
+                  </section>
+                  <section class="pm-advanced" id="pm-advanced">
+                    <h3>Ownership, schedule &amp; work limits</h3>
                     <div class="project-form-grid">
                       <div class="field">
                         <label for="pm-paths">Owned repository paths</label
@@ -1934,7 +1966,7 @@
                         />
                       </div>
                     </div>
-                  </details>
+                  </section>
                   <label class="discovery-after-create"
                     ><input type="checkbox" id="pm-discover-after-create" />
                     <span
@@ -2059,7 +2091,7 @@
                     <label for="job-type">Job type</label
                     ><select id="job-type">
                       <option value="pm">PM Gremlin</option>
-                      <option value="developer">Coding Gremlin</option>
+                      <option value="developer" selected>Coding Gremlin</option>
                     </select>
                   </div>
                   <div class="field">
@@ -2074,9 +2106,8 @@
                       <option value="">Choose a project</option>
                     </select>
                   </div>
-                  <details class="field" id="job-ticket-field" hidden>
-                    <summary>Choose a specific ticket (optional)</summary>
-                    <label for="job-ticket">Approved Linear ticket</label
+                  <div class="field" id="job-ticket-field" hidden>
+                    <label for="job-ticket">Specific ticket (optional)</label
                     ><input
                       id="job-ticket"
                       type="text"
@@ -2087,12 +2118,10 @@
                       aria-describedby="job-ticket-help"
                     />
                     <p id="job-ticket-help">
-                      Leave empty to let your Coding Gremlin pick the next
-                      approved ticket from this project's Linear queue. A
-                      specific ticket must belong to one of its PMs and be
-                      approved for coding. Paused PMs can receive manual runs.
+                      Leave empty to pick the next approved ticket
+                      automatically.
                     </p>
-                  </details>
+                  </div>
                 </div>
                 <div class="form-bottom">
                   <p id="job-guidance">
@@ -2366,6 +2395,11 @@
                   tabindex="0"
                 >
                   <p class="run-summary-state" id="run-summary-state"></p>
+                  <section
+                    id="grumblin-report"
+                    class="grumblins-report"
+                    hidden
+                  ></section>
                   <div id="run-patrol-evidence" hidden></div>
                   <dl class="run-metadata" id="run-metadata"></dl>
                   <h3 class="run-section-title">Outcome</h3>
@@ -2576,11 +2610,7 @@
               class="updates-card"
               aria-label="Recently deleted"
             ></section>
-            <details id="advanced-settings" class="advanced-settings">
-              <summary>
-                <span>Files &amp; advanced configuration</span
-                ><small>Folders, project files, and workspace JSON</small>
-              </summary>
+            <section id="advanced-settings" class="advanced-settings">
               <div class="advanced-settings-body">
                 <div class="folder-grid">
                   <div class="folder-card">
@@ -2764,7 +2794,7 @@
                   role="status"
                 ></span>
               </div>
-            </details>
+            </section>
           </section>
 
           <section
@@ -2858,6 +2888,7 @@
         <fieldset id="edit-project-fields">
           <legend class="sr-only">Execution and hosting settings</legend>
           <div id="edit-project-settings"></div>
+          <div id="edit-signals-settings" hidden></div>
           <div class="form-bottom">
             <p>
               Other project settings and saved credentials are kept. Verify the

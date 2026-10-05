@@ -1,4 +1,5 @@
 import { writeFileSync, renameSync, existsSync } from "node:fs";
+import { validateGrumblinPayload } from "./grumblin-runtime.mjs";
 const chunks = [];
 let size = 0;
 try {
@@ -16,6 +17,7 @@ try {
     !["verify", "pm", "developer"].includes(value.kind)
   )
     throw new Error();
+  validateGrumblinPayload(value);
   writeFileSync("/work/job.pending", source, { mode: 0o600, flag: "wx" });
   renameSync("/work/job.pending", "/work/job.json");
   writeFileSync("/work/job.ready", "ready\n", { mode: 0o600, flag: "wx" });

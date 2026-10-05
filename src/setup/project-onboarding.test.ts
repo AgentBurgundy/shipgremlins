@@ -17,6 +17,17 @@ class Element {
   id = "";
   value = "";
   disabled = false;
+  hidden = false;
+  open = false;
+  scrollTop = 0;
+  focus = vi.fn();
+  showModal() {
+    this.open = true;
+    this.scrollTop = 500;
+  }
+  close() {
+    this.open = false;
+  }
   constructor(public tagName = "DIV") {}
   append(...children: Element[]) {
     this.children.push(...children);
@@ -67,6 +78,7 @@ function fixture(
     removeEventListener() {},
   };
   const window = {
+    dashboardPages: { navigate: vi.fn(() => true) },
     addEventListener() {},
     removeEventListener() {},
     onboardingStep: (_data: unknown) => 0,
@@ -148,6 +160,157 @@ const docker = (): Draft => ({
 });
 
 describe("guided environment target review", () => {
+  it("returns an existing crew to its project after environment verification", async () => {
+    const target = {
+      kind: "url",
+      role: "staging",
+      url: "https://preview.example.test/",
+      access: { kind: "public" },
+    };
+    const f = fixture(
+        vi.fn(async () => ({
+          ...state(),
+          environment: {
+            name: "preview",
+            profile: "hosted",
+            target,
+            verification: { status: "passed" },
+          },
+        })),
+      ),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: { preview: target },
+      areas: [{ key: "foundation" }],
+    });
+    await settle();
+    expect(text(root)).toContain("Your crew can explore.");
+    expect(text(root)).not.toContain("Create a PM");
+    await walk(root)
+      .find((item) => item.textContent === "Open project")!
+      .fire("click");
+    expect(f.window.dashboardPages.navigate).toHaveBeenCalledWith(
+      "/projects/shop",
+    );
+    expect(f.created).not.toHaveBeenCalled();
+    f.panel.destroy();
+  });
+  it("offers the reviewed foundation build before environment choices for a fresh idea", async () => {
+    const foundation = {
+      stage: "review",
+      revision: "brief-1",
+      title: "Build the booking app",
+      milestone: "A student can book a seat",
+      assignment: "Build the first complete booking journey.",
+      acceptanceCriteria: ["Reject full classes"],
+      buildBrief: "Reviewed build scope",
+    };
+    const api = vi.fn(async (path: string) => ({
+      ...state(),
+      foundation,
+      ...foundation,
+      ...(path.endsWith("/build")
+        ? {
+            stage: "queued",
+            job: { id: "job-foundation", runId: 1, status: "queued" },
+          }
+        : {}),
+    }));
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      ideaPlanId: "saved-idea",
+    });
+    await settle();
+    expect(text(root)).toContain("Approve & build foundation");
+    await walk(root)
+      .find((element) => element.textContent === "Read the full build brief")!
+      .fire("click");
+    const dialog = walk(root).find((element) => element.tagName === "DIALOG")!,
+      heading = walk(dialog).find((element) => element.tagName === "H2")!;
+    expect(dialog.open).toBe(true);
+    expect(dialog.scrollTop).toBe(0);
+    expect(heading.attributes.get("tabindex")).toBe("-1");
+    expect(heading.attributes.has("autofocus")).toBe(true);
+    expect(heading.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(dialog.children[0]!.tagName).toBe("HEADER");
+    await walk(dialog.children[0]!)
+      .find((element) => element.textContent === "Close")!
+      .fire("click");
+    expect(dialog.open).toBe(false);
+    expect(
+      walk(root).find((element) => element.className === "onboarding-choice")!
+        .hidden,
+    ).toBe(true);
+    expect(
+      walk(root).find((element) => element.className === "onboarding-analysis")!
+        .hidden,
+    ).toBe(true);
+    await walk(root)
+      .find((element) => element.textContent === "Approve & build foundation")!
+      .fire("click");
+    expect(api).toHaveBeenCalledWith(
+      "/api/projects/shop/foundation/build",
+      { revision: "brief-1" },
+      "POST",
+      180000,
+    );
+    expect(text(root)).toContain("Your foundation is in the queue");
+    expect(api.mock.calls.some(([path]) => path.includes("/api/jobs"))).toBe(
+      false,
+    );
+    f.panel.destroy();
+  });
+  it("keeps environment choices out of the way until the user chooses manual setup", async () => {
+    const f = fixture(),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(
+      walk(root).find((element) => element.className === "onboarding-choice")!
+        .hidden,
+    ).toBe(true);
+    await walk(root)
+      .find(
+        (element) => element.textContent === "I already know where to test",
+      )!
+      .fire("click");
+    expect(
+      walk(root).find((element) => element.className === "onboarding-choice")!
+        .hidden,
+    ).toBe(false);
+    expect(
+      walk(root).find((element) => element.className === "onboarding-analysis")!
+        .hidden,
+    ).toBe(true);
+    expect(
+      walk(root).filter((element) => element.tagName === "DETAILS"),
+    ).toHaveLength(0);
+    await walk(root)
+      .find(
+        (element) =>
+          element.tagName === "BUTTON" &&
+          element.textContent === "Hosting provider settings",
+      )!
+      .fire("click");
+    const dialog = walk(root).find(
+      (element) => element.tagName === "DIALOG" && element.open,
+    )!;
+    const header = dialog.children[0]!;
+    expect(header.tagName).toBe("HEADER");
+    expect(header.children[0]!.focus).toHaveBeenCalledWith({
+      preventScroll: true,
+    });
+    expect(dialog.scrollTop).toBe(0);
+    expect(header.children[1]!.textContent).toBe("Close");
+    await header.children[1]!.fire("click");
+    expect(dialog.open).toBe(false);
+    f.panel.destroy();
+  });
   it("keeps a discovered Vercel target and its account binding when applying app access", () => {
     const f = fixture();
     const target = {
@@ -205,6 +368,9 @@ describe("guided environment target review", () => {
       environments: { "pm-test": target },
     });
     await settle();
+    await walk(root)
+      .find((element) => element.textContent === "Find a preview with Vercel")!
+      .fire("click");
     select({
       target: {
         kind: "vercel",
@@ -405,9 +571,7 @@ describe("guided environment target review", () => {
       root = new Element();
     f.panel.mount(root, { name: "shop", repo: "owner/shop" });
     await settle();
-    expect(text(root)).toContain(
-      "Reviewed 1 files · Entrypoints & dependencies",
-    );
+    expect(text(root)).toContain("Review source evidence · 1 files");
     expect(text(root)).toContain(
       "300 files listed (repository listing incomplete)",
     );

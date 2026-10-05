@@ -6,6 +6,8 @@ class Element {
   children: Element[] = [];
   attributes = new Map<string, string>();
   className = "";
+  classList = { add: () => {} };
+  parentElement: Element | null = null;
   textContent = "";
   value = "";
   open = false;
@@ -17,6 +19,7 @@ class Element {
   dataset: Record<string, string> = {};
   constructor(public tagName: string) {}
   append(...children: Element[]) {
+    for (const child of children) child.parentElement = this;
     this.children.push(...children);
   }
   setAttribute(name: string, value: string) {
@@ -35,7 +38,10 @@ class Element {
 function fixture() {
   const window = {} as {
     addEventListener(): void;
-    renderKnowledgeDocument: (value: string) => Element;
+    renderKnowledgeDocument: (
+      value: string,
+      options?: { setupProposal?: object },
+    ) => Element;
     createProjectWorkspace: (
       root: Element,
       options: object,
@@ -63,9 +69,11 @@ function fixture() {
     URLSearchParams,
     clearTimeout,
     setTimeout,
+    queueMicrotask,
   };
   for (const name of [
     "crew-guidance",
+    "coding-launch",
     "patrol-flow",
     "project-workspace",
     "pm-charter",
@@ -84,6 +92,48 @@ const text = (root: Element): string =>
   root.textContent + root.children.map(text).join("");
 
 describe("PM workspace knowledge", () => {
+  it("hides only the matching reviewed setup machine block while preserving the learning and ordinary code", () => {
+    const renderer = fixture().renderKnowledgeDocument,
+      proposal = {
+        commands: { install: "npm ci", test: "npm test" },
+        paths: ["src"],
+      },
+      block =
+        "```shipgremlins-setup\n" +
+        JSON.stringify({
+          paths: proposal.paths,
+          commands: { test: "npm test", install: "npm ci" },
+        }) +
+        "\n```",
+      content =
+        "# Findings\nUseful learning.\n\n" +
+        block +
+        "\n\n```js\nconst ordinary = true;\n```\nNext steps.";
+    const rendered = renderer(content, { setupProposal: proposal });
+    expect(text(rendered)).toContain("Useful learning.");
+    expect(text(rendered)).toContain("const ordinary = true;");
+    expect(text(rendered)).toContain("Next steps.");
+    expect(text(rendered)).not.toContain("npm ci");
+    expect(all(rendered).filter((item) => item.tagName === "PRE")).toHaveLength(
+      1,
+    );
+    expect(text(renderer(content))).toContain("npm ci");
+    expect(
+      text(
+        renderer(content, { setupProposal: { ...proposal, paths: ["other"] } }),
+      ),
+    ).toContain("npm ci");
+    expect(
+      text(renderer(content + "\n" + block, { setupProposal: proposal })),
+    ).toContain("npm ci");
+    expect(
+      text(
+        renderer("```shipgremlins-setup\ninvalid JSON\n```", {
+          setupProposal: proposal,
+        }),
+      ),
+    ).toContain("invalid JSON");
+  });
   it("renders feature and queue tables as accessible scrollable DOM, including useful evidence links", () => {
     const root = fixture().renderKnowledgeDocument(
       "# Ranked queue\n| Priority | Opportunity | Evidence |\n| --- | --- | --- |\n| **1** | Preserve `deliveryMethod` | [Source](https://github.com/example/app/blob/main/checkout.ts) |\n| 2 | Improve errors | Pending investigation |\n\nOwner approval is still required.",
@@ -181,6 +231,7 @@ describe("focused project crew workspace", () => {
     const project = {
       name: "shipgremlins",
       repo: "AgentBurgundy/shipgremlins",
+      readiness: { canRun: true, blockers: [] },
       areas: [
         {
           key: "security-gremlin-v2",
@@ -230,26 +281,22 @@ describe("focused project crew workspace", () => {
     expect(text(header)).not.toContain("Run coding");
     expect(text(header)).toContain("shipgremlins");
     const details = all(root).find((item) =>
-      item.className.includes("project-details workspace-disclosure"),
+      item.className.includes("project-details project-reference"),
     )!;
-    expect(details.open).toBe(false);
+    expect(details.tagName).toBe("SECTION");
     expect(text(details)).toContain("AgentBurgundy/shipgremlins");
     const coding = all(root).find(
-      (item) => item.className === "project-coding-section",
+      (item) => item.className === "coding-launch",
     )!;
-    expect(text(coding)).toContain("next ready, approved ticket");
+    expect(text(coding)).toContain("next approved ticket");
+    expect(text(coding)).toContain("Start coding");
     expect(
       all(coding).find((item) => item.dataset.launchCrew === "developer")
         ?.dataset.launchProject,
     ).toBe("shipgremlins");
   });
-  it("retains disclosure state across polling and labels an active PM action View run", () => {
+  it("keeps project reference visible across polling and labels an active PM action View run", () => {
     const { root, state, view, jobs } = workspace();
-    const details = all(root).find((item) =>
-      item.className.includes("project-details workspace-disclosure"),
-    )!;
-    details.open = true;
-    details.fire("toggle");
     jobs.push({
       id: "run-1",
       runId: 1,
@@ -259,11 +306,11 @@ describe("focused project crew workspace", () => {
       status: "running",
     });
     view.setStatus(state, false);
-    expect(
-      all(root).find((item) =>
-        item.className.includes("project-details workspace-disclosure"),
-      )?.open,
-    ).toBe(true);
+    const details = all(root).find((item) =>
+      item.className.includes("project-details project-reference"),
+    )!;
+    expect(details.tagName).toBe("SECTION");
+    expect(text(details)).toContain("AgentBurgundy/shipgremlins");
     expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
       "View run",
     );
@@ -344,8 +391,9 @@ describe("focused project crew workspace", () => {
     ).toBe("MandateEdit brief");
     expect(
       all(root).find((item) => item.className.includes("pm-brief-details"))
-        ?.open,
-    ).toBe(false);
+        ?.tagName,
+    ).toBe("SECTION");
+    expect(text(root)).toContain("Protect each workspace's data.");
     expect(
       all(root).find((item) => item.className.includes("pm-delete-action"))
         ?.tagName,

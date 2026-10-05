@@ -1,0 +1,351 @@
+/* A gremlin arrives with a real brief, not an intimidating setup form. */
+#pm-create-drawer {
+  width: min(700px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: #fff;
+  color: var(--ink);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+#pm-create-drawer::backdrop {
+  background: rgb(13 32 23 / 50%);
+}
+#pm-create-drawer .pm-create-dialog-header {
+  position: static;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 0 20px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+#pm-create-drawer .pm-create-dialog-header > div {
+  min-width: 0;
+}
+#pm-create-title {
+  margin: 8px 0;
+  font-size: clamp(1.6rem, 4vw, 2rem);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+#pm-adoption-subtitle {
+  margin: 0;
+  max-width: 48ch;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+#pm-create-drawer #close-pm-create {
+  flex-shrink: 0;
+}
+#pm-create-drawer #pm-create-form {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+#pm-create-drawer #pm-create-fields {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  min-width: 0;
+}
+.adoption-progress {
+  margin: 0 0 22px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: var(--muted);
+}
+.adoption-stage {
+  min-width: 0;
+  display: grid;
+  gap: 18px;
+}
+.adoption-stage .field {
+  min-width: 0;
+  margin: 0;
+}
+.adoption-stage .field > label {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.adoption-stage input,
+.adoption-stage textarea,
+.adoption-stage select {
+  max-width: 100%;
+}
+.adoption-stage .field > p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.adoption-stage h3 {
+  margin: 0;
+}
+.adoption-starters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.adoption-starters .small-button {
+  min-height: 46px;
+  white-space: normal;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafcfb;
+  color: var(--ink);
+}
+.adoption-starters .small-button[aria-pressed="true"] {
+  border-color: #557d3b;
+  background: #ecf3e4;
+  box-shadow: inset 0 0 0 1px #557d3b;
+}
+.adoption-starter-note:empty {
+  display: none;
+}
+.adoption-starter-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.adoption-mission > .small-button {
+  justify-self: start;
+}
+.adoption-mission .pm-ai-draft {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+.adoption-mission .pm-ai-draft-heading {
+  display: none;
+}
+.adoption-mission .pm-ai-draft-status {
+  margin: 0;
+}
+.adoption-creature-card {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 22px;
+  border-radius: 20px;
+  background: radial-gradient(ellipse at 20% 20%, #eef7e0, #f7f9f5 75%);
+  border: 1px solid #e3ecdc;
+}
+.adoption-creature {
+  width: 100%;
+  height: 155px;
+  object-fit: contain;
+  filter: drop-shadow(0 9px 10px rgb(52 77 25 / 10%));
+}
+.adoption-creature-copy {
+  min-width: 0;
+}
+.adoption-specialty {
+  margin: 0 0 12px;
+  color: #507137;
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.adoption-home {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.adoption-job-summary {
+  margin: -8px 0 0;
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.adoption-contract {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.adoption-review-actions,
+.adoption-welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.adoption-review-actions button {
+  max-width: 100%;
+  white-space: normal;
+}
+.adoption-meet .pm-creation-readiness {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  background: transparent;
+  color: var(--muted);
+}
+#pm-create-drawer .form-bottom {
+  position: static;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 20px 0 0;
+  border-top: 1px solid var(--line);
+}
+#pm-create-drawer .form-bottom > p {
+  flex: 1 1 180px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+#pm-create-drawer .form-bottom .button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.adoption-advanced > .pm-advanced {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.adoption-brief .pm-charter-create {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.adoption-brief .pm-charter-create > h3 {
+  display: none;
+}
+.adoption-reasoning .pm-ai-draft-preview {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.adoption-reasoning .pm-ai-draft-fields {
+  display: none;
+}
+.adoption-reasoning .pm-ai-review h3 {
+  display: none;
+}
+.adoption-reasoning .pm-ai-draft-actions {
+  display: none;
+}
+.adoption-welcome {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  text-align: center;
+  padding: 0 8px 8px;
+  min-width: 0;
+}
+.adoption-welcome-creature {
+  width: 190px;
+  height: 180px;
+  object-fit: contain;
+  filter: drop-shadow(0 14px 14px rgb(52 77 25 / 12%));
+}
+.adoption-welcome h3 {
+  margin: 0;
+  max-width: 100%;
+  font-size: 25px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.adoption-welcome-job {
+  margin: 0;
+  max-width: 50ch;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.adoption-welcome-status {
+  margin: 0;
+  max-width: 50ch;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.adoption-welcome-actions {
+  justify-content: center;
+  margin-top: 6px;
+}
+.adoption-welcome .form-message {
+  width: 100%;
+  margin: 0;
+}
+.adoption-welcome > .adoption-contract {
+  max-width: 48ch;
+}
+@media (max-width: 540px) {
+  #pm-create-drawer {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    padding: 22px 18px;
+    border-radius: 20px;
+  }
+  #pm-create-drawer .pm-create-dialog-header {
+    gap: 12px;
+  }
+  #pm-create-drawer #close-pm-create {
+    padding-inline: 8px;
+  }
+  .adoption-creature-card {
+    grid-template-columns: 90px minmax(0, 1fr);
+    padding: 16px;
+    gap: 12px;
+  }
+  .adoption-creature {
+    height: 120px;
+  }
+  .adoption-creature-copy .field > label {
+    font-size: 12px;
+  }
+  .adoption-starters .small-button {
+    font-size: 12px;
+    padding: 10px;
+  }
+  #pm-create-drawer .form-bottom > p {
+    flex-basis: 100%;
+    order: 3;
+  }
+  #pm-create-drawer .form-bottom > .button {
+    flex: 1;
+  }
+  .adoption-welcome {
+    padding-inline: 0;
+  }
+  .adoption-welcome-actions {
+    width: 100%;
+  }
+  .adoption-welcome-actions > button {
+    width: 100%;
+    white-space: normal;
+  }
+}
+@media (max-width: 380px) {
+  .adoption-creature-card {
+    grid-template-columns: minmax(0, 1fr);
+    text-align: center;
+  }
+  .adoption-creature {
+    width: 100px;
+    height: 110px;
+    justify-self: center;
+  }
+}

@@ -3,13 +3,21 @@
 This guide prepares an application for browser testing, including an early
 prototype. Starting without code? Use [idea onboarding](IDEA_TO_APP.md) to plan
 the first milestone and create its PM crew. Return here when the foundation
-is runnable. [When to bring in ShipGremlins →](WHEN_TO_USE.md)
+is runnable. For a newly created idea, this page starts with **Approve & build
+foundation**: a reviewed coding run that creates the first app and tests. It
+does not ask for hosting or run a PM patrol against an empty repository.
+[When to bring in ShipGremlins →](WHEN_TO_USE.md)
 
 Start with `gremlins setup`, or `gremlins setup --lan` on a homelab server. Connect source control and Claude Code, then add a repository. The dashboard opens that project's **Environment** page and starts a Setup Gremlin when its connections are ready. It reads bounded source files at an exact commit and recommends a test strategy. No Linear team, PM, or working deployment is required for this analysis.
 
-You can also skip analysis and configure an environment yourself. Existing projects use the same Environment page; choosing a setup path preserves their PMs, accounts, workflow, commands, and other named environments.
+Choose **I already know where to test** to skip analysis and enter an environment
+yourself. The page shows one setup stage at a time. Hosted setup starts with a
+test URL; **Find a preview with Vercel** opens the provider workflow when needed.
+Advanced runtime settings, source evidence and proposed setup files have separate
+review dialogs. Existing projects use the same Environment page; choosing a
+setup path preserves their PMs, accounts, workflow, commands and other named environments.
 
-Source selection follows manifests, executable entrypoints, relative imports, web assets and relevant test fixtures rather than taking the first files alphabetically. It can inspect up to 80 files and provide up to 512 KiB of selected source to Claude. Large files are explicitly marked as excerpts with line ranges. Expand **Reviewed files** to see why each file was selected, listing limits and unread references. This remains a bounded investigation, not a complete repository audit or an agent freely browsing every file. Earlier saved reports retain their earlier coverage; choose **Analyze again** to use the improved investigation.
+Source selection follows manifests, executable entrypoints, relative imports, web assets and relevant test fixtures rather than taking the first files alphabetically. It can inspect up to 80 files and provide up to 512 KiB of selected source to Claude. Large files are explicitly marked as excerpts with line ranges. Open **Reviewed files** to see why each file was selected, listing limits and unread references. This remains a bounded investigation, not a complete repository audit or an agent freely browsing every file. Earlier saved reports retain their earlier coverage; choose **Analyze again** to use the improved investigation.
 
 The analysis card shows saved connection status for this project's source provider and Claude. **Connect** appears for missing services, **Reconnect** for a source account that needs authorization again, and **Manage connections** for configured services. Analysis failures distinguish model limits, credential rejection, incomplete reports and runtime problems without displaying private model output. Use **Retry analysis** after addressing the reported cause; an older retained suggestion is labeled separately from the failed attempt.
 
@@ -31,7 +39,7 @@ The Docker app is separate from the gremlin worker: one hosts your application; 
 2. **Choose hosted staging or Docker.** For hosted staging, select an existing named environment or enter a test URL. For Docker, review the proposed image/Dockerfile, port, health path, services and commands. The app must listen on `0.0.0.0` inside its container.
 3. **Save required Connections.** Environment configuration holds variable names, never secret values. Named inputs appear in Connections after saving. Add dedicated credentials for external test services if needed.
 4. **Test environment.** ShipGremlins starts Chromium, opens the app, checks any configured password logins, and retains a private screenshot. Docker environments remain alive through the browser check, then are removed. Failed checks stay failed. Changing the selected environment invalidates the previous result.
-5. **Create a PM.** Review install/test commands and the worker toolchain, connect Linear for patrols, give the PM a mandate, and run discovery or a first supervised patrol. Automation remains paused until you enable it.
+5. **Return to your crew.** Choose **Open project** when PMs already exist, or adopt your first PM if the project has none. Review install/test commands and the worker toolchain before coding, and connect Linear for patrols. Repository discovery does not require browser setup. Automation remains paused until you enable it.
 
 The setup browser test runs on the controller's Docker host. A remote worker must separately be able to reach a hosted URL and supply the required architecture/toolchain. A URL reachable only from the controller does not certify remote network access. Each Docker-backed job creates its app on the machine executing that job.
 

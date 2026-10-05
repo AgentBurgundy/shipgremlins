@@ -1,0 +1,102 @@
+.project-settings .project-settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 5px;
+  margin: 0 0 26px;
+  border: 1px solid #e4eae6;
+  border-radius: 11px;
+  background: #f0f4f2;
+}
+.project-settings .project-settings-tabs button {
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted, #617169);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: normal;
+  cursor: pointer;
+}
+.project-settings .project-settings-tabs button[aria-selected="true"] {
+  background: #fff;
+  color: #20452e;
+  box-shadow: 0 1px 4px #18332412;
+}
+.project-settings
+  .project-settings-tabs
+  button:hover:not([aria-selected="true"]) {
+  background: #e6eee8;
+  color: #20452e;
+}
+.project-settings .project-settings-tabs button:focus-visible {
+  outline: 3px solid #72a354;
+  outline-offset: 2px;
+}
+.project-settings .settings-tab-panel {
+  min-width: 0;
+}
+.project-settings .settings-tab-panel[hidden] {
+  display: none;
+}
+.project-settings .settings-heading {
+  margin-bottom: 24px;
+}
+.project-settings .settings-heading h3,
+.project-settings .command-settings > h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+}
+.project-settings .settings-heading p,
+.project-settings .command-settings > p {
+  margin: 0;
+  max-width: 64ch;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted, #617169);
+}
+.project-settings .command-settings {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.project-settings .command-settings .project-form-grid {
+  margin-top: 24px;
+}
+.project-settings .settings-tab-panel > .field {
+  margin-bottom: 20px;
+}
+.project-settings .environment-fields {
+  padding: 20px;
+  background: #fafcfb;
+  border: 1px solid #e4ebe5;
+  border-radius: 12px;
+}
+.project-settings .settings-advanced-note {
+  font-size: 12px;
+  color: var(--muted, #617169);
+  margin: 20px 0 0;
+}
+@media (max-width: 600px) {
+  .project-settings .project-settings-tabs {
+    margin-bottom: 22px;
+  }
+  .project-settings .project-settings-tabs button {
+    padding: 9px 6px;
+    font-size: 12px;
+  }
+  .project-settings .environment-fields {
+    padding: 16px;
+  }
+  .project-settings .project-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

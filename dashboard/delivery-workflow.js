@@ -50,6 +50,7 @@
           candidateRevision: "",
           candidateBaseline: "",
           candidateSignature: "",
+          trackingOpen: false,
         };
       const heading = el("div", undefined, "project-section-title");
       heading.append(
@@ -145,9 +146,35 @@
       );
       promote.append(areaLabel, area, s.promote, s.advance);
       s.actions.append(s.candidate, promote, s.confirmBox);
-      s.tracking = el("details", undefined, "production-tracking");
+      s.productionIntro = el("section", undefined, "production-tracking");
+      s.openTracking = button("Track a production release", () => {
+        s.trackingOpen = true;
+        paint(s);
+        trackingTitle.focus();
+      });
+      s.productionIntro.append(
+        el("h3", "Ready for production?"),
+        el(
+          "p",
+          "Choose the reviewed delivery scope and follow its production merge.",
+          "runner-guidance",
+        ),
+        s.openTracking,
+      );
+      s.tracking = el(
+        "section",
+        undefined,
+        "production-tracking production-tracking-editor",
+      );
+      const trackingTitle = el("h2", "Track a production release");
+      trackingTitle.setAttribute("tabindex", "-1");
       s.tracking.append(
-        el("summary", "Track a production release"),
+        button("← Promotion controls", () => {
+          s.trackingOpen = false;
+          paint(s);
+          s.openTracking.focus();
+        }),
+        trackingTitle,
         el(
           "p",
           "After staging review, choose the complete approved scope and its production PR. ShipGremlins checks the actual merge and included changes before updating Linear to Done. This does not merge production.",
@@ -295,13 +322,64 @@
       s.declarations = el("div", undefined, "production-declarations");
       s.handoffs = el("div", undefined, "candidate-handoffs");
       s.handoffSignature = "";
+      s.handoffDialog = el("dialog", undefined, "delivery-detail-dialog");
+      s.handoffDialog.setAttribute(
+        "aria-labelledby",
+        `candidate-handoff-title-${project.name}`,
+      );
+      const handoffHeader = el("header", undefined, "surface-dialog-header");
+      s.handoffTitle = el("h2", "Candidate verification handoff");
+      s.handoffTitle.id = `candidate-handoff-title-${project.name}`;
+      const closeHandoff = () => {
+        s.handoffDialog.close();
+        (s.handoffTrigger || heading.querySelector("button"))?.focus();
+      };
+      const handoffClose = button("×", closeHandoff);
+      handoffClose.className = "icon-close";
+      handoffClose.setAttribute("aria-label", "Close candidate handoff");
+      handoffHeader.append(s.handoffTitle, handoffClose);
+      const handoffBody = el("div", undefined, "surface-dialog-body");
+      s.handoffNotice = el("p", "", "runner-guidance");
+      s.handoffContent = el("textarea");
+      s.handoffContent.readOnly = true;
+      s.handoffContent.rows = 12;
+      s.handoffContent.setAttribute(
+        "aria-label",
+        "Unsigned candidate coordinates",
+      );
+      const copyHandoff = button("Copy candidate JSON", async () => {
+        try {
+          if (navigator.clipboard?.writeText)
+            await navigator.clipboard.writeText(s.handoffContent.value);
+          else {
+            s.handoffContent.focus();
+            s.handoffContent.select();
+            if (!document.execCommand("copy")) throw new Error("manual");
+          }
+          s.handoffNotice.textContent =
+            "Unsigned candidate coordinates copied. Trusted verification is still required.";
+        } catch {
+          s.handoffContent.focus();
+          s.handoffContent.select();
+          s.handoffNotice.textContent =
+            "JSON selected. Copy it manually for your trusted verifier.";
+        }
+      });
+      handoffBody.append(s.handoffNotice, s.handoffContent, copyHandoff);
+      s.handoffDialog.append(handoffHeader, handoffBody);
+      s.handoffDialog.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        closeHandoff();
+      });
       root.append(
         heading,
         s.notice,
         s.actions,
         s.handoffs,
+        s.productionIntro,
         s.tracking,
         s.declarations,
+        s.handoffDialog,
       );
       return s;
     }
@@ -356,8 +434,12 @@
       s.node.setAttribute("aria-busy", String(s.busy));
       for (const input of s.node.querySelectorAll("input, select"))
         input.disabled = disabled;
-      s.actions.hidden = !available;
-      s.tracking.hidden = !available;
+      s.actions.hidden = !available || s.trackingOpen;
+      s.productionIntro.hidden = !available || s.trackingOpen;
+      s.tracking.hidden = !available || !s.trackingOpen;
+      s.handoffs.hidden = s.trackingOpen;
+      s.declarations.hidden = s.trackingOpen;
+      s.openTracking.disabled = disabled;
       const candidate = s.data?.candidateSetup;
       s.candidate.hidden = !candidate;
       const candidateSignature = JSON.stringify(candidate);
@@ -492,45 +574,33 @@
       const handoffSignature = JSON.stringify(handoffs);
       if (handoffSignature !== s.handoffSignature) {
         s.handoffSignature = handoffSignature;
+        if (s.handoffDialog.open)
+          s.handoffNotice.textContent =
+            "Candidate information changed. These coordinates are from when you opened this view. Close and reopen the handoff to review the latest candidate.";
+        s.handoffTrigger = null;
         s.handoffs.replaceChildren();
         for (const handoff of handoffs) {
-          const detail = el("details", undefined, "production-tracking"),
-            content = el("textarea"),
-            notice = el(
-              "p",
-              "Unsigned preparation only. Give these exact commit coordinates to your trusted candidate verifier. This is not a passing attestation.",
-              "runner-guidance",
-            );
-          content.readOnly = true;
-          content.rows = 9;
-          content.value = JSON.stringify(handoff, null, 2);
-          content.setAttribute(
-            "aria-label",
-            `Unsigned candidate coordinates for ${handoff.area}`,
-          );
-          const copy = button("Copy candidate JSON", async () => {
-            try {
-              if (navigator.clipboard?.writeText)
-                await navigator.clipboard.writeText(content.value);
-              else {
-                content.focus();
-                content.select();
-                if (!document.execCommand("copy")) throw new Error("manual");
-              }
-              notice.textContent =
-                "Unsigned candidate coordinates copied. Trusted verification is still required.";
-            } catch {
-              content.focus();
-              content.select();
-              notice.textContent =
-                "JSON selected. Copy it manually for your trusted verifier.";
-            }
+          const detail = el("section", undefined, "production-tracking");
+          const open = button("View candidate coordinates", () => {
+            s.handoffTrigger = open;
+            s.handoffArea = handoff.area;
+            s.handoffTitle.textContent = `Candidate handoff · ${handoff.area}`;
+            s.handoffContent.value = JSON.stringify(handoff, null, 2);
+            s.handoffNotice.textContent =
+              "Unsigned preparation only. Give these exact commit coordinates to your trusted candidate verifier. This is not a passing attestation.";
+            if (!s.handoffDialog.open) s.handoffDialog.showModal();
+            s.handoffDialog.querySelector("button").focus();
           });
+          if (s.handoffDialog.open && s.handoffArea === handoff.area)
+            s.handoffTrigger = open;
           detail.append(
-            el("summary", `Candidate verification handoff · ${handoff.area}`),
-            notice,
-            content,
-            copy,
+            el("h3", `Candidate verification handoff · ${handoff.area}`),
+            el(
+              "p",
+              "Review the exact prepared commit coordinates for trusted verification.",
+              "runner-guidance",
+            ),
+            open,
           );
           s.handoffs.append(detail);
         }
@@ -664,6 +734,15 @@
     }
     function schedule() {
       clearTimeout(timer);
+      for (const s of entries.values())
+        if (
+          s.handoffDialog.open &&
+          (pages.current !== "project" ||
+            pages.project !== s.project.name ||
+            pages.pm ||
+            pages.tab !== "delivery")
+        )
+          s.handoffDialog.close();
       if (
         pages.current !== "project" ||
         pages.pm ||
@@ -711,6 +790,7 @@
         if (s) return load(s, true);
       },
       forget(name) {
+        entries.get(name)?.handoffDialog.close();
         entries.delete(name);
         clearTimeout(timer);
       },

@@ -23,6 +23,7 @@ import {
   selectRemoteArtifacts,
 } from "./worker.ts";
 import { startLeaseWatchdog } from "../../runner-local/lease.mjs";
+import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import type {
   DockerArtifacts,
   DockerJobInspection,
@@ -141,6 +142,50 @@ function fixture() {
 }
 
 describe("remote worker enrollment and scope", () => {
+  it("preserves the immutable Grumblin through remote storage/restart and rejects Linear credentials", async () => {
+    const f = fixture();
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    const grumblin = grumblinFixture({ project: "alpha" });
+    const input: DockerJobPayload = {
+      ...payload,
+      pmMode: "grumblin",
+      grumblin,
+      browserVerification: true,
+      grumblinTarget: { url: "https://test.invalid", role: "staging" },
+    };
+    await expect(
+      f.adapter.startJob({
+        id: "job-forbidden",
+        workerId: "worker-one",
+        payload: {
+          ...input,
+          credentials: { ...input.credentials, LINEAR_API_KEY: "never-send" },
+        },
+      }),
+    ).rejects.toThrow("no Linear");
+    await f.adapter.startJob({
+      id: "job-grumblin",
+      workerId: "worker-one",
+      payload: input,
+    });
+    await expect(
+      f.adapter.startJob({
+        id: "job-grumblin",
+        workerId: "worker-one",
+        payload: { ...input, grumblin: { ...grumblin, clickBudget: 30 } },
+      }),
+    ).rejects.toThrow("already assigned");
+    expect(f.hub.poll(f.worker.token).job?.payload).toMatchObject({
+      pmMode: "grumblin",
+      grumblin,
+    });
+    const restarted = createRemoteWorkers({ root: f.directory });
+    expect(restarted.poll(f.worker.token).job?.payload).toMatchObject({
+      pmMode: "grumblin",
+      grumblin,
+    });
+    expect(f.local.docker.startJob).not.toHaveBeenCalled();
+  });
   it("requires new enrollment after a project name is reused for a different incarnation", async () => {
     const f = fixture();
     initializeSetup(

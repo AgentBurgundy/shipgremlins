@@ -36,6 +36,9 @@
     document.body.append(dialog);
     let context = null,
       checking = false;
+    // Keep a confirmed run available even when the following dashboard refresh
+    // fails or has not observed it yet. A second click opens that run.
+    const acceptedJobs = new Map();
     const labels = {
       source: "Connect source control",
       ai: "Connect Claude",
@@ -46,6 +49,12 @@
       mandate: "Edit PM brief",
       config: "Edit project settings",
     };
+    const canPrepareRun = (readiness) =>
+      readiness?.canRun === true ||
+      (readiness?.blockers?.length > 0 &&
+        readiness.blockers.every((blocker) =>
+          ["linear_mapping", "verification"].includes(blocker.id),
+        ));
     function finish() {
       if (checking) return;
       dialog.close();
@@ -70,7 +79,11 @@
       if (!context) return;
       const current = target(context.project, context.area);
       const automation = context.mode === "automation";
-      title.textContent = automation ? "Turn automation on" : "Start this PM";
+      title.textContent = automation
+        ? "Turn automation on"
+        : context.mode === "exploration"
+          ? "Explore product ideas"
+          : "Start this PM";
       subtitle.textContent = `${context.project} / ${current?.area.name || context.area}`;
       content.replaceChildren();
       status.textContent = "";
@@ -80,7 +93,7 @@
         : current?.readiness?.blockers;
       const ready = automation
         ? current?.readiness?.canEnable
-        : current?.readiness?.canRun;
+        : canPrepareRun(current?.readiness);
       if (ready)
         content.append(
           node("p", "Ready. Your PM keeps its saved mandate and settings."),
@@ -146,6 +159,7 @@
       } catch (error) {
         status.textContent = error.message;
         status.hidden = false;
+        refresh.textContent = "Check again";
         return;
       } finally {
         checking = false;
@@ -158,7 +172,7 @@
       if (
         selected.mode === "automation"
           ? current?.readiness?.canEnable
-          : current?.readiness?.canRun
+          : canPrepareRun(current?.readiness)
       ) {
         finish();
         await execute(
@@ -174,22 +188,36 @@
         current = target(projectName, areaKey);
       if (isLocked() || states.get(key)?.busy || !current) return;
       const { project, area, readiness } = current;
-      if (mode === "run") {
-        const active = (getJobs() || []).find(
-          (job) =>
-            job.type === "pm" &&
-            job.project === projectName &&
-            (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
-            job.area === areaKey &&
-            ["queued", "running"].includes(job.status),
-        );
+      if (mode !== "automation") {
+        const jobs = getJobs() || [];
+        let accepted = acceptedJobs.get(key);
+        if (accepted) {
+          const observed = jobs.find((job) => job.id === accepted.job.id);
+          if (
+            accepted.projectInstanceId !== (project.instanceId ?? null) ||
+            (observed && !["queued", "running"].includes(observed.status))
+          ) {
+            acceptedJobs.delete(key);
+            accepted = null;
+          }
+        }
+        const active =
+          jobs.find(
+            (job) =>
+              job.type === "pm" &&
+              job.project === projectName &&
+              (job.projectInstanceId ?? null) ===
+                (project.instanceId ?? null) &&
+              job.area === areaKey &&
+              ["queued", "running"].includes(job.status),
+          ) || accepted?.job;
         if (active) {
           onJob(active);
           return;
         }
       }
       if (
-        (mode === "run" && readiness?.canRun !== true) ||
+        (mode !== "automation" && !canPrepareRun(readiness)) ||
         (mode === "automation" &&
           !area.enabled &&
           readiness?.canEnable !== true)
@@ -199,18 +227,30 @@
       }
       states.set(key, { busy: true, mode });
       onState();
+      let confirmedMessage = null;
       try {
-        if (mode === "run") {
-          const result = await api("/api/jobs", {
-            type: "pm",
-            project: projectName,
-            area: areaKey,
-          });
+        if (mode !== "automation") {
+          const result = await api(
+            "/api/jobs",
+            {
+              type: "pm",
+              project: projectName,
+              area: areaKey,
+              ...(mode === "exploration" ? { pmMode: "exploration" } : {}),
+            },
+            "POST",
+            90000,
+          );
           if (!result.job?.id)
             throw new Error(
               "The server did not confirm this run. Check Activity before trying again.",
             );
-          states.set(key, { message: "Run queued. Automation is unchanged." });
+          confirmedMessage = "Run queued. Automation is unchanged.";
+          acceptedJobs.set(key, {
+            job: result.job,
+            projectInstanceId: project.instanceId ?? null,
+          });
+          states.set(key, { busy: true, mode, message: confirmedMessage });
           onJob(result.job);
         } else {
           await api(
@@ -221,16 +261,24 @@
               projectRevision: project.projectRevision,
             },
           );
-          states.set(key, {
-            message: area.enabled
-              ? "Automation off. Current runs keep going."
-              : "Automation on. Scheduled patrols and approved-ticket pickup are enabled.",
-          });
+          confirmedMessage = area.enabled
+            ? "Automation off. Current runs keep going."
+            : "Automation on. Scheduled patrols and approved-ticket pickup are enabled.";
+          states.set(key, { busy: true, mode, message: confirmedMessage });
         }
         await onChanged();
       } catch (error) {
-        states.set(key, { error: true, message: error.message });
-        await onChanged().catch(() => {});
+        states.set(
+          key,
+          confirmedMessage
+            ? {
+                busy: true,
+                mode,
+                message: `${confirmedMessage} The dashboard could not refresh. ${mode === "automation" ? "Refresh before changing automation again." : "Open Activity to follow this run."}`,
+              }
+            : { busy: true, mode, error: true, message: error.message },
+        );
+        if (!confirmedMessage) await onChanged().catch(() => {});
       } finally {
         const state = states.get(key);
         if (state) state.busy = false;
@@ -240,6 +288,8 @@
     }
     return {
       run: (project, area, trigger) => execute(project, area, "run", trigger),
+      explore: (project, area, trigger) =>
+        execute(project, area, "exploration", trigger),
       toggle: (project, area, trigger) =>
         execute(project, area, "automation", trigger),
       isBusy: () =>

@@ -67,7 +67,9 @@ function fixture(
     window = {} as {
       createPmActions: (options: unknown) => {
         run: (project: string, area: string) => Promise<void>;
+        explore: (project: string, area: string) => Promise<void>;
         toggle: (project: string, area: string) => Promise<void>;
+        isBusy: () => boolean;
       };
     };
   runInNewContext(
@@ -98,6 +100,214 @@ function fixture(
   return { actions, api, body, saved, states, jobs, onJob, onChanged };
 }
 describe("direct PM actions", () => {
+  it.each(["run", "explore"] as const)(
+    "lets %s prepare missing mappings and verify the project through normal admission",
+    async (action) => {
+      const f = fixture(),
+        readiness = f.saved.readiness.areas[0]!;
+      readiness.canRun = false;
+      readiness.blockers = [
+        {
+          id: "linear_mapping",
+          action: "mapping",
+          message: "Mapping missing.",
+        },
+        {
+          id: "verification",
+          action: "verify",
+          message: "Verification needed.",
+        },
+      ];
+      await f.actions[action]("shop", "core");
+      expect(f.api).toHaveBeenCalledWith(
+        "/api/jobs",
+        {
+          type: "pm",
+          project: "shop",
+          area: "core",
+          ...(action === "explore" ? { pmMode: "exploration" } : {}),
+        },
+        "POST",
+        90000,
+      );
+      expect(f.body.children[0]!.open).toBe(false);
+    },
+  );
+  it("keeps real prerequisites and automation gated while allowing automatic run preparation", async () => {
+    const f = fixture(),
+      readiness = f.saved.readiness.areas[0]!;
+    readiness.canRun = readiness.canEnable = false;
+    readiness.blockers = [
+      { id: "linear_mapping", action: "mapping", message: "Mapping missing." },
+      { id: "worker", action: "worker", message: "Start a worker." },
+    ];
+    readiness.enableBlockers = [readiness.blockers[0]!];
+    await f.actions.run("shop", "core");
+    expect(f.api).not.toHaveBeenCalled();
+    await f.actions.toggle("shop", "core");
+    expect(f.api).not.toHaveBeenCalled();
+  });
+  it("queues deliberate product exploration without changing automation or the normal patrol request", async () => {
+    const f = fixture();
+    await f.actions.explore("shop", "core");
+    expect(f.api).toHaveBeenCalledExactlyOnceWith(
+      "/api/jobs",
+      {
+        type: "pm",
+        project: "shop",
+        area: "core",
+        pmMode: "exploration",
+      },
+      "POST",
+      90000,
+    );
+    expect(f.saved.areas[0]!.enabled).toBe(false);
+    await f.actions.toggle("shop", "core");
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/areas/core/status",
+      {
+        enabled: true,
+        revision: "areas-v1",
+        projectRevision: "project-v1",
+      },
+    );
+  });
+  it("opens an active patrol when Explore is clicked instead of launching competing PM work", async () => {
+    const f = fixture(),
+      active = {
+        id: "current-patrol",
+        type: "pm",
+        project: "shop",
+        area: "core",
+        status: "queued",
+      };
+    f.jobs.push(active);
+    await f.actions.explore("shop", "core");
+    expect(f.onJob).toHaveBeenCalledExactlyOnceWith(active);
+    expect(f.api).not.toHaveBeenCalled();
+  });
+  it("keeps exploration intent through its readiness remedies and recheck", async () => {
+    const f = fixture();
+    f.saved.readiness.areas[0]!.canRun = false;
+    f.saved.readiness.areas[0]!.blockers = [
+      {
+        id: "linear_connection",
+        action: "linear",
+        message: "Connect Linear first.",
+      },
+    ];
+    await f.actions.explore("shop", "core");
+    expect(f.api).not.toHaveBeenCalled();
+    expect(
+      walk(f.body).some((item) => item.textContent === "Explore product ideas"),
+    ).toBe(true);
+    expect(
+      walk(f.body).find((item) => item.dataset.setupAction === "linear")
+        ?.dataset.setupProject,
+    ).toBe("shop");
+    f.onChanged.mockImplementation(async () => {
+      f.saved.readiness.areas[0]!.canRun = true;
+    });
+    await walk(f.body)
+      .find((item) => item.textContent === "Check again")!
+      .fire("click");
+    expect(f.api).toHaveBeenCalledWith(
+      "/api/jobs",
+      {
+        type: "pm",
+        project: "shop",
+        area: "core",
+        pmMode: "exploration",
+      },
+      "POST",
+      90000,
+    );
+  });
+  it("keeps an accepted run successful when refresh fails and opens it on the next click", async () => {
+    const f = fixture();
+    f.onChanged.mockRejectedValue(new Error("Dashboard unavailable"));
+    await f.actions.explore("shop", "core");
+    expect(f.states.get("shop/core")).toMatchObject({
+      busy: false,
+      message: expect.stringContaining("Run queued"),
+    });
+    expect(f.states.get("shop/core")?.error).not.toBe(true);
+    expect(f.states.get("shop/core")?.message).toContain("could not refresh");
+    await f.actions.run("shop", "core");
+    expect(f.api).toHaveBeenCalledTimes(1);
+    expect(f.onJob).toHaveBeenLastCalledWith({ id: "job-one" });
+    expect(f.onChanged).toHaveBeenCalledTimes(1);
+  });
+  it("preserves confirmed automation success when refreshing its new state fails", async () => {
+    const f = fixture();
+    f.onChanged.mockRejectedValue(new Error("Dashboard unavailable"));
+    await f.actions.toggle("shop", "core");
+    expect(f.api).toHaveBeenCalledExactlyOnceWith(
+      "/api/projects/shop/areas/core/status",
+      { enabled: true, revision: "areas-v1", projectRevision: "project-v1" },
+    );
+    expect(f.states.get("shop/core")?.error).not.toBe(true);
+    expect(f.states.get("shop/core")?.message).toContain("Automation on.");
+    expect(f.states.get("shop/core")?.message).toContain(
+      "Refresh before changing automation again.",
+    );
+    expect(f.states.get("shop/core")?.busy).toBe(false);
+  });
+  it("keeps a failed readiness refresh retryable without creating a job", async () => {
+    const f = fixture();
+    f.saved.readiness.areas[0]!.canRun = false;
+    await f.actions.explore("shop", "core");
+    f.onChanged.mockRejectedValue(new Error("Setup status unavailable"));
+    const refresh = walk(f.body).find(
+      (item) => item.textContent === "Check again",
+    )!;
+    await refresh.fire("click");
+    expect(refresh.textContent).toBe("Check again");
+    expect(refresh.disabled).toBe(false);
+    expect(f.actions.isBusy()).toBe(false);
+    expect(f.api).not.toHaveBeenCalled();
+    expect(
+      walk(f.body).some(
+        (item) => item.textContent === "Setup status unavailable",
+      ),
+    ).toBe(true);
+  });
+  it("holds the busy state after acceptance until refresh finishes and allows another run only after completion is observed", async () => {
+    const f = fixture();
+    let finish!: () => void;
+    f.onChanged.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = f.actions.explore("shop", "core");
+    await Promise.resolve();
+    expect(f.actions.isBusy()).toBe(true);
+    await f.actions.run("shop", "core");
+    expect(f.api).toHaveBeenCalledTimes(1);
+    finish();
+    await pending;
+    f.jobs.push({
+      id: "job-one",
+      type: "pm",
+      project: "shop",
+      area: "core",
+      status: "succeeded",
+    });
+    await f.actions.run("shop", "core");
+    expect(f.api).toHaveBeenCalledTimes(2);
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/jobs",
+      {
+        type: "pm",
+        project: "shop",
+        area: "core",
+      },
+      "POST",
+      90000,
+    );
+  });
   it("queues a paused PM directly without changing automation and deduplicates an in-flight click", async () => {
     let resolve!: (value: { job: { id: string } }) => void;
     const api = vi.fn(
@@ -110,11 +320,16 @@ describe("direct PM actions", () => {
       pending = f.actions.run("shop", "core");
     await f.actions.run("shop", "core");
     expect(api).toHaveBeenCalledTimes(1);
-    expect(api).toHaveBeenCalledWith("/api/jobs", {
-      type: "pm",
-      project: "shop",
-      area: "core",
-    });
+    expect(api).toHaveBeenCalledWith(
+      "/api/jobs",
+      {
+        type: "pm",
+        project: "shop",
+        area: "core",
+      },
+      "POST",
+      90000,
+    );
     resolve({ job: { id: "job-one" } });
     await pending;
     expect(f.onJob).toHaveBeenCalledWith({ id: "job-one" });
@@ -198,11 +413,16 @@ describe("direct PM actions", () => {
     await walk(f.body)
       .find((item) => item.textContent === "Check again")!
       .fire("click");
-    expect(f.api).toHaveBeenCalledWith("/api/jobs", {
-      type: "pm",
-      project: "shop",
-      area: "core",
-    });
+    expect(f.api).toHaveBeenCalledWith(
+      "/api/jobs",
+      {
+        type: "pm",
+        project: "shop",
+        area: "core",
+      },
+      "POST",
+      90000,
+    );
     expect(f.body.children[0]!.open).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { validateGrumblinPayload } from "../../runner-local/grumblin-runtime.mjs";
 import {
   existsSync,
   readFileSync,
@@ -373,6 +374,7 @@ export function createRemoteWorker(options: {
             "Invalid isolated Docker job assignment.",
             502,
           );
+        validateGrumblinPayload(job.payload);
         state.active ??= {
           id: job.id,
           workerId: job.workerId,

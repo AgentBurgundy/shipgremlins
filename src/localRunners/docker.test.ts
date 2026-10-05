@@ -416,6 +416,30 @@ describe("local Docker job runtime", () => {
     await expect(test.api.stopJob(id)).rejects.toThrow();
     await expect(test.api.stopJob("../another")).rejects.toThrow();
   });
+  it("allows product exploration to inspect code and file proposals, without code publication or delivery review", async () => {
+    const payload: DockerJobPayload = {
+      ...developer,
+      kind: "pm",
+      pmMode: "exploration",
+      delivery: undefined,
+      browserVerification: false,
+      credentials: { ...developer.credentials, LINEAR_API_KEY: "linear-key" },
+    };
+    expect(() => validatePayload(payload)).not.toThrow();
+    expect(() =>
+      validatePayload({ ...payload, delivery: developer.delivery }),
+    ).toThrow("cannot publish");
+    expect(() => validatePayload({ ...payload, kind: "developer" })).toThrow(
+      "PM mode",
+    );
+    expect(() => validatePayload({ ...payload, pmMode: "discovery" })).toThrow(
+      "Discovery",
+    );
+    const test = fake();
+    await test.api.startJob({ id, workerId, payload });
+    expect(test.calls.some((call) => call.args[0] === "start")).toBe(true);
+  });
+
   it("rejects discovery payloads with commands, publication or integration credentials before Docker starts", async () => {
     const test = fake();
     const payload: DockerJobPayload = {

@@ -24,6 +24,37 @@
   const ongoing = (data) =>
     ["analyzing", "publishing"].includes(data?.status) ||
     data?.environment?.verification?.status === "testing";
+  function openDialogAtStart(dialog, heading) {
+    heading.setAttribute("tabindex", "-1");
+    heading.setAttribute("autofocus", "");
+    dialog.showModal();
+    heading.focus({ preventScroll: true });
+    dialog.scrollTop = 0;
+  }
+  function dialogHeader(dialog, heading) {
+    const header = node("header", undefined, "foundation-dialog-header"),
+      close = button("Close", () => dialog.close());
+    close.className = "small-button foundation-dialog-close";
+    header.append(heading, close);
+    return header;
+  }
+  function settingsSheet(title) {
+    const section = node("section", undefined, "onboarding-settings-link"),
+      dialog = node("dialog", undefined, "foundation-brief-dialog"),
+      content = node("div"),
+      heading = node("h2", title);
+    dialog.setAttribute("aria-label", title);
+    dialog.append(
+      dialogHeader(dialog, heading),
+      content,
+      button("Done", () => dialog.close()),
+    );
+    section.append(
+      button(title, () => openDialogAtStart(dialog, heading)),
+      dialog,
+    );
+    return { section, content, dialog };
+  }
   window.onboardingStep = (data) =>
     data?.environment?.verification?.status === "passed"
       ? 3
@@ -243,10 +274,10 @@
       if (s.connectionSignature === signature) return;
       s.connectionSignature = signature;
       s.connectionHelp.textContent = rows.every((row) => row.ready)
-        ? "Uses your saved connections and Docker on this server. Already have a test URL? Choose hosted staging below."
+        ? "Uses your saved connections and Docker on this server."
         : rows.some((row) => row.missing)
           ? "Connect the missing service below to analyze this repository. Docker is also required on this server."
-          : "Analysis uses source access, Claude Code and Docker on this server. Already have a test URL? Choose hosted staging below.";
+          : "Analysis uses source access, Claude Code and Docker on this server.";
       s.connectionLinks.replaceChildren();
       for (const row of rows) {
         const item = node(
@@ -353,14 +384,17 @@
           node: node("section", undefined, "project-onboarding"),
         };
         s.heading = node("header", undefined, "onboarding-heading");
+        s.title = node("h2", "A safe place to test.");
+        s.description = node(
+          "p",
+          "Choose where your crew can explore. Test access before using a browser environment.",
+        );
         s.heading.append(
           node("span", "ENVIRONMENT", "eyebrow muted"),
-          node("h2", "A safe place to test."),
-          node(
-            "p",
-            "Choose where your crew can explore. Test access before creating your first PM.",
-          ),
+          s.title,
+          s.description,
         );
+        s.foundation = node("section", undefined, "onboarding-analysis");
         s.steps = node("ol", undefined, "onboarding-steps");
         s.message = node("div", undefined, "onboarding-message");
         s.message.setAttribute("role", "status");
@@ -370,6 +404,7 @@
         s.proposal = node("section", undefined, "onboarding-proposal");
         s.node.append(
           s.heading,
+          s.foundation,
           s.steps,
           s.message,
           s.analysis,
@@ -385,7 +420,13 @@
     }
     function schedule(s) {
       clearTimeout(s.timer);
-      if (destroyed || active !== s || document.hidden || !ongoing(s.data))
+      if (
+        destroyed ||
+        active !== s ||
+        document.hidden ||
+        (!ongoing(s.data) &&
+          !["queued", "building"].includes(s.data?.foundation?.stage))
+      )
         return;
       s.timer = setTimeout(() => load(s, true), 1800);
     }
@@ -465,6 +506,206 @@
         schedule(s);
       }
     }
+    async function runFoundation(s, action) {
+      if (isLocked() || s.busy || s.loading) return;
+      s.busy = true;
+      s.error = s.notice = "";
+      paint(s);
+      try {
+        const foundation = await api(
+          `/api/projects/${encodeURIComponent(s.project.name)}/foundation/${action}`,
+          action === "inspect"
+            ? {}
+            : {
+                revision: s.data.foundation.revision,
+                ...(s.data.foundation.stage === "failed" &&
+                s.data.foundation.job
+                  ? { retryJobId: s.data.foundation.job.id }
+                  : {}),
+              },
+          "POST",
+          180000,
+        );
+        s.data.foundation = foundation;
+        if (action === "inspect")
+          s.notice =
+            foundation.stage === "ready"
+              ? "Application code and test commands are on the base branch. Now choose where to test the app."
+              : "The base branch still needs the app, npm start, and tests. Review and merge the foundation PR, then check again.";
+        await onSaved(s.project.name);
+      } catch (error) {
+        s.error =
+          error.message ||
+          "Foundation setup paused. Your progress is saved; retry to resume.";
+      } finally {
+        s.busy = false;
+        paint(s);
+        schedule(s);
+      }
+    }
+    function showBuildBrief(s) {
+      if (s.briefDialog) s.briefDialog.remove();
+      const dialog = node("dialog", undefined, "foundation-brief-dialog");
+      const title = node("h2", "Your foundation build brief");
+      title.id = `foundation-brief-${s.project.name}`;
+      dialog.setAttribute("aria-labelledby", title.id);
+      const close = button("Back to build review", () => dialog.close());
+      const brief = String(s.data.foundation.buildBrief || "").replace(
+        /^<!-- ShipGremlins foundation: [a-f0-9-]+ -->\s*$/m,
+        "",
+      );
+      dialog.append(
+        dialogHeader(dialog, title),
+        node(
+          "p",
+          "This is the exact scope used for the approved Linear ticket.",
+        ),
+        typeof window.renderKnowledgeDocument === "function"
+          ? window.renderKnowledgeDocument(brief)
+          : node("pre", brief),
+        close,
+      );
+      s.node.append(dialog);
+      s.briefDialog = dialog;
+      openDialogAtStart(dialog, title);
+    }
+    function paintFoundation(s) {
+      const data = s.data?.foundation,
+        stage = data?.stage || "review";
+      s.foundation.className = "foundation-card";
+      s.foundation.replaceChildren();
+      const timeline = node("ol", undefined, "foundation-progress");
+      for (const [index, label] of [
+        "Build foundation",
+        "Review code",
+        "Test the app",
+      ].entries()) {
+        const step = node("li", label);
+        if (index === (stage === "review-code" ? 1 : 0))
+          step.setAttribute("aria-current", "step");
+        timeline.append(step);
+      }
+      s.foundation.append(timeline);
+      if (!data) {
+        s.foundation.append(node("h3", "Preparing your build review…"));
+        return;
+      }
+      const running = ["queued", "building"].includes(stage);
+      s.foundation.append(
+        node(
+          "span",
+          running ? "CODING GREMLIN" : "YOUR FIRST VERSION",
+          "eyebrow muted",
+        ),
+        node(
+          "h3",
+          running
+            ? stage === "queued"
+              ? "Your foundation is in the queue."
+              : "Your foundation is taking shape."
+            : stage === "review-code"
+              ? "Your first build is ready to review."
+              : stage === "failed"
+                ? "Let's get your build moving again."
+                : data.title,
+        ),
+        node(
+          "p",
+          running
+            ? "A Coding Gremlin will implement the reviewed plan on your runner, run its tests, and open a draft pull request."
+            : stage === "review-code"
+              ? "Open the coding run to review its draft pull request and test evidence. Merge the code when you're happy, then check the repository below."
+              : stage === "failed"
+                ? data.job?.message ||
+                  "Open the run to see what stopped it. Retry resumes the same foundation ticket."
+                : data.milestone,
+          "foundation-lead",
+        ),
+      );
+      if (!running && stage === "review") {
+        s.foundation.append(
+          node(
+            "p",
+            "Automatic foundation: Node.js web app + npm.",
+            "onboarding-help",
+          ),
+          node("p", data.assignment),
+        );
+        const acceptance = node("section", undefined, "foundation-acceptance");
+        acceptance.append(
+          node("h4", "The first version will"),
+          list(data.acceptanceCriteria),
+        );
+        s.foundation.append(acceptance);
+        const scope = button("Read the full build brief", () =>
+          showBuildBrief(s),
+        );
+        scope.className = "onboarding-text-button";
+        s.foundation.append(scope);
+      }
+      const actions = node("div", undefined, "onboarding-actions");
+      if (["review", "failed"].includes(stage)) {
+        const build = button(
+          s.busy
+            ? "Setting up your build…"
+            : stage === "failed"
+              ? "Retry foundation build"
+              : "Approve & build foundation",
+          () => runFoundation(s, "build"),
+          true,
+        );
+        build.disabled = isLocked() || s.loading || s.busy;
+        actions.append(build);
+      }
+      if (data.job) {
+        const run = node("a", "Open coding run", "button");
+        run.href = `/activity?run=${encodeURIComponent(data.job.id)}`;
+        actions.append(run);
+      }
+      if (!running) {
+        const check = button(
+          s.busy
+            ? "Checking…"
+            : stage === "review-code"
+              ? "I've merged it · check repository"
+              : "My app already has code",
+          () => runFoundation(s, "inspect"),
+        );
+        check.disabled = isLocked() || s.loading || s.busy;
+        actions.append(check);
+      }
+      s.foundation.append(actions);
+      if (stage === "review")
+        s.foundation.append(
+          node(
+            "p",
+            "This approves one foundation ticket in Linear and starts a coding run. We'll set up its team and labels and check your connections. You review the draft pull request before merging. Hosting can wait.",
+            "onboarding-help",
+          ),
+        );
+      if (data.ticket) {
+        const ticket = node(
+          "a",
+          `Foundation ticket · ${data.ticket.identifier}`,
+        );
+        if (
+          typeof data.ticket.url === "string" &&
+          /^https:\/\/linear\.app\//.test(data.ticket.url)
+        ) {
+          ticket.href = data.ticket.url;
+          ticket.target = "_blank";
+          ticket.rel = "noopener noreferrer";
+        }
+        s.foundation.append(ticket);
+      }
+      const resources = node("p", undefined, "foundation-resources");
+      const connections = node("a", "Connections"),
+        runners = node("a", "Runners");
+      connections.href = "/connections";
+      runners.href = "/runners";
+      resources.append(connections, runners);
+      s.foundation.append(resources);
+    }
     function field(s, key, label, help, type = "text") {
       const wrap = node("div", undefined, "field"),
         caption = node("label", label),
@@ -508,6 +749,7 @@
         s.draft.accessKind,
         s.draft.vercelBypassEnabled,
         s.draft.accounts.length,
+        s.showVercel,
         Object.keys(s.project.environments || {}),
       ]);
       if (shape === s.formSignature) {
@@ -540,7 +782,19 @@
       }
       s.form.append(choices);
       if (s.draft.profile === "hosted") {
-        if (window.createVercelSetup) {
+        if (!s.showVercel) s.vercelSetup?.setActive(false);
+        const chooseVercel = button(
+          s.showVercel
+            ? "Use a test URL instead"
+            : "Find a preview with Vercel",
+          () => {
+            s.showVercel = !s.showVercel;
+            s.formSignature = "";
+            paintForm(s);
+          },
+        );
+        s.form.append(chooseVercel);
+        if (window.createVercelSetup && s.showVercel) {
           if (!s.vercelSetup)
             s.vercelSetup = window.createVercelSetup({
               api,
@@ -667,9 +921,8 @@
                 "onboarding-help",
               ),
             );
-            const advanced = node("details", undefined, "onboarding-advanced");
-            advanced.append(
-              node("summary", "Saved bypass secret name"),
+            const advanced = settingsSheet("Saved bypass secret name");
+            advanced.content.append(
               field(
                 s,
                 "vercelBypassSecret",
@@ -677,7 +930,7 @@
                 "A reference to the token in Connections, not the token itself.",
               ),
             );
-            protection.append(advanced);
+            protection.append(advanced.section);
             const credentials = node(
               "a",
               "Open project access in Connections →",
@@ -687,25 +940,23 @@
           }
           s.form.append(protection);
         }
-        const advanced = node("details", undefined, "onboarding-advanced");
-        advanced.append(
-          node("summary", "Hosting provider settings"),
+        const advanced = settingsSheet("Hosting provider settings");
+        advanced.content.append(
           node(
             "p",
             "Choose a saved provider account and resource in project settings. Hosting access is separate from signing into your app.",
           ),
         );
-        const settings = button("Open project settings", () => {});
+        const settings = button("Open project settings", () =>
+          advanced.dialog.close(),
+        );
         settings.dataset.editProject = s.project.name;
-        advanced.append(settings);
-        s.form.append(advanced);
+        advanced.content.append(settings);
+        s.form.append(advanced.section);
         if (s.data?.report?.hosted?.instructions?.length) {
-          const tips = node("details", undefined, "onboarding-advanced");
-          tips.append(
-            node("summary", "Suggested hosting setup"),
-            list(s.data.report.hosted.instructions),
-          );
-          s.form.append(tips);
+          const tips = settingsSheet("Suggested hosting setup");
+          tips.content.append(list(s.data.report.hosted.instructions));
+          s.form.append(tips.section);
         }
       } else {
         s.vercelSetup?.setActive(false);
@@ -774,9 +1025,8 @@
           ),
         );
         s.form.append(grid);
-        const advanced = node("details", undefined, "onboarding-advanced");
-        advanced.append(
-          node("summary", "Startup, data & credential references"),
+        const advanced = settingsSheet("Startup, data & credential references");
+        advanced.content.append(
           node(
             "p",
             "Advanced JSON can set start, migrate, seed (argument arrays), PostgreSQL/Redis services, and env mappings. env values are dedicated secret names from Connections, never token values.",
@@ -789,20 +1039,16 @@
             "textarea",
           ),
         );
-        s.form.append(advanced);
+        s.form.append(advanced.section);
       }
       const access = node(
-        "details",
+        "section",
         undefined,
         "onboarding-advanced onboarding-access",
       );
-      access.open = s.accessOpen === true;
-      access.addEventListener("toggle", () => {
-        s.accessOpen = access.open;
-      });
       access.append(
         node(
-          "summary",
+          "h4",
           s.draft.accessKind === "password"
             ? `Test accounts · ${s.draft.accounts.length}`
             : s.draft.accessKind === "legacy"
@@ -896,17 +1142,16 @@
             "A stable element visible only after successful sign-in, such as [data-testid=account-menu].",
           ),
         );
-        const selectors = node("details", undefined, "onboarding-advanced");
-        selectors.append(node("summary", "Advanced login selectors"));
+        const selectors = settingsSheet("Advanced login selectors");
         for (const [key, label] of [
           ["usernameSelector", "Username field"],
           ["passwordSelector", "Password field"],
           ["submitSelector", "Submit button"],
         ])
-          selectors.append(
+          selectors.content.append(
             field(s, key, label, "CSS selector used by the browser test."),
           );
-        access.append(selectors);
+        access.append(selectors.section);
       } else if (s.draft.accessKind === "legacy")
         access.append(
           node(
@@ -961,6 +1206,33 @@
       updateFormActions(s);
     }
     function paint(s) {
+      const buildFirst = Boolean(
+        s.project.ideaPlanId && s.data?.foundation?.stage !== "ready",
+      );
+      s.foundation.hidden = !buildFirst;
+      s.steps.hidden = buildFirst;
+      s.verification.hidden = buildFirst;
+      s.proposal.hidden = buildFirst;
+      s.title.textContent = buildFirst
+        ? "First, let's build your app."
+        : "A safe place to test.";
+      s.description.textContent = buildFirst
+        ? "Your plan is ready. A Coding Gremlin can turn it into a working first version before you need a test environment."
+        : "Choose where your crew can explore. Test access before using a browser environment.";
+      if (buildFirst) {
+        s.analysis.hidden = s.form.hidden = true;
+        s.vercelSetup?.setActive(false);
+        s.message.replaceChildren();
+        paintFoundation(s);
+        if (s.error)
+          s.message.append(
+            node("p", s.error, "form-message error"),
+            button("Refresh status", () => load(s, true)),
+          );
+        else if (s.notice)
+          s.message.append(node("p", s.notice, "form-message"));
+        return;
+      }
       const step = window.onboardingStep(s.data);
       s.steps.replaceChildren();
       for (const [index, label] of [
@@ -986,11 +1258,11 @@
       } else if (s.notice)
         s.message.append(node("p", s.notice, "form-message"));
       s.analysis.hidden = Boolean(
-        s.data?.environment &&
+        (s.data?.environment || s.showForm) &&
         !s.showAnalysis &&
         !["analyzing", "publishing"].includes(s.data?.status),
       );
-      s.form.hidden = Boolean(s.data?.environment && !s.showForm);
+      s.form.hidden = !s.showForm;
       s.analysis.replaceChildren();
       const intro = node("div", undefined, "onboarding-analysis-heading"),
         image = node("img");
@@ -1019,6 +1291,18 @@
       );
       analyze.disabled = disabled(s) || !s.data;
       s.analysis.append(analyze);
+      const manual = button(
+        s.data?.report
+          ? "Choose a test environment"
+          : "I already know where to test",
+        () => {
+          s.showForm = true;
+          s.showAnalysis = false;
+          paint(s);
+        },
+      );
+      manual.disabled = disabled(s) || !s.data;
+      s.analysis.append(manual);
       if (s.data?.status === "analyzing") {
         const cancel = button("Stop analysis", () =>
           run(s, "cancel", { revision: s.data.revision }),
@@ -1093,20 +1377,18 @@
         }
         if (report.warnings?.length)
           recommendation.append(list(report.warnings, "onboarding-help"));
-        const evidence = node("details", undefined, "onboarding-advanced");
         const inspection = report.repository?.inspection;
-        evidence.append(
-          node(
-            "summary",
-            `Reviewed ${report.repository?.filesRead?.length || 0} files${inspection ? " · Entrypoints & dependencies" : " · Earlier source scan"}`,
-          ),
+        const evidence = settingsSheet(
+          `Review source evidence · ${report.repository?.filesRead?.length || 0} files`,
+        );
+        evidence.content.append(
           node(
             "p",
             `${report.repository?.repo || s.project.repo} · ${report.repository?.branch || ""} · ${(report.repository?.sha || "").slice(0, 12)}`,
           ),
         );
         if (inspection) {
-          evidence.append(
+          evidence.content.append(
             node(
               "p",
               `${inspection.totalFiles} files listed${inspection.treeTruncated ? " (repository listing incomplete)" : ""} · ${Math.ceil(inspection.sourceBytes / 1024)} KiB of selected source · ${inspection.files.filter((file) => file.excerpt).length} files read in excerpts.`,
@@ -1125,22 +1407,22 @@
             );
             reviewed.append(item);
           }
-          evidence.append(reviewed);
+          evidence.content.append(reviewed);
           if (inspection.criticalMissing?.length) {
-            evidence.append(
+            evidence.content.append(
               node("strong", "Important source is still missing"),
               list(inspection.criticalMissing),
             );
           }
           if (inspection.unresolved?.length) {
-            const remaining = node("details", undefined, "onboarding-advanced");
+            const remaining = node("section", undefined, "onboarding-advanced");
             remaining.append(
-              node("summary", "Unread references & limits"),
+              node("h4", "Unread references & limits"),
               list(inspection.unresolved),
             );
-            evidence.append(remaining);
+            evidence.content.append(remaining);
           }
-          evidence.append(
+          evidence.content.append(
             node(
               "p",
               `This analysis follows selected source references; it is not a complete repository audit. Budget: up to ${inspection.limits.files} source reads and ${Math.round(inspection.limits.sourceBytes / 1024)} KiB of source context.`,
@@ -1148,27 +1430,30 @@
             ),
           );
         } else {
-          evidence.append(list(report.repository?.filesRead || []));
-          evidence.append(
+          evidence.content.append(list(report.repository?.filesRead || []));
+          evidence.content.append(
             node(
               "p",
               "This report used the earlier file-selection method. Analyze again to follow application entrypoints, imports and test fixtures with the expanded source budget.",
             ),
           );
         }
-        recommendation.append(evidence);
+        recommendation.append(evidence.section);
         s.analysis.append(recommendation);
       }
       paintForm(s);
       s.verification.replaceChildren();
       if (s.data?.environment) {
         const environment = s.data.environment,
-          result = environment.verification;
+          result = environment.verification,
+          hasCrew = Boolean(s.project.areas?.length);
         s.verification.append(
           node(
             "h3",
             result?.status === "passed"
-              ? "Ready for a PM."
+              ? hasCrew
+                ? "Your crew can explore."
+                : "Ready for a PM."
               : "Test the environment.",
           ),
           node(
@@ -1233,8 +1518,14 @@
         s.verification.append(editActions);
         if (result?.status === "passed") {
           s.create = button(
-            "Create a PM",
-            () => onCreatePm?.(s.project.name),
+            hasCrew ? "Open project" : "Create a PM",
+            () => {
+              if (hasCrew) {
+                const path = `/projects/${encodeURIComponent(s.project.name)}`;
+                if (!window.dashboardPages?.navigate(path))
+                  window.location.assign(path);
+              } else onCreatePm?.(s.project.name);
+            },
             true,
           );
           s.create.disabled = isLocked() || s.busy || dirty(s);
@@ -1286,12 +1577,10 @@
       }
       s.proposal.replaceChildren();
       if (report?.proposedFiles?.length) {
-        const details = node("details", undefined, "onboarding-advanced");
-        details.append(
-          node(
-            "summary",
-            `Review ${report.proposedFiles.length} proposed setup ${report.proposedFiles.length === 1 ? "file" : "files"}`,
-          ),
+        const details = settingsSheet(
+          `Review ${report.proposedFiles.length} proposed setup ${report.proposedFiles.length === 1 ? "file" : "files"}`,
+        );
+        details.content.append(
           node(
             "p",
             "These files are a proposal. A draft PR gives you a diff to review; nothing is merged automatically. New Dockerfiles must be merged before they can be used to test this repository.",
@@ -1304,7 +1593,7 @@
             node("p", file.reason),
             node("pre", file.content),
           );
-          details.append(section);
+          details.content.append(section);
         }
         const confirm = node("label", undefined, "onboarding-confirm"),
           checkbox = node("input");
@@ -1314,7 +1603,7 @@
           checkbox,
           document.createTextNode("I reviewed these proposed setup files."),
         );
-        details.append(confirm);
+        details.content.append(confirm);
         const publish = button(
           s.data?.status === "publishing"
             ? "Preparing draft PR…"
@@ -1326,8 +1615,8 @@
           s.reviewed = checkbox.checked;
           publish.disabled = disabled(s) || !s.reviewed || s.data.stale;
         });
-        details.append(publish);
-        s.proposal.append(details);
+        details.content.append(publish);
+        s.proposal.append(details.section);
       }
       if (s.data?.setupPull?.url) {
         try {
@@ -1387,7 +1676,7 @@
         active = s;
         container.append(s.node);
         paint(s);
-        if (!s.form.hidden && s.draft?.profile === "hosted")
+        if (!s.form.hidden && s.draft?.profile === "hosted" && s.showVercel)
           s.vercelSetup?.setActive(true);
         load(s);
         schedule(s);

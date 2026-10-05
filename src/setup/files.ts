@@ -515,19 +515,19 @@ function initializeLocked(
     preserved,
     secretNames: [...new Set([...COMMON_SECRETS, ...secrets])],
     next: [
-      `Review projects/${input.project}/project.json: base branch and install/test commands. Repository review needs no hosting provider; optionally choose browser verification and an environment.`,
+      `Open gremlins setup and choose ${input.project}. Review its base branch and install/test commands in project settings.`,
       ...(input.createInitialPm === false
         ? [
-            "Open the project's Environment page to analyze its source, choose hosted staging or a disposable Docker app, and test browser access before creating PMs.",
+            "Choose Adopt a PM Gremlin on the project and give it one focused job. Browser environment setup can wait until a runnable app needs browser testing.",
           ]
         : [
-            `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
-            `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
+            `Open the ${area} PM's Product brief and describe the users, goal, and boundaries. The initial PM stays paused.`,
+            "Review PM ownership in the dashboard. A later PM run can prepare missing Linear mappings using your chosen account.",
           ]),
       `Use gremlins setup to save connections and create a Docker worker on this machine. Use gremlins setup --lan for a server accessed from other devices.`,
       `Run gremlins setup --check --project ${input.project}. If using a local .env, create/fill it first, then use gremlins --env-file .env setup --check --project ${input.project}.`,
       `For live provider checks run gremlins --env-file .env doctor ${input.project} (or gremlins doctor ${input.project} when credentials are already exported).`,
-      "After reviewing the mandate, set its area enabled=true. Local workers follow its UTC schedule while the controller is running; existing CI installations still use gremlins crons write.",
+      "Try one Discovery or Run now assignment with automation paused. Review the result before choosing Automation on for recurring work; existing CI installations still use gremlins crons write.",
       "The default local Docker mode needs no fork, automation repository, GitHub Actions, or GitLab CI. Existing CI runner settings are preserved.",
     ],
   };

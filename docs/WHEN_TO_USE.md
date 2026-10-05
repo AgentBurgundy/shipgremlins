@@ -1,6 +1,6 @@
 # When to use ShipGremlins
 
-**Give your idea a crew.**
+**AI product managers that actually use your app.**
 
 Start with a product idea or an app you already have. ShipGremlins can turn an
 idea into a proposed first milestone and PM crew, then carry work through the
@@ -10,12 +10,12 @@ or MRs. You set priorities and review what ships.
 
 ## Find your starting point
 
-| Where you are                          | A useful next step                                                                                                                                       |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| An idea or an empty repository         | Describe the users and first useful version. Review the proposed PM crew and create its new private-by-default repository. Start with its foundation PM. |
-| An early codebase or working prototype | Give one PM a focused goal and run repository discovery. Review its feature map and opportunities before assigning more work.                            |
-| A product with a growing backlog       | Use a PM patrol to investigate a flow, approve a scoped improvement, and review the Coding Gremlin's draft change.                                       |
-| An established app with several areas  | Add distinct mandates for areas that need attention. Set schedules and work limits around your ability to review the results.                            |
+| Where you are                          | A useful next step                                                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| An idea or an empty repository         | Describe the users and first useful version. Review the crew and its private-by-default repository, then approve and build the foundation. |
+| An early codebase or working prototype | Give one PM a focused goal and run repository discovery. Review its feature map and opportunities before assigning more work.              |
+| A product with a growing backlog       | Use a PM patrol to investigate a flow, approve a scoped improvement, and review the Coding Gremlin's draft change.                         |
+| An established app with several areas  | Add distinct mandates for areas that need attention. Set schedules and work limits around your ability to review the results.              |
 
 An idea can be enough to plan a crew. A prototype can be enough to start improving
 an app. You do not need paying users, a public launch,
@@ -51,9 +51,16 @@ For a new app, use **one milestone and a foundation PM**. The idea planner
 proposes one to four PMs with first assignments and dependency order. Creating
 the crew saves their briefs together and creates a repository with a README.
 Private visibility is the default; choose public explicitly for open-source work.
-PMs start paused; run the foundation PM first and approve its implementation
-ticket before running Coding. The initial stack is Node.js with npm.
+PMs start paused. Review **Build the foundation** and choose **Approve & build**
+to prepare its Linear ticket and queue a Coding Gremlin. Merge the reviewed draft
+before routine PM analysis and browser walkthroughs. The initial stack is Node.js with npm.
 [Start an app with a PM crew →](IDEA_TO_APP.md)
+
+For a fresh perspective on a working app, try [Grumblins](GRUMBLINS.md).
+AI generates customers suited to your product and gives each a goal, personality
+and patience budget. Their walkthroughs expose friction and possible unmet needs;
+PMs investigate the evidence and propose experiments. These are simulated
+perspectives to test with real users, not a substitute for customer research.
 
 For an existing app, start with **one PM, one area, one useful change**. For example, give a PM this
 mandate for an existing import feature:
@@ -64,13 +71,15 @@ mandate for an existing import feature:
 > with reproducible evidence and acceptance criteria. Leave billing and account
 > permissions alone.
 
-1. **Connect the app and create one PM.** Follow [setup](SETUP.md). Give the PM
+1. **Connect the app and adopt one gremlin.** Follow [setup](SETUP.md#your-first-adoption). Choose its job and give the PM
    the goal, boundaries, and expected behavior in its product brief. Keep
    automation paused.
-2. **Run Discovery.** Review the feature inventory, opportunities, and source
-   evidence. Correct the PM's understanding before asking it to investigate more.
-3. **Try one supervised patrol.** Finish the PM's Linear mapping and project
-   checks. For browser work, configure and test its environment first. Choose
+2. **Explore the codebase.** This starts Discovery with source access, Claude
+   Code, and a ready worker; choose **Prepare first mission** if setup is missing.
+   Linear and browser setup can wait. Review the feature inventory, opportunities,
+   and source evidence. Correct the PM’s understanding before asking it to investigate more.
+3. **Try one supervised patrol.** Connect Linear; the run can prepare missing
+   mappings and required verification with your selected account. For browser work, configure and test its environment first. Choose
    **Run now** and inspect the findings and evidence in Activity.
 4. **Approve one bounded ticket.** Confirm that the scope and acceptance criteria
    are useful. Run Coding on that approved ticket, then review the draft PR or

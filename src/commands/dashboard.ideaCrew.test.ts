@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { createDashboardServer } from "./dashboard.ts";
+import { createDashboardServer, type DashboardOptions } from "./dashboard.ts";
 import { createIdeaCrew, type CrewDraft } from "../ideaCrew/index.ts";
 import { samplePlan } from "../ideaCrew/test-support.ts";
 import { createLocalRunners } from "../localRunners/engine.ts";
@@ -20,7 +20,7 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
-async function fixture() {
+async function fixture(foundation?: DashboardOptions["foundation"]) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-idea-api-"));
   roots.push(root);
   const ideaCrew = createIdeaCrew({
@@ -53,6 +53,7 @@ async function fixture() {
     ideaCrew,
     runners,
     sourceControl,
+    foundation,
   });
   servers.push(server);
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -79,8 +80,60 @@ describe("idea onboarding API", () => {
       ["/api/idea-plans/11111111-1111-4111-8111-111111111111", undefined],
       ["/api/idea-plans/11111111-1111-4111-8111-111111111111/create", {}],
       ["/api/source-control/github/owners", undefined],
+      ["/api/projects/studio/foundation", undefined],
+      ["/api/projects/studio/foundation/build", {}],
+      ["/api/projects/studio/foundation/inspect", {}],
     ] as const)
       expect((await f.call(path, data, false)).status).toBe(401);
+  });
+  it("requires a reviewed revision for a foundation build and keeps inspection separate", async () => {
+    const status = { stage: "review", revision: "brief-1" } as Awaited<
+      ReturnType<NonNullable<DashboardOptions["foundation"]>["status"]>
+    >;
+    const foundation = {
+      status: vi.fn(async () => status),
+      inspect: vi.fn(async () => status),
+      needed: () => true,
+      start: vi.fn(async () => ({ ...status, stage: "queued" })),
+    };
+    const f = await fixture(foundation);
+    const plan = (await (
+      await f.call("/api/idea-plans", {
+        idea: "Build a booking app for pottery class students.",
+      })
+    ).json()) as CrewDraft;
+    await f.call(`/api/idea-plans/${plan.id}/create`, {
+      revision: plan.revision,
+      project: "studio",
+      repo: "owner/studio",
+    });
+    expect((await f.call("/api/projects/studio/foundation")).status).toBe(200);
+    expect(
+      (await f.call("/api/projects/studio/foundation/build", {})).status,
+    ).toBe(400);
+    expect(
+      (
+        await f.call("/api/projects/studio/foundation/build", {
+          revision: "brief-1",
+          prompt: "other scope",
+        })
+      ).status,
+    ).toBe(400);
+    expect(foundation.start).not.toHaveBeenCalled();
+    expect(
+      (
+        await f.call("/api/projects/studio/foundation/build", {
+          revision: "brief-1",
+        })
+      ).status,
+    ).toBe(202);
+    expect(foundation.start).toHaveBeenCalledWith("studio", {
+      revision: "brief-1",
+    });
+    expect(
+      (await f.call("/api/projects/studio/foundation/inspect", {})).status,
+    ).toBe(200);
+    expect(foundation.inspect).toHaveBeenCalledWith("studio");
   });
   it("lists repository owners only at the authenticated source endpoint", async () => {
     const f = await fixture();

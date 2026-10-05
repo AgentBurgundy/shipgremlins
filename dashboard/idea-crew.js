@@ -7,6 +7,22 @@
     if (className) element.className = className;
     return element;
   };
+  function dialogHeading(dialog, title) {
+    const header = node("header", undefined, "foundation-dialog-header"),
+      heading = node("h2", title),
+      close = node("button", "Close", "small-button foundation-dialog-close");
+    heading.setAttribute("tabindex", "-1");
+    heading.setAttribute("autofocus", "");
+    close.type = "button";
+    close.addEventListener("click", () => dialog.close());
+    header.append(heading, close);
+    dialog.append(header);
+    return () => {
+      dialog.showModal();
+      heading.focus({ preventScroll: true });
+      dialog.scrollTop = 0;
+    };
+  }
   window.createIdeaCrew = ({
     container,
     api,
@@ -86,9 +102,10 @@
       for (const member of plan.crew) {
         const card = node("li");
         card.append(node("h4", member.name), node("p", member.mission));
-        const detail = node("details");
+        const detail = node("dialog", undefined, "foundation-brief-dialog");
+        detail.setAttribute("aria-label", `${member.name} · First assignment`);
+        const openDetail = dialogHeading(detail, member.name);
         detail.append(
-          node("summary", "First assignment & success criteria"),
           node("p", member.why, "idea-why"),
           node("strong", "First assignment"),
           node("p", member.firstTask),
@@ -97,7 +114,14 @@
         for (const criterion of member.acceptanceCriteria)
           criteria.append(node("li", criterion));
         detail.append(criteria);
+        const open = node("button", "View first assignment", "small-button"),
+          close = node("button", "Done", "small-button");
+        open.type = close.type = "button";
+        open.addEventListener("click", openDetail);
+        close.addEventListener("click", () => detail.close());
+        detail.append(close);
         card.append(
+          open,
           detail,
           node(
             "p",
@@ -110,11 +134,13 @@
         cards.append(card);
       }
       preview.append(cards);
-      const assumptions = node("details");
-      assumptions.append(
-        node("summary", "Assumptions and scope"),
-        node("p", `Users: ${plan.users.join("; ")}`),
+      const assumptions = node("dialog", undefined, "foundation-brief-dialog");
+      assumptions.setAttribute("aria-label", "Assumptions and scope");
+      const openAssumptions = dialogHeading(
+        assumptions,
+        "Assumptions and scope",
       );
+      assumptions.append(node("p", `Users: ${plan.users.join("; ")}`));
       for (const [title, items] of [
         ["Assumptions to confirm", plan.assumptions],
         ["Outside the first version", plan.nonGoals],
@@ -124,11 +150,22 @@
         for (const item of items) list.append(node("li", item));
         assumptions.append(list);
       }
+      const scope = node(
+          "button",
+          "Review assumptions & scope",
+          "small-button",
+        ),
+        closeScope = node("button", "Done", "small-button");
+      scope.type = closeScope.type = "button";
+      scope.addEventListener("click", openAssumptions);
+      closeScope.addEventListener("click", () => assumptions.close());
+      assumptions.append(closeScope);
       preview.append(
+        scope,
         assumptions,
         node(
           "p",
-          "Your crew shares one app. Foundation starts first; other PMs wait for their dependencies. You approve implementation tickets before coding begins.",
+          "Your first coding run builds the shared foundation. The PMs take over when the app has code to explore. You'll review the build scope before it starts.",
           "idea-next",
         ),
       );

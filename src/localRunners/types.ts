@@ -23,7 +23,10 @@ export interface LocalJobInput {
   };
   /** Explicit controller-authorized one-off; it does not enable scheduled automation. */
   runOnce?: boolean;
-  pmMode?: "discovery";
+  /** Explicit PM work strategy; Grumblins simulate a saved user's app walkthrough. */
+  pmMode?: "discovery" | "exploration" | "grumblin";
+  /** Exact generated profile selected at admission; never regenerate during a run. */
+  grumblin?: import("../grumblins/schema.ts").GrumblinProfileSnapshot;
   /** Owner configuration snapshot for adopting learned PM observations. */
   discoveryRevision?: string;
 }

@@ -1,0 +1,104 @@
+body:not(.is-first-run) .first-run-path,
+body.is-first-run .overview-metrics,
+body.first-run-no-project .workspace-projects-overview {
+  display: none;
+}
+body.is-first-run .first-run-path:not([hidden]) {
+  display: block !important;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 18px 0 28px;
+}
+.first-run-progress {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.first-run-progress li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px 10px;
+  color: var(--muted);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.first-run-progress li[aria-current="step"] {
+  color: var(--ink);
+  background: #e9f0e4;
+  font-weight: 700;
+}
+.first-run-step-marker {
+  display: grid;
+  place-items: center;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 11px;
+}
+.first-run-progress .complete .first-run-step-marker {
+  color: #345d24;
+  background: #e5eedf;
+  border-color: #d6e2cd;
+}
+#overview .first-run-note {
+  margin: 14px 0 0;
+  color: #60715d;
+  font-size: 12px;
+}
+@media (max-width: 850px) {
+  .first-run-progress {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 540px) {
+  .first-run-progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .first-run-progress li {
+    padding: 9px 6px;
+  }
+  #overview-primary-action,
+  #overview-adopt-action {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+  }
+}
+@media (max-width: 600px) {
+  body.is-first-run #overview .hero-copy > .eyebrow {
+    min-height: 72px;
+    padding-top: 20px;
+    padding-right: 82px;
+  }
+  body.is-first-run #overview .hero-art {
+    display: flex;
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    bottom: auto;
+    width: 80px;
+    height: 90px;
+    padding: 0;
+    margin: 0;
+    pointer-events: none;
+  }
+  body.is-first-run #overview .hero-art img {
+    width: 80px;
+    height: 90px;
+    max-width: 100%;
+    max-height: 90px;
+    margin: 0;
+    object-fit: contain;
+  }
+}

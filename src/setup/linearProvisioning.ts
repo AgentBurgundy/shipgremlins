@@ -33,6 +33,7 @@ import {
   completePmRecreation,
 } from "./resourceDeletion.ts";
 import { buildLinearProjectContent } from "./linearProjectContent.ts";
+import { LABELS } from "../dispatcher/notes.ts";
 import { parsePmCharter, type PmCharter } from "../pmCharter.ts";
 import type {
   LinearApi,
@@ -49,7 +50,8 @@ export type LinearProvisioningClient = Pick<
   | "createProject"
   | "updateProject"
   | "resources"
->;
+> &
+  Partial<Pick<LinearApi, "ensureLabels">>;
 export interface LinearMappingStatus {
   status: "ready" | "needs-connection" | "error" | "skipped";
   message?: string;
@@ -384,7 +386,7 @@ export function createLinearProvisioning(options: {
       revision: document.revision,
     });
   }
-  function status(project: string): LinearMappingStatus {
+  function status(project: string, areaKey?: string): LinearMappingStatus {
     if (existsSync(repairPath(project)))
       return {
         status: "error",
@@ -419,17 +421,19 @@ export function createLinearProvisioning(options: {
       };
     const ready =
       !!team?.teamId &&
-      config.areas.every(
-        (area) =>
-          !missingId(area.linearProjectId) &&
-          !(
-            state?.areas[area.key]?.id === area.linearProjectId &&
-            state.areas[area.key]?.instanceId === area.instanceId &&
-            state.areas[area.key]?.managedBrief?.applied === false
-          ),
-      );
+      config.areas
+        .filter((area) => !areaKey || area.key === areaKey)
+        .every(
+          (area) =>
+            !missingId(area.linearProjectId) &&
+            !(
+              state?.areas[area.key]?.id === area.linearProjectId &&
+              state.areas[area.key]?.instanceId === area.instanceId &&
+              state.areas[area.key]?.managedBrief?.applied === false
+            ),
+        );
     return {
-      status: ready ? "ready" : state?.error ? "error" : "skipped",
+      status: state?.error ? "error" : ready ? "ready" : "skipped",
       ...(team
         ? {
             teamId: team.teamId,
@@ -438,7 +442,7 @@ export function createLinearProvisioning(options: {
             workspaceId: team.workspaceId,
           }
         : {}),
-      ...(!ready
+      ...(!ready || state?.error
         ? {
             message: state?.error
               ? "Linear setup is incomplete. Retry to resume the saved operation."
@@ -714,11 +718,18 @@ export function createLinearProvisioning(options: {
   }
   async function provision(
     project: string,
-    input: { teamId?: string } = {},
+    input: { teamId?: string; areaKey?: string } = {},
   ): Promise<LinearMappingStatus> {
     return locked(project, async () => {
       let state = read(project);
       const config = loadProject(root, project);
+      const selectedAreas = config.areas.filter(
+        (area) => !input.areaKey || area.key === input.areaKey,
+      );
+      if (input.areaKey && !selectedAreas.length)
+        throw new LinearProvisioningError(
+          "Choose an existing PM before preparing Linear.",
+        );
       const connectionId = config.config.linear?.connectionId ?? "default";
       if (state?.connectionId && state.connectionId !== connectionId)
         throw new LinearProvisioningError(
@@ -863,7 +874,17 @@ export function createLinearProvisioning(options: {
             workspaceId: workspace.id,
           };
         });
-        for (const area of config.areas) {
+        for (const area of selectedAreas) {
+          if (client.ensureLabels) {
+            try {
+              await client.ensureLabels(team.id, [area.label, LABELS.proposal]);
+            } catch {
+              throw new LinearProvisioningError(
+                "Linear labels could not be prepared in this app's team. Allow the selected connection to read and create issue labels, then retry. Your team and PM mappings were preserved.",
+                502,
+              );
+            }
+          }
           let intent = Object.hasOwn(state.areas, area.key)
             ? state.areas[area.key]
             : undefined;
@@ -975,7 +996,7 @@ export function createLinearProvisioning(options: {
         }
         delete state.error;
         atomic(statePath(project), state);
-        return status(project);
+        return status(project, input.areaKey);
       } catch (error) {
         if (state) {
           state.error = true;

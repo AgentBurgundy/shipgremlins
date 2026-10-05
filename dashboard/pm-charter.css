@@ -1,0 +1,105 @@
+.pm-charter-editor {
+  min-width: 0;
+}
+.pm-charter-editor .charter-navigation {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 4px;
+  padding: 5px;
+  margin: 0 0 24px;
+  border: 1px solid #e4eae6;
+  border-radius: 11px;
+  background: #f0f4f2;
+}
+.pm-charter-editor .charter-navigation button {
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted, #617169);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: normal;
+  cursor: pointer;
+}
+.pm-charter-editor .charter-navigation button[aria-selected="true"] {
+  background: #fff;
+  color: #20452e;
+  box-shadow: 0 1px 4px #18332412;
+}
+.pm-charter-editor
+  .charter-navigation
+  button:hover:not([aria-selected="true"]) {
+  color: #20452e;
+  background: #e6eee8;
+}
+.pm-charter-editor .charter-navigation button:focus-visible {
+  outline: 3px solid #72a354;
+  outline-offset: 2px;
+}
+.pm-charter-editor .charter-panel {
+  padding: 0;
+  border: 0;
+  margin: 0;
+  min-width: 0;
+}
+.pm-charter-editor .charter-panel[hidden] {
+  display: none;
+}
+.pm-charter-editor .charter-panel > h3 {
+  margin: 0 0 7px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.4;
+}
+.pm-charter-editor .charter-panel-description {
+  max-width: 64ch;
+  margin: 0 0 22px;
+  color: var(--muted, #617169);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.pm-charter-editor .charter-panel .field {
+  margin: 0 0 22px;
+}
+.pm-charter-editor .charter-panel .field:last-child {
+  margin-bottom: 0;
+}
+.pm-charter-editor textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 94px;
+  resize: vertical;
+  border: 1px solid #d6dfd8;
+  border-radius: 9px;
+  padding: 11px 13px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.pm-charter-editor .setup-help {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted, #617169);
+}
+@media (max-width: 600px) {
+  .pm-charter-editor .charter-navigation {
+    gap: 2px;
+    margin-bottom: 20px;
+  }
+  .pm-charter-editor .charter-navigation button {
+    padding: 9px 6px;
+    font-size: 12px;
+  }
+  .pm-charter-editor textarea {
+    font-size: 16px;
+  }
+}

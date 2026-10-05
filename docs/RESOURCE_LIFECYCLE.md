@@ -21,7 +21,7 @@ Recovery files live under `.run/deleted/`. Use **Settings → Recently deleted**
 
 After deletion completes, you can create a fresh project with the same name from the dashboard or CLI. It receives a new internal identity: old jobs, learned memory, delivery records, setup analysis, and default project credential names do not become the new project's state. Shared provider connections remain available. The previous project and its history stay recoverable; first free its name before restoring it. A failed creation keeps the recovery copy and can be retried. Remote workers enrolled for the deleted project must be enrolled again for its replacement.
 
-After a PM deletion completes, **Create PM** can reuse its visible mandate ID for
+After a PM deletion completes, **Adopt a PM Gremlin** can reuse its visible mandate ID for
 a fresh PM. The new PM receives a separate internal identity and memory branch;
 old learned observations and delivery ownership do not transfer merely because
 the ID matches. It starts paused and the project needs verification again. Its

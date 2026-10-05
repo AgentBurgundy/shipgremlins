@@ -7,21 +7,18 @@ for repository verification.
 
 ## The flow at a glance
 
-Project onboarding and a PM's own discovery are separate steps. The Setup Gremlin recommends how to run the application; PM discovery learns one mandate's part of that codebase.
+Project onboarding and a PM’s own discovery are separate steps. Existing apps can adopt a PM and begin repository discovery before browser setup. The Setup Gremlin recommends how to run the application; PM discovery learns one mandate’s part of that codebase. A new idea builds its reviewed foundation before either investigates source.
 
 ```mermaid
 flowchart TD
-  Repo[Connect repository] --> Setup[Setup Gremlin analyzes source]
-  Setup --> Strategy{Choose how to test}
-  Strategy --> Hosted[Existing hosted staging]
-  Strategy --> Docker[Disposable Docker app]
-  Strategy --> Code[Repository checks only]
-  Hosted --> Access[Test browser access and configured logins]
-  Docker --> Access
-  Access --> PM[Create PM with mandate and boundaries]
-  Code --> PM
+  Repo[Connect existing repository] --> PM[Adopt PM with a goal and boundaries]
   PM --> Discovery[Optional read-only PM discovery]
   Discovery --> Memory[Code map, features, ranked queue and memory]
+  Repo --> Setup[Setup Gremlin recommends how to test]
+  Setup --> Strategy{Need browser testing?}
+  Strategy -->|No| Code[Repository checks]
+  Strategy -->|Yes| Hosted[Hosted staging or disposable Docker app]
+  Hosted --> Access[Test browser access and configured logins]
 ```
 
 ```mermaid
@@ -93,18 +90,79 @@ revision guard. The **Product brief**, **Discovery**, **Features**, **Ranked que
 **Memory** and **Activity** tabs keep each PM's context together. A direct discovery
 link is `/projects/<project>?pm=<area>&tab=discovery`.
 
-**Run discovery** queues a codebase investigation. **Run now** queues one normal
+The adoption welcome screen offers **Explore the codebase** for the first
+Discovery mission, or **Prepare first mission** when its setup is incomplete.
+Discovery needs source access, Claude Code, and a ready worker; no Linear or
+browser environment is required. Fresh ideas offer **Build the foundation** first.
+
+**Run discovery** queues a later codebase investigation. **Run now** queues one normal
 patrol without enabling automation. The **Automation** switch controls scheduled
 patrols and automatic pickup of approved Coding tickets. Turning it off does not
 cancel work already running. Each action shows its own missing setup requirements
 with direct remedies. A remote worker must be online and enrolled for this project.
 
-On the creation form, **Fill with AI** fills blank operational settings and all
-eight product-brief fields from the mandate, repository paths, and existing PM
-ownership. It preserves the original mandate and user-entered values; review
-the suggestions before choosing **Create PM**. Suggested users, priorities, and
-measurement still need owner confirmation. This form assistant does not replace
-discovery of the checked-out repository or create learned knowledge.
+**Grumblins** generates three simulated customers from the project's briefs and
+learned context. Each brings a relevant goal, personality and patience budget
+to a walkthrough of the test app. Its PM investigates the observations and
+retains evidence and candidate experiments for review. Start with
+[Let customers try it](GRUMBLINS.md); profiles are hypotheses, not real research.
+
+**Explore product ideas** starts a separate creative PM run. It considers the
+user's whole job, unmet needs, new capabilities and alternative workflows,
+including experiences the app does not have yet. The PM considers distinct
+directions before filtering for feasibility, researches relevant public sources
+when useful, and compares a promising concept with simpler alternatives. Private
+repository and user data stay out of external searches.
+
+Each opportunity separates observed evidence from hypotheses about demand or
+value, describes a concrete user outcome, and identifies the smallest useful
+milestone or experiment that could disprove the idea. Worthwhile implementable
+proposals go to the mapped Linear project for your review. There is no ticket
+quota or invented demand. Exploration uses the same scoped runner, budget and
+proposal safeguards as a patrol; it cannot approve tickets, start Coding, edit
+the product or verify releases. Its concepts and remaining questions become
+learned PM knowledge for the next run.
+
+## When to explore product ideas
+
+Use **Explore product ideas** when you want a new direction or a better way to
+serve your users. A patrol is useful for investigating current behavior; discovery
+builds a map of the codebase. Exploration asks what should exist next. For a new
+idea with no application yet, start with **Build foundation** in Environment.
+
+Give the PM a concrete ambition in its **Product brief**, then start exploration
+from that PM's page. You can keep automation paused. For example:
+
+| Product                | Direction to put in the brief                                                           | Useful exploration outcome                                                                                         |
+| ---------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Team planning app      | “Help a new teammate understand what matters without reading six tools.”                | A new onboarding experience, compared with a simpler guided checklist, and an experiment to test whether it helps. |
+| Developer tool         | “Make our complex setup approachable to someone who has never used Docker.”             | Alternative setup experiences with a first milestone and the assumptions each depends on.                          |
+| Scheduling app         | “Reduce the work before and after a booking, not just the clicks on the calendar.”      | A workflow spanning preparation and follow-up, including what could stay manual.                                   |
+| Internal reporting app | “Help a manager decide what to do next, while keeping sensitive employee data private.” | A decision-focused concept, privacy boundaries, and a small test of its usefulness.                                |
+
+Describe the users, the outcome, and the constraints you care about. Include any
+known complaints or measurements as evidence; leave missing customer research
+explicitly unknown. You do not need to preselect the feature or promise a market
+for it.
+
+Open the run's **Summary** for its recommendation, **Activity** for the work it
+performed, and **Evidence** for saved files. The PM's **Ranked queue** and
+**Memory** retain alternatives and unanswered questions. A useful result explains
+the experience, why it might matter, what supports it, what is still a hypothesis,
+and a cheap way to learn whether to proceed. No new Linear ticket can be the right
+result when an idea needs more evidence.
+
+Review a proposed milestone before approving its Linear ticket. **Start coding**
+then finds eligible approved work on your runners. Exploration itself does not
+approve the idea, start implementation, contact customers, or enable automation.
+
+During adoption, **Meet my gremlin** proposes a name, product brief, and
+operational settings from your goal, repository paths, and existing PM ownership.
+The original goal stays its mandate. Use **Review full brief** and **Advanced
+settings** before choosing **Adopt [name]**. Suggested users, priorities, and
+measurement still need owner confirmation. Drafting does not replace discovery
+of the checked-out repository or create learned knowledge. Adoption saves the
+PM with automation paused; starting an investigation is a separate action.
 
 ## Discover before patrolling
 

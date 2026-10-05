@@ -17,6 +17,7 @@ import type { LocalJob } from "../localRunners/types.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import { createPmKnowledge, knowledgeRevision } from "./index.ts";
 import { PM_KNOWLEDGE_FILES } from "./prompts.ts";
+import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-knowledge-"));
@@ -79,6 +80,27 @@ function fixture(runId = 1) {
   return { job, project, area, documents, result, artifacts, docker, store };
 }
 describe("PM knowledge retention", () => {
+  it("requires exact Grumblin worker provenance and all knowledge documents before retaining simulated findings", async () => {
+    const f = fixture();
+    const grumblin = grumblinFixture({
+      projectInstanceId: f.project.config.instanceId,
+    });
+    const job = { ...f.job, pmMode: "grumblin" as const, grumblin };
+    await expect(f.store.capture(job, f.docker)).rejects.toThrow("provenance");
+    Object.assign(f.result, {
+      pmMode: "grumblin",
+      grumblin: { ...grumblin, name: "Forged replacement" },
+    });
+    await expect(f.store.capture(job, f.docker)).rejects.toThrow("provenance");
+    Object.assign(f.result, { grumblin });
+    f.artifacts.mockResolvedValueOnce({ result: f.result, files: [] });
+    await expect(f.store.capture(job, f.docker)).rejects.toThrow(
+      "four bounded",
+    );
+    await f.store.capture(job, f.docker);
+    const status = f.store.read("app", f.area.key);
+    expect(status.provenance?.grumblin).toEqual(grumblin);
+  });
   it("gives a recreated PM fresh knowledge without erasing the deleted PM's memory", async () => {
     const old = fixture();
     await old.store.capture(old.job, old.docker);
@@ -213,6 +235,16 @@ describe("PM knowledge retention", () => {
     await f.store.capture({ ...f.job, pmMode: undefined }, f.docker);
     expect(f.store.read("app", "core").state).toBe("empty");
     await f.store.capture({ ...f.job, pmMode: undefined }, f.docker);
+    expect(f.store.read("app", "core").state).toBe("ready");
+  });
+  it("retains product exploration only from matching worker provenance", async () => {
+    const f = fixture();
+    const exploration = { ...f.job, pmMode: "exploration" as const };
+    await expect(f.store.capture(exploration, f.docker)).rejects.toThrow(
+      "matching repository provenance",
+    );
+    f.result.pmMode = "exploration";
+    await f.store.capture(exploration, f.docker);
     expect(f.store.read("app", "core").state).toBe("ready");
   });
   it("recovers a dead process lock while leaving live locks intact", async () => {

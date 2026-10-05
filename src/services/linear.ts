@@ -3,6 +3,7 @@
 // commentCreate); labels are created in the ticket's team on first use.
 
 import { fetchJson } from "../http.ts";
+import { LABELS } from "../dispatcher/notes.ts";
 import type {
   LinearClient,
   LinearComment,
@@ -368,39 +369,72 @@ export class LinearApi implements LinearClient {
     };
   }
 
+  private async findLabelId(
+    teamId: string,
+    name: string,
+  ): Promise<string | undefined> {
+    let after: string | null = null;
+    const cursors = new Set<string>();
+    for (;;) {
+      const found: {
+        issueLabels: {
+          nodes: { id: string; name: string; team: { id: string } | null }[];
+          pageInfo?: { hasNextPage: boolean; endCursor: string | null };
+        };
+      } = await this.graphql(
+        `query Labels($name: String!, $after: String) {
+        issueLabels(filter: { name: { eqIgnoreCase: $name } }, first: 50, after: $after) {
+          nodes { id name team { id } }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+        { name, after },
+      );
+      // a workspace label (team == null) serves every team
+      const id = found.issueLabels.nodes.find(
+        (n) =>
+          sameName(n.name, name) && (n.team === null || n.team.id === teamId),
+      )?.id;
+      if (id) return id;
+      const page = found.issueLabels.pageInfo;
+      if (!page?.hasNextPage) return undefined;
+      if (!page.endCursor || cursors.has(page.endCursor) || cursors.size >= 20)
+        throw new Error(
+          "Linear: label lookup could not finish; no label was created",
+        );
+      cursors.add(page.endCursor);
+      after = page.endCursor;
+    }
+  }
+
   private async labelId(teamId: string, name: string): Promise<string> {
     const key = `${teamId}:${name.toLowerCase()}`;
     const cached = this.labelCache.get(key);
     if (cached) return cached;
-    const found = await this.graphql<{
-      issueLabels: {
-        nodes: { id: string; name: string; team: { id: string } | null }[];
-      };
-    }>(
-      `query Labels($name: String!) {
-        issueLabels(filter: { name: { eqIgnoreCase: $name } }, first: 50) {
-          nodes { id name team { id } }
-        }
-      }`,
-      { name },
-    );
-    // a workspace label (team == null) serves every team
-    let id = found.issueLabels.nodes.find(
-      (n) => n.team === null || n.team.id === teamId,
-    )?.id;
+    let id = await this.findLabelId(teamId, name);
     if (!id) {
-      const created = await this.graphql<{
-        issueLabelCreate: {
-          success: boolean;
-          issueLabel: { id: string } | null;
-        };
-      }>(
-        `mutation CreateLabel($input: IssueLabelCreateInput!) {
+      try {
+        const created = await this.graphql<{
+          issueLabelCreate: {
+            success: boolean;
+            issueLabel: { id: string } | null;
+          };
+        }>(
+          `mutation CreateLabel($input: IssueLabelCreateInput!) {
           issueLabelCreate(input: $input) { success issueLabel { id } }
         }`,
-        { input: { name, teamId } },
-      );
-      id = created.issueLabelCreate.issueLabel?.id;
+          { input: { name, teamId } },
+        );
+        id = created.issueLabelCreate.success
+          ? created.issueLabelCreate.issueLabel?.id
+          : undefined;
+      } catch (error) {
+        // Another PM may have created the same label, or our response was lost.
+        // Reconcile by name and scope before reporting a failed creation.
+        id = await this.findLabelId(teamId, name);
+        if (!id) throw error;
+      }
+      if (!id) id = await this.findLabelId(teamId, name);
       if (!id)
         throw new Error(
           `Linear: could not create label "${name}" in team ${teamId}`,
@@ -408,6 +442,61 @@ export class LinearApi implements LinearClient {
     }
     this.labelCache.set(key, id);
     return id;
+  }
+
+  /** Ensure routing labels exist before a PM files its first proposal. */
+  async ensureLabels(teamId: string, names: string[]): Promise<void> {
+    if (!teamId.trim())
+      throw new Error("Linear: a mapped team is required for labels");
+    const unique = new Map<string, string>();
+    for (const name of names) {
+      if (!name.trim() || name !== name.trim())
+        throw new Error(
+          "Linear: label names must be nonempty without surrounding whitespace",
+        );
+      unique.set(name.toLowerCase(), name);
+    }
+    for (const [key, name] of unique) {
+      // A previously resolved label may have been deleted since the last patrol.
+      this.labelCache.delete(`${teamId}:${key}`);
+      await this.labelId(teamId, name);
+    }
+  }
+
+  /** Caller must establish that this mapped project belongs to exactly one PM. */
+  async repairProposalAreaLabels(input: {
+    teamId: string;
+    projectId: string;
+    label: string;
+  }): Promise<void> {
+    const eligible = (ticket: LinearTicket) =>
+      ticket.projectId === input.projectId &&
+      ticket.teamId === input.teamId &&
+      ["backlog", "unstarted", "started"].includes(ticket.stateType) &&
+      ticket.labels.some((label) => sameName(label, LABELS.proposal)) &&
+      !ticket.labels.some(
+        (label) => sameName(label, input.label) || /^pm:/i.test(label),
+      );
+    for (const listed of await this.listTickets(input.projectId, [
+      LABELS.proposal,
+    ])) {
+      if (!eligible(listed)) continue;
+      const current = await this.getTicket(listed.id);
+      if (!current || current.id !== listed.id || !eligible(current)) continue;
+      const labelId = await this.labelId(input.teamId, input.label);
+      // Atomic addition preserves concurrent owner edits to other labels. There
+      // is no state, approval, project or team mutation in this repair operation.
+      const data = await this.graphql<{ issueUpdate: { success: boolean } }>(
+        `mutation RepairAreaLabel($id: String!, $input: IssueUpdateInput!) {
+          issueUpdate(id: $id, input: $input) { success }
+        }`,
+        { id: current.id, input: { addedLabelIds: [labelId] } },
+      );
+      if (!data.issueUpdate.success)
+        throw new Error(
+          `Linear: could not repair the routing label for ${current.identifier}`,
+        );
+    }
   }
 
   private async setLabels(issueId: string, labelIds: string[]): Promise<void> {
@@ -605,6 +694,8 @@ export class LinearApi implements LinearClient {
   }
 
   async createTicket(input: {
+    id?: string;
+    teamId?: string;
     projectId: string;
     title: string;
     description: string;
@@ -612,14 +703,25 @@ export class LinearApi implements LinearClient {
     priority?: number;
   }): Promise<LinearTicket> {
     const proj = await this.graphql<{
-      project: { teams: { nodes: { id: string }[] } } | null;
+      project: {
+        teams: { nodes: { id: string }[]; pageInfo?: PageInfo };
+      } | null;
     }>(
-      `query ProjectTeam($id: String!) { project(id: $id) { teams(first: 1) { nodes { id } } } }`,
+      `query ProjectTeam($id: String!) { project(id: $id) { teams(first: 100) { nodes { id } pageInfo { hasNextPage endCursor } } } }`,
       { id: input.projectId },
     );
-    const teamId = proj.project?.teams.nodes[0]?.id;
-    if (!teamId)
+    const teams = proj.project?.teams;
+    if (!teams?.nodes.length)
       throw new Error(`Linear: project ${input.projectId} has no team`);
+    const teamId =
+      input.teamId ??
+      (teams.nodes.length === 1 && !teams.pageInfo?.hasNextPage
+        ? teams.nodes[0]?.id
+        : undefined);
+    if (!teamId || !teams.nodes.some((team) => team.id === teamId))
+      throw new Error(
+        `Linear: choose a mapped team belonging to project ${input.projectId} before creating a ticket`,
+      );
     const labelIds: string[] = [];
     for (const name of input.labels)
       labelIds.push(await this.labelId(teamId, name));
@@ -631,6 +733,7 @@ export class LinearApi implements LinearClient {
       }`,
       {
         input: {
+          ...(input.id ? { id: input.id } : {}),
           teamId,
           projectId: input.projectId,
           title: input.title,
@@ -640,7 +743,11 @@ export class LinearApi implements LinearClient {
         },
       },
     );
-    if (!data.issueCreate.success || !data.issueCreate.issue) {
+    if (
+      !data.issueCreate.success ||
+      !data.issueCreate.issue ||
+      (input.id && data.issueCreate.issue.id !== input.id)
+    ) {
       throw new Error(`Linear: issueCreate refused for "${input.title}"`);
     }
     return toTicket(data.issueCreate.issue);

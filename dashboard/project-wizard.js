@@ -25,6 +25,23 @@
     track.append(fill);
     const title = node("h2");
     title.tabIndex = -1;
+    const drawer = $("new-project-drawer");
+    const exit = node(
+      "button",
+      "← Back to projects",
+      "small-button wizard-exit",
+    );
+    exit.type = "button";
+    exit.addEventListener("click", () => {
+      drawer.open = false;
+      $("projects").classList.remove("is-creating");
+      document.querySelector('a[href="#new-project-drawer"]')?.focus();
+    });
+    drawer.insertBefore(exit, form);
+    drawer.addEventListener("toggle", () => {
+      $("projects").classList.toggle("is-creating", drawer.open);
+      if (drawer.open) title.focus({ preventScroll: true });
+    });
     const description = node("p", undefined, "wizard-description");
     const body = node("div", undefined, "wizard-body");
     const footer = node("div", undefined, "wizard-footer");
@@ -59,7 +76,7 @@
         ],
         repository: [
           "Which app are we joining?",
-          "Choose an existing repository your crew can work in.",
+          "Choose a repository with application code to explore. Starting from an empty repository? Go back and choose “I have an idea” to build a foundation in a new repository.",
         ],
         visibility: [
           "Who can see your code?",
@@ -88,7 +105,7 @@
       [
         "existing",
         "I have an app",
-        "Bring your repository. Give your development a crew.",
+        "Bring an app with code. Adopt a gremlin to help it grow.",
         "↗",
       ],
     ]) {
@@ -297,8 +314,8 @@
       for (const [key, value] of rows)
         summary.append(node("dt", key), node("dd", value));
       expectation.textContent = isIdea()
-        ? "We’ll create the repository, add your product brief, and save your PMs. Schedules start paused. Review the first tickets before coding begins. Connect Linear and workers in your project when you’re ready."
-        : "A Setup Gremlin will inspect your app when source and Claude access are ready. Next you’ll choose its environment and shape its crew. Workflow, commands, and Linear can be adjusted in project settings.";
+        ? "We’ll create your repository, add the product brief, and save the crew. Next, review and start the foundation build. We'll set up Linear and check your connections when you do. PM schedules stay paused."
+        : "Next, adopt your first gremlin and give it a useful job. A Setup Gremlin may inspect the code when source and Claude access are ready. You’ll set up testing when a mission needs it.";
     }
     function update() {
       const ready = crew()?.ready();

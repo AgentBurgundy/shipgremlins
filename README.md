@@ -18,7 +18,7 @@
   <a href="CONTRIBUTING.md">Join the crew</a>
 </p>
 
-# Give your idea a crew.
+# AI product managers that actually use your app.
 
 Describe an app you want to build, or bring the one you already have.
 ShipGremlins helps organize the work into focused PM responsibilities and
@@ -84,6 +84,12 @@ One PM per mandate. Different obsessions. The same app.
 
 These are example mandates, not fixed agent types. Each area has its own instructions, feature inventory, queue, and memory. Start with one; add another when a different part of your product needs attention. [Create a mandate →](docs/add-a-project.md)
 
+**Let customers try it with Grumblins.** AI creates three simulated customers
+from your project's purpose, PM briefs and learned context. Each has a relevant
+goal, opinionated personality and patience budget. Choose one to try your test
+app, then read its journey and the PM's proposed experiment. Observed friction,
+simulated preferences and assumptions stay separate. [Meet your Grumblins →](docs/GRUMBLINS.md)
+
 ## From “that's weird” to shipped
 
 ```mermaid
@@ -106,7 +112,9 @@ flowchart LR
 
 **“Trust me” isn't a test.** Missing or stale evidence blocks promotion. A staging merge does not close a ticket. [Read the verification model →](docs/VERIFICATION.md)
 
-## Get started
+<a id="get-started"></a>
+
+## Adopt your first gremlin
 
 You need Git, **Node.js 22.12+**, and Docker running Linux containers. Install the global CLI once, then open your private setup dashboard:
 
@@ -117,7 +125,24 @@ gremlins setup
 
 The dashboard opens in your browser with gremlins, project setup, official GitHub/GitLab sign-in, and local connection-token entry. The `gremlins` CLI works from any directory; `shipgremlins` and `hub` remain compatibility aliases. Everyday commands do not need a source checkout or an `npm run` wrapper. [Connect source control →](docs/SOURCE_CONTROL.md)
 
-Add a repository and the **Setup Gremlin** recommends a test environment from its actual source. Choose an existing staging URL (including Railway/Vercel) or a disposable Docker app with optional PostgreSQL/Redis. Review any proposed setup files as a draft PR/MR, then run the browser and test-account checks. Create PMs afterward; Linear is not needed for this onboarding step. [Project onboarding →](docs/PROJECT_ONBOARDING.md)
+Once the dashboard opens, choose where your gremlin will live:
+
+- **A new idea:** choose **I have an idea**, describe who the app helps, and review
+  its proposed crew. Create a repository that is private by default, then review
+  and approve the foundation build. A Coding Gremlin builds the first app and
+  tests; PMs explore after there is code. [Start from an idea →](docs/IDEA_TO_APP.md)
+- **An existing app:** connect its repository and choose **Adopt a PM Gremlin** on
+  the project. Choose its job, give it a name and a clear goal, then review its
+  brief. Importing the app may start Setup Gremlin analysis when source access
+  and Claude Code are ready; it starts no PM or coding job. Start with one small
+  assignment and keep automation paused.
+  [Meet your first PM →](docs/SETUP.md#your-first-adoption)
+
+Source control and Claude Code are enough to prepare an existing app's PM;
+Discovery also needs a ready worker. Connect Linear when you want proposals or
+approved coding work. Add a test environment when the gremlin needs to use a
+runnable app in a browser. The Setup Gremlin can help choose hosted staging or
+a disposable Docker app. [Find a test home →](docs/PROJECT_ONBOARDING.md)
 
 The dashboard shows each crew's **Patrol plan** and separates finished runs from recorded browser activity, images and check results. To test ShipGremlins itself, use the [disposable dashboard Docker fixture](examples/dashboard-test/README.md): the real UI and configuration handlers with clearly simulated integrations, no real credentials or Docker socket.
 
@@ -155,30 +180,34 @@ gremlins --help
 
 Configuration lives in the nearest existing configuration directory, or `~/.shipgremlins` outside one. Use `gremlins --home PATH setup` to choose another location. Add your app repository directly; local mode does not require `--hub-repo`.
 
-Follow the project's setup steps: connect source control, Linear, and Claude Code;
-review its repository, commands, and PM mapping; then **Verify connections** and
-create a local worker. The worker runs on the CLI/dashboard server, even when you
+Follow the next assignment's setup steps. Discovery needs source control, Claude
+Code, and a ready worker; a regular PM run also needs Linear. Missing mappings and
+required connection verification can be prepared when you start that run.
+The worker runs on the CLI/dashboard server, even when you
 visit from a phone. Ready requires actual Chromium screenshot evidence.
 
-New PMs start with automation paused. Choose **Run now** on a PM card or its
-workspace to try a mapped, verified PM without turning on its schedule. Missing
+New PMs start with automation paused. Choose **Explore the codebase** on the
+welcome screen for Discovery, or **Prepare first mission** to finish its setup.
+Discovery needs no Linear or browser environment. A fresh idea starts with
+**Build the foundation** instead. For later patrols, choose **Run now** on a PM
+card or its workspace without turning on its schedule. Missing
 setup opens a checklist for that PM with direct actions. Review Activity, then
 turn **Automation** on for recurring patrols and background approved-ticket
 pickup. Turning it off stops new automatic work; manual runs remain separate. A manual
 Coding run still requires an open, approved ticket in the PM's Linear project.
 
-Choose **+ PM** on your project's page to open the creation dialog. Write your
-mandate and choose **Fill with AI**. It fills
+Choose **Adopt a PM Gremlin** on your project's page. Describe what it should
+take care of and choose **Meet my gremlin**, or **Write the brief myself**. AI fills
 blank fields and default controls with a suggested name, ID, grounded ownership,
 shared touchpoints, metric, UTC schedule, WIP limit, and complete product brief:
 ambition, goal, measurement, users, expected capabilities, non-goals, guardrails,
 and priorities. Your original mandate and existing edits are preserved. Review
-the filled form, then choose **Create PM** separately. AI fill uses repository
+the gremlin's name and proposed job, then adopt it separately. AI fill uses repository
 paths and existing PM ownership; it does not read file contents, invent provider
 IDs, change Linear, enable automation, or run a patrol.
 
-The project page puts PM controls first, with setup details collapsed below the
-crew and recent runs. Open any run for separate **Summary**, **Activity**,
+The project page puts PM controls first, with focused tabs for setup, review,
+and project knowledge. Open any run for separate **Summary**, **Activity**,
 **Output**, and **Artifacts** tabs. Live refreshes keep your tab and reading
 position; closing the viewer leaves the worker running.
 
