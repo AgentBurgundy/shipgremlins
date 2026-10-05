@@ -12,7 +12,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
-import { readConnections, saveConnections } from "./connections.ts";
+import { generateKeyPairSync } from "node:crypto";
+import {
+  readConnections,
+  saveConnections,
+  projectConnections,
+} from "./connections.ts";
+import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
 
 const directories: string[] = [];
 function temporary(): string {
@@ -28,6 +34,149 @@ afterEach(() => {
 });
 
 describe("dashboard connection storage", () => {
+  const key = generateKeyPairSync("rsa", { modulusLength: 2048 })
+    .privateKey.export({ format: "pem", type: "pkcs8" })
+    .toString();
+  const google = () => ({
+    type: "service_account",
+    project_id: "sample-project",
+    client_email: "reader@sample-project.iam.gserviceaccount.com",
+    private_key: key,
+    token_uri: "https://oauth2.googleapis.com/token",
+  });
+  it("roundtrips pasted multiline Google JSON without turning PEM newlines into dotenv assignments", () => {
+    const root = temporary();
+    writeFileSync(
+      join(root, ".env"),
+      "# preserve me\nOTHER=value\nNODE_OPTIONS=never-import\n",
+    );
+    saveConnections(root, {
+      GCP_SERVICE_ACCOUNT_JSON: JSON.stringify(google(), null, 2),
+      RAILWAY_TOKEN: "railway-account-token",
+    });
+    const saved = readConnections(root);
+    expect(parseGoogleServiceAccount(saved.GCP_SERVICE_ACCOUNT_JSON!)).toEqual(
+      google(),
+    );
+    expect(saved.RAILWAY_TOKEN).toBe("railway-account-token");
+    expect(saved.NODE_OPTIONS).toBeUndefined();
+    const source = readFileSync(join(root, ".env"), "utf8");
+    expect(source).toContain("# preserve me\nOTHER=value");
+    expect(
+      source
+        .split("\n")
+        .filter((line) => line.startsWith("GCP_SERVICE_ACCOUNT_JSON=")),
+    ).toHaveLength(1);
+    saveConnections(root, {
+      GCP_SERVICE_ACCOUNT_JSON: JSON.stringify(google()),
+      GITHUB_TOKEN: "new-token",
+    });
+    expect(JSON.parse(readConnections(root).GCP_SERVICE_ACCOUNT_JSON!)).toEqual(
+      google(),
+    );
+  });
+  it("supports named hosting credentials without a legacy Vercel block", () => {
+    const root = temporary();
+    const directory = join(root, "projects", "app");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, "project.json"),
+      JSON.stringify({
+        repo: "owner/app",
+        workflow: { kind: "pull-request", baseBranch: "main" },
+        verification: { mode: "repository" },
+        environments: {
+          staging: {
+            kind: "cloud-run",
+            role: "staging",
+            projectId: "sample-project",
+            region: "us-central1",
+            service: "app",
+            credentialsSecret: "GCP_APP_READER",
+          },
+          preview: {
+            kind: "railway",
+            role: "preview",
+            projectId: "project",
+            environmentId: "env",
+            serviceId: "service",
+            tokenSecret: "RAILWAY_APP",
+          },
+        },
+        database: "none",
+        slackWebhookSecret: "SLACK_WEBHOOK_APP",
+        runnerLabel: null,
+        mergeMethod: "squash",
+        commands: {
+          install: "npm ci",
+          test: "npm test",
+          lint: null,
+          typecheck: null,
+        },
+        verified: null,
+      }),
+    );
+    writeFileSync(
+      join(directory, "areas.json"),
+      JSON.stringify({
+        areas: {
+          core: {
+            name: "Core",
+            paths: ["src/"],
+            sharedTouchpoints: [],
+            linearProjectId: "lin_core",
+            label: "pm:core",
+            wipLimit: 2,
+            metric: "/",
+            schedule: "0 13 * * 1-5",
+            enabled: true,
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(directory, "tiers.json"),
+      JSON.stringify({
+        ownerOnlyPrefixes: [],
+        hubOwnerOnly: [],
+        alwaysFree: [],
+        guardTests: [],
+        testFileMarkers: [],
+      }),
+    );
+    expect(projectConnections(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "GCP_APP_READER", format: "json" }),
+        expect.objectContaining({ name: "RAILWAY_APP" }),
+      ]),
+    );
+    saveConnections(root, {
+      GCP_APP_READER: JSON.stringify(google()),
+      RAILWAY_APP: "specific-token",
+    });
+    expect(readConnections(root).RAILWAY_APP).toBe("specific-token");
+    expect(JSON.parse(readConnections(root).GCP_APP_READER!)).toEqual(google());
+  });
+  it.each([
+    {
+      type: "external_account",
+      credential_source: { executable: { command: "never-run" } },
+    },
+    { ...google(), token_uri: "https://attacker.example/token" },
+    { ...google(), private_key: "never-disclose-this" },
+  ])(
+    "rejects unsafe Google credentials without changing the file or exposing values",
+    (value) => {
+      const root = temporary();
+      writeFileSync(join(root, ".env"), "OTHER=keep\n");
+      expect(() =>
+        saveConnections(root, {
+          GCP_SERVICE_ACCOUNT_JSON: JSON.stringify(value),
+        }),
+      ).toThrow("Enter a valid Google service-account JSON");
+      expect(readFileSync(join(root, ".env"), "utf8")).toBe("OTHER=keep\n");
+    },
+  );
   it("preserves unrelated dotenv content, comments and multiline values while replacing old tokens", () => {
     const root = temporary();
     const untouched =

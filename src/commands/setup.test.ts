@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -39,13 +40,122 @@ const input = {
 };
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "gremlins-setup-"));
+  root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-setup-"));
   output = [];
   errors = [];
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("setup initialization", () => {
+  it("seeds repository-only defaults and honors a single CLI base branch", async () => {
+    expect(
+      await runSetup(
+        root,
+        [
+          "init",
+          "--project",
+          "lib",
+          "--repo",
+          "org/lib",
+          "--base-branch",
+          "develop",
+        ],
+        io,
+        deps,
+      ),
+    ).toBe(0);
+    const project = loadProject(root, "lib");
+    expect(project.config.workflow).toEqual({
+      kind: "pull-request",
+      baseBranch: "develop",
+    });
+    expect(project.config.verification).toEqual({ mode: "repository" });
+    expect(project.config.vercel).toBeUndefined();
+    expect(project.config.database).toBe("none");
+    const report = inspectSetup(
+      root,
+      { ...deps, env: { GITHUB_TOKEN: "source", LINEAR_API_KEY: "linear" } },
+      "lib",
+    );
+    expect(report.secrets.map((secret) => secret.name)).toEqual([
+      "GITHUB_TOKEN",
+      "LINEAR_API_KEY",
+    ]);
+    expect(
+      report.checks.some((check) => check.id === "promotion-evidence"),
+    ).toBe(false);
+  });
+  it("validates optional hosting and workflow settings before creating any configuration", () => {
+    expect(() =>
+      initializeSetup(root, templatesRoot, {
+        project: "bad",
+        repo: "org/app",
+        settings: {
+          verification: { mode: "browser", environment: "live" },
+          environments: {
+            live: {
+              kind: "url",
+              role: "production",
+              url: "https://example.com",
+            },
+          },
+        },
+      }),
+    ).toThrow("No files changed");
+    expect(existsSync(join(root, "hub.json"))).toBe(false);
+    expect(existsSync(join(root, "projects", "bad"))).toBe(false);
+    expect(() =>
+      initializeSetup(root, templatesRoot, {
+        project: "bad",
+        repo: "org/app",
+        settings: { commands: { install: "npm ci" } },
+      }),
+    ).toThrow("No files changed");
+    expect(existsSync(join(root, "projects", "bad"))).toBe(false);
+  });
+  it("requires credentials only for the selected browser environment", () => {
+    initializeSetup(root, templatesRoot, {
+      project: "site",
+      repo: "org/site",
+      settings: {
+        verification: { mode: "browser", environment: "qa" },
+        environments: {
+          qa: { kind: "url", role: "staging", url: "https://qa.example.com" },
+          unused: {
+            kind: "railway",
+            role: "staging",
+            projectId: "project",
+            environmentId: "stage",
+            serviceId: "api",
+            tokenSecret: "UNUSED_TOKEN",
+          },
+        },
+      },
+    });
+    const report = inspectSetup(
+      root,
+      {
+        ...deps,
+        env: { GITHUB_TOKEN: "source", LINEAR_API_KEY: "linear" },
+        oauthConnections: [
+          {
+            provider: "vercel",
+            method: "oauth",
+            connected: false,
+            needsReconnect: true,
+          },
+        ],
+      },
+      "site",
+    );
+    expect(report.secrets.map((secret) => secret.name)).toEqual([
+      "GITHUB_TOKEN",
+      "LINEAR_API_KEY",
+    ]);
+    expect(report.checks.some((check) => check.id === "oauth:vercel")).toBe(
+      false,
+    );
+  });
   it("defaults to local Docker even inside a Git checkout", async () => {
     expect(
       await runSetup(
@@ -198,7 +308,7 @@ describe("setup initialization", () => {
     expect(
       readFileSync(join(root, "projects", "demo-app", ".env.example"), "utf8"),
     ).toBe(env);
-    expect(env).toContain("VERCEL_BYPASS_DEMO_APP=\n");
+    expect(env).not.toContain("VERCEL_BYPASS_DEMO_APP=");
     expect(
       env
         .split("\n")
@@ -255,7 +365,7 @@ describe("setup initialization", () => {
       "utf8",
     );
     expect(env).toContain("SLACK_WEBHOOK_DEMO_APP=\n");
-    expect(env).toContain("VERCEL_BYPASS_DEMO_APP=\n");
+    expect(env).not.toContain("VERCEL_BYPASS_DEMO_APP=");
     expect(env).not.toContain("existing-private-value");
   });
 
@@ -411,7 +521,7 @@ describe("setup status and CLI", () => {
       report.capabilities.find((capability) =>
         capability.name.includes("Railway"),
       )?.status,
-    ).toBe("planned");
+    ).toBe("implemented");
     expect(
       report.capabilities.find((capability) =>
         capability.name.includes("Dashboard"),
@@ -536,7 +646,7 @@ describe("setup status and CLI", () => {
       report.checks
         .filter((check) => check.id.startsWith("oauth:"))
         .map((check) => check.status),
-    ).toEqual(["pass", "pass"]);
+    ).toEqual(["pass"]);
     const revoked = inspectSetup(root, {
       ...deps,
       env: { LINEAR_API_KEY: "stale-key", VERCEL_TOKEN: "stale-token" },
@@ -567,7 +677,6 @@ describe("setup status and CLI", () => {
     initializeSetup(root, templatesRoot, input);
     const projectFile = join(root, "projects", input.project, "project.json");
     const project = JSON.parse(readFileSync(projectFile, "utf8"));
-    project.vercel.projectId = "prj_test";
     writeFileSync(projectFile, JSON.stringify(project));
     const areasFile = join(root, "projects", input.project, "areas.json");
     const areas = JSON.parse(readFileSync(areasFile, "utf8"));

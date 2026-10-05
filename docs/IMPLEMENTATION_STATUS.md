@@ -22,11 +22,18 @@ project per mandate, with persisted creation IDs and retry recovery. Existing
 mappings are preserved. PMs remain disabled until reviewed; connection/provisioning
 tests use fake provider responses. See [connections and mapping](LINEAR_VERCEL.md).
 
+Version 0.6 adds repository-first projects with an explicit pull-request base and
+editable install/test commands. Browser verification is optional and selects a
+named preview/staging environment: a supplied URL, Vercel, Railway, or Cloud Run.
+Connections holds shared and named credentials; hosting account credentials stay
+on the controller. Existing Vercel promotion configurations remain supported.
+See [project settings and hosting](PROJECTS.md).
+
 | Capability       | Current state                                                                                                                                                                                                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |
 | Recovery         | Durable local queue, idempotent schedule/ticket keys, cross-process lock, inspection of existing containers after restart, and one retry before launch. Failed agent jobs require review. Legacy dispatcher recovery remains separate.                            |
-| Promotion        | Separate legacy release tools enforce install/lint/typecheck/test/build and signed browser evidence for an assembled candidate. Local worker jobs currently stop at draft integration PRs/MRs; no automatic staging promotion.                                    |
+| Promotion        | Separate legacy Vercel release tools enforce checks and signed browser evidence for an assembled candidate. Local workers stop at draft PRs/MRs targeting the configured base branch; no automatic staging promotion.                                             |
 | Linear Done      | Read-only audit and explicit, dry-run-first reconciliation using an operator-reviewed complete deliverable manifest; merged production PR and Git-tree proof required                                                                                             |
 | Test fixtures    | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                                                                            |
 | Setup            | Global `gremlins` command (`shipgremlins` / `hub` compatibility aliases), compact ASCII greeting, resumable initialization, LAN dashboard, validated config editor, file locations and connection tokens; PMs start disabled                                      |
@@ -44,11 +51,14 @@ receipts; this release does not automatically install a browser verifier, manage
 its protected keys, or supply authenticated test accounts for arbitrary apps.
 Existing PM/developer environments must never receive the private signing key.
 
-Local jobs support GitHub and GitLab source connections with Vercel previews,
-Linear, and Claude Code. This does not establish complete live certification of
-both stacks. Railway deployment verification, other AI runtimes, semantic image
-generation, automatic fixture cleanup, automatic OS service installation, cloud
-fleet management, and production lifecycle webhooks remain roadmap work.
+Local jobs support GitHub and GitLab source connections, optional URL/Vercel/Railway/
+Cloud Run browser targets, Linear, and Claude Code. Hosting adapters discover
+existing ready environments; they do not provision infrastructure or deploy changes.
+Railway and Cloud Run contracts are covered by mocked provider tests, not live
+account certification. Exact-candidate promotion across all hosting providers,
+other AI runtimes, semantic image generation, automatic fixture cleanup, automatic
+OS service installation, cloud fleet management, and production lifecycle webhooks
+remain roadmap work.
 The local controller stores queue metadata in owner-private files and keeps job
 containers/output volumes. PostgreSQL stores activity history and retained evidence;
 distributed database leases and a guaranteed-delivery outbox are not implemented.
@@ -69,6 +79,13 @@ signed evidence tampering and mismatches, lifecycle reconciliation, configuratio
 fixture encoding, and static-file containment. Docker smoke checks cover non-root
 execution, health, configuration initialization and private-file rejection. The
 landing page was checked in a real browser at desktop and phone dimensions.
+
+Flexible-project checks cover repository-only work, provider scope/readiness,
+cross-project credential separation, configuration edits invalidating verification,
+and concurrent edits during doctor checks. Real Docker smoke checks exercise
+Chromium screenshots, host.docker.internal access and Python virtual environments.
+Dashboard flows were checked at desktop and 320px widths with isolated provider
+fixtures. These checks do not establish live Railway or Cloud Run authorization.
 
 Slack tests use fake HTTP responses and cover formatting bounds, mention escaping,
 restricted webhook URLs, timeouts, durable attempt markers, and restart behavior.

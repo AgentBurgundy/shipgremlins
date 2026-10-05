@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -11,7 +17,7 @@ import {
 } from "./signinCode.ts";
 
 function hub(signIn: unknown): string {
-  const root = mkdtempSync(join(tmpdir(), "hub-signin-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "hub-signin-")));
   const dir = join(root, "projects", "game");
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -101,6 +107,62 @@ describe("hashOtp / accountOwner", () => {
 });
 
 describe("runSigninCode", () => {
+  it("refuses a cross-project hosting credential alias before database or browser access", async () => {
+    const root = hub(SIGN_IN);
+    const file = join(root, "projects", "game", "project.json");
+    const project = JSON.parse(readFileSync(file, "utf8"));
+    const other = {
+      ...project,
+      signIn: null,
+      verification: { mode: "repository" },
+      environments: {
+        preview: {
+          role: "preview",
+          kind: "railway",
+          projectId: "p",
+          serviceId: "s",
+          environmentId: "e",
+          tokenSecret: "OTHER_ACCOUNT",
+        },
+      },
+    };
+    mkdirSync(join(root, "projects", "other"));
+    for (const name of ["areas.json", "tiers.json"])
+      writeFileSync(
+        join(root, "projects", "other", name),
+        readFileSync(join(root, "projects", "game", name)),
+      );
+    writeFileSync(
+      join(root, "projects", "other", "project.json"),
+      JSON.stringify(other),
+    );
+    project.vercel.bypassSecret = "OTHER_ACCOUNT";
+    writeFileSync(file, JSON.stringify(project));
+    const connect = vi.fn(),
+      fetchImpl = vi.fn(),
+      errors: string[] = [];
+    expect(
+      await runSigninCode(
+        root,
+        [
+          "--project",
+          "game",
+          "--bootstrap",
+          "--preview-url",
+          "https://test.example",
+        ],
+        {
+          OTHER_ACCOUNT: "private-hosting",
+          PM_DATABASE_URL_GAME: "postgres://preview",
+        },
+        { log: () => {}, error: (value) => errors.push(value) },
+        { connect, fetchImpl },
+      ),
+    ).toBe(1);
+    expect(connect).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(errors.join(" ")).not.toContain("private-hosting");
+  });
   it("seeds a hashed code for the project's test account and prints email + code", async () => {
     const { sql, calls } = recorder();
     const out: string[] = [];

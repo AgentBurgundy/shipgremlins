@@ -31,6 +31,7 @@ import type {
 } from "../oauthConnection/types.ts";
 import { OAuthConnectionError } from "../oauthConnection/types.ts";
 import { LinearProvisioningError } from "../setup/linearProvisioning.ts";
+import { initializeSetup } from "../setup/files.ts";
 import {
   SourceControlError,
   type SourceControl,
@@ -312,6 +313,172 @@ describe("local dashboard HTTP boundary", () => {
       releaseLease: vi.fn(async () => {}),
     } satisfies SourceControl;
   }
+
+  it("creates a repository-first app with selected commands and exposes editable capabilities", async () => {
+    const { url, root } = await start(
+      fileURLToPath(new URL("../..", import.meta.url)),
+    );
+    const workflow = { kind: "pull-request", baseBranch: "develop" };
+    const commands = {
+      install: "npm ci",
+      test: "npm test",
+      lint: null,
+      typecheck: null,
+      build: "npm run build",
+    };
+    const response = await post(`${url}/api/projects`, {
+      project: "demo",
+      repo: "org/app",
+      linearMode: "later",
+      workflow,
+      verification: { mode: "repository" },
+      environments: {},
+      commands,
+    });
+    expect(response.status).toBe(200);
+    const path = "projects/demo/project.json";
+    expect(JSON.parse(readFileSync(join(root, path), "utf8"))).toMatchObject({
+      workflow,
+      verification: { mode: "repository" },
+      environments: {},
+      commands,
+      verified: null,
+    });
+    const status = (await (
+      await fetch(`${url}/api/status`, { headers: auth })
+    ).json()) as { projects: unknown[] };
+    expect(status.projects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "demo",
+          workflow,
+          verification: { mode: "repository" },
+          environments: {},
+          commands,
+        }),
+      ]),
+    );
+    const document = (await (
+      await fetch(`${url}/api/config?path=${encodeURIComponent(path)}`, {
+        headers: auth,
+      })
+    ).json()) as { content: string; revision: string };
+    const config = JSON.parse(document.content);
+    config.environments = {
+      qa: { kind: "url", role: "staging", url: "https://qa.example.com" },
+    };
+    config.verification = { mode: "browser", environment: "qa" };
+    const saved = await fetch(`${url}/api/config`, {
+      method: "PUT",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path,
+        revision: document.revision,
+        content: JSON.stringify(config),
+      }),
+    });
+    expect(saved.status).toBe(200);
+    expect(JSON.parse(readFileSync(join(root, path), "utf8"))).toMatchObject({
+      verification: { mode: "browser", environment: "qa" },
+      environments: config.environments,
+    });
+  });
+
+  it("rejects an active production target before creating a project", async () => {
+    const { url, root } = await start(
+      fileURLToPath(new URL("../..", import.meta.url)),
+    );
+    const response = await post(`${url}/api/projects`, {
+      project: "demo",
+      repo: "org/app",
+      linearMode: "later",
+      workflow: { kind: "pull-request", baseBranch: "main" },
+      verification: { mode: "browser", environment: "prod" },
+      environments: {
+        prod: {
+          kind: "url",
+          role: "production",
+          url: "https://prod.example.com",
+        },
+      },
+    });
+    expect(response.status).toBe(400);
+    expect(() =>
+      readFileSync(join(root, "projects/demo/project.json")),
+    ).toThrow();
+  });
+
+  it("returns a verification conflict when settings are edited while provider checks are in flight", async () => {
+    const sourceControl = sourceFixture();
+    const linearConnection = oauthFixture("linear");
+    const { url, root, installation } = await start(
+      fileURLToPath(new URL("../..", import.meta.url)),
+      [],
+      { sourceControl, linearConnection },
+    );
+    initializeSetup(root, installation, { project: "demo", repo: "org/demo" });
+    const areaPath = join(root, "projects/demo/areas.json");
+    const areas = JSON.parse(readFileSync(areaPath, "utf8"));
+    areas.areas.core.linearProjectId = "linear-project";
+    writeFileSync(areaPath, JSON.stringify(areas));
+    let entered!: () => void;
+    const checking = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const continueCheck = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sourceControl.resolveCredential = vi.fn(async () => {
+      entered();
+      await continueCheck;
+      return { token: "private-source-token", method: "oauth" as const };
+    });
+    const nativeFetch = globalThis.fetch;
+    const fake = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const target = String(input);
+        return target.startsWith(url)
+          ? nativeFetch(input, init)
+          : Response.json({ data: { project: { name: "Test project" } } });
+      });
+    try {
+      const pending = post(`${url}/api/projects/demo/verify`, {});
+      await checking;
+      const path = "projects/demo/project.json";
+      const document = (await (
+        await fetch(`${url}/api/config?path=${encodeURIComponent(path)}`, {
+          headers: auth,
+        })
+      ).json()) as { content: string; revision: string };
+      const config = JSON.parse(document.content);
+      config.commands.test = "npm run test:updated";
+      const edit = await fetch(`${url}/api/config`, {
+        method: "PUT",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path,
+          revision: document.revision,
+          content: JSON.stringify(config),
+        }),
+      });
+      expect(edit.status).toBe(200);
+      release();
+      const response = await pending;
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: expect.stringContaining("settings changed during verification"),
+      });
+      expect(JSON.parse(readFileSync(join(root, path), "utf8"))).toMatchObject({
+        verified: null,
+        commands: { test: "npm run test:updated" },
+      });
+    } finally {
+      release();
+      fake.mockRestore();
+    }
+  });
 
   it("exposes authenticated source app/device/repository actions without credential values", async () => {
     const sourceControl = sourceFixture();

@@ -49,10 +49,18 @@ function edit(
   file: string,
   mutate: (raw: {
     verified: string | null;
+    workflow?: unknown;
+    verification?: unknown;
+    environments?: unknown;
+    branches?: { production: string; staging: string; integration: string };
     provider?: string;
     serverUrl?: string;
     repo: string;
-    vercel: { projectId: string };
+    vercel: {
+      projectId: string;
+      teamId?: string | null;
+      bypassSecret?: string;
+    };
     areas: {
       core: { enabled: boolean; linearProjectId: string; schedule: string };
     };
@@ -68,7 +76,19 @@ beforeEach(() => {
   initializeSetup(root, packageRoot, { project: "app", repo: "owner/app" });
   edit("project.json", (raw) => {
     raw.verified = "2026-10-04";
-    raw.vercel.projectId = "prj_test";
+    raw.vercel = {
+      projectId: "prj_test",
+      teamId: null,
+      bypassSecret: "VERCEL_BYPASS_APP",
+    };
+    raw.branches = {
+      production: "main",
+      staging: "staging",
+      integration: "pm-staging",
+    };
+    delete raw.workflow;
+    delete raw.verification;
+    delete raw.environments;
   });
   edit("areas.json", (raw) => {
     raw.areas.core.enabled = true;
@@ -92,6 +112,131 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("reviews repositories and targets the chosen branch without hosting or browser credentials", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "release/current" };
+      raw.verification = { mode: "repository" };
+      raw.environments = {
+        unused: {
+          kind: "vercel",
+          role: "preview",
+          projectId: "prj_unused",
+          bypassSecret: "UNUSED_BYPASS",
+        },
+      };
+    });
+    const resolveCredential = vi.fn(async () => {
+      throw new Error("Hosting must not be used");
+    });
+    const resolveEnvironment = vi.fn(async () => {
+      throw new Error("Hosting must not be used");
+    });
+    const prepared = createJobPreparation({
+      root,
+      env: { ...env, VERCEL_TOKEN: undefined },
+      vercelConnection: { resolveCredential },
+      resolveEnvironment,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [],
+      }),
+    });
+    const payload = await prepared.prepareJob(job);
+    expect(payload.branch).toBe("release/current");
+    expect(payload.delivery?.base).toBe("release/current");
+    expect(payload.browserVerification).toBe(false);
+    expect(payload.prompt).toContain("Verification mode: repository");
+    expect(payload.prompt).not.toContain("Use Playwright MCP");
+    expect(payload.credentials).not.toHaveProperty("GREMLINS_PREVIEW_BYPASS");
+    expect(payload.credentials).not.toHaveProperty("VERCEL_TOKEN");
+    expect(resolveCredential).not.toHaveBeenCalled();
+    expect(resolveEnvironment).not.toHaveBeenCalled();
+    const pm = await prepared.prepareJob({
+      ...job,
+      type: "pm",
+      area: "core",
+      ticket: undefined,
+    });
+    expect(pm.prompt).toContain("file references and test output");
+    expect(pm.delivery).toBeUndefined();
+  });
+  it("resolves only the selected browser environment and separates its baseline from the coding branch", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "browser", environment: "qa" };
+      raw.environments = {
+        qa: {
+          kind: "railway",
+          role: "staging",
+          projectId: "project",
+          environmentId: "stage",
+          serviceId: "web",
+          branch: "develop",
+          tokenSecret: "RAILWAY_QA",
+        },
+        unused: { kind: "vercel", role: "preview", projectId: "prj_unused" },
+      };
+    });
+    const resolveEnvironment = vi.fn(async () => ({
+      url: "https://qa.example.com",
+      provider: "railway" as const,
+      branch: "develop",
+    }));
+    const prepared = createJobPreparation({
+      root,
+      env: {
+        ...env,
+        VERCEL_TOKEN: undefined,
+        RAILWAY_QA: "controller-only-token",
+      },
+      resolveEnvironment,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [],
+      }),
+    });
+    const coding = await prepared.prepareJob(job);
+    expect(coding.browserVerification).toBe(true);
+    expect(coding.branch).toBe("main");
+    expect(coding.delivery?.base).toBe("main");
+    expect(coding.prompt).toContain("Deployed baseline branch: develop");
+    expect(coding.prompt).toContain("not proof of an unmerged candidate");
+    expect(JSON.stringify(coding)).not.toContain("controller-only-token");
+    expect(coding.credentials).not.toHaveProperty("GREMLINS_PREVIEW_BYPASS");
+    const pm = await prepared.prepareJob({
+      ...job,
+      type: "pm",
+      area: "core",
+      ticket: undefined,
+    });
+    expect(pm.branch).toBe("develop");
+    expect(resolveEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "railway", branch: "develop" }),
+      expect.objectContaining({ branch: "develop" }),
+    );
+  });
+  it("rejects preview credentials that alias another project's hosting credential", async () => {
+    initializeSetup(root, packageRoot, {
+      project: "infra",
+      repo: "org/infra",
+      settings: {
+        verification: { mode: "repository" },
+        environments: {
+          stage: {
+            kind: "railway",
+            role: "staging",
+            projectId: "project",
+            environmentId: "stage",
+            serviceId: "api",
+            tokenSecret: "VERCEL_BYPASS_APP",
+          },
+        },
+      },
+    });
+    await expect(setup().prepareJob(job)).rejects.toThrow(
+      "aliases a controller hosting credential",
+    );
+  });
   it("uses the connected source token only after preparation and reserves a publication-safe lease", async () => {
     const acquireLease = vi.fn(async () => ({
       token: "official-oauth-token",

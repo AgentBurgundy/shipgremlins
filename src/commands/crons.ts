@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadAllProjects, type Project } from "../config.ts";
+import { supportsLegacyCI } from "../projectCapabilities.ts";
 
 export interface CronEntry {
   project: string;
@@ -52,7 +53,7 @@ export const PM_AGENT_WORKFLOW = join(".github", "workflows", "pm-agent.yml");
 export function cronEntries(projects: Project[]): CronEntry[] {
   return [...projects]
     .sort((a, b) => a.config.name.localeCompare(b.config.name))
-    .filter((p) => p.config.verified !== null)
+    .filter((p) => p.config.verified !== null && supportsLegacyCI(p.config))
     .flatMap((p) =>
       p.areas
         .filter((a) => a.enabled)

@@ -2,7 +2,8 @@
 // APIs and, when everything passes, stamps `verified` into project.json so
 // `hub crons` starts generating this project's PM schedules.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { loadProject, type Project } from "../config.ts";
 import type { Io } from "./crons.ts";
@@ -22,6 +23,15 @@ import {
   type VercelConnection,
 } from "../vercelConnection/index.ts";
 import { OAuthConnectionError } from "../oauthConnection/types.ts";
+import {
+  effectiveVerification,
+  effectiveWorkflow,
+  inspectionBranch,
+} from "../projectCapabilities.ts";
+import { resolveEnvironment } from "../hosting/index.ts";
+import { controllerPreviewFetch } from "../hosting/controllerProbe.ts";
+import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
+import { assertNoSymlinks } from "../setup/files.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -30,16 +40,18 @@ export interface DoctorCheck {
 }
 
 export interface DoctorDeps {
+  /** Real CLI/dashboard calls supply the full workspace for cross-project credential checks. */
+  root?: string;
   env: NodeJS.ProcessEnv;
   fetch: FetchLike;
   today: () => string;
   sourceControl?: Pick<SourceControl, "resolveCredential">;
   linearConnection?: Pick<LinearConnection, "resolveCredential">;
   vercelConnection?: Pick<VercelConnection, "resolveCredential">;
+  resolveEnvironment?: typeof resolveEnvironment;
 }
 
 const GITHUB = "https://api.github.com";
-const VERCEL = "https://api.vercel.com";
 const LINEAR = "https://api.linear.app/graphql";
 
 async function probe(
@@ -70,18 +82,70 @@ const bearer = (token: string): Record<string, string> => ({
   accept: "application/json",
 });
 
+async function reachable(
+  url: string,
+  fetcher: FetchLike,
+  bypass?: string,
+): Promise<boolean> {
+  const first = new URL(url);
+  const signal = AbortSignal.timeout(10_000);
+  let current = first;
+  for (let redirects = 0; redirects <= 3; redirects++) {
+    if (
+      !["http:", "https:"].includes(current.protocol) ||
+      current.username ||
+      current.password ||
+      (first.protocol === "https:" && current.protocol !== "https:")
+    )
+      return false;
+    const headers: Record<string, string> = {};
+    if (bypass && current.origin === first.origin)
+      headers["x-vercel-protection-bypass"] = bypass;
+    const probeFetch =
+      fetcher === globalThis.fetch ? controllerPreviewFetch : fetcher;
+    const response = await probeFetch(current.href, {
+      method: "GET",
+      redirect: "manual",
+      signal,
+      headers,
+    });
+    await response.body?.cancel();
+    if (response.ok) return true;
+    if (![301, 302, 303, 307, 308].includes(response.status)) return false;
+    const location = response.headers.get("location");
+    if (!location || redirects === 3) return false;
+    current = new URL(location, current);
+  }
+  return false;
+}
+
 export async function doctorChecks(
   project: Project,
   deps: DoctorDeps,
 ): Promise<DoctorCheck[]> {
   const { config, areas } = project;
+  const verification = effectiveVerification(config);
+  const workflow = effectiveWorkflow(config);
   const checks: DoctorCheck[] = [];
   const add = (name: string, ok: boolean, detail: string): void => {
     checks.push({ name, ok, detail });
   };
 
+  try {
+    assertBrowserSecretSafety(config, deps.root);
+  } catch {
+    add(
+      "browser credential safety",
+      false,
+      "Preview and sign-in credentials must be separate from every project's hosting and telemetry connections. Check configuration and use dedicated browser credentials.",
+    );
+    return checks;
+  }
+
   const placeholders = [
-    ["vercel.projectId", config.vercel.projectId],
+    ...(verification.mode === "browser" && verification.target.kind === "vercel"
+      ? [["verification.projectId", verification.target.projectId] as const]
+      : []),
     ...areas.map(
       (a) => [`areas.${a.key}.linearProjectId`, a.linearProjectId] as const,
     ),
@@ -136,7 +200,16 @@ export async function doctorChecks(
       repo.ok,
       repo.ok ? config.repo : `GET /repos/${config.repo} → ${repo.status}`,
     );
-    for (const [role, branch] of Object.entries(config.branches)) {
+    const branches =
+      workflow.kind === "pull-request"
+        ? [["base", workflow.baseBranch]]
+        : Object.entries(config.branches);
+    if (
+      verification.mode === "browser" &&
+      !branches.some(([, branch]) => branch === inspectionBranch(config))
+    )
+      branches.push(["verification", inspectionBranch(config)]);
+    for (const [role, branch] of branches as Array<[string, string]>) {
       const r = await probe(
         deps.fetch,
         `${repoApi}/${gitlab ? "repository/" : ""}branches/${encodeURIComponent(branch)}`,
@@ -149,86 +222,48 @@ export async function doctorChecks(
         r.ok,
         r.ok
           ? branch
-          : `${branch} not found (${r.status}) — create it from ${config.branches.production}`,
+          : `${branch} not found (${r.status}) — choose an existing branch in project settings`,
       );
     }
   }
 
-  let vt = deps.env.VERCEL_TOKEN;
-  let vercelTeam = config.vercel.teamId;
-  let vercelDetail = vt ? "set" : "not set — connect Vercel in gremlins setup";
-  if (deps.vercelConnection) {
+  if (verification.mode === "browser") {
     try {
-      const credential = await deps.vercelConnection.resolveCredential({
-        projectId: config.vercel.projectId,
-        ...(config.vercel.teamId ? { teamId: config.vercel.teamId } : {}),
-        minValidityMs: 5 * 60_000,
-      });
-      vt = credential.token;
-      vercelTeam ??= credential.teamId ?? null;
-      vercelDetail =
-        credential.method === "oauth"
-          ? "connected with the Vercel integration"
-          : "advanced token configured";
-    } catch (error) {
-      vt = undefined;
-      vercelDetail =
-        error instanceof OAuthConnectionError &&
-        ["refresh_blocked", "busy"].includes(error.code)
-          ? "waiting for active jobs before refreshing; retry verification when they finish"
-          : "Vercel access could not be verified — reconnect or select this project in the integration";
+      const environment = await (deps.resolveEnvironment ?? resolveEnvironment)(
+        verification.target,
+        {
+          env: deps.env,
+          fetch: deps.fetch,
+          vercelConnection: deps.vercelConnection,
+          branch: inspectionBranch(config),
+        },
+      );
+      const bypass =
+        verification.target.kind === "vercel" &&
+        verification.target.bypassSecret
+          ? deps.env[verification.target.bypassSecret]
+          : undefined;
+      const available = await reachable(environment.url, deps.fetch, bypass);
+      add(
+        "browser environment",
+        available,
+        available
+          ? `Selected ${verification.target.kind} environment responds over HTTP; the worker still verifies browser behavior.`
+          : "The selected environment did not respond successfully. Check its access settings, protection bypass, and network reachability.",
+      );
+    } catch {
+      add(
+        "browser environment",
+        false,
+        "The selected environment is not ready or accessible. Check its settings and controller credentials.",
+      );
     }
-  }
-  add("VERCEL_TOKEN", !!vt, vercelDetail);
-  if (vt) {
-    const team = vercelTeam ? `?teamId=${encodeURIComponent(vercelTeam)}` : "";
-    const proj = await probe(
-      deps.fetch,
-      `${VERCEL}/v9/projects/${config.vercel.projectId}${team}`,
-      {
-        headers: bearer(vt),
-      },
-    );
+  } else
     add(
-      "Vercel project",
-      proj.ok,
-      proj.ok
-        ? config.vercel.projectId
-        : `GET /v9/projects/${config.vercel.projectId} → ${proj.status}`,
+      "verification mode",
+      true,
+      "Repository review: code, documentation, and tests; no hosted application required.",
     );
-    const q = new URLSearchParams({
-      projectId: config.vercel.projectId,
-      target: "preview",
-      limit: "20",
-    });
-    if (vercelTeam) q.set("teamId", vercelTeam);
-    const deps6 = await probe(
-      deps.fetch,
-      `${VERCEL}/v6/deployments?${q.toString()}`,
-      {
-        headers: bearer(vt),
-      },
-    );
-    const list = (
-      deps6.body as { deployments?: { meta?: Record<string, string> }[] } | null
-    )?.deployments;
-    const hit = Array.isArray(list)
-      ? list.some(
-          (d) =>
-            (gitlab ? d.meta?.gitlabCommitRef : d.meta?.githubCommitRef) ===
-            config.branches.integration,
-        )
-      : false;
-    add(
-      `deployment for ${config.branches.integration}`,
-      deps6.ok && hit,
-      deps6.ok
-        ? hit
-          ? "found"
-          : `none of the last 20 preview deployments is for ${config.branches.integration} — push the branch once with "build all branches" on`
-        : `GET /v6/deployments → ${deps6.status}`,
-    );
-  }
 
   let lk = deps.env.LINEAR_API_KEY;
   let linearDetail = lk ? "set" : "not set — connect Linear in gremlins setup";
@@ -273,7 +308,16 @@ export async function doctorChecks(
     }
   }
 
-  for (const secret of [config.vercel.bypassSecret]) {
+  const browserSecrets =
+    verification.mode === "browser"
+      ? [
+          verification.target.kind === "vercel"
+            ? verification.target.bypassSecret
+            : undefined,
+          config.signIn?.databaseUrlSecret,
+        ].filter((secret): secret is string => !!secret)
+      : [];
+  for (const secret of browserSecrets) {
     const set = !!deps.env[secret];
     add(
       `secret ${secret}`,
@@ -322,12 +366,78 @@ export function renderTable(checks: DoctorCheck[]): string {
     .join("\n");
 }
 
-/** rewrites project.json with `verified` set, keeping every other key and order */
-export function stampVerified(dir: string, date: string): void {
+const VERIFICATION_FILES = [
+  "project.json",
+  "areas.json",
+  "tiers.json",
+] as const;
+export type VerificationSnapshot = Record<
+  (typeof VERIFICATION_FILES)[number],
+  string
+>;
+export class VerificationConflictError extends Error {
+  constructor() {
+    super(
+      "Project settings changed during verification. Run verification again before starting jobs.",
+    );
+    this.name = "VerificationConflictError";
+  }
+}
+
+export function verificationSnapshot(dir: string): VerificationSnapshot {
+  return Object.fromEntries(
+    VERIFICATION_FILES.map((name) => {
+      const path = join(dir, name);
+      assertNoSymlinks(path);
+      return [
+        name,
+        createHash("sha256").update(readFileSync(path)).digest("hex"),
+      ];
+    }),
+  ) as VerificationSnapshot;
+}
+
+function assertVerificationSnapshot(
+  dir: string,
+  expected?: VerificationSnapshot,
+): void {
+  if (!expected) return;
+  try {
+    const current = verificationSnapshot(dir);
+    if (VERIFICATION_FILES.every((name) => current[name] === expected[name]))
+      return;
+  } catch {
+    /* Deleted or replaced files also invalidate the checked snapshot. */
+  }
+  throw new VerificationConflictError();
+}
+
+/** Atomically stamps only the same project, area, and policy bytes that were checked. */
+export function stampVerified(
+  dir: string,
+  date: string,
+  expected?: VerificationSnapshot,
+): void {
+  assertVerificationSnapshot(dir, expected);
   const file = join(dir, "project.json");
+  assertNoSymlinks(file);
   const raw = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
   raw.verified = date;
-  writeFileSync(file, JSON.stringify(raw, null, 2) + "\n");
+  const temporary = join(dir, `.verification-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporary, JSON.stringify(raw, null, 2) + "\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
+    assertVerificationSnapshot(dir, expected);
+    renameSync(temporary, file);
+  } finally {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      /* Already renamed or never created. */
+    }
+  }
 }
 
 export async function runDoctor(
@@ -346,6 +456,7 @@ export async function runDoctor(
     return 1;
   }
   const project = loadProject(root, name);
+  const snapshot = verificationSnapshot(project.dir);
   const sourceControl =
     deps.sourceControl ??
     createSourceControl({
@@ -376,6 +487,7 @@ export async function runDoctor(
     deps.vercelConnection ?? createVercelConnection(connectionOptions);
   const checks = await doctorChecks(project, {
     ...deps,
+    root,
     sourceControl,
     linearConnection,
     vercelConnection,
@@ -389,7 +501,13 @@ export async function runDoctor(
     return 1;
   }
   const date = deps.today();
-  stampVerified(project.dir, date);
+  try {
+    stampVerified(project.dir, date, snapshot);
+  } catch (error) {
+    if (!(error instanceof VerificationConflictError)) throw error;
+    io.error(error.message);
+    return 1;
+  }
   io.log(
     `all checks passed — projects/${name}/project.json now has "verified": "${date}"`,
   );

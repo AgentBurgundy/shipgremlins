@@ -2,11 +2,15 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
+  realpathSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import {
   loadHub,
   loadProject,
@@ -15,6 +19,7 @@ import {
   type HubConfig,
 } from "../config.ts";
 import { fillTemplate, templateVars } from "../commands/addProject.ts";
+import { projectSecretNames } from "../projectCapabilities.ts";
 
 const PORTABLE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const RESERVED_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
@@ -133,6 +138,7 @@ export interface InitInput {
   runner?: "local" | "self-hosted" | "gce";
   runnerLabel?: string;
   today?: string;
+  settings?: Record<string, unknown>;
 }
 
 export interface InitResult {
@@ -152,6 +158,22 @@ export function initializeSetup(
   validateName(input.project, "project");
   validateName(input.area ?? "core", "area");
   validateRepo(input.repo, input.provider);
+  if (
+    input.settings &&
+    Object.keys(input.settings).some(
+      (key) =>
+        ![
+          "workflow",
+          "verification",
+          "environments",
+          "branches",
+          "commands",
+        ].includes(key),
+    )
+  )
+    throw new Error(
+      "Unsupported project settings. Use workflow, verification, environments, branches, and commands.",
+    );
   if (
     input.serverUrl !== undefined &&
     (input.provider !== "gitlab" || !validSourceServer(input.serverUrl))
@@ -260,12 +282,26 @@ export function initializeSetup(
       );
     }
     preserved.push(projectPath.replace(/\\/g, "/") + "/");
+    if (input.settings) {
+      const raw = JSON.parse(
+        readFileSync(join(projectDir, "project.json"), "utf8"),
+      );
+      if (
+        Object.entries(input.settings).some(
+          ([key, value]) => JSON.stringify(raw[key]) !== JSON.stringify(value),
+        )
+      )
+        throw new Error(
+          "This project already has different settings. Edit them in the dashboard; setup never overwrites existing configuration.",
+        );
+    }
     secrets = [
       project.config.slackWebhookSecret,
-      project.config.vercel.bypassSecret,
+      ...projectSecretNames(project.config),
+      ...(project.config.signIn
+        ? [project.config.signIn.databaseUrlSecret]
+        : []),
     ];
-    if (project.config.signIn)
-      secrets.push(project.config.signIn.databaseUrlSecret);
   } else {
     const vars = templateVars({
       name: input.project,
@@ -292,6 +328,7 @@ export function initializeSetup(
         const config = JSON.parse(content) as Record<string, unknown>;
         config.provider = input.provider ?? "github";
         if (input.serverUrl) config.serverUrl = input.serverUrl;
+        Object.assign(config, input.settings);
         content = JSON.stringify(config, null, 2) + "\n";
       }
       if (filename === "areas.json") {
@@ -306,7 +343,32 @@ export function initializeSetup(
         : join(projectPath, area, filename);
       plan(path, content);
     }
-    secrets = [`SLACK_WEBHOOK_${vars.NAME}`, `VERCEL_BYPASS_${vars.NAME}`];
+    const temporaryParent = realpathSync(tmpdir());
+    const staging = mkdtempSync(join(temporaryParent, "gremlins-new-project-"));
+    try {
+      for (const [path, content] of writes) {
+        if (!path.startsWith(projectPath) || !path.endsWith(".json")) continue;
+        const file = join(staging, path);
+        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+        writeFileSync(file, content, { flag: "wx", mode: 0o600 });
+      }
+      const config = loadProject(staging, input.project).config;
+      secrets = [
+        config.slackWebhookSecret,
+        ...projectSecretNames(config),
+        ...(config.signIn ? [config.signIn.databaseUrlSecret] : []),
+      ];
+    } catch {
+      throw new Error(
+        "Project settings are invalid. Check workflow, verification environment, and commands. No files changed.",
+      );
+    } finally {
+      if (
+        dirname(staging) === temporaryParent &&
+        relative(temporaryParent, staging).startsWith("gremlins-new-project-")
+      )
+        rmSync(staging, { recursive: true, force: true });
+    }
   }
   plan(".env.example", environmentTemplate(secrets));
   plan(join(projectPath, ".env.example"), environmentTemplate(secrets));
@@ -337,7 +399,7 @@ export function initializeSetup(
     preserved,
     secretNames: [...new Set([...COMMON_SECRETS, ...secrets])],
     next: [
-      `Edit projects/${input.project}/project.json: Vercel IDs, branch names, database recipe, and commands for your app.`,
+      `Review projects/${input.project}/project.json: base branch and install/test commands. Repository review needs no hosting provider; optionally choose browser verification and an environment.`,
       `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
       `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
       `Use gremlins setup to save connections and create a Docker worker on this machine. Use gremlins setup --lan for a server accessed from other devices.`,

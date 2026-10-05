@@ -38,11 +38,12 @@ gremlins status
 gremlins stop</code></pre>
         <p>
           Local workers use Claude Code and Playwright MCP with GitHub or GitLab
-          source repositories, Linear tickets, and Vercel previews. A worker
-          becomes Ready after a real Chromium screenshot check. Railway
-          deployment checks, other AI runtimes, and automatic local production
-          promotion remain planned. Existing GitHub Actions and GCE setups
-          remain advanced options.
+          source repositories, Linear tickets, and optional browser targets. Use
+          repository checks, a direct URL, or Vercel, Railway, or Cloud Run
+          discovery. A worker becomes Ready after a real Chromium screenshot
+          check. Other AI runtimes, provider provisioning, and automatic local
+          production promotion remain planned. Existing GitHub Actions and GCE
+          setups remain advanced options.
         </p>
       </section>
       <section aria-labelledby="production-title">
@@ -54,9 +55,9 @@ gremlins stop</code></pre>
           close a ticket.
         </p>
         <p>
-          Local developers run configured checks before opening draft
-          integration PRs or merge requests. They never mark tickets Done or
-          merge into production.
+          Local developers run configured checks before opening draft PRs or
+          merge requests to the selected base branch. They never mark tickets
+          Done or merge into production.
         </p>
       </section>
       <nav aria-label="Documentation">

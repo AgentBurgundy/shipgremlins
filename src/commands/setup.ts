@@ -15,6 +15,7 @@ import { createLinearConnection } from "../linearConnection/index.ts";
 import { createVercelConnection } from "../vercelConnection/index.ts";
 
 export interface SetupDeps extends PreflightDeps {
+  projectSettings?: Record<string, unknown>;
   templatesRoot?: string;
   detectHubRepo?: (directory: string) => string | undefined;
 }
@@ -26,7 +27,7 @@ const USAGE = `ShipGremlins setup
   gremlins setup status [--check] [--json] [--verbose] [--dir PATH] [--project my-app]
   gremlins setup init --project my-app --repo owner/app [--provider github|gitlab]
                  [--server-url https://gitlab.example.com]
-                 [--dir PATH] [--area core] [--runner local|self-hosted|gce]
+                 [--dir PATH] [--area core] [--base-branch main] [--runner local|self-hosted|gce]
                  [--runner-label pm] [--json]
 
 Status is read-only. --check exits 1 when local preflight fails.
@@ -37,7 +38,8 @@ No fork or automation repository is required. --hub-repo is only for optional CI
 No secret values are accepted, printed, or copied. Provider checks use gremlins doctor my-app.
 Load local credentials with: gremlins --env-file .env setup --check
 Dashboard connections are stored locally and loaded by subsequent CLI commands.
-GitHub and GitLab repositories can run locally. Railway deployment checks are planned.`;
+GitHub and GitLab repositories can run locally. Repository review needs no hosting credentials.
+Choose optional browser environments and promotion workflows in the dashboard.`;
 
 export async function runSetup(
   root: string,
@@ -65,6 +67,7 @@ export async function runSetup(
       "runner-label",
       "provider",
       "server-url",
+      "base-branch",
     ]);
     if (Object.keys(values).some((name) => !allowed.has(name)))
       throw new Error(
@@ -85,6 +88,7 @@ export async function runSetup(
       "runner-label",
       "provider",
       "server-url",
+      "base-branch",
     ])
       if (
         values[key] !== undefined &&
@@ -149,6 +153,15 @@ export async function runSetup(
         area: string("area"),
         runner,
         runnerLabel: string("runner-label"),
+        settings: string("base-branch")
+          ? {
+              ...deps.projectSettings,
+              workflow: {
+                kind: "pull-request",
+                baseBranch: string("base-branch"),
+              },
+            }
+          : deps.projectSettings,
       });
       if (values.json) io.log(JSON.stringify(result, null, 2));
       else {
@@ -182,6 +195,7 @@ export async function runSetup(
         "runner-label",
         "provider",
         "server-url",
+        "base-branch",
       ].some((key) => values[key] !== undefined)
     )
       throw new Error(

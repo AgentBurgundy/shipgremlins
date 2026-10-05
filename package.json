@@ -1,6 +1,6 @@
 {
   "name": "shipgremlins",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "files": [
     "bin/shipgremlins.mjs",
@@ -53,6 +53,7 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
     "cron-parser": "5.10.1",
+    "google-auth-library": "11.1.0",
     "pg": "8.23.1",
     "tsx": "^4.19.2"
   }

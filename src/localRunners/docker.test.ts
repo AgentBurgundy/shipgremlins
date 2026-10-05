@@ -224,6 +224,10 @@ describe("local Docker job runtime", () => {
     expect(create).toContain("1000:1000");
     expect(create).toContain("no-new-privileges");
     expect(create).toContain("--cap-drop");
+    expect(create[create.indexOf("--add-host") + 1]).toBe(
+      "host.docker.internal:host-gateway",
+    );
+    expect(create).not.toContain("--network=host");
     expect(create[create.indexOf("--restart") + 1]).toBe("no");
     expect(create).not.toContain("--privileged");
     expect(create.join(" ")).not.toContain("docker.sock");

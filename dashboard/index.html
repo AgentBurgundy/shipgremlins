@@ -9,6 +9,7 @@
     <title>Your crew · ShipGremlins</title>
     <link rel="icon" type="image/svg+xml" href="/assets/mark.svg" />
     <link rel="stylesheet" href="/styles.css" />
+    <script src="/project-settings.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -317,6 +318,17 @@
               </div>
               <span class="section-symbol" aria-hidden="true">⌘</span>
             </div>
+            <nav
+              class="connection-categories"
+              aria-label="Connection categories"
+            >
+              <a href="#source-control"
+                >GitHub &amp; GitLab <span aria-hidden="true">↗</span></a
+              ><a href="#linear-connection">Planning</a
+              ><a href="#vercel-connection">Hosting</a
+              ><a href="#model-connections">AI &amp; project signals</a
+              ><a href="#slack-connection">Slack</a>
+            </nav>
             <div class="service-grid">
               <section
                 class="service-card linear-card"
@@ -632,10 +644,172 @@
                 </details>
               </section>
             </div>
-            <form id="connections-form">
+            <div class="hosting-connection-grid">
+              <section class="service-card" aria-labelledby="railway-title">
+                <div class="service-heading">
+                  <span class="service-mark" aria-hidden="true"
+                    ><img
+                      src="/assets/brands/railway.svg"
+                      width="23"
+                      height="23"
+                      alt=""
+                  /></span>
+                  <div>
+                    <span class="eyebrow muted">OPTIONAL HOSTING</span>
+                    <h3 id="railway-title">Railway</h3>
+                    <p>
+                      Read a service’s deployment state and discover its test
+                      URL.
+                    </p>
+                  </div>
+                </div>
+                <div class="service-status-row">
+                  <span class="saved-state" data-connection="RAILWAY_TOKEN"
+                    >Not configured</span
+                  ><span class="manual-connection-label">Manual token</span>
+                </div>
+                <details class="service-advanced">
+                  <summary>Add or update Railway token</summary>
+                  <form id="railway-token-form">
+                    <fieldset id="railway-token-fields" disabled>
+                      <legend class="sr-only">Railway credential</legend>
+                      <div class="field">
+                        <label for="railway-token">Railway API token</label>
+                        <div class="password-wrap">
+                          <input
+                            id="railway-token"
+                            name="RAILWAY_TOKEN"
+                            type="password"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Paste a Railway token"
+                          /><button
+                            type="button"
+                            data-reveal="railway-token"
+                            aria-label="Show Railway token"
+                            aria-pressed="false"
+                          >
+                            Show
+                          </button>
+                        </div>
+                        <p>
+                          Use the narrowest account, workspace, or project
+                          access available. Choose project-token authentication
+                          in the app settings when using a Railway project
+                          token.
+                        </p>
+                      </div>
+                      <div class="form-bottom">
+                        <p>
+                          Saved on this server. Verify each project’s live
+                          access separately.
+                        </p>
+                        <button
+                          type="submit"
+                          class="small-button"
+                          id="save-railway-token"
+                        >
+                          Save token
+                        </button>
+                      </div>
+                    </fieldset>
+                    <div
+                      id="railway-token-message"
+                      class="form-message"
+                      role="status"
+                      hidden
+                    ></div>
+                  </form>
+                </details>
+              </section>
+              <section class="service-card" aria-labelledby="cloud-run-title">
+                <div class="service-heading">
+                  <span class="service-mark" aria-hidden="true"
+                    ><img
+                      src="/assets/brands/googlecloud.svg"
+                      width="23"
+                      height="23"
+                      alt=""
+                  /></span>
+                  <div>
+                    <span class="eyebrow muted">OPTIONAL HOSTING</span>
+                    <h3 id="cloud-run-title">Google Cloud Run</h3>
+                    <p>
+                      Use server identity or a service account to discover a
+                      service URL.
+                    </p>
+                  </div>
+                </div>
+                <div class="service-status-row">
+                  <span
+                    class="saved-state"
+                    data-connection="GCP_SERVICE_ACCOUNT_JSON"
+                    >Not configured</span
+                  ><span class="manual-connection-label"
+                    >JSON or machine identity</span
+                  >
+                </div>
+                <details class="service-advanced">
+                  <summary>Service account or machine identity</summary>
+                  <p class="runner-guidance">
+                    Leave the key blank to use Application Default Credentials
+                    on the controller. Identity availability is checked during
+                    project verification. Grant only the read access needed for
+                    the Cloud Run service; this does not configure browser
+                    access to a private service.
+                  </p>
+                  <form id="cloud-run-token-form">
+                    <fieldset id="cloud-run-token-fields" disabled>
+                      <legend class="sr-only">Google Cloud credential</legend>
+                      <div class="field">
+                        <label for="gcp-credentials"
+                          >Service-account JSON (optional)</label
+                        ><textarea
+                          id="gcp-credentials"
+                          class="secret-json"
+                          name="GCP_SERVICE_ACCOUNT_JSON"
+                          rows="4"
+                          autocomplete="off"
+                          spellcheck="false"
+                          placeholder="Paste service-account JSON only if needed"
+                        ></textarea
+                        ><button
+                          type="button"
+                          class="small-button"
+                          id="reveal-gcp-credentials"
+                          aria-pressed="false"
+                        >
+                          Show JSON
+                        </button>
+                        <p>
+                          The key stays on the controller. Blank keeps an
+                          existing saved key.
+                        </p>
+                      </div>
+                      <div class="form-bottom">
+                        <button
+                          type="submit"
+                          class="small-button"
+                          id="save-cloud-run-token"
+                        >
+                          Save credential
+                        </button>
+                      </div>
+                    </fieldset>
+                    <div
+                      id="cloud-run-token-message"
+                      class="form-message"
+                      role="status"
+                      hidden
+                    ></div>
+                  </form>
+                </details>
+              </section>
+            </div>
+            <form id="connections-form" aria-labelledby="model-connections">
               <fieldset id="connections-fields" disabled>
                 <legend class="sr-only">Model and telemetry credentials</legend>
-                <h3 class="connection-group-title">
+                <h3 class="connection-group-title" id="model-connections">
                   Model &amp; product signals
                 </h3>
                 <div class="token-grid">
@@ -683,9 +857,9 @@
                   </div>
                 </div>
                 <p class="field-help">
-                  Optional project telemetry: add Sentry, Datadog or Mixpanel in
-                  your project's configuration. Credential fields appear here
-                  after saving.
+                  Project credentials appear below after you save named hosting,
+                  preview-access, sign-in, or telemetry settings. Add Sentry,
+                  Datadog, or Mixpanel in the project’s full configuration.
                 </p>
                 <div class="token-grid" id="telemetry-connections"></div>
                 <div class="form-bottom">
@@ -718,7 +892,11 @@
                 “Saved” means configured; live access still needs verification.
               </p>
             </div>
-            <section class="slack-card" aria-labelledby="slack-title">
+            <section
+              class="slack-card"
+              id="slack-connection"
+              aria-labelledby="slack-title"
+            >
               <div class="slack-heading">
                 <span class="slack-mark" aria-hidden="true"
                   ><img
@@ -958,6 +1136,7 @@
                       </p>
                     </div>
                   </div>
+                  <div id="new-project-settings"></div>
                   <div class="project-linear-setup">
                     <div class="field">
                       <label for="project-linear-mode"
@@ -1812,5 +1991,87 @@
         </main>
       </div>
     </div>
+    <dialog
+      id="project-settings-dialog"
+      class="project-settings-dialog"
+      aria-labelledby="project-settings-title"
+    >
+      <form id="edit-project-form">
+        <div class="settings-dialog-heading">
+          <div>
+            <span class="eyebrow muted">PROJECT SETTINGS</span>
+            <h2 id="project-settings-title">Edit project</h2>
+            <p id="project-settings-repo" class="runner-guidance"></p>
+          </div>
+          <button
+            type="button"
+            class="small-button"
+            id="close-project-settings"
+            aria-label="Close project settings"
+          >
+            Close ×
+          </button>
+        </div>
+        <fieldset id="edit-project-fields">
+          <legend class="sr-only">Execution and hosting settings</legend>
+          <div id="edit-project-settings"></div>
+          <div class="form-bottom">
+            <p>
+              Other project settings and saved credentials are kept. Verify the
+              project after changes.
+            </p>
+            <button
+              type="submit"
+              class="button button-dark"
+              id="save-project-settings"
+            >
+              Save settings
+            </button>
+          </div>
+        </fieldset>
+        <div
+          id="project-settings-message"
+          class="form-message"
+          role="status"
+          hidden
+        ></div>
+        <div id="project-settings-discard" class="settings-discard" hidden>
+          <p>
+            There are unsaved project changes. Keep editing, or discard this
+            draft.
+          </p>
+          <div class="button-row">
+            <button
+              type="button"
+              class="small-button"
+              id="keep-project-settings"
+            >
+              Keep editing</button
+            ><button
+              type="button"
+              class="small-button"
+              id="discard-project-settings"
+            >
+              Discard draft
+            </button>
+          </div>
+        </div>
+        <div class="settings-dialog-footer">
+          <button
+            type="button"
+            class="small-button"
+            id="reload-project-settings"
+          >
+            Reload saved settings</button
+          ><button
+            type="button"
+            class="small-button"
+            id="advanced-project-settings"
+          >
+            Open full configuration
+          </button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>

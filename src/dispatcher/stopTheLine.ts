@@ -8,6 +8,7 @@ import type { CheckSummary, PullRequest } from "../forge/types.ts";
 import type { Deployment, LinearTicket } from "../services/types.ts";
 import { branchesOf, repoOf, type Ctx, type DigestRow } from "./context.ts";
 import { LABELS } from "./notes.ts";
+import { promotionVercel } from "../projectCapabilities.ts";
 
 const FIX_BUDGET = 2;
 const FIX_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -48,7 +49,17 @@ export async function integrationHealth(ctx: Ctx): Promise<{
 }> {
   const repo = repoOf(ctx);
   const { integration } = branchesOf(ctx);
-  const { projectId, teamId } = ctx.project.config.vercel;
+  const target = promotionVercel(ctx.project.config);
+  if (!target)
+    return {
+      state: "unknown",
+      sha: null,
+      reason:
+        "Automatic promotion requires a Vercel promotion target with revision-bound verification; use the local draft PR workflow for this project.",
+      checks: { status: "none", failedJobs: [] },
+      deployment: null,
+    };
+  const { projectId, teamId } = target;
   const sha = await ctx.forge.getBranchSha(repo, integration);
   const missing: CheckSummary = { status: "none", failedJobs: [] };
   if (!sha)
@@ -62,7 +73,7 @@ export async function integrationHealth(ctx: Ctx): Promise<{
   const checks = await ctx.forge.getChecks(repo, sha);
   const deployment = await ctx.vercel.latestDeployment(
     projectId,
-    teamId,
+    teamId ?? null,
     integration,
   );
   const exactDeployment =

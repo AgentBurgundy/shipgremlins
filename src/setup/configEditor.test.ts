@@ -203,6 +203,60 @@ describe("dashboard configuration editor", () => {
     ).toThrow(ConfigEditorError);
   });
 
+  it("revokes verification when execution settings change and returns the saved revision", () => {
+    const root = fixture();
+    const path = "projects/demo/project.json";
+    const value = JSON.parse(readEditableConfig(root, path).content);
+    value.verified = "2026-10-04";
+    writeFileSync(join(root, path), JSON.stringify(value));
+    const original = readEditableConfig(root, path);
+    value.commands.test = "npm run test:ci";
+    const saved = saveEditableConfig(root, {
+      ...original,
+      content: JSON.stringify(value),
+    });
+    const current = readEditableConfig(root, path);
+    expect(saved.revision).toBe(current.revision);
+    expect(JSON.parse(current.content)).toMatchObject({
+      verified: null,
+      commands: { test: "npm run test:ci" },
+    });
+    expect(() =>
+      saveEditableConfig(root, { ...original, content: original.content }),
+    ).toThrow(/changed since/);
+  });
+
+  it("preserves doctor verification on formatting edits and prevents manually granting it", () => {
+    const root = fixture();
+    const path = "projects/demo/project.json";
+    let original = readEditableConfig(root, path);
+    const value = JSON.parse(original.content);
+    value.verified = "2099-01-01";
+    saveEditableConfig(root, { ...original, content: JSON.stringify(value) });
+    expect(
+      JSON.parse(readEditableConfig(root, path).content).verified,
+    ).toBeNull();
+    value.verified = "2026-10-04";
+    writeFileSync(join(root, path), JSON.stringify(value));
+    original = readEditableConfig(root, path);
+    const reordered = Object.fromEntries(Object.entries(value).reverse());
+    saveEditableConfig(root, {
+      ...original,
+      content: JSON.stringify(reordered, null, 4),
+    });
+    expect(JSON.parse(readEditableConfig(root, path).content).verified).toBe(
+      "2026-10-04",
+    );
+    const area = readEditableConfig(root, "projects/demo/areas.json");
+    saveEditableConfig(root, {
+      ...area,
+      content: area.content.replace('"enabled": false', '"enabled": true'),
+    });
+    expect(JSON.parse(readEditableConfig(root, path).content).verified).toBe(
+      "2026-10-04",
+    );
+  });
+
   it.each([
     ["hub.json", '{"hubRepo":"private-secret-value",'],
     ["hub.json", "null"],

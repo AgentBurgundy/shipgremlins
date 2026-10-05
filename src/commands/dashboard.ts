@@ -58,9 +58,18 @@ import {
 } from "../localRunners/docker.ts";
 import { createJobPreparation } from "../localRunners/jobs.ts";
 import type { LocalJobInput, WorkerAction } from "../localRunners/types.ts";
-import { doctorChecks, stampVerified } from "./doctor.ts";
+import {
+  doctorChecks,
+  stampVerified,
+  verificationSnapshot,
+  VerificationConflictError,
+} from "./doctor.ts";
 import { createSlackConnect } from "../slack/connection.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
+import {
+  effectiveVerification,
+  effectiveWorkflow,
+} from "../projectCapabilities.ts";
 import {
   createLinearConnection,
   type LinearConnection,
@@ -307,11 +316,7 @@ export function createDashboardServer(
       vercelConnection.status({ checkAvailability: false }),
     ]);
     const blockedSources = new Set<string>();
-    const required = new Set([
-      "CLAUDE_CODE_OAUTH_TOKEN",
-      "LINEAR_API_KEY",
-      "VERCEL_TOKEN",
-    ]);
+    const required = new Set(["CLAUDE_CODE_OAUTH_TOKEN", "LINEAR_API_KEY"]);
     for (const connection of serviceConnections) {
       const name =
         connection.provider === "linear" ? "LINEAR_API_KEY" : "VERCEL_TOKEN";
@@ -322,6 +327,24 @@ export function createDashboardServer(
     for (const name of listProjectNames(root)) {
       try {
         const project = loadProject(root, name);
+        const verification = effectiveVerification(project.config);
+        if (verification.mode === "browser") {
+          const target = verification.target;
+          if (target.kind === "vercel") {
+            const connection = serviceConnections.find(
+              (item) => item.provider === "vercel",
+            );
+            if (!connection?.connected || connection.needsReconnect)
+              required.add("VERCEL_TOKEN");
+            if (target.bypassSecret) required.add(target.bypassSecret);
+          }
+          if (target.kind === "railway")
+            required.add(target.tokenSecret ?? "RAILWAY_TOKEN");
+          if (target.kind === "cloud-run" && target.credentialsSecret)
+            required.add(target.credentialsSecret);
+          if (project.config.signIn)
+            required.add(project.config.signIn.databaseUrlSecret);
+        }
         const provider = project.config.provider ?? "github";
         const serverUrl =
           project.config.serverUrl ??
@@ -372,7 +395,7 @@ export function createDashboardServer(
       serviceConnections,
       limitations: [
         "Local workers use Claude Code. Each worker runs one job at a time.",
-        "Jobs create draft integration PRs/MRs; staging promotion and production merges still need review.",
+        "Jobs create draft PRs/MRs to each project's selected base branch; merges and release decisions need review.",
         "Closing the browser is safe. Keep the controller running for schedules and queued jobs.",
       ],
     };
@@ -921,6 +944,7 @@ export function createDashboardServer(
               assertNoSymlinks(join(root, "projects", name, file));
             try {
               const project = loadProject(root, name);
+              const verification = effectiveVerification(project.config);
               projectConnections.push(
                 ...telemetrySecrets(project.config.telemetry).map(
                   (connection) => ({
@@ -934,6 +958,19 @@ export function createDashboardServer(
                 repo: project.config.repo,
                 provider: project.config.provider ?? "github",
                 serverUrl: project.config.serverUrl,
+                workflow: effectiveWorkflow(project.config),
+                verification:
+                  verification.mode === "browser"
+                    ? { mode: "browser", environment: verification.environment }
+                    : { mode: "repository" },
+                environments:
+                  project.config.environments ??
+                  (verification.mode === "browser"
+                    ? { [verification.environment]: verification.target }
+                    : {}),
+                commands: project.config.commands,
+                branches: project.config.branches,
+                verified: project.config.verified,
                 linear: linearProvisioning.status(name),
                 areas: project.areas.map(
                   ({
@@ -1080,7 +1117,7 @@ export function createDashboardServer(
           } catch {
             throw new RequestError(
               400,
-              "Connections were not saved. Use supported single-line tokens and check .env permissions and formatting.",
+              "Connections were not saved. Use supported tokens or valid Google service-account JSON, and check .env permissions and formatting.",
             );
           }
           json(res, 200, { ok: true });
@@ -1101,6 +1138,11 @@ export function createDashboardServer(
                   "serverUrl",
                   "linearMode",
                   "linearTeamId",
+                  "workflow",
+                  "verification",
+                  "environments",
+                  "commands",
+                  "branches",
                 ].includes(key),
             ) ||
             typeof input.project !== "string" ||
@@ -1191,7 +1233,21 @@ export function createDashboardServer(
             root,
             args,
             { log: (line) => output.push(line), error: () => {} },
-            { env: {}, templatesRoot: packageRoot },
+            {
+              env: {},
+              templatesRoot: packageRoot,
+              projectSettings: Object.fromEntries(
+                [
+                  "workflow",
+                  "verification",
+                  "environments",
+                  "commands",
+                  "branches",
+                ]
+                  .filter((key) => input[key] !== undefined)
+                  .map((key) => [key, input[key]]),
+              ),
+            },
           );
           if (code !== 0)
             throw new RequestError(
@@ -1286,7 +1342,9 @@ export function createDashboardServer(
               "Project verification takes an empty object.",
             );
           const project = loadProject(root, verifyProject[1]!);
+          const snapshot = verificationSnapshot(project.dir);
           const checks = await doctorChecks(project, {
+            root,
             env: { ...readConnections(root), ...process.env },
             fetch,
             today: () => new Date().toISOString().slice(0, 10),
@@ -1295,8 +1353,18 @@ export function createDashboardServer(
             vercelConnection,
           });
           const ok = checks.every((check) => check.ok);
-          if (ok)
-            stampVerified(project.dir, new Date().toISOString().slice(0, 10));
+          if (ok) {
+            try {
+              stampVerified(
+                project.dir,
+                new Date().toISOString().slice(0, 10),
+                snapshot,
+              );
+            } catch (error) {
+              if (!(error instanceof VerificationConflictError)) throw error;
+              throw new RequestError(409, error.message);
+            }
+          }
           json(res, 200, { ok, checks });
           return;
         }

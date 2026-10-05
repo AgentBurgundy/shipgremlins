@@ -19,6 +19,208 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
+.hosting-connection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.manual-connection-label {
+  font-size: 10px;
+  color: var(--muted);
+}
+.connection-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.connection-categories a {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 9px 13px;
+  font-size: 11px;
+  text-decoration: none;
+  background: #fafbf8;
+}
+.connection-categories a:hover,
+.connection-categories a:focus-visible {
+  background: #eff5e4;
+  border-color: #9aaa8c;
+}
+.hosting-connection-grid .field {
+  margin-top: 18px;
+}
+.hosting-connection-grid .field p {
+  font-size: 10px;
+  line-height: 1.75;
+  color: var(--muted);
+  margin: 10px 0;
+}
+.secret-json {
+  -webkit-text-security: disc;
+  resize: vertical;
+  width: 100%;
+  min-height: 110px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font:
+    12px/1.6 ui-monospace,
+    monospace;
+}
+.secret-json.revealed {
+  -webkit-text-security: none;
+}
+.project-settings {
+  margin: 25px 0;
+  border-top: 1px solid var(--line);
+  padding-top: 23px;
+}
+.settings-heading h3 {
+  font-size: 18px;
+  margin: 8px 0;
+  letter-spacing: -0.4px;
+}
+.project-settings > .field,
+.project-settings > .project-form-grid {
+  margin-top: 20px;
+}
+.environment-fields {
+  padding: 19px;
+  margin-top: 17px;
+  background: #f7f9f3;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.environment-fields > .field,
+.environment-fields > .project-form-grid {
+  margin-bottom: 17px;
+}
+.environment-fields p a {
+  color: #42642d;
+  text-underline-offset: 3px;
+}
+.project-settings .field p {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.command-settings {
+  border-top: 1px solid var(--line);
+  padding-top: 19px;
+  margin-top: 22px;
+}
+.command-settings > summary {
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.command-settings .project-form-grid {
+  margin-top: 18px;
+}
+.command-settings input {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+.settings-advanced-note {
+  margin-top: 20px;
+}
+.promotion-settings {
+  border: 1px solid #e4d7b0;
+  background: #fcfaf2;
+  padding: 18px;
+  margin-top: 16px;
+  border-radius: 8px;
+}
+.promotion-settings .project-form-grid {
+  margin-top: 15px;
+}
+.project-capabilities {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+.project-settings-dialog {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--ink);
+  width: min(850px, calc(100vw - 28px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 40px);
+  padding: 30px;
+  overflow: auto;
+}
+body:has(.project-settings-dialog[open]) {
+  overflow: hidden;
+}
+.project-settings-dialog::backdrop {
+  background: #13231c99;
+  backdrop-filter: blur(3px);
+}
+.project-settings-dialog h2 {
+  font-size: 23px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.settings-dialog-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
+}
+.settings-dialog-heading > button {
+  flex-shrink: 0;
+}
+.settings-dialog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.settings-discard {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #e4d7b0;
+  border-radius: 9px;
+  background: #fcfaf2;
+}
+.settings-discard p {
+  font-size: 12px;
+  line-height: 1.7;
+  margin-bottom: 12px;
+}
+@media (max-width: 1100px) {
+  .hosting-connection-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .project-settings-dialog {
+    padding: 18px;
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 20px);
+  }
+  .project-settings-dialog h2 {
+    font-size: 20px;
+  }
+  .environment-fields {
+    padding: 13px;
+  }
+  .project-settings-dialog .project-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .project-settings-dialog .form-bottom {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 * {
   box-sizing: border-box;
 }

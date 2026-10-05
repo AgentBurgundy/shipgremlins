@@ -9,6 +9,12 @@ import {
   parseTelemetry,
   type TelemetryConfig,
 } from "./telemetry/config.ts";
+import {
+  parseProjectCapabilities,
+  validateWorkerSecretReferences,
+  validBranch,
+  type ProjectCapabilities,
+} from "./projectCapabilities.ts";
 
 export interface HubConfig {
   runners: { mode: "local" | "self-hosted" | "gce"; label: string };
@@ -23,7 +29,7 @@ export interface HubConfig {
   hubRepo: string;
 }
 
-export interface ProjectConfig {
+export interface ProjectConfig extends ProjectCapabilities {
   /** The Linear team for this app; existing area project IDs remain authoritative. */
   linear?: { teamId: string; workspaceId?: string; teamName?: string };
   telemetry?: TelemetryConfig;
@@ -33,7 +39,8 @@ export interface ProjectConfig {
   provider?: "github" | "gitlab";
   serverUrl?: string;
   branches: { production: string; staging: string; integration: string };
-  vercel: { projectId: string; teamId: string | null; bypassSecret: string };
+  /** Legacy Vercel configuration. New projects use named environments. */
+  vercel?: { projectId: string; teamId: string | null; bypassSecret: string };
   database: "neon-vercel-integration" | "none";
   slackWebhookSecret: string;
   runnerLabel: string | null;
@@ -272,8 +279,29 @@ export function loadProject(root: string, name: string): Project {
   const pf = join(dir, "project.json");
   const raw = readJson(pf);
   if (!isObj(raw)) throw new ConfigError(pf, "must be an object");
-  const branches = need(pf, raw, "branches", isObj, "an object");
-  const vercel = need(pf, raw, "vercel", isObj, "an object");
+  let capabilities: ProjectCapabilities;
+  try {
+    capabilities = parseProjectCapabilities(raw);
+  } catch (error) {
+    throw new ConfigError(pf, (error as Error).message);
+  }
+  const workflow =
+    capabilities.workflow ??
+    (raw.vercel === undefined
+      ? { kind: "pull-request" as const, baseBranch: "main" }
+      : { kind: "promotion" as const });
+  const branches =
+    workflow.kind === "pull-request"
+      ? {
+          production: workflow.baseBranch,
+          staging: workflow.baseBranch,
+          integration: workflow.baseBranch,
+        }
+      : need(pf, raw, "branches", isObj, "an object");
+  const vercel =
+    raw.vercel === undefined
+      ? undefined
+      : need(pf, raw, "vercel", isObj, "an object");
   const commands = need(pf, raw, "commands", isObj, "an object");
   let telemetry: TelemetryConfig | undefined;
   try {
@@ -282,6 +310,10 @@ export function loadProject(root: string, name: string): Project {
     throw new ConfigError(pf, (error as Error).message);
   }
   const config: ProjectConfig = {
+    ...capabilities,
+    ...(raw.vercel === undefined && capabilities.workflow === undefined
+      ? { workflow }
+      : {}),
     ...(telemetry ? { telemetry } : {}),
     name,
     provider:
@@ -317,28 +349,59 @@ export function loadProject(root: string, name: string): Project {
       '"owner/name"',
     ),
     branches: {
-      production: need(pf, branches, "production", isString, "a branch"),
-      staging: need(pf, branches, "staging", isString, "a branch"),
-      integration: need(pf, branches, "integration", isString, "a branch"),
-    },
-    vercel: {
-      projectId: need(pf, vercel, "projectId", isString, "a Vercel project id"),
-      teamId: need(pf, vercel, "teamId", isStringOrNull, "a team id or null"),
-      bypassSecret: need(
+      production: need(
         pf,
-        vercel,
-        "bypassSecret",
-        isString,
-        "the NAME of a hub secret",
+        branches,
+        "production",
+        validBranch,
+        "a valid branch",
+      ),
+      staging: need(pf, branches, "staging", validBranch, "a valid branch"),
+      integration: need(
+        pf,
+        branches,
+        "integration",
+        validBranch,
+        "a valid branch",
       ),
     },
-    database: need(
-      pf,
-      raw,
-      "database",
-      oneOf("neon-vercel-integration", "none"),
-      '"neon-vercel-integration" or "none"',
-    ),
+    ...(vercel
+      ? {
+          vercel: {
+            projectId: need(
+              pf,
+              vercel,
+              "projectId",
+              isString,
+              "a Vercel project id",
+            ),
+            teamId: need(
+              pf,
+              vercel,
+              "teamId",
+              isStringOrNull,
+              "a team id or null",
+            ),
+            bypassSecret: need(
+              pf,
+              vercel,
+              "bypassSecret",
+              isString,
+              "the NAME of a hub secret",
+            ),
+          },
+        }
+      : {}),
+    database:
+      raw.database === undefined
+        ? "none"
+        : need(
+            pf,
+            raw,
+            "database",
+            oneOf("neon-vercel-integration", "none"),
+            '"neon-vercel-integration" or "none"',
+          ),
     slackWebhookSecret: need(
       pf,
       raw,
@@ -383,7 +446,7 @@ export function loadProject(root: string, name: string): Project {
       : { linear: parseLinearMapping(pf, raw.linear) }),
   };
   const set = new Set(Object.values(config.branches));
-  if (set.size !== 3)
+  if (workflow.kind === "promotion" && set.size !== 3)
     throw new ConfigError(
       pf,
       "production, staging and integration branches must differ",
@@ -391,13 +454,19 @@ export function loadProject(root: string, name: string): Project {
   for (const k of ["bypassSecret", "slackWebhookSecret"] as const) {
     const v =
       k === "bypassSecret"
-        ? config.vercel.bypassSecret
+        ? config.vercel?.bypassSecret
         : config.slackWebhookSecret;
+    if (v === undefined) continue;
     if (!/^[A-Z][A-Z0-9_]*$/.test(v))
       throw new ConfigError(
         pf,
         `"${k}" must be a SECRET NAME like SLACK_WEBHOOK_${name.toUpperCase()}, never a value`,
       );
+  }
+  try {
+    validateWorkerSecretReferences(config);
+  } catch (error) {
+    throw new ConfigError(pf, (error as Error).message);
   }
 
   const af = join(dir, "areas.json");

@@ -6,6 +6,10 @@ import { telemetrySecrets } from "../telemetry/config.ts";
 import { isExampleHub, validateName } from "./files.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
 import type { OAuthStatus } from "../oauthConnection/types.ts";
+import {
+  effectiveVerification,
+  effectiveWorkflow,
+} from "../projectCapabilities.ts";
 
 export type Tool = "git" | "npm" | "docker" | "claude" | "gcloud";
 export interface ToolResult {
@@ -74,6 +78,8 @@ export function inspectSetup(
   if (selectedProject) validateName(selectedProject, "project");
   const checks: SetupCheck[] = [];
   const secretNames = new Set<string>();
+  const oauthProviders = new Set<"linear" | "vercel">(["linear"]);
+  let requiresPromotion = false;
   const add = (
     id: string,
     status: SetupCheck["status"],
@@ -81,23 +87,6 @@ export function inspectSetup(
   ): void => {
     checks.push({ id, status, detail });
   };
-  for (const [provider, secretName] of [
-    ["linear", "LINEAR_API_KEY"],
-    ["vercel", "VERCEL_TOKEN"],
-  ] as const) {
-    const connection = deps.oauthConnections?.find(
-      (item) => item.provider === provider && item.method === "oauth",
-    );
-    if (connection)
-      add(
-        `oauth:${provider}`,
-        connection.connected && !connection.needsReconnect ? "pass" : "fail",
-        connection.connected && !connection.needsReconnect
-          ? `${provider === "linear" ? "Linear" : "Vercel"} OAuth is saved; doctor checks live project access.`
-          : `Reconnect ${provider === "linear" ? "Linear" : "Vercel"} in the dashboard. The saved OAuth connection needs attention.`,
-      );
-    else secretNames.add(secretName);
-  }
   const nodeVersion = deps.nodeVersion ?? process.versions.node;
   const parsed = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(nodeVersion);
   const major = Number(parsed?.[1]);
@@ -187,6 +176,9 @@ export function inspectSetup(
     try {
       validateName(name, "project");
       const project = loadProject(root, name);
+      const verification = effectiveVerification(project.config);
+      requiresPromotion ||=
+        effectiveWorkflow(project.config).kind === "promotion";
       const provider = project.config.provider ?? "github";
       const serverUrl =
         provider === "github"
@@ -212,19 +204,42 @@ export function inspectSetup(
           provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN",
         );
       add(`project:${name}`, "pass", "Project configuration is valid.");
-      secretNames.add(project.config.vercel.bypassSecret);
+      if (verification.mode === "browser") {
+        const target = verification.target;
+        if (target.kind === "vercel") {
+          oauthProviders.add("vercel");
+          if (target.bypassSecret) secretNames.add(target.bypassSecret);
+        }
+        if (target.kind === "railway")
+          secretNames.add(target.tokenSecret ?? "RAILWAY_TOKEN");
+        if (target.kind === "cloud-run") {
+          if (target.credentialsSecret || deps.env.GCP_SERVICE_ACCOUNT_JSON)
+            secretNames.add(
+              target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON",
+            );
+          else
+            add(
+              `cloud-run:${name}`,
+              "warn",
+              "Cloud Run uses controller application-default credentials; doctor checks access to the selected service.",
+            );
+        }
+      }
       for (const secret of telemetrySecrets(project.config.telemetry))
         secretNames.add(secret.name);
-      if (project.config.signIn)
+      if (verification.mode === "browser" && project.config.signIn)
         secretNames.add(project.config.signIn.databaseUrlSecret);
       const placeholders =
-        project.config.vercel.projectId.startsWith("PASTE_") ||
+        (verification.mode === "browser" &&
+          Object.values(verification.target).some(
+            (value) => typeof value === "string" && value.startsWith("PASTE_"),
+          )) ||
         project.areas.some((area) => area.linearProjectId.startsWith("PASTE_"));
       add(
         `connections:${name}`,
         placeholders ? "fail" : "pass",
         placeholders
-          ? "Replace Vercel/Linear placeholders in project.json and areas.json."
+          ? "Replace selected environment/Linear placeholders in project.json and areas.json."
           : `Provider IDs configured; run gremlins doctor ${name} for live validation.`,
       );
       add(
@@ -248,6 +263,22 @@ export function inspectSetup(
         "Project configuration is missing or invalid; fix it before continuing.",
       );
     }
+  }
+  for (const provider of oauthProviders) {
+    const secretName =
+      provider === "linear" ? "LINEAR_API_KEY" : "VERCEL_TOKEN";
+    const connection = deps.oauthConnections?.find(
+      (item) => item.provider === provider && item.method === "oauth",
+    );
+    if (connection)
+      add(
+        `oauth:${provider}`,
+        connection.connected && !connection.needsReconnect ? "pass" : "fail",
+        connection.connected && !connection.needsReconnect
+          ? `${provider === "linear" ? "Linear" : "Vercel"} OAuth is saved; doctor checks live project access.`
+          : `Reconnect ${provider === "linear" ? "Linear" : "Vercel"} in the dashboard. The saved OAuth connection needs attention.`,
+      );
+    else secretNames.add(secretName);
   }
   // Legacy config accepts loose secret references; reject them before any output or lookup.
   const secrets = [...secretNames]
@@ -285,13 +316,14 @@ export function inspectSetup(
   const evidenceConfigured =
     Boolean(deps.env.SHIPGREMLINS_VERIFICATION_FILE?.trim()) &&
     Boolean(deps.env.SHIPGREMLINS_ATTESTATION_PUBLIC_KEY?.trim());
-  add(
-    "promotion-evidence",
-    evidenceConfigured ? "pass" : "warn",
-    evidenceConfigured
-      ? "Attestation public key and evidence-file path configured; key and evidence validity are checked against the exact candidate at promotion."
-      : "Promotions require trusted verification: configure SHIPGREMLINS_VERIFICATION_FILE and SHIPGREMLINS_ATTESTATION_PUBLIC_KEY (Ed25519 public PEM). Keep the private key only in the trusted signer.",
-  );
+  if (requiresPromotion)
+    add(
+      "promotion-evidence",
+      evidenceConfigured ? "pass" : "warn",
+      evidenceConfigured
+        ? "Attestation public key and evidence-file path configured; key and evidence validity are checked against the exact candidate at promotion."
+        : "Promotions require trusted verification: configure SHIPGREMLINS_VERIFICATION_FILE and SHIPGREMLINS_ATTESTATION_PUBLIC_KEY (Ed25519 public PEM). Keep the private key only in the trusted signer.",
+    );
   return {
     version: 1,
     directory: root,
@@ -300,7 +332,7 @@ export function inspectSetup(
     secrets,
     capabilities: [
       {
-        name: "Local Docker workers + GitHub/GitLab + Vercel",
+        name: "Local Docker workers + GitHub/GitLab + optional browser environments",
         status: "implemented",
         detail:
           "Local queue, UTC schedules, approved-ticket jobs, browser verification and artifacts. Source providers need no CI runner registration. Each project requires live doctor checks.",
@@ -312,10 +344,10 @@ export function inspectSetup(
           "Existing GitHub runner workflows; enrollment, image build, and cloud permissions require operator setup.",
       },
       {
-        name: "Railway deployment checks and GitLab CI",
-        status: "planned",
+        name: "Vercel, Railway, Cloud Run, and direct test URLs",
+        status: "implemented",
         detail:
-          "Adapters and live certification are not implemented. Setup will not create a misleading active configuration.",
+          "Selected preview/staging environment adapters run on the controller. Credentials and live access still need project-specific verification. GitLab CI enrollment is not implemented.",
       },
       {
         name: "Dashboard connection management",

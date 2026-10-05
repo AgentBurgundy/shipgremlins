@@ -1,6 +1,6 @@
 # Connect Linear and Vercel
 
-Run `gremlins setup`, or `gremlins setup --lan` on a homelab server. In Connections, choose **Connect Linear** and **Connect Vercel**, approve the requested access, and return to the same dashboard. Authorizations stay on the machine running ShipGremlins. Manual API keys remain available under advanced settings.
+Run `gremlins setup`, or `gremlins setup --lan` on a homelab server. In Connections, choose **Connect Linear** and, if your browser environment uses Vercel, **Connect Vercel**. Approve the requested access and return to the same dashboard. Authorizations stay on the machine running ShipGremlins. Manual API keys remain available under advanced settings. Repository-only projects need no hosting connection; see [project and hosting choices](PROJECTS.md).
 
 ## One app team, one project per PM
 
@@ -20,9 +20,9 @@ Creating teams depends on your Linear workspace's permissions and limits. Choose
 
 ## Vercel preview access
 
-Choose the Vercel account/team and projects available to the integration. Set the app's `vercel.projectId` in Configuration; set `vercel.teamId` when necessary. An OAuth installation's team is used when no team ID is configured. Verify connections checks the selected project, and local jobs look up its ready integration preview before launching.
+Choose the Vercel account/team and projects available to the integration. In Edit settings, select Vercel and enter its project ID and optional team ID. New targets are stored in named `environments`; legacy `vercel` settings remain supported. An OAuth installation's team is used when no team ID is configured. Set the target's preview branch separately from the PR base when needed. Verify connections checks the selected project, and browser jobs look up its ready preview before launching.
 
-Connecting Vercel does not create deployments or test accounts. The integration branch must already have a ready deployment. The current job path requires Vercel preview access; Railway checks remain planned.
+Connecting Vercel does not create deployments or test accounts. The selected branch must already have a ready preview deployment; a production deployment is not a preview. Vercel is optional: repository verification requires no hosting, and browser targets also support Railway, Cloud Run, or a direct test URL. Provider discovery does not provision or deploy your app.
 
 ## Credentials and recovery
 

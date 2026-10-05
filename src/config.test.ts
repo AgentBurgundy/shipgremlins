@@ -121,6 +121,23 @@ describe("loadHub", () => {
 });
 
 describe("loadProject", () => {
+  it("loads a repository-only project with one base branch and no hosting or database", () => {
+    const project = structuredClone(PROJECT);
+    delete project.vercel;
+    delete project.branches;
+    delete project.database;
+    project.workflow = { kind: "pull-request", baseBranch: "develop" };
+    project.verification = { mode: "repository" };
+    writeProject("library", { project });
+    const loaded = loadProject(root, "library").config;
+    expect(loaded.vercel).toBeUndefined();
+    expect(loaded.database).toBe("none");
+    expect(loaded.branches).toEqual({
+      production: "develop",
+      staging: "develop",
+      integration: "develop",
+    });
+  });
   it("loads a valid project with derived fields", () => {
     writeProject("game");
     const p = loadProject(root, "game");

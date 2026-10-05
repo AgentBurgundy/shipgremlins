@@ -192,6 +192,7 @@ jobs:
           test -f "$f" || { echo "unknown project ${PM_PROJECT}" >&2; exit 1; }
           node -e '
             const p = require("./" + process.argv[1]);
+            if (!p.vercel || p.verification || p.workflow?.kind === "pull-request") throw new Error("Use gremlins start and local Docker workers for this project; these optional Actions templates support legacy Vercel promotion projects.");
             const areas = require("./" + process.argv[2]).areas;
             if (!areas[process.argv[3]]) { console.error(`area ${process.argv[3]} is not in areas.json (have: ${Object.keys(areas).join(", ")})`); process.exit(1); }
             const [owner, name] = p.repo.split("/");

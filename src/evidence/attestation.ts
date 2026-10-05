@@ -8,6 +8,7 @@ import {
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { Ctx } from "../dispatcher/context.ts";
+import { promotionVercel } from "../projectCapabilities.ts";
 import type { PromoteOpts } from "../dispatcher/promote.ts";
 import {
   isBrowserEvidence,
@@ -339,10 +340,14 @@ export function createCandidateVerifier(
           throw new AttestationError(
             "Screenshot artifact digest does not match",
           );
-      const v = ctx.project.config.vercel;
+      const v = promotionVercel(ctx.project.config);
+      if (!v)
+        throw new AttestationError(
+          "This project's workflow has no supported revision-bound promotion target",
+        );
       const deployment = await ctx.vercel.latestDeployment(
         v.projectId,
-        v.teamId,
+        v.teamId ?? null,
         candidate.branch,
       );
       if (

@@ -46,6 +46,7 @@ jobs:
           test -f "$f" || { echo "unknown project ${{ inputs.project }}" >&2; exit 1; }
           node -e '
             const p = require("./" + process.argv[1]);
+            if (!p.vercel || p.verification || p.workflow?.kind === "pull-request") throw new Error("Use gremlins start and local Docker workers for this project; these optional Actions templates support legacy Vercel promotion projects.");
             if (!p.signIn) { console.error("project.json has no signIn recipe"); process.exit(1); }
             const out = {
               signin_secret: p.signIn.databaseUrlSecret, bypass_secret: p.vercel.bypassSecret,

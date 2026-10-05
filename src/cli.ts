@@ -34,6 +34,7 @@ import { runTicket } from "./commands/ticket.ts";
 import { runSetup } from "./commands/setup.ts";
 import { configurationRoot } from "./setup/location.ts";
 import { welcome } from "./terminal.ts";
+import { promotionVercel } from "./projectCapabilities.ts";
 
 export const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const ROOT = configurationRoot(
@@ -206,6 +207,12 @@ async function promote(args: string[]): Promise<number> {
     return 1;
   }
   const project = loadProject(ROOT, values.project);
+  if (!promotionVercel(project.config)) {
+    io.error(
+      "This project uses local draft PR review. Automatic promotion requires a Vercel promotion target with revision-bound verification.",
+    );
+    return 1;
+  }
   if (!project.areas.some((a) => a.key === values.area)) {
     io.error(`project ${values.project} has no area "${values.area}"`);
     return 1;

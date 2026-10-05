@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -13,6 +14,11 @@ import { parseEnv } from "node:util";
 import { assertNoSymlinks } from "./files.ts";
 import { TELEMETRY_SECRET_RE } from "../telemetry/config.ts";
 import { listProjectNames, loadProject } from "../config.ts";
+import {
+  projectSecretNames,
+  validProjectSecretName,
+} from "../projectCapabilities.ts";
+import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
 
 export const CONNECTIONS = [
   {
@@ -37,6 +43,19 @@ export const CONNECTIONS = [
     description: "Preview deployments and app environments.",
   },
   {
+    name: "RAILWAY_TOKEN",
+    label: "Railway",
+    description:
+      "Read deployment readiness and app domains. Use an account/workspace token, or select project token in the target.",
+  },
+  {
+    name: "GCP_SERVICE_ACCOUNT_JSON",
+    label: "Google Cloud Run",
+    description:
+      "Service-account JSON with Cloud Run Viewer access. Leave blank to use controller Application Default Credentials.",
+    format: "json",
+  },
+  {
     name: "CLAUDE_CODE_OAUTH_TOKEN",
     label: "Claude Code",
     description:
@@ -47,16 +66,27 @@ export const CONNECTIONS = [
 const allowed = new Set<string>(CONNECTIONS.map(({ name }) => name));
 export function projectConnections(
   root: string,
-): { name: string; label: string; description: string }[] {
+): { name: string; label: string; description: string; format?: "json" }[] {
   return listProjectNames(root).flatMap((name) => {
     try {
       const { config } = loadProject(root, name);
       return [
-        {
-          name: config.vercel.bypassSecret,
-          label: `${name} · Preview access`,
-          description: "Bypass token for this app's test preview.",
-        },
+        ...projectSecretNames(config).map((secret) => {
+          const google = Object.values(config.environments ?? {}).some(
+            (target) =>
+              target.kind === "cloud-run" &&
+              (target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON") ===
+                secret,
+          );
+          return {
+            name: secret,
+            label: `${name} · Environment connection`,
+            description: google
+              ? "Google service-account JSON for this environment. Kept on the controller."
+              : "Credential for this project's hosting or preview environment.",
+            ...(google ? { format: "json" as const } : {}),
+          };
+        }),
         ...(config.signIn
           ? [
               {
@@ -72,13 +102,7 @@ export function projectConnections(
           label: `${name} · Slack (optional)`,
           description: "Optional report webhook.",
         },
-      ].filter(
-        (entry) =>
-          /^[A-Z][A-Z0-9_]*$/.test(entry.name) &&
-          !/^(SHIPGREMLINS_|NODE_|LD_|DYLD_|PATH$|HOME$|APP_PRIVATE_KEY$)/.test(
-            entry.name,
-          ),
-      );
+      ].filter((entry) => validProjectSecretName(entry.name));
     } catch {
       return [];
     }
@@ -89,6 +113,28 @@ const isAllowed = (name: string, root: string): boolean =>
   TELEMETRY_SECRET_RE.test(name) ||
   projectConnections(root).some((entry) => entry.name === name);
 const MAX_ENV_BYTES = 512 * 1024;
+let ownerSid: string | undefined;
+
+function protectWindowsFile(file: string): void {
+  if (process.platform !== "win32") return;
+  ownerSid ??= execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 5000,
+    maxBuffer: 16_384,
+  }).match(/S-1-(?:\d+-)+\d+/)?.[0];
+  if (!ownerSid) throw new Error();
+  execFileSync(
+    "icacls.exe",
+    [file, "/inheritance:r", "/grant:r", `*${ownerSid}:(F)`],
+    {
+      windowsHide: true,
+      timeout: 5000,
+      maxBuffer: 16_384,
+      stdio: "ignore",
+    },
+  );
+}
 
 function assertConnectionPath(file: string): void {
   assertNoSymlinks(file);
@@ -193,8 +239,24 @@ export function saveConnections(root: string, input: unknown): void {
     if (!isAllowed(name, root)) throw new Error("Unsupported connection name.");
     if (typeof raw !== "string")
       throw new Error("Connection values must be text.");
-    const value = raw.trim();
+    let value = raw.trim();
     if (!value) continue;
+    const google =
+      name === "GCP_SERVICE_ACCOUNT_JSON" ||
+      projectConnections(root).some(
+        (entry) => entry.name === name && entry.format === "json",
+      );
+    if (google) {
+      // Canonical JSON contains escaped PEM newlines, not dotenv line breaks. Projected
+      // fields contain no apostrophes, so single-quoted dotenv preserves backslashes.
+      value = JSON.stringify(parseGoogleServiceAccount(value));
+      if (value.includes("'"))
+        throw new Error(
+          "Google service-account JSON could not be stored safely.",
+        );
+      updates[name] = value;
+      continue;
+    }
     if (
       value.length > 8192 ||
       /[\s"'`\\]/.test(value) ||
@@ -218,11 +280,13 @@ export function saveConnections(root: string, input: unknown): void {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     assertConnectionPath(file);
     temporary = join(directory, `.env.${randomBytes(12).toString("hex")}.tmp`);
-    writeFileSync(temporary, content, {
+    writeFileSync(temporary, "", {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx",
     });
+    protectWindowsFile(temporary);
+    writeFileSync(temporary, content, { encoding: "utf8", mode: 0o600 });
     assertConnectionPath(file);
     renameSync(temporary, file);
     temporary = undefined;

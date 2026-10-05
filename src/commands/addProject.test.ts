@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +23,7 @@ const REAL_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 let root: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "pm-hub-add-"));
+  root = mkdtempSync(join(realpathSync(tmpdir()), "pm-hub-add-"));
   cpSync(
     join(REAL_ROOT, "projects", "_templates"),
     join(root, "projects", "_templates"),
@@ -81,7 +88,13 @@ describe("addProject", () => {
     ]);
     const p = loadProject(root, "game");
     expect(p.config.repo).toBe("owner/game");
-    expect(p.config.vercel.bypassSecret).toBe("VERCEL_BYPASS_GAME");
+    expect(p.config.vercel).toBeUndefined();
+    expect(p.config.workflow).toEqual({
+      kind: "pull-request",
+      baseBranch: "main",
+    });
+    expect(p.config.verification).toEqual({ mode: "repository" });
+    expect(p.areas[0]!.enabled).toBe(false);
     expect(p.config.slackWebhookSecret).toBe("SLACK_WEBHOOK_GAME");
     expect(p.config.verified).toBeNull();
     expect(p.areas.map((a) => a.key)).toEqual(["core"]);
@@ -170,8 +183,8 @@ describe("runAddProject (CLI)", () => {
     ).toBe(true);
     const text = out.join("\n");
     expect(text).toContain(CHECKLIST);
-    expect(text).toContain("SLACK_WEBHOOK_GAME");
-    expect(text).toContain("VERCEL_BYPASS_GAME");
+    expect(text).toContain("Save connections through the local dashboard");
+    expect(text).toContain("Hosting and preview secrets are optional");
     expect(text).toContain("gremlins doctor game");
   });
 

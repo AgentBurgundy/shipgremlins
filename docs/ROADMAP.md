@@ -8,6 +8,12 @@ follow-up work. Local automatic staging promotion/production reconciliation,
 automatic boot-service installation, and full live provider certification remain
 open. See [implementation status](IMPLEMENTATION_STATUS.md) for the boundary.
 
+Implemented in 0.6: repository-first projects, configurable PR base branches and
+commands, and optional named URL/Vercel/Railway/Cloud Run environments. Shared
+hosting credentials live in Connections. These adapters discover existing ready
+targets; provisioning and exact-candidate promotion across providers remain open.
+See [project configuration](PROJECTS.md).
+
 Implemented telemetry foundation: project-scoped Sentry/Datadog reads and
 per-area Mixpanel Insights reports. See [configuration and current limits](TELEMETRY.md).
 Live account certification and broader telemetry queries remain follow-up work.

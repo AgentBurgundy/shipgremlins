@@ -365,7 +365,18 @@ The accepted default is `gremlins setup` → save connections → choose the app
 
 Implemented foundations include a durable local queue, per-worker concurrency one, up to four slots, idempotent scheduled/ticket work, approval rechecks before launch, PNG-backed browser verification, pause/drain/repair/remove controls, and retained logs/artifacts. `gremlins start`, `status`, and `stop` manage a detached controller. Existing containers survive controller stops and updates; a returning controller inspects them before proceeding. A pre-launch infrastructure failure gets one retry; failed agents are not blindly replayed.
 
-Local developers propose draft integration PRs/MRs after configured checks. They do not merge, promote staging, or mark tickets Done. Signed promotion and explicit production-reconciliation tools remain separate. Full local release parity, durable shared-memory updates, cloud execution, automatic OS service installation, and live GitHub/GitLab/Railway certification remain work to complete. Disable legacy CI schedules when migrating a project locally.
+Local developers propose draft PRs/MRs against the project's configured base after configured checks. They do not merge, promote staging, or mark tickets Done. Signed promotion and explicit production-reconciliation tools remain separate. Full local release parity, durable shared-memory updates, cloud execution, automatic OS service installation, and live GitHub/GitLab/Railway certification remain work to complete. Disable legacy CI schedules when migrating a project locally.
+
+### Flexible project decision — October 4, 2026
+
+Source control, hosting and execution are independent choices. Version 0.6 defaults
+to repository review and a selected PR base without requiring a deployment or
+hosting account. Browser verification selects a named preview/staging environment
+using a URL, Vercel, Railway or Cloud Run. A URL supports self-hosted Docker and
+other platforms. Connections manages account credentials; projects choose targets
+and commands. Adapters discover ready environments without provisioning or
+deploying them. Broader release automation remains roadmap work. See the current
+[project configuration guide](PROJECTS.md) and [implementation status](IMPLEMENTATION_STATUS.md).
 
 The following **optional advanced CI fleet** work is independent of local setup:
 

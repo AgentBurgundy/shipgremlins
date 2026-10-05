@@ -11,11 +11,20 @@ import { runRepair } from "./repair.ts";
 import { runMerge } from "./merge.ts";
 import { runDispatch } from "./dispatch.ts";
 import { runPromote, type PromoteOpts } from "./promote.ts";
+import { promotionVercel } from "../projectCapabilities.ts";
 
 export async function runDispatcher(
   ctx: Ctx,
   promote?: PromoteOpts,
 ): Promise<DigestRow[]> {
+  if (!promotionVercel(ctx.project.config))
+    return [
+      {
+        rule: "line",
+        needsYou: true,
+        text: "Use local Docker workers for this project. Legacy automatic dispatch and promotion require the Vercel promotion workflow; draft PR review remains available for every project type.",
+      },
+    ];
   const rows: DigestRow[] = [];
   const guarded = async (
     rule: DigestRow["rule"],

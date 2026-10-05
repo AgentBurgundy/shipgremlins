@@ -12,6 +12,8 @@ export interface DockerJobPayload {
   branch?: string;
   provider?: "github" | "gitlab";
   prompt?: string;
+  /** Browser tools remain available; repository mode does not require screenshots. */
+  browserVerification?: boolean;
   credentials?: Record<string, string>;
   commands?: Partial<
     Record<"install" | "test" | "lint" | "typecheck" | "build", string | null>
@@ -79,7 +81,6 @@ const credentialNames = new Set([
   "CLAUDE_CODE_OAUTH_TOKEN",
   "ANTHROPIC_API_KEY",
   "LINEAR_API_KEY",
-  "VERCEL_TOKEN",
   "GREMLINS_PREVIEW_BYPASS",
   "GREMLINS_PREVIEW_DATABASE_URL",
 ]);
@@ -171,6 +172,7 @@ function validatePayload(payload: DockerJobPayload): string {
           "branch",
           "provider",
           "prompt",
+          "browserVerification",
           "credentials",
           "commands",
           "memory",
@@ -179,6 +181,11 @@ function validatePayload(payload: DockerJobPayload): string {
     )
   )
     throw new Error("Invalid local job payload.");
+  if (
+    payload.browserVerification !== undefined &&
+    typeof payload.browserVerification !== "boolean"
+  )
+    throw new Error("Invalid browser verification mode.");
   if (payload.kind === "verify") {
     if (
       typeof payload.nonce !== "string" ||
@@ -488,6 +495,8 @@ export function createDockerRunners(options: {
         "--restart",
         "no",
         "--init",
+        "--add-host",
+        "host.docker.internal:host-gateway",
         "--user",
         "1000:1000",
         "--cap-drop",

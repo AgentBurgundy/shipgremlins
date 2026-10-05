@@ -35,7 +35,7 @@ Jobs receive scoped credentials at launch through stdin. Credentials stay out of
 queue records and process arguments; logs redact known token values. The Docker
 socket and the operator's home/configuration directories are not mounted inside
 job containers. After configured checks pass, the worker publishes the developer's
-unique branch as a draft integration PR/MR; the model does not publish directly.
+unique branch as a draft PR/MR to the configured base branch; legacy promotion projects use their integration branch. The model does not publish directly.
 Jobs have a 45-minute execution limit. Human review and merges remain required. This local path does not yet
 provide the legacy promotion/reconciliation loop automatically.
 

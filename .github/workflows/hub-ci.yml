@@ -46,4 +46,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:package
-      - run: npm test -- src/commands/dashboard.test.ts src/commands/update.test.ts src/setup/connections.test.ts src/setup/configEditor.test.ts src/setup/openFolder.test.ts src/setup/runtime.test.ts src/setup/linearProvisioning.test.ts src/oauthConnection src/update src/localRunners src/storage src/slack
+      - run: npm test -- src/commands/dashboard.test.ts src/commands/update.test.ts src/commands/doctor.local.test.ts src/commands/signinCode.test.ts src/projectCapabilities.test.ts src/hosting src/setup/connections.test.ts src/setup/configEditor.test.ts src/setup/openFolder.test.ts src/setup/runtime.test.ts src/setup/linearProvisioning.test.ts src/oauthConnection src/update src/localRunners src/storage src/slack

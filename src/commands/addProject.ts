@@ -32,12 +32,12 @@ export interface AddProjectResult {
 }
 
 export const CHECKLIST = `Next, in this order:
-  1. Install the PM Hub GitHub App on the repo (contents, pull requests, issues, checks, actions, metadata).
-  2. Create the staging and pm-staging branches from main if missing; protect pm-staging (the app and the owner push).
-  3. Vercel: build all branches, Neon integration on; paste the Vercel project id (and team id) into project.json.
-  4. Create the Linear project(s); paste each id into areas.json.
-  5. Add the two secrets to the hub repo's Actions secrets (names from project.json, values never in git).
-  6. Write the mandate(s) — the steering wheel. A PM with a small mandate files small tickets.`;
+  1. Open gremlins setup and connect GitHub or GitLab, Linear, and your AI runtime.
+  2. Choose this repository's base branch and install/test commands. New projects review repositories and open draft PRs to main.
+  3. Optionally select browser verification and a preview/staging environment. Hosting credentials are needed only for the selected provider.
+  4. Set up the app's Linear team and each PM's project in the dashboard, or preserve existing IDs.
+  5. Write and review each PM mandate, then run gremlins doctor for this app.
+  6. Create a local worker and enable reviewed PMs. No additional branches or hosting provider are required for repository review.`;
 
 export function templateVars(
   input: Required<Pick<AddProjectInput, "name" | "repo" | "area" | "today">>,
@@ -95,7 +95,17 @@ export function addProject(
     files.push(relative(root, target));
   };
   mkdirSync(join(dir, area), { recursive: true });
-  for (const f of CONFIG_FILES) write(join(dir, f), join(templates, f));
+  for (const f of CONFIG_FILES) {
+    write(join(dir, f), join(templates, f));
+    if (f === "areas.json") {
+      const raw = JSON.parse(readFileSync(join(dir, f), "utf8"));
+      for (const area of Object.values(raw.areas) as Array<{
+        enabled: boolean;
+      }>)
+        area.enabled = false;
+      writeFileSync(join(dir, f), JSON.stringify(raw, null, 2) + "\n");
+    }
+  }
   for (const f of AREA_FILES) write(join(dir, area, f), join(templates, f));
   return { dir, files, vars };
 }
@@ -128,10 +138,10 @@ export async function runAddProject(
     io.log(CHECKLIST);
     io.log("");
     io.log(
-      `Secrets to add on the hub repo: SLACK_WEBHOOK_${result.vars.NAME} (the Slack incoming webhook URL) and VERCEL_BYPASS_${result.vars.NAME} (the Vercel protection-bypass secret).`,
+      "Save connections through the local dashboard. Hosting and preview secrets are optional until browser verification is selected.",
     );
     io.log(
-      `Then run \`gremlins doctor ${name}\`; the PM crons are generated only once it passes.`,
+      `Then run \`gremlins doctor ${name}\`; PM schedules start when verification passes, the PM is enabled, and the controller is running.`,
     );
     return 0;
   } catch (err) {

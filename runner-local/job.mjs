@@ -45,7 +45,6 @@ const allowedCredentials = new Set([
   "CLAUDE_CODE_OAUTH_TOKEN",
   "ANTHROPIC_API_KEY",
   "LINEAR_API_KEY",
-  "VERCEL_TOKEN",
   "GREMLINS_PREVIEW_BYPASS",
   "GREMLINS_PREVIEW_DATABASE_URL",
 ]);
@@ -165,6 +164,11 @@ try {
   if (!input || !["verify", "pm", "developer"].includes(input.kind))
     throw new Error("Unsupported job kind.");
   kind = input.kind;
+  if (
+    input.browserVerification !== undefined &&
+    typeof input.browserVerification !== "boolean"
+  )
+    throw new Error("Invalid browser verification mode.");
   activity.emit("progress", "Job started", `Starting ${kind} work.`, "running");
   if (kind === "developer") validateDelivery(input.delivery);
   if (kind === "verify") {
@@ -315,7 +319,10 @@ try {
         "/work/mcp.json",
         "-p",
         input.prompt +
-          "\n\nUse the Playwright MCP browser for visual verification. Save screenshots under /output/screenshots. Your memory snapshot is in /work/memory. Never print credentials.",
+          (input.browserVerification === false
+            ? "\n\nThis job uses repository verification. Capture reproducible test output and file references; screenshots are optional. Browser tools are available if local app testing is useful, but never claim a browser check you did not perform."
+            : "\n\nUse the Playwright MCP browser for visual verification. Save screenshots under /output/screenshots.") +
+          " Your memory snapshot is in /work/memory. Never print credentials.",
       ],
       { cwd: "/work/repo", env, model: true },
     );

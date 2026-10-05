@@ -306,11 +306,12 @@ export function makeCtx(
     failedJobs: [],
   });
   const vercel = new FakeVercel();
-  vercel.seedDeployment(
-    project.config.vercel.projectId,
-    project.config.branches.integration,
-    { state: "READY", sha: integ },
-  );
+  if (project.config.vercel)
+    vercel.seedDeployment(
+      project.config.vercel.projectId,
+      project.config.branches.integration,
+      { state: "READY", sha: integ },
+    );
   const lines: string[] = [];
   return {
     forge,

@@ -156,6 +156,7 @@ jobs:
           test -f "$f" || { echo "unknown project ${PM_PROJECT}" >&2; exit 1; }
           node -e '
             const p = require("./" + process.argv[1]);
+            if (!p.vercel || p.verification || p.workflow?.kind === "pull-request") throw new Error("Use gremlins start and local Docker workers for this project; these optional Actions templates support legacy Vercel promotion projects.");
             const [owner, name] = p.repo.split("/");
             const out = {
               repo: p.repo, owner, name,

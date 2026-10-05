@@ -17,6 +17,8 @@
 
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { loadProject } from "../config.ts";
+import { effectiveVerification } from "../projectCapabilities.ts";
+import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import type { Io } from "./crons.ts";
 import { parseFlags } from "./crons.ts";
 
@@ -82,6 +84,20 @@ export async function runSigninCode(
   const { config } = loadProject(root, name);
   if (!config.signIn) {
     io.error(`${name} has no signIn recipe in project.json`);
+    return 1;
+  }
+  if (effectiveVerification(config).mode !== "browser") {
+    io.error(
+      "Select browser verification and a test environment before using the sign-in recipe.",
+    );
+    return 1;
+  }
+  try {
+    assertBrowserSecretSafety(config, root);
+  } catch {
+    io.error(
+      "Test sign-in credentials could not be classified safely. Use separate browser credentials and check project configuration.",
+    );
     return 1;
   }
   const rawUrl = env[config.signIn.databaseUrlSecret];
@@ -152,7 +168,12 @@ export async function runSigninCode(
     return 1;
   }
   const doFetch = deps.fetchImpl ?? globalThis.fetch;
-  const bypass = env[config.vercel.bypassSecret] ?? env.VERCEL_BYPASS ?? "";
+  const verification = effectiveVerification(config);
+  const bypassName =
+    verification.mode === "browser" && verification.target.kind === "vercel"
+      ? verification.target.bypassSecret
+      : undefined;
+  const bypass = bypassName ? (env[bypassName] ?? env.VERCEL_BYPASS ?? "") : "";
   // --auth-url posts straight to the auth service (diagnosis: is it the app's
   // auth URL or the code format that is wrong?); the default goes through the
   // app, which is what creates the session cookie path the PM will use.

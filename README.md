@@ -21,7 +21,7 @@
 
 You build the product. Give a few gremlins a mandate to explore it.
 
-**ShipGremlins gives AI product managers a real browser, a job to do, and a memory.** They click through your app, capture screenshots, and turn findings into Linear tickets. Local Docker workers run PMs and developers on your computer or homelab. Developers work on approved tickets and prepare draft changes for your review.
+**ShipGremlins gives AI product managers a job to do, a memory, and a browser when the project needs one.** They investigate repositories or explore a configured test environment and turn findings into Linear tickets. Local Docker workers run PMs and developers on your computer or homelab. Developers work on approved tickets and prepare draft changes for your review.
 
 Real browser evidence. Approved work. **Done means merged into production.**
 
@@ -33,7 +33,7 @@ reads and per-project credentials. [Connect project telemetry →](docs/TELEMETR
 **Keep the crew in your Slack channel.** PMs report their patrols; Coding Gremlins announce drafts ready for review and flag blockers. Updates carry the project, mandate or ticket, and run number. [Connect Slack →](docs/SLACK.md)
 
 > [!NOTE]
-> **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. GitHub/GitLab app repositories, Vercel previews, Linear, and Claude Code are wired into local jobs; full live certification of both provider stacks remains pending. You control merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
+> **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. Start with a GitHub/GitLab repository and configured checks. Browser testing is optional: use a direct URL or Vercel, Railway, or Cloud Run discovery. Full live provider certification remains pending. You control merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
 
 ## A particular set of nitpicks
 
@@ -68,8 +68,8 @@ flowchart LR
 
 | Step        | What actually happens                                                                                                                                                                                   |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Explore** | Scheduled PMs use Playwright MCP to inspect the app. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                             |
-| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open implementation PRs against `pm-staging`.                                                                                |
+| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                 |
+| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Legacy promotion projects use their integration branch.               |
 | **Recover** | The local queue survives controller restarts, reconciles existing containers, and retries a launch failure once. Failed agent jobs are not blindly repeated.                                            |
 | **Verify**  | Worker readiness requires an actual Chromium screenshot. Developer jobs run configured checks before proposing a draft; you review the candidate and its evidence.                                      |
 | **Ship**    | You control integration, staging, and production merges. The separate release tools provide signed promotion gates and an explicit production audit; the local queue does not automate these steps yet. |
@@ -101,7 +101,9 @@ Save connections, add your app, and choose **Create runner on this machine**. Th
 
 Connect GitHub or GitLab with a device code in **Source control**, then select your repository. GitHub requires installing the App on the repositories you choose. The controller manages token refresh and waits when active work still needs the old credential. Existing manual tokens and self-hosted GitLab remain available as advanced setup options.
 
-Connect Linear and Vercel from the dashboard. New apps can create a Linear team, and each PM mandate gets its own Linear project. Existing mappings are preserved and interrupted provisioning resumes with the same IDs. [Connection and mapping guide →](docs/LINEAR_VERCEL.md)
+Connect Linear from the dashboard. New apps can create a Linear team, and each PM mandate gets its own Linear project. Existing mappings are preserved and interrupted provisioning resumes with the same IDs. [Connection and mapping guide →](docs/LINEAR_VERCEL.md)
+
+**Any repository first. Hosting when you need it.** New projects use repository checks and draft PRs/MRs to a chosen base branch. Edit the install/test/build commands for your stack. Add a named preview or staging URL for browser work, or select Vercel, Railway, or Cloud Run discovery. Credentials belong in Connections; resource IDs and settings belong to each project. Existing projects have **Edit settings**, with conflict protection and preserved unrelated configuration. [Project and hosting guide →](docs/PROJECTS.md)
 
 The local runtime provisions its PostgreSQL activity store when preparing work. The dashboard retains visible tool activity, summaries, checks, logs, and bounded artifacts. Private model reasoning is not exposed. Slack delivery runs separately from job execution and records each attempt so restarts do not repeat messages.
 
@@ -159,17 +161,18 @@ Read the [manifest format and limitations](docs/LINEAR_LIFECYCLE.md) before enab
 
 ## What works. What's next.
 
-| Available in the alpha                                                   | On the roadmap                                                    |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| Local Docker jobs with GitHub/GitLab, Vercel and Linear                  | Railway deployment verification; full live provider certification |
-| Claude Code + Playwright MCP                                             | Additional AI providers and connection management                 |
-| Sentry + Datadog project logs; Mixpanel Insights                         | Broader telemetry queries and live certification                  |
-| Branded PM/developer Slack updates and local PostgreSQL activity history | Broader team collaboration and distributed queue coordination     |
-| Persistent local queue, browser-verified workers, logs and artifacts     | Automatic OS service installation and cloud fleet management      |
-| Mandates, memory, CSV/PNG fixtures                                       | Richer generated fixtures and cleanup                             |
-| Bounded launch recovery; separate signed promotion tools                 | Local automatic promotion and broader recovery coverage           |
-| Production audit and explicit reconciliation                             | Automatic production lifecycle hooks                              |
-| Global CLI, LAN dashboard, config editor and background controller       | Richer agent editing and deployment orchestration                 |
+| Available in the alpha                                                   | On the roadmap                                                     |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Local Docker jobs with GitHub/GitLab and optional browser targets        | Full live provider certification and broader deployment automation |
+| Direct URLs; Vercel, Railway and Cloud Run discovery                     | Provider provisioning and broader staged promotion support         |
+| Claude Code + Playwright MCP                                             | Additional AI providers and connection management                  |
+| Sentry + Datadog project logs; Mixpanel Insights                         | Broader telemetry queries and live certification                   |
+| Branded PM/developer Slack updates and local PostgreSQL activity history | Broader team collaboration and distributed queue coordination      |
+| Persistent local queue, browser-verified workers, logs and artifacts     | Automatic OS service installation and cloud fleet management       |
+| Mandates, memory, CSV/PNG fixtures                                       | Richer generated fixtures and cleanup                              |
+| Bounded launch recovery; separate signed promotion tools                 | Local automatic promotion and broader recovery coverage            |
+| Production audit and explicit reconciliation                             | Automatic production lifecycle hooks                               |
+| Global CLI, LAN dashboard, config editor and background controller       | Richer agent editing and deployment orchestration                  |
 
 The local queue opens draft changes and leaves merges to you. The older GitHub Actions workflows and GCE tooling remain advanced options; GCE and the complete GitLab/Railway stack have not been live-certified.
 

@@ -42,6 +42,26 @@ beforeEach(() => {
 });
 
 describe("runDispatcher", () => {
+  it("does not sync, merge, dispatch or promote a repository-only workflow", async () => {
+    const ctx = makeCtx();
+    ctx.project.config.workflow = { kind: "pull-request", baseBranch: "main" };
+    ctx.project.config.verification = { mode: "repository" };
+    const rows = await runDispatcher(ctx, promoteOpts);
+    expect(rows[0]?.text).toContain("local Docker");
+    for (const fn of Object.values(mocks)) expect(fn).not.toHaveBeenCalled();
+  });
+  it("does not run legacy automatic writes for an external URL target", async () => {
+    const ctx = makeCtx();
+    ctx.project.config.environments = {
+      preview: { kind: "url", role: "preview", url: "https://test.example" },
+    };
+    ctx.project.config.verification = {
+      mode: "browser",
+      environment: "preview",
+    };
+    expect((await runDispatcher(ctx, promoteOpts))[0]?.needsYou).toBe(true);
+    for (const fn of Object.values(mocks)) expect(fn).not.toHaveBeenCalled();
+  });
   it("waits for health on the new integration revision after any successful merge", async () => {
     const ctx = makeCtx();
     mocks.runMerge.mockResolvedValue([row("merge", "🚢 #10 repaired")]);

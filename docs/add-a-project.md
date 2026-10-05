@@ -3,15 +3,15 @@
 ## Default local Docker setup
 
 Open `gremlins setup` (or `gremlins setup --lan` on your server), save the source,
-Linear, Vercel, and Claude Code connections, and add your app repository. A fork
+Linear and Claude Code connections, and add your app repository. Hosting is optional. A fork
 or separate automation repository is not required. Terminal initialization is:
 
 ```sh
 gremlins setup init --project my-app --repo your-org/my-app
 ```
 
-Review the generated branches, provider IDs, test commands, area and mandate.
-Use Configuration to edit JSON and File locations to find the mandate/memory
+Review the PR base branch, test commands, area and mandate. New projects use repository-only verification; add a preview/staging target only for browser work. Use **Edit settings** for commands, workflow, and named environments. See [Projects and hosting](PROJECTS.md) for Vercel, Railway, Cloud Run, or direct URL choices.
+Use Configuration to edit advanced JSON and File locations to find the mandate/memory
 files. Create a Docker worker in the dashboard and wait for its browser screenshot
 verification. Choose **Verify connections** or run `gremlins doctor my-app`, then enable reviewed areas. The local
 controller reads their schedules in UTC; there is no `crons write` or commit/push
@@ -19,7 +19,7 @@ step for local scheduling. Inspect a supervised PM run before relying on it.
 
 Developer jobs require an open `pm-approved` ticket in the area's Linear project
 with its `pm:AREA` label. Approval is rechecked at launch; the worker publishes a draft
-integration PR/MR only after configured checks pass. The model does not publish
+PR/MR to the configured base branch only after checks pass. Legacy promotion projects use their integration branch. The model does not publish
 directly, and jobs cannot merge or mark the ticket Done.
 See [the setup guide](SETUP.md) for background operation and current limits.
 

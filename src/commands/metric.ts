@@ -5,6 +5,19 @@
 import { loadProject, type AreaConfig, type ProjectConfig } from "../config.ts";
 import { parseFlags, type Io } from "./crons.ts";
 import { readMixpanel } from "../telemetry/read.ts";
+import { effectiveVerification } from "../projectCapabilities.ts";
+
+function metricTarget(project: ProjectConfig) {
+  // A production Vercel environment is an explicit analytics destination only.
+  const production = Object.values(project.environments ?? {}).find(
+    (target) => target.role === "production" && target.kind === "vercel",
+  );
+  if (production?.kind === "vercel") return production;
+  const verification = effectiveVerification(project);
+  if (verification.mode === "browser" && verification.target.kind === "vercel")
+    return verification.target;
+  return project.vercel;
+}
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -20,9 +33,11 @@ export function statsUrl(
   const to = now.toISOString();
   const from = new Date(now.getTime() - days * DAY).toISOString();
   const key = area.metric.startsWith("/") ? "path" : "event";
+  const target = metricTarget(project);
+  if (!target) throw new Error("This project has no Vercel analytics target.");
   const q = new URLSearchParams({
-    projectId: project.vercel.projectId,
-    teamId: project.vercel.teamId ?? "",
+    projectId: target.projectId,
+    teamId: target.teamId ?? "",
     environment: "production",
     from,
     to,
@@ -57,7 +72,7 @@ export async function readMetric(
   opts: { env: NodeJS.ProcessEnv; fetch: FetchLike; now?: () => Date },
 ): Promise<{ d7: number; d28: number } | null> {
   const token = opts.env.VERCEL_TOKEN;
-  if (!token || !project.vercel.teamId) return null;
+  if (!token || !metricTarget(project)?.teamId) return null;
   const now = (opts.now ?? (() => new Date()))();
   const one = async (days: number): Promise<number | null> => {
     try {

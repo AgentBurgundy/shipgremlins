@@ -75,6 +75,20 @@
   let pmKeyEdited = false;
   let pmCreating = false;
   let projectLayoutInitialized = false;
+  let newProjectSettings = window.createProjectSettings(
+    $("new-project-settings"),
+    "new-settings",
+  );
+  const projectEditor = {
+    name: "",
+    path: "",
+    revision: "",
+    config: null,
+    form: null,
+    busy: false,
+    pending: null,
+    trigger: null,
+  };
   const mappingBusy = new Set();
   const mappingTeamSelections = new Map();
   const mappingMessages = new Map();
@@ -108,6 +122,8 @@
     formsLocked = locked;
     $("connections-fields").disabled = locked;
     $("source-token-fields").disabled = locked;
+    $("railway-token-fields").disabled = locked;
+    $("cloud-run-token-fields").disabled = locked;
     renderSourceControls();
     $("project-fields").disabled = locked;
     updateEditorControls();
@@ -269,10 +285,17 @@
     for (const field of [...telemetryFields.children]) {
       if (!telemetryNames.has(field.dataset.secret)) field.remove();
     }
-    for (const connection of connections.filter((connection) =>
-      /^(SENTRY_AUTH_TOKEN|DD_API_KEY|DD_APP_KEY|MIXPANEL_USERNAME|MIXPANEL_PASSWORD)_/.test(
-        connection.name,
-      ),
+    const fixedConnections = new Set([
+      "GITHUB_TOKEN",
+      "GITLAB_TOKEN",
+      "LINEAR_API_KEY",
+      "VERCEL_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "RAILWAY_TOKEN",
+      "GCP_SERVICE_ACCOUNT_JSON",
+    ]);
+    for (const connection of connections.filter(
+      (connection) => !fixedConnections.has(connection.name),
     )) {
       if (document.getElementById(`telemetry-${connection.name}`)) continue;
       const field = document.createElement("div");
@@ -288,11 +311,17 @@
       badge.dataset.connection = connection.name;
       const help = document.createElement("p");
       help.id = `help-${connection.name}`;
-      help.textContent = connection.description;
-      const input = document.createElement("input");
+      help.textContent = `${connection.description} Variable: ${connection.name}.`;
+      const input = document.createElement(
+        connection.format === "json" ? "textarea" : "input",
+      );
       input.id = label.htmlFor;
       input.name = connection.name;
-      input.type = "password";
+      if (connection.format === "json") {
+        input.className = "secret-json";
+        input.rows = 3;
+        input.dataset.secretJson = "true";
+      } else input.type = "password";
       input.autocomplete = "off";
       input.spellcheck = false;
       input.placeholder = "Paste credential (optional)";
@@ -301,6 +330,18 @@
       const wrap = document.createElement("div");
       wrap.className = "password-wrap";
       wrap.append(input);
+      if (connection.format === "json") {
+        const reveal = element("button", "small-button", "Show JSON");
+        reveal.type = "button";
+        reveal.setAttribute("aria-pressed", "false");
+        reveal.setAttribute("aria-label", `Show ${connection.label} JSON`);
+        reveal.addEventListener("click", () => {
+          const showing = input.classList.toggle("revealed");
+          reveal.textContent = showing ? "Hide JSON" : "Show JSON";
+          reveal.setAttribute("aria-pressed", String(showing));
+        });
+        wrap.append(reveal);
+      }
       field.append(heading, help, wrap);
       telemetryFields.append(field);
     }
@@ -331,7 +372,7 @@
           : "Not configured";
       badge.classList.toggle("configured", configured);
       const input = document.querySelector(
-        `input[name="${badge.dataset.connection}"]`,
+        `[name="${badge.dataset.connection}"]`,
       );
       if (input)
         input.placeholder = browserConnected
@@ -361,7 +402,9 @@
       name.append(repo);
       const badge = document.createElement("span");
       badge.className = "project-row-badge";
-      badge.textContent = "Configured on server";
+      badge.textContent = project.verified
+        ? "Verified settings"
+        : "Needs verification";
       const actions = element("div", "project-actions");
       const verify = element("button", "small-button", "Verify connections");
       verify.type = "button";
@@ -369,7 +412,10 @@
       const check = projectChecks.get(project.name);
       verify.disabled = check?.busy === true;
       if (check?.busy) verify.textContent = "Verifying…";
-      actions.append(badge, verify);
+      const edit = element("button", "small-button", "Edit settings");
+      edit.type = "button";
+      edit.dataset.editProject = project.name;
+      actions.append(badge, edit, verify);
       const launch = element("div", "button-row project-launch");
       for (const [type, label] of [
         ["pm", "Run PM"],
@@ -385,6 +431,19 @@
       row.append(name, actions);
       const card = element("div", "project-card");
       card.append(row);
+      const verification =
+        project.verification ||
+        (project.vercel
+          ? { mode: "browser", environment: "legacy Vercel" }
+          : { mode: "repository" });
+      const workflow = project.workflow || { kind: "promotion" };
+      card.append(
+        element(
+          "p",
+          "project-capabilities",
+          `${verification.mode === "repository" ? "Repository checks · no hosting required" : `Browser target: ${verification.environment}`} · ${workflow.kind === "pull-request" ? `Draft changes → ${workflow.baseBranch}` : "Staged promotion workflow"}`,
+        ),
+      );
       card.append(projectLinearDetails(project));
       if (check) {
         const result = element("div", "project-checks");
@@ -506,7 +565,7 @@
     event.preventDefault();
     const values = {};
     for (const input of $("connections-form").querySelectorAll(
-      ".password-wrap input",
+      ".password-wrap input, textarea[data-secret-json]",
     )) {
       if (input.value.trim()) values[input.name] = input.value.trim();
     }
@@ -525,7 +584,7 @@
     try {
       await api("/api/connections", { values });
       for (const input of $("connections-form").querySelectorAll(
-        ".password-wrap input",
+        ".password-wrap input, textarea[data-secret-json]",
       ))
         input.value = "";
       for (const button of $("connections-form").querySelectorAll(
@@ -594,6 +653,12 @@
       provider: $("project-provider").value,
       linearMode: $("project-linear-mode").value,
     };
+    try {
+      Object.assign(data, newProjectSettings.read());
+    } catch (error) {
+      message($("project-message"), error.message, true);
+      return;
+    }
     if (data.linearMode === "reuse") {
       data.linearTeamId = $("project-linear-team").value;
       if (!data.linearTeamId) {
@@ -640,6 +705,10 @@
     try {
       const result = await api("/api/projects", data, "POST", 90000);
       $("project-form").reset();
+      newProjectSettings = window.createProjectSettings(
+        $("new-project-settings"),
+        "new-settings",
+      );
       projectNameEdited = false;
       linearModeEdited = false;
       renderProjectProvider();
@@ -650,7 +719,7 @@
         : null;
       message(
         $("project-message"),
-        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Complete its settings in Configuration, then verify connections before running agents.`,
+        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Review Edit settings, then verify connections before running agents.`,
         result.linear?.status === "error",
       );
       try {
@@ -1323,6 +1392,11 @@
   });
   $("repository-select").addEventListener("change", () => {
     $("project-repo").value = $("repository-select").value;
+    newProjectSettings.setDefaultBranch(
+      repositories.find(
+        (item) => item.fullName === $("repository-select").value,
+      )?.defaultBranch,
+    );
     suggestProjectName();
     renderRepositoryDetail();
   });
@@ -1336,6 +1410,11 @@
   createSourceCards();
   renderProjectProvider();
   $("project-list").addEventListener("click", async (event) => {
+    const edit = event.target.closest("[data-edit-project]");
+    if (edit && !formsLocked) {
+      await openProjectSettings(edit.dataset.editProject, edit);
+      return;
+    }
     const launch = event.target.closest("[data-launch-project]");
     if (launch && !formsLocked) {
       $("job-project").value = launch.dataset.launchProject;
@@ -3346,12 +3425,227 @@
     }
   }
 
+  async function openProjectSettings(name, trigger) {
+    if (projectEditor.busy) return;
+    projectEditor.name = name;
+    projectEditor.path = `projects/${name}/project.json`;
+    projectEditor.trigger = trigger || projectEditor.trigger;
+    projectEditor.busy = true;
+    $("edit-project-fields").disabled = true;
+    $("project-settings-title").textContent = `Edit ${name}`;
+    if (!$("project-settings-dialog").open)
+      $("project-settings-dialog").showModal();
+    message($("project-settings-message"), "Loading saved settings…");
+    try {
+      const file = await api(
+        `/api/config?path=${encodeURIComponent(projectEditor.path)}`,
+      );
+      projectEditor.config = JSON.parse(file.content);
+      projectEditor.revision = file.revision;
+      projectEditor.form = window.createProjectSettings(
+        $("edit-project-settings"),
+        "edit-settings",
+        projectEditor.config,
+      );
+      $("project-settings-repo").textContent =
+        projectEditor.config.repo || "Project configuration";
+      message($("project-settings-message"), "");
+    } catch (error) {
+      projectEditor.form = null;
+      $("edit-project-settings").replaceChildren();
+      message(
+        $("project-settings-message"),
+        `${error.message} Reload to try again, or use full configuration to repair the file.`,
+        true,
+      );
+    } finally {
+      projectEditor.busy = false;
+      $("edit-project-fields").disabled = !projectEditor.form;
+    }
+  }
+  async function projectSettingsAction(action, discard = false) {
+    if (projectEditor.busy) return;
+    if (!discard && projectEditor.form?.isDirty()) {
+      projectEditor.pending = action;
+      $("project-settings-discard").hidden = false;
+      $("keep-project-settings").focus();
+      return;
+    }
+    $("project-settings-discard").hidden = true;
+    projectEditor.pending = null;
+    if (action === "reload") {
+      await openProjectSettings(projectEditor.name);
+      return;
+    }
+    $("project-settings-dialog").close();
+    if (action === "connections") {
+      $("connections").scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (action === "advanced") {
+      $("configuration").scrollIntoView({ behavior: "smooth", block: "start" });
+      await requestEditorAction("switch", projectEditor.path);
+      return;
+    }
+    const trigger = [...document.querySelectorAll("[data-edit-project]")].find(
+      (item) => item.dataset.editProject === projectEditor.name,
+    );
+    (trigger || projectEditor.trigger)?.focus();
+  }
+  $("close-project-settings").addEventListener("click", () =>
+    projectSettingsAction("close"),
+  );
+  $("edit-project-settings").addEventListener("click", (event) => {
+    if (event.target.closest('a[href="#connections"]')) {
+      event.preventDefault();
+      projectSettingsAction("connections");
+    }
+  });
+  $("reload-project-settings").addEventListener("click", () =>
+    projectSettingsAction("reload"),
+  );
+  $("advanced-project-settings").addEventListener("click", () =>
+    projectSettingsAction("advanced"),
+  );
+  $("project-settings-dialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    projectSettingsAction("close");
+  });
+  $("keep-project-settings").addEventListener("click", () => {
+    $("project-settings-discard").hidden = true;
+    projectEditor.pending = null;
+    $("save-project-settings").focus();
+  });
+  $("discard-project-settings").addEventListener("click", () =>
+    projectSettingsAction(projectEditor.pending || "close", true),
+  );
+  $("edit-project-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (projectEditor.busy || !projectEditor.form) return;
+    let content;
+    try {
+      content =
+        JSON.stringify(
+          {
+            ...projectEditor.config,
+            ...projectEditor.form.read(),
+            verified: null,
+          },
+          null,
+          2,
+        ) + "\n";
+    } catch (error) {
+      message($("project-settings-message"), error.message, true);
+      return;
+    }
+    projectEditor.busy = true;
+    $("edit-project-fields").disabled = true;
+    message($("project-settings-message"), "Saving project settings…");
+    try {
+      const result = await api(
+        "/api/config",
+        { path: projectEditor.path, content, revision: projectEditor.revision },
+        "PUT",
+      );
+      projectEditor.revision = result.revision;
+      projectEditor.config = JSON.parse(content);
+      projectEditor.form = window.createProjectSettings(
+        $("edit-project-settings"),
+        "edit-settings",
+        projectEditor.config,
+      );
+      $("project-settings-discard").hidden = true;
+      projectChecks.delete(projectEditor.name);
+      message(
+        $("project-settings-message"),
+        "Settings saved. Run Verify connections beside this project before its next job. Other settings and credentials were kept.",
+      );
+      try {
+        await refreshStatus();
+      } catch {
+        /* The saved revision remains authoritative. */
+      }
+    } catch (error) {
+      message(
+        $("project-settings-message"),
+        error.status === 409
+          ? "This project changed on the server. Your draft is kept. Copy any changes you need, then Reload saved settings and reapply them."
+          : error.message,
+        true,
+      );
+    } finally {
+      projectEditor.busy = false;
+      $("edit-project-fields").disabled = false;
+    }
+  });
+  $("reveal-gcp-credentials").addEventListener("click", () => {
+    const showing = $("gcp-credentials").classList.toggle("revealed");
+    $("reveal-gcp-credentials").textContent = showing
+      ? "Hide JSON"
+      : "Show JSON";
+    $("reveal-gcp-credentials").setAttribute("aria-pressed", String(showing));
+  });
+  for (const [provider, id, key] of [
+    ["railway", "railway-token", "RAILWAY_TOKEN"],
+    ["cloud-run", "gcp-credentials", "GCP_SERVICE_ACCOUNT_JSON"],
+  ]) {
+    $(`${provider}-token-form`).addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = $(id);
+      const value = input.value.trim();
+      if (!value || formsLocked) return;
+      if (provider === "cloud-run") {
+        try {
+          const credential = JSON.parse(value);
+          if (
+            credential.type !== "service_account" ||
+            !credential.client_email ||
+            !credential.private_key
+          )
+            throw new Error();
+        } catch {
+          message(
+            $(`${provider}-token-message`),
+            "Paste a service-account JSON file with type, client_email and private_key. Its contents are kept out of error messages.",
+            true,
+          );
+          return;
+        }
+      }
+      $(`${provider}-token-fields`).disabled = true;
+      message($(`${provider}-token-message`), "Saving on your server…");
+      try {
+        await api("/api/connections", { values: { [key]: value } });
+        input.value = "";
+        if (provider === "cloud-run") {
+          input.classList.remove("revealed");
+          $("reveal-gcp-credentials").textContent = "Show JSON";
+          $("reveal-gcp-credentials").setAttribute("aria-pressed", "false");
+        } else input.type = "password";
+        message(
+          $(`${provider}-token-message`),
+          "Credential saved locally. Verify connections for the project to check access to its selected environment.",
+        );
+        await refreshStatus();
+      } catch (error) {
+        message($(`${provider}-token-message`), error.message, true);
+      } finally {
+        $(`${provider}-token-fields`).disabled = formsLocked;
+      }
+    });
+  }
+
   function hasUnsavedInputs() {
     return (
       isEditorDirty() ||
-      [...document.querySelectorAll(".password-wrap input")].some(
-        (input) => input.value,
-      ) ||
+      newProjectSettings.isDirty() ||
+      (projectEditor.form?.isDirty() && $("project-settings-dialog").open) ||
+      Boolean($("gcp-credentials").value) ||
+      [
+        ...document.querySelectorAll(
+          ".password-wrap input, textarea[data-secret-json]",
+        ),
+      ].some((input) => input.value) ||
       [
         "project-repo",
         "project-name",
@@ -3428,7 +3722,15 @@
   $("update-restart").addEventListener("click", () => restartDashboard());
 
   window.addEventListener("beforeunload", (event) => {
-    if (restartReloadApproved || !isEditorDirty()) return;
+    if (
+      restartReloadApproved ||
+      !(
+        isEditorDirty() ||
+        newProjectSettings.isDirty() ||
+        (projectEditor.form?.isDirty() && $("project-settings-dialog").open)
+      )
+    )
+      return;
     event.preventDefault();
     event.returnValue = "";
   });
@@ -3440,7 +3742,10 @@
     for (const timer of sourceTimers.values()) clearTimeout(timer);
     sourceFlows.clear();
     $("slack-webhook").value = "";
-    for (const input of document.querySelectorAll(".password-wrap input"))
+    $("gcp-credentials").value = "";
+    for (const input of document.querySelectorAll(
+      ".password-wrap input, textarea[data-secret-json]",
+    ))
       input.value = "";
   });
   initialize();

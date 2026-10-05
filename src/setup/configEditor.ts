@@ -230,6 +230,15 @@ function parseJson(content: string): unknown {
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+function semantic(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(semantic).join(",")}]`;
+  if (object(value))
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${semantic(value[key])}`)
+      .join(",")}}`;
+  return JSON.stringify(value) ?? "undefined";
+}
 
 function validationMessage(error: ConfigError): string {
   const reason = error.message.slice(error.file.length + 2);
@@ -328,6 +337,40 @@ export function saveEditableConfig(
         "This file changed since you opened it. Keep your draft and reload the latest file.",
         409,
       );
+    let content = input.content;
+    if (path.endsWith("/project.json")) {
+      const previous = parseJson(original.content),
+        next = parseJson(content);
+      if (object(previous) && object(next)) {
+        const executionFields = [
+          "repo",
+          "provider",
+          "serverUrl",
+          "branches",
+          "vercel",
+          "workflow",
+          "verification",
+          "environments",
+          "commands",
+          "database",
+          "signIn",
+          "telemetry",
+          "linear",
+        ];
+        const changed = executionFields.some(
+          (key) => semantic(previous[key]) !== semantic(next[key]),
+        );
+        const verified = changed
+          ? null
+          : next.verified === null
+            ? null
+            : previous.verified;
+        if (next.verified !== verified) {
+          next.verified = verified;
+          content = JSON.stringify(next, null, 2) + "\n";
+        }
+      }
+    }
     const relatedPaths =
       path === "hub.json"
         ? [path]
@@ -337,9 +380,7 @@ export function saveEditableConfig(
     );
     validateDocuments(
       originals.map((document) =>
-        document.path === path
-          ? { ...document, content: input.content }
-          : document,
+        document.path === path ? { ...document, content } : document,
       ),
       path,
     );
@@ -353,7 +394,7 @@ export function saveEditableConfig(
       const fd = openSync(temporary, "wx", 0o600);
       temporaryCreated = true;
       try {
-        writeFileSync(fd, input.content, "utf8");
+        writeFileSync(fd, content, "utf8");
         fsyncSync(fd);
       } finally {
         closeSync(fd);
@@ -371,7 +412,7 @@ export function saveEditableConfig(
       configLocation(root, path);
       renameSync(temporary, target);
       temporaryCreated = false;
-      return { revision: digest(input.content) };
+      return { revision: digest(content) };
     } finally {
       if (temporaryCreated) unlinkSync(temporary);
     }
