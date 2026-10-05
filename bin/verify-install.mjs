@@ -235,6 +235,11 @@ try {
   const ideaScript = await fetch(`${origin}/idea-crew.js`);
   assert.equal(ideaScript.status, 200);
   assert.match(await ideaScript.text(), /createIdeaCrew/);
+  const wizardScript = await fetch(`${origin}/project-wizard.js`);
+  assert.equal(wizardScript.status, 200);
+  assert.match(await wizardScript.text(), /createProjectWizard/);
+  const wizardStyles = await fetch(`${origin}/project-wizard.css`);
+  assert.equal(wizardStyles.status, 200);
   const invalidIdea = await fetch(`${origin}/api/idea-plans`, {
     method: "POST",
     headers: {

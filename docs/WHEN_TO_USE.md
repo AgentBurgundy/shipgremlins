@@ -10,12 +10,12 @@ or MRs. You set priorities and review what ships.
 
 ## Find your starting point
 
-| Where you are                          | A useful next step                                                                                                                              |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| An idea or an empty repository         | Describe the users and first useful version. Review the proposed PM crew and create it in a connected repository. Start with its foundation PM. |
-| An early codebase or working prototype | Give one PM a focused goal and run repository discovery. Review its feature map and opportunities before assigning more work.                   |
-| A product with a growing backlog       | Use a PM patrol to investigate a flow, approve a scoped improvement, and review the Coding Gremlin's draft change.                              |
-| An established app with several areas  | Add distinct mandates for areas that need attention. Set schedules and work limits around your ability to review the results.                   |
+| Where you are                          | A useful next step                                                                                                                                       |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An idea or an empty repository         | Describe the users and first useful version. Review the proposed PM crew and create its new private-by-default repository. Start with its foundation PM. |
+| An early codebase or working prototype | Give one PM a focused goal and run repository discovery. Review its feature map and opportunities before assigning more work.                            |
+| A product with a growing backlog       | Use a PM patrol to investigate a flow, approve a scoped improvement, and review the Coding Gremlin's draft change.                                       |
+| An established app with several areas  | Add distinct mandates for areas that need attention. Set schedules and work limits around your ability to review the results.                            |
 
 An idea can be enough to plan a crew. A prototype can be enough to start improving
 an app. You do not need paying users, a public launch,
@@ -26,8 +26,8 @@ with too many rough edges, or account permissions that need another careful look
 ## What makes a project ready?
 
 - **An idea or existing source.** Describe the new app, or connect its GitHub or
-  GitLab repository. Idea planning needs no repository; creating the crew needs
-  one you can write to, including an empty repository.
+  GitLab repository. Idea planning needs no repository; creating the crew also
+  creates a new repository, private by default, in your chosen source account.
   [Follow the idea-to-app guide →](IDEA_TO_APP.md)
 - **A clear goal.** Explain who uses the product, what should work better, and
   which area the PM should investigate. Set boundaries for changes it should avoid.
@@ -49,7 +49,8 @@ tickets or publishing code. [Learn about discovery →](PM_WORKFLOW.md)
 
 For a new app, use **one milestone and a foundation PM**. The idea planner
 proposes one to four PMs with first assignments and dependency order. Creating
-the crew saves their briefs together and adds a README to an empty repository.
+the crew saves their briefs together and creates a repository with a README.
+Private visibility is the default; choose public explicitly for open-source work.
 PMs start paused; run the foundation PM first and approve its implementation
 ticket before running Coding. The initial stack is Node.js with npm.
 [Start an app with a PM crew →](IDEA_TO_APP.md)

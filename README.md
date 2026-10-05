@@ -47,15 +47,16 @@ scopes and each PM's Mixpanel report in the dashboard, then save credentials the
 milestone and assemble one to four PMs, or give an existing app a focused PM
 to investigate its next improvement. You set direction and review the work.
 
-| Where you are                          | Where ShipGremlins fits                                                                                          |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| An idea or an empty repository         | Describe the users and first useful version. Review the proposed crew, then create it in a connected repository. |
-| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.                       |
-| An app with a growing backlog          | Investigate one area, approve a bounded ticket, and review the Coding Gremlin's draft PR or MR.                  |
-| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity.          |
+| Where you are                          | Where ShipGremlins fits                                                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| A new idea                             | Describe the users and first useful version. Review a proposed crew and create its new, private-by-default repository. |
+| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.                             |
+| An app with a growing backlog          | Investigate one area, approve a bounded ticket, and review the Coding Gremlin's draft PR or MR.                        |
+| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity.                |
 
 For a new app, start with **one milestone and a foundation PM**. Idea onboarding
-creates the PM crew and initializes an empty repository with a README; app code
+asks one question at a time, creates a private repository by default, and saves
+the PM crew with a shared brief. Choose public explicitly for open-source work. App code
 is implemented through approved tickets. For an existing app, start with
 **one PM, one area, one useful change**. You bring the direction and review the work. Browser patrols need a runnable test environment; repository
 discovery can start before hosting and Linear setup. The Setup Gremlin helps

@@ -46,7 +46,29 @@ export interface SourceCredential {
   method: "oauth" | "token";
   expiresAt?: string;
 }
+export interface RepositoryOwner {
+  id: string;
+  path: string;
+  name: string;
+}
+export interface NewRepository {
+  ownerId: string;
+  accountId: string;
+  visibility: "private" | "public";
+}
 export interface SourceControl {
+  repositoryOwners?(input: SourceTarget): Promise<{
+    accountId: string;
+    owners: RepositoryOwner[];
+    truncated: boolean;
+  }>;
+  createRepository?(
+    input: SourceTarget &
+      NewRepository & {
+        repository: string;
+        creationId: string;
+      },
+  ): Promise<SourceRepository>;
   status(): Promise<SourceStatus[]>;
   connect(
     input: SourceTarget & { clientId?: string; repositoryId?: string },
