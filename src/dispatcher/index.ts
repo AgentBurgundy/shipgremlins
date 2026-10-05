@@ -17,7 +17,7 @@ export async function runDispatcher(
   ctx: Ctx,
   promote?: PromoteOpts,
 ): Promise<DigestRow[]> {
-  if (!promotionVercel(ctx.project.config))
+  if (!promotionVercel(ctx.project.config) && !ctx.resolveDeployment)
     return [
       {
         rule: "line",

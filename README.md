@@ -21,7 +21,7 @@
 
 You build the product. Give a few gremlins a mandate to explore it.
 
-**ShipGremlins gives AI product managers a job to do, a memory, and a browser when the project needs one.** They investigate repositories or explore a configured test environment and turn findings into Linear tickets. Local Docker workers run PMs and developers on your computer or homelab. Developers work on approved tickets and prepare draft changes for your review.
+**ShipGremlins gives AI product managers a job to do, a memory, and a browser when the project needs one.** They investigate repositories or explore a configured test environment and turn findings into Linear tickets. Docker workers run PMs and developers on your computer, homelab, or an enrolled remote machine. Developers work on approved tickets; the owning PM checks fixes on its next patrol.
 
 Real browser evidence. Approved work. **Done means merged into production.**
 
@@ -69,13 +69,13 @@ flowchart LR
     F --> G[Production audit]
 ```
 
-| Step        | What actually happens                                                                                                                                                                                   |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                 |
-| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Legacy promotion projects use their integration branch.               |
-| **Recover** | The local queue survives controller restarts, reconciles existing containers, and retries a launch failure once. Failed agent jobs are not blindly repeated.                                            |
-| **Verify**  | Worker readiness requires an actual Chromium screenshot. Developer jobs run configured checks before proposing a draft; you review the candidate and its evidence.                                      |
-| **Ship**    | You control integration, staging, and production merges. The separate release tools provide signed promotion gates and an explicit production audit; the local queue does not automate these steps yet. |
+| Step        | What actually happens                                                                                                                                                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                                                         |
+| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Legacy promotion projects use their integration branch.                                                                                       |
+| **Recover** | Durable queues, bounded startup retries and cancellation preserve existing work. An ambiguous launch or publication is held for review, not blindly repeated.                                                                                                                   |
+| **Verify**  | In promotion projects, the owning PM checks its fixes on the exact integration deployment. Independent browser receipts and screenshots are required; prose alone cannot pass a fix.                                                                                            |
+| **Ship**    | Selective promotion cherry-picks verified work from the staging base and checks the assembled candidate. Candidate deployment/evidence must be configured. You control staging and production merges; production reconciliation requires an explicitly reviewed complete scope. |
 
 **“Trust me” isn't a test.** Missing or stale evidence blocks promotion. A staging merge does not close a ticket. [Read the verification model →](docs/VERIFICATION.md)
 
@@ -98,6 +98,10 @@ you deliberately configure an override.
 Each project also has its own sidebar link and workspace. Open a PM to edit its
 product brief and review its discovery, feature inventory, ranked opportunities,
 and learned memory together. The repository and PM name stay visible while you work.
+
+Project **Review**, **Knowledge**, **Delivery**, and **Run limits** keep decisions,
+shared owner notes, releases, and capacity in separate views. The workspace inbox
+shows what needs attention and links to the remedy. [Use the control room →](docs/PROJECT_OPERATIONS.md)
 
 On a homelab server, run `gremlins setup --lan` and open the printed private-network link from your laptop or phone. Edit configuration in the dashboard and find both installation and settings folders under File locations. LAN mode uses HTTP on your trusted network; see the [server guide](docs/SETUP.md#server-use) for firewall and encrypted SSH-tunnel access.
 
@@ -136,6 +140,9 @@ code, enable automation, or rewrite your brief. Give the PM ambition, users,
 success measures, priorities, guardrails, and non-goals in its **Product brief**.
 Owner direction stays separate from what the PM learns. [PM workflow →](docs/PM_WORKFLOW.md)
 
+Discovery can propose source-backed commands and ownership settings. Review the
+evidence and apply each suggestion explicitly; discovery never enables automation.
+
 Connect GitHub or GitLab with a device code in **Source control**, then select your repository. GitHub requires installing the App on the repositories you choose. The controller manages token refresh and waits when active work still needs the old credential. Existing manual tokens and self-hosted GitLab remain available as advanced setup options.
 
 Connect Linear from the dashboard. New apps can create a Linear team, and each PM mandate gets its own Linear project. Existing mappings are preserved and interrupted provisioning resumes with the same IDs. [Connection and mapping guide →](docs/LINEAR_VERCEL.md)
@@ -160,6 +167,12 @@ gremlins stop
 
 Omit `--lan` for a local-only dashboard. Stop pauses scheduling; already-running Docker jobs continue. For unattended restart after a server reboot, use the [service-manager example](docs/SETUP.md#restart-after-a-server-reboot).
 
+Need capacity on another machine? Create a project-scoped enrollment under
+**Your gremlins**, then run `gremlins worker` there using the displayed command.
+Workers connect outbound to the controller. Linux, Windows and macOS hosts use
+Linux Docker containers; native iOS simulation is not supported yet.
+[Remote worker setup →](docs/REMOTE_WORKERS.md)
+
 <details>
 <summary><strong>Local credentials and live connection checks</strong></summary>
 
@@ -180,6 +193,11 @@ gremlins --env-file .env doctor my-app
 
 Verification is a milestone. Staging is a milestone. **Done means every approved deliverable is merged into the configured production branch.**
 
+For promotion projects, **Delivery** tracks drafts, deployment, PM review and
+selective promotion. Confirm the complete ticket scope and its staging-to-production
+PR once; the controller can then reconcile actual production merges into Linear.
+It never merges production for you. [GitLab/Railway and GitHub/Vercel delivery →](docs/DELIVERY_WORKFLOW.md)
+
 Start with a read-only audit:
 
 ```bash
@@ -198,26 +216,30 @@ gremlins tickets reconcile --project my-app --manifest /secure/release-scope.jso
 
 The first command is a dry run. Only `--apply` enables status writes. The reconciler reads actual merged PRs and Git trees; a comment, label, or deployment alone cannot close a ticket. Canceled tickets remain canceled. Ambiguous history, edited ports, and later changes to the same files remain flagged for review.
 
-Read the [manifest format and limitations](docs/LINEAR_LIFECYCLE.md) before enabling writes. This is an explicit command today, not an automatic webhook service. Disable conflicting native completion automations when using it as the lifecycle authority.
+Read the [manifest format and limitations](docs/LINEAR_LIFECYCLE.md) before enabling writes. The CLI remains explicit; the dashboard polls only production scopes you have confirmed. Disable conflicting native completion automations when using it as the lifecycle authority.
 
 </details>
 
 ## What works. What's next.
 
-| Available in the alpha                                                   | On the roadmap                                                     |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| Local Docker jobs with GitHub/GitLab and optional browser targets        | Full live provider certification and broader deployment automation |
-| Direct URLs; Vercel, Railway and Cloud Run discovery                     | Provider provisioning and broader staged promotion support         |
-| Claude Code + Playwright MCP                                             | Additional AI providers and connection management                  |
-| Sentry + Datadog project logs; Mixpanel Insights                         | Broader telemetry queries and live certification                   |
-| Branded PM/developer Slack updates and local PostgreSQL activity history | Broader team collaboration and distributed queue coordination      |
-| Persistent local queue, browser-verified workers, logs and artifacts     | Automatic OS service installation and cloud fleet management       |
-| Mandates, memory, CSV/PNG fixtures                                       | Richer generated fixtures and cleanup                              |
-| Bounded launch recovery; separate signed promotion tools                 | Local automatic promotion and broader recovery coverage            |
-| Production audit and explicit reconciliation                             | Automatic production lifecycle hooks                               |
-| Global CLI, LAN dashboard, config editor and background controller       | Richer agent editing and deployment orchestration                  |
+| Available in the alpha                                                   | On the roadmap                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Local Docker jobs with GitHub/GitLab and optional browser targets        | Full live provider certification and broader deployment automation              |
+| Direct URLs; Vercel, Railway and Cloud Run discovery                     | Provider provisioning and broader staged promotion support                      |
+| Claude Code + Playwright MCP                                             | Additional AI providers and connection management                               |
+| Sentry + Datadog project logs; Mixpanel Insights                         | Broader telemetry queries and live certification                                |
+| Branded PM/developer Slack updates and local PostgreSQL activity history | Broader team collaboration and distributed queue coordination                   |
+| Persistent queue, local/remote Docker workers, logs and artifacts        | Automatic OS service installation, native macOS jobs and cloud fleet management |
+| Mandates, memory, CSV/PNG fixtures                                       | Richer generated fixtures and cleanup                                           |
+| Bounded recovery, project limits and PM-reviewed selective promotion     | Automatic candidate environment provisioning and broader recovery coverage      |
+| Production audit and owner-confirmed scope reconciliation                | Production lifecycle webhooks                                                   |
+| Global CLI, LAN dashboard, config editor and background controller       | Richer agent editing and deployment orchestration                               |
 
-The local queue opens draft changes and leaves merges to you. The older GitHub Actions workflows and GCE tooling remain advanced options; GCE and the complete GitLab/Railway stack have not been live-certified.
+Repository-only projects open drafts for you to merge. Explicit promotion projects
+can advance eligible approved fixes into the integration branch and have the owning
+PM review them. Staging and production remain owner-controlled. The older GitHub
+Actions workflows and GCE tooling remain advanced options; GCE and the complete
+GitLab/Railway stack have not been live-certified.
 
 [Implementation status](docs/IMPLEMENTATION_STATUS.md) · [Roadmap](docs/ROADMAP.md) · [Master plan](docs/MASTER_PLAN.md)
 
@@ -235,12 +257,14 @@ Tests use fake providers and mocked HTTP responses; normal unit tests need no pr
 
 ## Field guide
 
-| Start here                             | Go deeper                                                 |
-| -------------------------------------- | --------------------------------------------------------- |
-| [Setup](docs/SETUP.md)                 | [Verification and trust boundaries](docs/VERIFICATION.md) |
-| [Runners](docs/runners.md)             | [Linear lifecycle](docs/LINEAR_LIFECYCLE.md)              |
-| [Add a project](docs/add-a-project.md) | [CSV and image fixtures](docs/FIXTURES.md)                |
-| [Operating guide](docs/README.md)      | [Launch plan](docs/OPEN_SOURCE_LAUNCH.md)                 |
+| Start here                                         | Go deeper                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| [Setup](docs/SETUP.md)                             | [Verification and trust boundaries](docs/VERIFICATION.md)    |
+| [Runners](docs/runners.md)                         | [Linear lifecycle](docs/LINEAR_LIFECYCLE.md)                 |
+| [Add a project](docs/add-a-project.md)             | [CSV and image fixtures](docs/FIXTURES.md)                   |
+| [Operating guide](docs/README.md)                  | [Launch plan](docs/OPEN_SOURCE_LAUNCH.md)                    |
+| [Project control room](docs/PROJECT_OPERATIONS.md) | [Selective delivery](docs/DELIVERY_WORKFLOW.md)              |
+| [Remote workers](docs/REMOTE_WORKERS.md)           | [Disposable reference app](examples/reference-app/README.md) |
 
 Older operating documents use the original PM Hub name and describe the v1 workflow. The setup, verification, and lifecycle guides describe the current alpha; the master plan distinguishes the larger intended system.
 

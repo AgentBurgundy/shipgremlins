@@ -99,6 +99,11 @@ function fake() {
       value.State = { Running: true, Status: "running", ExitCode: 0 };
       return ok();
     }
+    if (args[0] === "stop") {
+      const value = containers.get(args.at(-1)!)!;
+      value.State = { Running: false, Status: "exited", ExitCode: 143 };
+      return ok();
+    }
     if (args[0] === "exec") return ok('{"accepted":true}');
     if (args[0] === "logs") return ok(log);
     if (args[0] === "rm") {
@@ -161,6 +166,26 @@ const developer = {
 } satisfies DockerJobPayload;
 
 describe("local Docker job runtime", () => {
+  it("stops only a labeled owned container and retains its output volume", async () => {
+    const test = fake();
+    await test.api.startJob({ id, workerId, payload: verify });
+    await test.api.stopJob(id);
+    expect(test.calls.find((call) => call.args[0] === "stop")?.args).toEqual([
+      "stop",
+      "--time",
+      "20",
+      `gremlins-job-${id}`,
+    ]);
+    expect(test.containers.size).toBe(1);
+    expect(test.volumes.size).toBe(1);
+    await test.api.stopJob(id);
+    expect(test.calls.filter((call) => call.args[0] === "stop")).toHaveLength(
+      1,
+    );
+    test.containers.get(`gremlins-job-${id}`)!.Config.Labels[MANAGED] = "false";
+    await expect(test.api.stopJob(id)).rejects.toThrow();
+    await expect(test.api.stopJob("../another")).rejects.toThrow();
+  });
   it("rejects discovery payloads with commands, publication or integration credentials before Docker starts", async () => {
     const test = fake();
     const payload: DockerJobPayload = {
@@ -528,6 +553,7 @@ describe("trusted local job publication", () => {
       expect(await runCheckedDelivery(h.input)).toEqual({
         checks: ["install", "test", "lint", "typecheck", "build"],
         prUrl: h.prUrl,
+        headSha: "b".repeat(40),
       });
       expect(h.calls.slice(0, 5).map((call) => call[2])).toEqual(
         Object.values(h.input.commands),
@@ -713,6 +739,13 @@ describe("trusted local job publication", () => {
       vi.advanceTimersByTime(MAX_JOB_MS + 10000);
       expect(stop).toHaveBeenCalledOnce();
       expect(exit).toHaveBeenCalledOnce();
+      const shorter = enforceDeadline(stop, exit, 1);
+      vi.advanceTimersByTime(59999);
+      expect(stop).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1);
+      expect(stop).toHaveBeenCalledTimes(2);
+      shorter();
+      expect(() => enforceDeadline(stop, exit, 46)).toThrow();
     } finally {
       vi.useRealTimers();
     }

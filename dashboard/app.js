@@ -43,6 +43,8 @@
         : undefined,
   });
   let currentStatus = null;
+  let projectOperations = null;
+  let remoteWorkers = null;
   let projectNameEdited = false;
   let loading = false;
   let formsLocked = true;
@@ -60,6 +62,7 @@
   let runnerRequestBusy = false;
   let removeRunnerId = "";
   let selectedJobId = "";
+  let jobActionBusy = false;
   let jobDetailTrigger = null;
   let jobOutputTimer = null;
   let jobOutputSuspended = false;
@@ -533,13 +536,13 @@
     const action = $("overview-primary-action");
     if (action) {
       action.href = projects.length
-        ? "/runners#job-form"
+        ? `/projects/${encodeURIComponent(projects[0].name)}`
         : "/connections#source-control";
       const arrow = element("span", "", "↗");
       arrow.setAttribute("aria-hidden", "true");
       action.replaceChildren(
         document.createTextNode(
-          projects.length ? "Run a gremlin " : "Set up your crew ",
+          projects.length ? "Open your project " : "Set up your crew ",
         ),
         arrow,
       );
@@ -565,7 +568,15 @@
     $("projects-summary").textContent = projects.length
       ? `${projects.length} ${projects.length === 1 ? "project" : "projects"} configured`
       : "No projects yet";
-    $("connection-step").classList.toggle("complete", sourceSaved);
+    $("connection-step").classList.toggle(
+      "complete",
+      sourceSaved &&
+        connections.some(
+          (connection) =>
+            connection.name === "CLAUDE_CODE_OAUTH_TOKEN" &&
+            connection.configured,
+        ),
+    );
     $("project-step").classList.toggle("complete", projects.length > 0);
     renderOverview();
     $("config-directory").textContent =
@@ -792,6 +803,8 @@
     renderJobProjects();
     renderPmProjects();
     projectWorkspace?.setStatus(status, formsLocked);
+    projectOperations?.resume();
+    remoteWorkers?.setProjects(projects);
     if (!projectLayoutInitialized) {
       $("new-project-drawer").open = projects.length === 0;
       projectLayoutInitialized = true;
@@ -2119,6 +2132,14 @@
   $("load-history").addEventListener("click", () => refreshHistory(true));
   function renderJobs(jobs) {
     jobs = mergedJobs(jobs);
+    if (
+      pages.current === "activity" &&
+      pages.run &&
+      !selectedJobId &&
+      jobs.some((job) => job.id === pages.run)
+    )
+      selectJob(pages.run);
+    renderJobControls();
     $("job-count").textContent =
       `${jobs.length} ${jobs.length === 1 ? "job" : "jobs"}`;
     const list = $("job-list");
@@ -2649,6 +2670,8 @@
     selectedJobId = id;
     jobOutput.select(id);
     if (changed) {
+      $("job-action-confirm").hidden = true;
+      message($("job-action-message"), "");
       outputErrors.clear();
       outputNotices.clear();
       outputCompleted.clear();
@@ -2670,6 +2693,134 @@
     renderJobs(runnerStatus?.jobs || []);
     refreshJobOutput();
   }
+  function renderJobControls() {
+    const root = $("job-run-controls");
+    if (!root) return;
+    const job = mergedJobs().find((item) => item.id === selectedJobId);
+    const signature = JSON.stringify([
+      job?.id,
+      job?.status,
+      job?.cancelRequestedAt,
+      job?.nextAttemptAt,
+      jobActionBusy,
+      formsLocked,
+    ]);
+    if (root.dataset.signature === signature) return;
+    root.dataset.signature = signature;
+    root.replaceChildren();
+    if (!job) return;
+    if (job.nextAttemptAt)
+      root.append(
+        element(
+          "span",
+          "runner-guidance",
+          `Infrastructure retry scheduled: ${timestamp(job.nextAttemptAt)}`,
+        ),
+      );
+    if (!["pm", "developer"].includes(job.type)) return;
+    const active = ["queued", "running"].includes(job.status);
+    if (!active && !["failed", "canceled"].includes(job.status)) return;
+    const action = element(
+      "button",
+      "small-button",
+      active
+        ? job.cancelRequestedAt
+          ? "Cancel requested"
+          : "Cancel run"
+        : "Retry with current settings",
+    );
+    action.type = "button";
+    action.disabled =
+      formsLocked || jobActionBusy || Boolean(job.cancelRequestedAt && active);
+    action.addEventListener("click", () => {
+      const prompt = $("job-action-confirm");
+      prompt.replaceChildren();
+      prompt.hidden = false;
+      prompt.append(
+        element(
+          "p",
+          "",
+          active
+            ? "Cancel this run? A running worker stays visible until it confirms that execution has stopped. Completed external actions are not undone."
+            : "Start a new attempt with the project’s current settings? Readiness and ticket approval will be checked again. The earlier run and its evidence stay in Activity.",
+        ),
+      );
+      const buttons = element("div", "button-row"),
+        confirm = element(
+          "button",
+          "button button-dark",
+          active ? "Cancel this run" : "Start new attempt",
+        ),
+        keep = element("button", "small-button", "Keep viewing");
+      confirm.type = keep.type = "button";
+      keep.addEventListener("click", () => {
+        prompt.hidden = true;
+        action.focus();
+      });
+      confirm.addEventListener("click", async () => {
+        if (jobActionBusy || formsLocked) return;
+        jobActionBusy = true;
+        confirm.disabled = keep.disabled = true;
+        renderJobControls();
+        message(
+          $("job-action-message"),
+          active
+            ? "Requesting cancellation…"
+            : "Checking and queuing a new attempt…",
+        );
+        try {
+          const body = { type: job.type, project: job.project };
+          if (job.type === "pm") {
+            body.area = job.area;
+            if (job.pmMode) body.pmMode = job.pmMode;
+          } else body.ticket = job.ticket;
+          const result = await api(
+            active
+              ? `/api/jobs/${encodeURIComponent(job.id)}/cancel`
+              : "/api/jobs",
+            active ? {} : body,
+          );
+          if (result.job?.id) {
+            jobHistory = [
+              ...jobHistory.filter((item) => item.id !== result.job.id),
+              result.job,
+            ];
+            if (runnerStatus?.jobs)
+              runnerStatus.jobs = runnerStatus.jobs.map((item) =>
+                item.id === result.job.id ? result.job : item,
+              );
+            if (!active && selectedJobId === job.id) selectJob(result.job.id);
+          }
+          if (
+            selectedJobId === job.id ||
+            (!active && selectedJobId === result.job?.id)
+          ) {
+            prompt.hidden = true;
+            message(
+              $("job-action-message"),
+              active
+                ? result.job?.status === "canceled"
+                  ? "Run canceled."
+                  : "Cancellation requested. Waiting for the worker to confirm it stopped."
+                : "New attempt queued; previous evidence was preserved.",
+            );
+          }
+          await refreshRunners();
+        } catch (error) {
+          if (selectedJobId === job.id)
+            message($("job-action-message"), error.message, true);
+        } finally {
+          jobActionBusy = false;
+          confirm.disabled = keep.disabled = false;
+          renderJobControls();
+        }
+      });
+      buttons.append(confirm, keep);
+      prompt.append(buttons);
+      confirm.focus();
+    });
+    root.append(action);
+  }
   $("job-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-job-id]");
     if (!button) return;
@@ -2687,16 +2838,24 @@
     outputCompleted.clear();
     clearArtifactBlobs();
     $("job-detail").hidden = true;
+    $("job-action-confirm").hidden = true;
     $("job-artifacts").replaceChildren();
+    if (pages.run) pages.navigate("/activity", { focus: false, scroll: false });
     renderJobs(runnerStatus?.jobs || []);
     const trigger = jobDetailTrigger?.dataset?.jobId;
     const button = [...$("job-list").querySelectorAll("[data-job-id]")].find(
       (item) => item.dataset.jobId === trigger,
     );
-    (button || $("refresh-runners")).focus({ preventScroll: true });
+    (button || $("activity-project")).focus({ preventScroll: true });
     jobDetailTrigger = null;
   }
   window.addEventListener("dashboard:pagechange", () => {
+    if (
+      pages.current === "activity" &&
+      pages.run &&
+      pages.run !== selectedJobId
+    )
+      selectJob(pages.run);
     if (jobOutputVisible()) refreshJobOutput();
     else pauseJobOutput();
   });
@@ -2707,6 +2866,19 @@
   $("close-job-output").addEventListener("click", closeJobDetail);
   $("job-detail").addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      event.preventDefault();
+      closeJobDetail();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape" &&
+      !event.defaultPrevented &&
+      pages.current === "activity" &&
+      !$("job-detail").hidden &&
+      !document.querySelector("dialog[open]") &&
+      $("nav-toggle").getAttribute("aria-expanded") !== "true"
+    ) {
       event.preventDefault();
       closeJobDetail();
     }
@@ -4411,6 +4583,9 @@
       pmCreating ||
       projectWorkspace?.isDirty() ||
       projectWorkspace?.isBusy() ||
+      projectOperations?.isDirty() ||
+      projectOperations?.isBusy() ||
+      remoteWorkers?.isBusy() ||
       Object.keys(pmCharter.read()).length > 0 ||
       pmDraft?.hasDraft() ||
       isEditorDirty() ||
@@ -4511,6 +4686,7 @@
       !(
         isEditorDirty() ||
         projectWorkspace?.isDirty() ||
+        projectOperations?.isDirty() ||
         Boolean(mixpanelReports?.isDirty()) ||
         newProjectSettings.isDirty() ||
         (isProjectEditorDirty() && $("project-settings-dialog").open)
@@ -4550,9 +4726,44 @@
       ...Object.keys(serviceProviders).map(refreshService),
     ]);
   });
+  projectOperations = window.createProjectOperations({
+    api,
+    pages,
+    inbox: $("inbox-content"),
+    getProject: (name) =>
+      currentStatus?.projects?.find((project) => project.name === name),
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onChanged: refreshStatus,
+    onDiscover: (project, area) =>
+      projectWorkspace.discover(project, area).catch(() => {}),
+    onCreatePm: (project) =>
+      document.dispatchEvent(
+        new CustomEvent("gremlins:create-pm", { detail: { project } }),
+      ),
+    onActivity: (id) => {
+      selectJob(id);
+      pages.navigate("/activity#job-detail");
+    },
+  });
+  remoteWorkers = window.createRemoteWorkers($("remote-workers"), {
+    api,
+    pages,
+    isLocked: () => formsLocked || !sessionToken || restarting,
+  });
+  document.addEventListener("gremlins:create-pm", (event) => {
+    if (formsLocked || pmCreating) return;
+    pages.navigate("/projects#pm-create-drawer");
+    $("pm-project").value = event.detail.project;
+    pmDraft.reset();
+    $("pm-create-drawer").open = true;
+    renderLinearSetup();
+    $("pm-name").focus();
+    refreshLinearResources();
+  });
   projectWorkspace = window.createProjectWorkspace($("project-workspace"), {
     api,
     pages,
+    operations: projectOperations,
     getJobs: () => mergedJobs(),
     getCheck: (name) => projectChecks.get(name),
     getAreaAction: (project, area) => areaActions.get(`${project}/${area}`),

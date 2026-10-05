@@ -2,11 +2,12 @@
 // context: they read through the clients, write through the clients, and
 // return digest rows. Nothing reads process.env below this line.
 
-import type { Forge } from "../forge/types.ts";
+import type { Forge, CheckSummary } from "../forge/types.ts";
 import type {
   LinearClient,
   VercelClient,
   SlackClient,
+  Deployment,
 } from "../services/types.ts";
 import type { HubConfig, Project } from "../config.ts";
 
@@ -39,6 +40,13 @@ export interface Ctx {
   log: (line: string) => void;
   /** the app's bot login, e.g. "pm-hub[bot]" — PRs by anyone else are ignored */
   botLogin: string;
+  /** Controller-only provider adapter. Must identify the actual deployed revision. */
+  resolveDeployment?: (
+    branch: string,
+    sha: string,
+  ) => Promise<Deployment | null>;
+  /** Local exact-revision configured-check receipt, used only when the provider has no checks. */
+  resolveChecks?: (sha: string) => Promise<CheckSummary>;
 }
 
 /** The repo shorthand every rule uses. */

@@ -6,6 +6,11 @@ const pngMagic = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const safeName = (name) =>
   typeof name === "string" &&
   name.length <= 240 &&
+  name !== "pm-review-request.json" &&
+  !name.split("/").some((part) => part.startsWith(".")) &&
+  (process.env.GREMLINS_TRUSTED_REVIEW === "1" ||
+    (name !== "pm-review-proof.json" &&
+      !name.startsWith("review-screenshots/"))) &&
   !name.includes("\\") &&
   !name.split("/").some((p) => !p || p === "." || p === "..") &&
   /^[A-Za-z0-9_./ -]+$/.test(name);

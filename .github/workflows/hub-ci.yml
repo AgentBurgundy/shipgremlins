@@ -29,6 +29,7 @@ jobs:
       - run: npm test
       - run: node --test slack-app/oauth.test.mjs
       - run: node --test oauth-app/oauth.test.mjs
+      - run: node --test examples/reference-app/benchmark.test.mjs
       - run: npx tsx src/cli.ts validate
       - run: npx tsx src/cli.ts crons --check
 
@@ -46,4 +47,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:package
-      - run: npm test -- src/commands/dashboard src/commands/update.test.ts src/commands/doctor.local.test.ts src/commands/signinCode.test.ts src/projectCapabilities.test.ts src/hosting src/setup/connections.test.ts src/setup/claudeToken.test.ts src/setup/configEditor.test.ts src/setup/openFolder.test.ts src/setup/runtime.test.ts src/setup/linearProvisioning.test.ts src/setup/pmBrief.test.ts src/setup/project-workspace.test.ts src/setup/pmReadiness.test.ts src/setup/job-output.test.ts src/setup/pm-linear-selection.test.ts src/pmPlanner src/pmKnowledge src/oauthConnection src/update src/localRunners src/storage src/slack
+      - run: npm test -- src/commands/dashboard src/commands/update.test.ts src/commands/doctor.local.test.ts src/commands/signinCode.test.ts src/projectCapabilities.test.ts src/hosting src/setup/connections.test.ts src/setup/claudeToken.test.ts src/setup/configEditor.test.ts src/setup/openFolder.test.ts src/setup/runtime.test.ts src/setup/linearProvisioning.test.ts src/setup/pmBrief.test.ts src/setup/project-workspace.test.ts src/setup/pmReadiness.test.ts src/setup/job-output.test.ts src/setup/pm-linear-selection.test.ts src/pmPlanner src/pmKnowledge src/projectKnowledge src/delivery src/remoteWorkers src/oauthConnection src/update src/localRunners src/storage src/slack

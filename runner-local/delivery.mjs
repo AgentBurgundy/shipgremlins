@@ -164,5 +164,5 @@ export async function runCheckedDelivery({
     throw new Error(
       "The draft may have been created, but its URL could not be confirmed. Inspect the source provider before retrying.",
     );
-  return { checks, prUrl };
+  return { checks, prUrl, headSha: commit };
 }

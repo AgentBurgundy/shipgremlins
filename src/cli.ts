@@ -386,6 +386,7 @@ Saved dashboard connections are loaded automatically; exported variables take pr
   start [--lan] [--port PORT] [--no-open]                  run the controller in the background
   status                                                show the background dashboard link
   stop                                                  stop scheduling; keep running Docker jobs
+  worker --controller URL [--enrollment-code CODE]        connect this machine's Docker worker to your instance
   update [--check | --rollback] [--json]                   safely update the runtime; keep your gremlins
   serve [--host 127.0.0.1] [--port 4310]                    serve the local ShipGremlins site
   dispatch [--project <name>] [--dry-run] [--target target]   sync → line → heal → repair → merge → dispatch → promote
@@ -425,6 +426,7 @@ export async function main(argv: string[]): Promise<number> {
       "setup",
       "dashboard",
       "update",
+      "worker",
     ].includes(command)
   )
     io.log(
@@ -449,6 +451,7 @@ export async function main(argv: string[]): Promise<number> {
       "crons",
       "add-project",
       "update",
+      "worker",
     ].includes(command) &&
     !args.includes("--help") &&
     !args.includes("-h")
@@ -458,6 +461,16 @@ export async function main(argv: string[]): Promise<number> {
       if (process.env[name] === undefined) process.env[name] = value;
   }
   switch (command) {
+    case "worker": {
+      if (args.includes("--help") || args.includes("-h")) {
+        io.log(
+          "gremlins worker --controller HTTPS_ORIGIN [--enrollment-code ONE_TIME_CODE] [--worker-home DIRECTORY] [--allow-insecure-lan]\nEnroll once from Your gremlins, then omit the code when restarting. Keep this command running. Docker uses Linux containers; native iOS simulation is not supported.",
+        );
+        return 0;
+      }
+      const { runWorker } = await import("./commands/worker.ts");
+      return runWorker(PACKAGE_ROOT, args, { out: io.log, err: io.error });
+    }
     case "start":
     case "stop":
     case "status": {

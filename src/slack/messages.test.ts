@@ -38,6 +38,26 @@ const options = () => ({
 });
 
 describe("branded Slack job messages", () => {
+  it("links to the project review without sharing session credentials", () => {
+    const message = buildJobNotification({
+      ...event,
+      dashboardUrl: "https://gremlins.example.test/",
+    });
+    expect(JSON.stringify(message.blocks)).toContain(
+      "https://gremlins.example.test/projects/my-app",
+    );
+    for (const dashboardUrl of [
+      "https://gremlins.example.test/#session=private",
+      "https://owner:private@gremlins.example.test/",
+      "https://gremlins.example.test/?token=private",
+    ]) {
+      const rendered = JSON.stringify(
+        buildJobNotification({ ...event, dashboardUrl }),
+      );
+      expect(rendered).not.toContain("private");
+    }
+  });
+
   it("explains PM starts with role, mandate, project, run and accessible fallback", () => {
     const message = buildJobNotification(event);
     expect(message.text).toContain("{g} 🔎 PM Gremlin · On the job");

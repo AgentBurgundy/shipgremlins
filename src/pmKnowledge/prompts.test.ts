@@ -142,7 +142,7 @@ describe("PM prompt policy and knowledge contracts", () => {
     expect(prompt).toContain("mapped-linear-only-patrol");
     expect(prompt).toContain("pm-proposal and pm:catalog, never pm-approved");
     for (const section of [
-      "Acceptance criteria and verification",
+      "## Acceptance criteria",
       "Implementation scope",
       "Confidence and unknowns",
       "Priority and metric",

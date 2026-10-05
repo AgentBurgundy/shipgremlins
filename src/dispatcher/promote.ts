@@ -49,6 +49,12 @@ export interface PromoteOpts {
   verifyCandidate?: (
     candidate: CandidateVerification,
   ) => Promise<CandidateVerificationResult>;
+  /** Controller ledger authority for local delivery; never inferred from worker comments. */
+  candidateVerdict?: (
+    pull: PullRequest,
+  ) => Promise<{ area: string; verdict: Verdict } | null>;
+  /** Local workers do not dispatch legacy CI port jobs. Conflicts remain held. */
+  local?: boolean;
 }
 
 const REMOTE = "origin";
@@ -252,7 +258,10 @@ async function freeBranchName(repo: Repo, base: string): Promise<string> {
 
 // ── the rule ─────────────────────────────────────────────────────────────────
 
-async function collectCandidates(ctx: Ctx): Promise<Candidate[]> {
+async function collectCandidates(
+  ctx: Ctx,
+  opts: PromoteOpts,
+): Promise<Candidate[]> {
   const repo = repoOf(ctx);
   const { staging, integration } = branchesOf(ctx);
   const since = new Date(
@@ -274,15 +283,24 @@ async function collectCandidates(ctx: Ctx): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const pr of merged) {
     const files = await ctx.forge.listPullFiles(repo, pr.number);
-    const area = areaOf(files, ctx.project.areas);
+    const tracked = opts.candidateVerdict
+      ? await opts.candidateVerdict(pr)
+      : null;
+    const area = tracked
+      ? (ctx.project.areas.find((a) => a.key === tracked.area) ?? null)
+      : areaOf(files, ctx.project.areas);
     if (!area) continue;
-    const comments = await ctx.forge.listPullComments(repo, pr.number);
+    const comments = opts.candidateVerdict
+      ? []
+      : await ctx.forge.listPullComments(repo, pr.number);
     out.push({
       pr,
       sha: pr.mergeCommitSha!,
       files,
       area,
-      verdict: trustedVerdict(comments, ctx.botLogin, pr.mergeCommitSha!),
+      verdict: opts.candidateVerdict
+        ? (tracked?.verdict ?? "untested")
+        : trustedVerdict(comments, ctx.botLogin, pr.mergeCommitSha!),
       order: out.length,
     });
   }
@@ -342,7 +360,7 @@ export async function runPromote(
   const repo = repoIn(opts.git, opts.checkoutDir);
   const { staging } = branchesOf(ctx);
   await repo.must(["fetch", REMOTE]);
-  const candidates = await collectCandidates(ctx);
+  const candidates = await collectCandidates(ctx, opts);
   const onStaging = await promotedOnStaging(repo, staging, candidates);
   const rows: DigestRow[] = [];
   for (const area of ctx.project.areas) {
@@ -745,7 +763,7 @@ async function promoteArea(
         text: `${area.name}: promotion (dry run) — ${summary}`,
       },
     ];
-    if (toPort.length > 0)
+    if (toPort.length > 0 && !opts.local)
       dry.push(await dispatchPort(ctx, area, branch, portChanges));
     return dry;
   }
@@ -917,7 +935,14 @@ async function promoteArea(
       ref: `#${pr.number}`,
     });
   }
-  if (toPort.length > 0)
-    rows.push(await dispatchPort(ctx, area, branch, portChanges));
+  if (toPort.length > 0) {
+    if (opts.local)
+      rows.push({
+        rule: "promote",
+        needsYou: true,
+        text: `${area.name}: ${toPort.length} changes need a reviewed port onto ${staging}; they remain excluded from the promotion.`,
+      });
+    else rows.push(await dispatchPort(ctx, area, branch, portChanges));
+  }
   return rows;
 }

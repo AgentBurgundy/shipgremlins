@@ -1,0 +1,84 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #e9f0f4;
+  background: #10171c;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 720px;
+  margin: 64px auto;
+  padding: 24px;
+}
+.eyebrow {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: #d8f883;
+}
+h1 {
+  font-size: clamp(32px, 6vw, 54px);
+  letter-spacing: -2px;
+  margin: 16px 0;
+}
+p {
+  color: #aab7c0;
+  line-height: 1.6;
+}
+label {
+  display: block;
+  margin: 16px 0 8px;
+}
+section {
+  padding: 24px;
+  border: 1px solid #354147;
+  border-radius: 18px;
+  margin: 24px 0;
+  background: #172127;
+}
+select,
+input,
+button {
+  font: inherit;
+  max-width: 100%;
+  padding: 12px;
+  border: 1px solid #516067;
+  border-radius: 8px;
+}
+select {
+  width: 100%;
+}
+button {
+  cursor: pointer;
+  background: #d8f883;
+  color: #19220b;
+  font-weight: 700;
+  margin-top: 16px;
+}
+ul {
+  padding-left: 20px;
+}
+li {
+  padding: 8px 0;
+}
+#status {
+  min-height: 24px;
+  color: #d8f883;
+}
+@media (max-width: 480px) {
+  main {
+    margin: 12px auto;
+    padding: 16px;
+  }
+  section {
+    padding: 18px;
+  }
+  input,
+  button {
+    width: 100%;
+  }
+}

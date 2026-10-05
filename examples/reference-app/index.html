@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Moonbase · Gremlins reference app</title
+  ><link rel="stylesheet" href="/style.css" />
+  <script src="/app.js" defer></script>
+  <body>
+    <main>
+      <p class="eyebrow">SHIPGREMLINS / SYNTHETIC TEST APP</p>
+      <h1>Moonbase tasks</h1>
+      <p>A tiny workspace with two tenants, two roles, and one CSV upload.</p>
+      <label for="account">Demo account</label
+      ><select id="account">
+        <option value="alice">Alice · Moon · Admin</option>
+        <option value="bob">Bob · Moon · Viewer</option>
+        <option value="nova">Nova · Mars · Admin</option>
+      </select>
+      <section>
+        <h2>Your tasks</h2>
+        <ul id="tasks"></ul>
+      </section>
+      <section>
+        <h2>Import tasks</h2>
+        <p>
+          CSV format: a <code>title</code> header and one task per line. Only
+          admins can import.
+        </p>
+        <label for="csv">Choose CSV</label
+        ><input id="csv" type="file" accept=".csv,text/csv" /><button
+          id="upload"
+          type="button"
+        >
+          Upload tasks
+        </button>
+        <p id="status" role="status"></p>
+      </section>
+    </main>
+  </body>
+</html>

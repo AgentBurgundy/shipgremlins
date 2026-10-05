@@ -50,7 +50,7 @@ export async function integrationHealth(ctx: Ctx): Promise<{
   const repo = repoOf(ctx);
   const { integration } = branchesOf(ctx);
   const target = promotionVercel(ctx.project.config);
-  if (!target)
+  if (!target && !ctx.resolveDeployment)
     return {
       state: "unknown",
       sha: null,
@@ -59,7 +59,6 @@ export async function integrationHealth(ctx: Ctx): Promise<{
       checks: { status: "none", failedJobs: [] },
       deployment: null,
     };
-  const { projectId, teamId } = target;
   const sha = await ctx.forge.getBranchSha(repo, integration);
   const missing: CheckSummary = { status: "none", failedJobs: [] };
   if (!sha)
@@ -70,12 +69,18 @@ export async function integrationHealth(ctx: Ctx): Promise<{
       checks: missing,
       deployment: null,
     };
-  const checks = await ctx.forge.getChecks(repo, sha);
-  const deployment = await ctx.vercel.latestDeployment(
-    projectId,
-    teamId ?? null,
-    integration,
-  );
+  const providerChecks = await ctx.forge.getChecks(repo, sha);
+  const checks =
+    providerChecks.status === "none" && ctx.resolveChecks
+      ? await ctx.resolveChecks(sha)
+      : providerChecks;
+  const deployment = ctx.resolveDeployment
+    ? await ctx.resolveDeployment(integration, sha)
+    : await ctx.vercel.latestDeployment(
+        target!.projectId,
+        target!.teamId ?? null,
+        integration,
+      );
   const exactDeployment =
     deployment?.sha === sha && deployment.branch === integration;
   const current = await ctx.forge.getBranchSha(repo, integration);
@@ -333,7 +338,7 @@ function failureSection(
   if (deployment?.state === "ERROR") {
     lines.push(
       "## Deployment",
-      `- Vercel deployment ${deployment.id} for ${deployment.branch} is ERROR — https://${deployment.url}`,
+      `- Deployment ${deployment.id} for ${deployment.branch} is ERROR`,
     );
   }
   return lines;

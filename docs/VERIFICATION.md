@@ -6,6 +6,13 @@ deployment. Then a trusted verifier checks the exact candidate assembled from
 those changes on the current staging base. Missing, expired, or mismatched
 evidence keeps the candidate out of staging.
 
+For local Docker jobs, start with [Project → Delivery](DELIVERY_WORKFLOW.md).
+Owning-PM review receipts are recorded automatically by an isolated replay phase;
+the candidate handoff is available on the Delivery page. The CLI examples below
+describe the original Vercel release path and the shared signing format. For a
+Railway project, use the dashboard preparation/retry path and an explicitly selected
+candidate environment instead of assuming the legacy `promote` CLI discovers it.
+
 ## Source change evidence
 
 Use Playwright MCP to exercise every acceptance criterion on the real preview.
@@ -163,9 +170,9 @@ assertions are meaningful or screenshots truthful. The dispatcher hashes local
 artifact bytes; it does not download public URLs or certify their contents. Use
 immutable artifact storage and preserve the full browser trace with the job.
 
-Existing area-selective promotions use `pm-release/*` branches into staging. A
-literal whole-branch `pm-staging` → staging release mode, durable distributed
-leases, required-check publisher enforcement, and automated evidence storage are
-still roadmap work. Protect staging/production in your provider and keep human
+Area-selective promotions use `pm-release/*` branches into staging. Do not replace
+them with a whole-branch merge containing unverified work. Multi-controller
+database leases, required-check publisher enforcement, and automated candidate
+deployment/signing remain roadmap work. Protect staging/production in your provider and keep human
 merge approval enabled. “Done” is separately governed by
 [production reconciliation](LINEAR_LIFECYCLE.md).

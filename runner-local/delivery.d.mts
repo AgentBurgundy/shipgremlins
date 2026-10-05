@@ -19,4 +19,9 @@ export function runCheckedDelivery(input: {
   writeBody: (body: string) => void | Promise<void>;
   prepareRepository: () => void | Promise<void>;
   onCheck?: (name: string, status: "running" | "succeeded" | "failed") => void;
-}): Promise<{ checks: string[]; prUrl?: string; noChanges?: boolean }>;
+}): Promise<{
+  checks: string[];
+  prUrl?: string;
+  noChanges?: boolean;
+  headSha?: string;
+}>;

@@ -5,6 +5,7 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parsePmCharter, type PmCharter } from "./pmCharter.ts";
+import { parseExecutionLimits, type ExecutionLimits } from "./execution.ts";
 import {
   ID_RE,
   parseTelemetry,
@@ -32,6 +33,7 @@ export interface HubConfig {
 }
 
 export interface ProjectConfig extends ProjectCapabilities {
+  execution?: ExecutionLimits;
   /** The Linear team for this app; existing area project IDs remain authoritative. */
   linear?: {
     teamId?: string;
@@ -318,8 +320,10 @@ export function loadProject(root: string, name: string): Project {
       : need(pf, raw, "vercel", isObj, "an object");
   const commands = need(pf, raw, "commands", isObj, "an object");
   let telemetry: TelemetryConfig | undefined;
+  let execution: ExecutionLimits | undefined;
   try {
     telemetry = parseTelemetry(raw.telemetry);
+    execution = parseExecutionLimits(raw.execution);
   } catch (error) {
     throw new ConfigError(pf, (error as Error).message);
   }
@@ -329,6 +333,7 @@ export function loadProject(root: string, name: string): Project {
       ? { workflow }
       : {}),
     ...(telemetry ? { telemetry } : {}),
+    ...(execution ? { execution } : {}),
     name,
     provider:
       raw.provider === undefined

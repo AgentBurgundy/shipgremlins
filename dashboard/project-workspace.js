@@ -20,7 +20,7 @@
   const path = (project, pm = "", tab = "brief") => {
     const query = new URLSearchParams();
     if (pm) query.set("pm", pm);
-    if (pm && tab !== "brief") query.set("tab", tab);
+    if (tab !== "brief" && tab !== "overview") query.set("tab", tab);
     return `/projects/${encodeURIComponent(project)}${query.size ? `?${query}` : ""}`;
   };
   const when = (value) =>
@@ -188,9 +188,15 @@
   };
   window.createProjectWorkspace = (root, options) => {
     const { api, pages, onSaved, onJob, onCreatePm, getJobs } = options;
+    const setupSuggestions = window.createSetupSuggestions?.({
+      api,
+      onSaved,
+      isLocked: () => locked,
+    });
     let status = null,
       locked = true,
       signature = "",
+      renderedRoute = "",
       sidebarSignature = "";
     let request = null,
       generation = 0,
@@ -491,7 +497,14 @@
           controller.signal,
         );
         if (activeKey() !== key || revision !== generation) return;
+        const previous = knowledge.get(key);
         knowledge.set(key, value);
+        if (
+          JSON.stringify(previous?.provenance) !==
+            JSON.stringify(value.provenance) ||
+          previous?.stale !== value.stale
+        )
+          setupSuggestions?.refresh(project.name, area.key);
         notices.delete(key);
         render();
       } catch (error) {
@@ -527,6 +540,7 @@
           "Discovery queued. Review its visible activity while it maps the product.",
         );
         if (result.job) onJob?.(result.job);
+        options.operations?.refresh(projectName, true);
         await refreshKnowledge();
         return result;
       } catch (error) {
@@ -547,7 +561,15 @@
       const readiness = project.readiness?.areas?.find(
         (item) => item.key === area.key,
       )?.discovery;
-      const state = knowledge.get(`${project.name}/${area.key}`)?.state;
+      const state = (getJobs?.() || []).some(
+        (job) =>
+          job.project === project.name &&
+          job.area === area.key &&
+          job.pmMode === "discovery" &&
+          ["queued", "running"].includes(job.status),
+      )
+        ? "refreshing"
+        : knowledge.get(`${project.name}/${area.key}`)?.state;
       const result = button(
         state === "refreshing" ? "Discovery running…" : "Run discovery",
         () => discover(project.name, area.key).catch(() => {}),
@@ -642,6 +664,7 @@
         );
     }
     function home(project) {
+      options.operations?.mount(root, project, "overview");
       const stats = node("div", "project-workspace-stats");
       for (const [value, label] of [
         [project.areas?.length || 0, "PM Gremlins"],
@@ -667,10 +690,7 @@
         main = node("div"),
         side = node("aside");
       const title = node("div", "project-section-title");
-      title.append(
-        node("h2", "", "Your PM Gremlins"),
-        button("+ Create PM", () => onCreatePm(project.name)),
-      );
+      title.append(node("h2", "", "Your product crew"));
       main.append(title);
       const cards = node("div", "project-pm-grid");
       for (const area of project.areas || []) {
@@ -707,13 +727,17 @@
             path(project.name, area.key),
             "small-button",
           ),
-          action("Run patrol once", {
-            launchProject: project.name,
-            launchCrew: "pm",
-            launchArea: area.key,
-          }),
+          discoveryButton(project, area),
         );
         text.append(actions);
+        if (notices.get(`${project.name}/${area.key}`))
+          text.append(
+            node(
+              "p",
+              "project-workspace-notice",
+              notices.get(`${project.name}/${area.key}`),
+            ),
+          );
         card.append(image, text);
         cards.append(card);
       }
@@ -1010,6 +1034,8 @@
           button("Refresh", refreshKnowledge),
         );
         content.append(statusRow);
+        if (tab === "discovery")
+          setupSuggestions?.mount(content, project.name, area.key);
         const file = data?.documents?.find((item) => item.name === `${tab}.md`);
         if (file?.content)
           content.append(window.renderKnowledgeDocument(file.content));
@@ -1076,6 +1102,13 @@
         (getJobs?.() || []).filter((job) => job.project === project?.name),
       ]);
       if (signature === next) return;
+      const currentRoute = `${pages.project}/${pages.pm}/${pages.tab}`;
+      if (
+        renderedRoute === currentRoute &&
+        options.operations?.protectFocus(root)
+      )
+        return;
+      renderedRoute = currentRoute;
       signature = next;
       root.replaceChildren();
       if (!status) {
@@ -1107,6 +1140,23 @@
       );
       header.append(identity, projectActions(project));
       root.append(header);
+      if (!pages.pm) {
+        const navigation = node("nav", "project-top-tabs");
+        navigation.setAttribute("aria-label", "Project sections");
+        for (const [key, label] of [
+          ["overview", "Overview"],
+          ["review", "Review"],
+          ["knowledge", "Knowledge"],
+          ["delivery", "Delivery"],
+          ["limits", "Run limits"],
+        ]) {
+          const item = link(label, path(project.name, "", key));
+          if ((pages.tab === "brief" ? "overview" : pages.tab) === key)
+            item.setAttribute("aria-current", "page");
+          navigation.append(item);
+        }
+        root.append(navigation);
+      }
       if (pages.pm && !area)
         root.append(
           node(
@@ -1117,6 +1167,10 @@
           link("Project overview", path(project.name), "small-button"),
         );
       else if (area) pmWorkspace(project, area);
+      else if (
+        ["review", "knowledge", "delivery", "limits"].includes(pages.tab)
+      )
+        options.operations?.mount(root, project, pages.tab);
       else home(project);
     }
     function routeChanged() {
@@ -1145,7 +1199,7 @@
       discover,
       openBrief,
       isDirty,
-      isBusy: () => editor.busy || launching,
+      isBusy: () => editor.busy || launching || setupSuggestions?.isBusy(),
       refresh: refreshKnowledge,
     };
   };

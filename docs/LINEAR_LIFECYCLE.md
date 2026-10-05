@@ -1,10 +1,18 @@
 # Linear ticket lifecycle
 
-Updated October 4, 2026. Status: the alpha includes a read-only production audit and an explicit opt-in completion reconciler. The broader lifecycle contract below remains the design target. This document does not change live Linear settings.
+Updated October 5, 2026. The alpha includes a read-only production audit, an explicit CLI completion reconciler, and dashboard reconciliation after owner confirmation of a complete production scope. This document does not change live Linear settings.
 
 A developer finishing code, a successful test, or a merge into `pm-staging` must never complete a ticket. A ticket reaches **Done only when all changes required to deliver its approved scope are confirmed merged into the configured production branch**. The branch may be called `main`, `master`, or something else; resolve `branches.production` instead of assuming its name.
 
 ## Implemented in the alpha
+
+For local promotion projects, use **Project → Delivery** to select every required
+promoted deliverable, the staging-to-production PR, and the team's real completed
+state. Confirm that the selection is the whole approved scope. The controller saves
+that declaration and periodically checks provider merge/tree evidence. It does not
+infer completeness from the currently visible rows, merge production, or mark Done
+on staging. Local `gremlins/job-*` implementation identities are supported alongside
+the original CI branches. See [delivery](DELIVERY_WORKFLOW.md).
 
 `hub tickets audit` and `hub tickets reconcile` operate on tickets carrying a configured area's label inside that area's Linear project. They do not enroll every issue in the workspace. Audit is always read-only. Reconcile is also read-only unless the operator supplies `--apply`; combining `--apply` with `--dry-run` is rejected.
 

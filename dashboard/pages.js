@@ -3,6 +3,7 @@
 (() => {
   const labels = Object.freeze({
     overview: "Overview",
+    inbox: "Review inbox",
     connections: "Connections",
     projects: "Projects",
     runners: "Your gremlins",
@@ -79,12 +80,15 @@
       const pm = project ? url.searchParams.get("pm") || "" : "";
       const tab = project ? url.searchParams.get("tab") || "brief" : "brief";
       const query = new URLSearchParams();
+      const run = page === "activity" ? url.searchParams.get("run") || "" : "";
+      if (run) query.set("run", run);
       if (pm) query.set("pm", pm);
-      if (pm && tab !== "brief") query.set("tab", tab);
+      if (project && tab !== "brief" && tab !== "overview")
+        query.set("tab", tab);
       const path = project
         ? `/projects/${encodeURIComponent(project)}${query.size ? `?${query}` : ""}`
-        : `/${page}`;
-      return { page, project, pm, tab, target, path: `${path}${anchor}` };
+        : `/${page}${query.size ? `?${query}` : ""}`;
+      return { page, project, pm, tab, run, target, path: `${path}${anchor}` };
     }
 
     function show(route, { focus = false, scroll = false } = {}) {
@@ -113,6 +117,7 @@
             project: route.project,
             pm: route.pm,
             tab: route.tab,
+            run: route.run,
           },
         }),
       );
@@ -206,6 +211,9 @@
       },
       get tab() {
         return currentRoute?.tab || "brief";
+      },
+      get run() {
+        return currentRoute?.run || "";
       },
       destroy() {
         document.removeEventListener("click", onClick);

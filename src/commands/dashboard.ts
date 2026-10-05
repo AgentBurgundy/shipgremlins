@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   existsSync,
@@ -127,6 +127,28 @@ import {
 } from "./dashboardOutput.ts";
 import { createPmKnowledge } from "../pmKnowledge/index.ts";
 import { readPmBrief, savePmBrief, PmBriefError } from "../setup/pmBrief.ts";
+import {
+  createProjectKnowledge,
+  ProjectKnowledgeError,
+} from "../projectKnowledge/index.ts";
+import {
+  projectOperations,
+  saveExecution,
+} from "../projectKnowledge/operations.ts";
+import { createProjectReview } from "../projectKnowledge/review.ts";
+import {
+  readSetupSuggestions,
+  applySetupSuggestions,
+} from "../projectKnowledge/setup.ts";
+import { createDeliveryController } from "../delivery/controller.ts";
+import {
+  createAutomaticPromotions,
+  type AutomaticPromotion,
+} from "../delivery/automatic.ts";
+import {
+  createRemoteWorkers,
+  RemoteWorkerError,
+} from "../remoteWorkers/index.ts";
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -148,6 +170,7 @@ const HTML_ROUTES = new Set([
   "/runners",
   "/activity",
   "/settings",
+  "/inbox",
 ]);
 
 /** Advertise private LAN/Tailscale IPv4 interfaces, never public or loopback addresses. */
@@ -244,6 +267,8 @@ async function body(
 }
 
 export interface DashboardOptions {
+  /** Explicit HTTPS reverse-proxy origin; never inferred from forwarded headers. */
+  publicUrl?: string;
   updater?: Updater;
   restart?: () => void;
   runners?: LocalRunners;
@@ -260,6 +285,8 @@ export interface DashboardOptions {
   vercelConnectionFor?: (connectionId?: string) => VercelConnection;
   linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
   pmPlanner?: PmPlanner;
+  delivery?: ReturnType<typeof createDeliveryController>;
+  remote?: ReturnType<typeof createRemoteWorkers>;
 }
 
 export function createDashboardServer(
@@ -274,13 +301,36 @@ export function createDashboardServer(
   if (networkHosts.some((host) => !isIPv4(host)))
     throw new Error("Dashboard network hosts must be IPv4 addresses.");
   const hosts = new Set(["127.0.0.1", ...networkHosts]);
+  let publicOrigin: URL | undefined;
+  if (options.publicUrl) {
+    try {
+      publicOrigin = new URL(options.publicUrl);
+    } catch {
+      throw new Error(
+        "Use an HTTPS dashboard origin without a path or credentials.",
+      );
+    }
+    if (
+      publicOrigin.protocol !== "https:" ||
+      publicOrigin.username ||
+      publicOrigin.password ||
+      publicOrigin.pathname !== "/" ||
+      publicOrigin.search ||
+      publicOrigin.hash
+    )
+      throw new Error(
+        "Use an HTTPS dashboard origin without a path or credentials.",
+      );
+  }
   // Update checks are explicit; opening the static page never makes a network request.
   let updater = options.updater;
   const updates = () =>
     (updater ??= createUpdater({ configurationRoot: root, packageRoot }));
   let updateRunning = false;
   let updateFailure = "";
-  const docker = options.docker ?? createDockerRunners({ packageRoot });
+  const remote = options.remote ?? createRemoteWorkers({ root });
+  const localDocker = options.docker ?? createDockerRunners({ packageRoot });
+  const docker = remote.adapter(localDocker);
   const sourceControl =
     options.sourceControl ?? createSourceControl({ root, session });
   const linearConnection =
@@ -383,6 +433,15 @@ export function createDashboardServer(
       };
     }
   }
+  const delivery =
+    options.delivery ??
+    createDeliveryController({
+      root,
+      sourceControl,
+      linearConnectionFor,
+      vercelConnectionFor,
+      docker: localDocker,
+    });
   const preparation =
     options.jobs ??
     createJobPreparation({
@@ -392,6 +451,8 @@ export function createDashboardServer(
       vercelConnection,
       linearConnectionFor,
       vercelConnectionFor,
+      beforePm: delivery.beforePm,
+      beforeDeveloper: delivery.beforeDeveloper,
     });
   const pmPlanner =
     options.pmPlanner ?? createPmPlanner({ root, packageRoot, sourceControl });
@@ -399,6 +460,195 @@ export function createDashboardServer(
   const activityStore = options.activityStore ?? createActivityStore({ root });
   const outputRead = createDashboardOutputReader();
   const knowledge = createPmKnowledge({ root });
+  const projectKnowledge = createProjectKnowledge({ root });
+  const projectReview = createProjectReview({
+    root,
+    client: async (project) =>
+      new LinearApi({
+        apiKey: (
+          await linearConnectionFor(
+            project.config.linear?.connectionId,
+          ).resolveCredential({
+            minValidityMs: 5 * 60_000,
+            ...(project.config.linear?.workspaceId
+              ? { workspaceId: project.config.linear.workspaceId }
+              : {}),
+          })
+        ).authorization,
+      }),
+  });
+  const deliveryOperations = new Map<
+    string,
+    { phase: "running" | "idle" | "error"; message: string; rows?: unknown[] }
+  >();
+  const productionReports = new Map<string, unknown[]>();
+  const automaticPromotions = createAutomaticPromotions({ root });
+  function continuePromotions(name: string) {
+    if (deliveryOperations.get(name)?.phase === "running") return;
+    try {
+      for (const item of automaticPromotions.pending()) {
+        if (item.project !== name) continue;
+        const hasVerified = delivery
+          .deliveryStatus(name)
+          .deliveries.some(
+            (record) =>
+              record.area === item.area && record.status === "verified",
+          );
+        const token = automaticPromotions.claim(item);
+        if (!token) return;
+        if (!hasVerified) {
+          automaticPromotions.finish(item, token);
+          continue;
+        }
+        preparePromotion(name, item.area, { item, token });
+        return;
+      }
+    } catch {
+      deliveryOperations.set(name, {
+        phase: "error",
+        message:
+          "Automatic promotion could not resume. Existing verified deliveries are preserved. Review Delivery and retry Prepare promotion; check controller storage if this persists.",
+      });
+    }
+  }
+  function deliveryView(name: string) {
+    const project = loadProject(root, name),
+      document = readEditableConfig(root, `projects/${name}/project.json`),
+      raw = JSON.parse(document.content),
+      verification = effectiveVerification(project.config);
+    return {
+      ...delivery.deliveryStatus(name),
+      candidateSetup: {
+        revision: document.revision,
+        selected: raw.workflow?.candidateEnvironment ?? "",
+        needsSelection:
+          verification.mode === "browser" &&
+          verification.target.kind === "railway" &&
+          !raw.workflow?.candidateEnvironment,
+        environments: Object.entries(project.config.environments ?? {})
+          .filter(
+            ([, target]) =>
+              target.role !== "production" &&
+              ["railway", "vercel"].includes(target.kind),
+          )
+          .map(([name, target]) => ({
+            name,
+            provider: target.kind,
+            role: target.role,
+          })),
+      },
+      operation: deliveryOperations.get(name) ?? { phase: "idle", message: "" },
+      productionReports: productionReports.get(name) ?? [],
+    };
+  }
+  function preparePromotion(
+    name: string,
+    area?: string,
+    automatic?: { item: AutomaticPromotion; token: string },
+  ) {
+    if (deliveryOperations.get(name)?.phase === "running")
+      throw new RequestError(
+        409,
+        "A delivery operation is already running for this project.",
+      );
+    deliveryOperations.set(name, {
+      phase: "running",
+      message:
+        "Preparing a selective candidate and running its checks in Docker. No staging PR is opened without matching candidate evidence.",
+    });
+    void delivery
+      .preparePromotion(name, { area, docker: localDocker })
+      .then((rows) => {
+        deliveryOperations.set(name, {
+          phase: "idle",
+          message: rows.map((row) => row.text).join("\n"),
+          rows,
+        });
+      })
+      .catch(() => {
+        deliveryOperations.set(name, {
+          phase: "error",
+          message:
+            "Promotion could not finish. Check source access, worker Docker, deployment metadata and trusted candidate verification. Existing deliveries remain available for review.",
+        });
+      })
+      .finally(() => {
+        if (automatic) {
+          try {
+            automaticPromotions.finish(automatic.item, automatic.token);
+          } catch {
+            deliveryOperations.set(name, {
+              phase: "error",
+              message:
+                "Promotion finished, but its automatic continuation could not be recorded. Existing delivery evidence is preserved; check controller storage before retrying.",
+            });
+            return;
+          }
+        }
+        continuePromotions(name);
+      });
+  }
+  function advanceIntegration(name: string) {
+    if (deliveryOperations.get(name)?.phase === "running")
+      throw new RequestError(
+        409,
+        "A delivery operation is already running for this project.",
+      );
+    deliveryOperations.set(name, {
+      phase: "running",
+      message:
+        "Checking the approved implementation and integration health. Eligible work may merge into integration; staging and production remain owner-controlled.",
+    });
+    void delivery
+      .advanceIntegration(name)
+      .then((record) => {
+        deliveryOperations.set(name, {
+          phase: "idle",
+          message:
+            record?.message ??
+            "Integration check finished. Review each delivery's status for remaining blockers.",
+        });
+      })
+      .catch(() => {
+        deliveryOperations.set(name, {
+          phase: "error",
+          message:
+            "Integration advancement could not finish. Check source access, configured checks and deployment health. Existing drafts remain available for review.",
+        });
+      })
+      .finally(() => continuePromotions(name));
+  }
+  let productionBusy = false;
+  async function reconcileDeliveries() {
+    if (productionBusy) return;
+    productionBusy = true;
+    try {
+      for (const name of listProjectNames(root)) {
+        try {
+          const status = delivery.deliveryStatus(name);
+          if (!status.enabled) continue;
+          continuePromotions(name);
+          if (
+            status.deliveries.some(
+              (item) => item.status === "awaiting-merge",
+            ) &&
+            loadProject(root, name).config.verified &&
+            deliveryOperations.get(name)?.phase !== "running"
+          )
+            advanceIntegration(name);
+          if (status.declarations.length)
+            productionReports.set(
+              name,
+              await delivery.reconcileProduction(name),
+            );
+        } catch {
+          /*Each project keeps its durable scope. One unavailable provider must not stop other projects.*/
+        }
+      }
+    } finally {
+      productionBusy = false;
+    }
+  }
   const cleanOutput = (lines: string[]) => {
     let secrets: string[] = [];
     try {
@@ -422,9 +672,51 @@ export function createDashboardServer(
       docker,
       activityStore,
       ...preparation,
+      admissionBlocker: projectKnowledge.admissionBlocker,
+      reconcileCompletedJob: async (job, result, worker) => {
+        await delivery.completeJob(job, result, worker);
+        if (job.type === "pm" && !job.pmMode && job.project && job.area) {
+          const verified = delivery
+            .deliveryStatus(job.project)
+            .deliveries.filter(
+              (item) =>
+                item.area === job.area &&
+                item.status === "verified" &&
+                item.review,
+            )
+            .map((item) => ({ id: item.id, review: item.review!.manifestHash }))
+            .sort((a, b) => a.id.localeCompare(b.id));
+          if (verified.length) {
+            const key = createHash("sha256")
+              .update(JSON.stringify(verified))
+              .digest("hex");
+            automaticPromotions.enqueue(job.project, job.area, key);
+            continuePromotions(job.project);
+          }
+        }
+      },
       beforeLaunch: () => activityStore.ensure(),
       releaseJobResources: preparation.releaseJobResources,
     }));
+  let remoteSyncBusy = false;
+  async function syncRemoteWorkers() {
+    if (remoteSyncBusy) return;
+    remoteSyncBusy = true;
+    try {
+      for (const worker of remote
+        .status()
+        .workers.filter(
+          (worker) => worker.enrolled && !worker.revoked && !worker.logicalId,
+        )) {
+        await runners().addRemote(worker.id, worker.name);
+        runners().start();
+      }
+    } catch {
+      /*Enrollment remains saved; the owner can free capacity and retry.*/
+    } finally {
+      remoteSyncBusy = false;
+    }
+  }
   async function readinessContext(
     sources?: SourceStatus[],
     services?: Awaited<ReturnType<typeof serviceStatuses>>,
@@ -601,9 +893,13 @@ export function createDashboardServer(
     try {
       const address = server.address() as AddressInfo | null;
       const host = req.headers.host ?? "";
-      const origin = `http://${host}`;
+      const proxyHost = publicOrigin?.host === host;
+      const origin = proxyHost ? publicOrigin!.origin : `http://${host}`;
       if (
-        ![...hosts].some((allowed) => host === `${allowed}:${address?.port}`) ||
+        (!proxyHost &&
+          ![...hosts].some(
+            (allowed) => host === `${allowed}:${address?.port}`,
+          )) ||
         (req.headers.origin !== undefined && req.headers.origin !== origin) ||
         (req.headers["sec-fetch-site"] === "cross-site" &&
           !(
@@ -619,6 +915,13 @@ export function createDashboardServer(
       const url = new URL(req.url ?? "/", origin);
       if (url.origin !== origin)
         throw new RequestError(403, "Invalid request origin.");
+      if (url.pathname.startsWith("/api/remote/worker/")) {
+        if (await remote.handleRequest(req, res)) {
+          void syncRemoteWorkers();
+          return;
+        }
+        throw new RequestError(404, "Unknown remote worker action.");
+      }
       if (url.pathname.startsWith("/api/")) {
         const supplied = Buffer.from(req.headers.authorization ?? "");
         const expected = Buffer.from(`Bearer ${session}`);
@@ -958,6 +1261,417 @@ export function createDashboardServer(
           );
           runners().start();
           json(res, 202, { ok: true, runner });
+          return;
+        }
+        if (url.pathname === "/api/remote/status") {
+          if (req.method !== "GET")
+            throw new RequestError(405, "Use GET for remote worker status.");
+          void syncRemoteWorkers();
+          json(res, 200, remote.status());
+          return;
+        }
+        if (url.pathname === "/api/remote/enrollments") {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to enroll a worker.");
+          const input = await body(req),
+            names = listProjectNames(root);
+          if (
+            Object.keys(input).some(
+              (key) => !["name", "projects"].includes(key),
+            ) ||
+            typeof input.name !== "string" ||
+            !Array.isArray(input.projects) ||
+            input.projects.some(
+              (name) => typeof name !== "string" || !names.includes(name),
+            )
+          )
+            throw new RequestError(
+              400,
+              "Choose a worker name and projects from this instance.",
+            );
+          json(
+            res,
+            201,
+            remote.createEnrollment({
+              name: input.name,
+              projects: input.projects as string[],
+            }),
+          );
+          return;
+        }
+        const revokeRemote =
+          /^\/api\/remote\/(remote-[a-f0-9-]+)\/revoke$/.exec(url.pathname);
+        if (revokeRemote) {
+          if (req.method !== "POST" || Object.keys(await body(req)).length)
+            throw new RequestError(
+              400,
+              "Use POST with an empty object to revoke this worker.",
+            );
+          const worker = remote
+            .status()
+            .workers.find((worker) => worker.id === revokeRemote[1]);
+          const result = remote.revoke(revokeRemote[1]!);
+          if (worker?.logicalId)
+            await runners().action(worker.logicalId, "pause");
+          json(res, 200, result);
+          return;
+        }
+        const deliveryRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]*)\/delivery(?:\/(promote|production|states|advance|environment))?$/.exec(
+            url.pathname,
+          );
+        if (deliveryRoute) {
+          const name = deliveryRoute[1]!,
+            action = deliveryRoute[2];
+          if (req.method === "GET" && !action)
+            json(res, 200, deliveryView(name));
+          else if (req.method === "POST" && action === "environment") {
+            const input = await body(req),
+              project = loadProject(root, name);
+            if (
+              Object.keys(input).some(
+                (key) => !["revision", "environment"].includes(key),
+              ) ||
+              typeof input.environment !== "string" ||
+              typeof input.revision !== "string" ||
+              effectiveWorkflow(project.config).kind !== "promotion"
+            )
+              throw new RequestError(
+                400,
+                "Choose an existing candidate environment and the current project revision.",
+              );
+            const target = project.config.environments?.[input.environment],
+              verification = effectiveVerification(project.config);
+            if (
+              !target ||
+              target.role === "production" ||
+              !["railway", "vercel"].includes(target.kind)
+            )
+              throw new RequestError(
+                400,
+                "Use a non-production Vercel or Railway target with exact deployment metadata.",
+              );
+            if (
+              target.kind === "railway" &&
+              verification.mode === "browser" &&
+              verification.target.kind === "railway" &&
+              target.projectId === verification.target.projectId &&
+              target.environmentId === verification.target.environmentId &&
+              target.serviceId === verification.target.serviceId
+            )
+              throw new RequestError(
+                400,
+                "Use a separate Railway candidate service or environment so release testing cannot replace pm-staging.",
+              );
+            const document = readEditableConfig(
+                root,
+                `projects/${name}/project.json`,
+              ),
+              raw = JSON.parse(document.content);
+            raw.workflow = {
+              ...raw.workflow,
+              kind: "promotion",
+              candidateEnvironment: input.environment,
+            };
+            try {
+              saveEditableConfig(root, {
+                path: document.path,
+                revision: input.revision,
+                content: JSON.stringify(raw, null, 2) + "\n",
+              });
+            } catch (error) {
+              if (error instanceof ConfigEditorError)
+                throw new RequestError(error.status, error.message);
+              throw error;
+            }
+            json(res, 200, deliveryView(name));
+          } else if (req.method === "GET" && action === "states") {
+            const project = loadProject(root, name),
+              mapping = project.config.linear;
+            if (!mapping?.teamId)
+              throw new RequestError(
+                409,
+                "Choose this project's Linear team before tracking production.",
+              );
+            const auth = await linearConnectionFor(
+              mapping.connectionId,
+            ).resolveCredential({
+              workspaceId: mapping.workspaceId,
+              minValidityMs: 60_000,
+            });
+            const states = await new LinearApi({
+              apiKey: auth.authorization,
+            }).listWorkflowStates(mapping.teamId);
+            json(res, 200, {
+              states: states.filter(
+                (state) =>
+                  state.type === "completed" && state.teamId === mapping.teamId,
+              ),
+            });
+          } else if (req.method === "POST" && action === "promote") {
+            const input = await body(req);
+            if (
+              Object.keys(input).some((key) => key !== "area") ||
+              (input.area !== undefined && typeof input.area !== "string")
+            )
+              throw new RequestError(
+                400,
+                "Choose an owning PM area or all verified deliveries.",
+              );
+            const current = delivery.deliveryStatus(name);
+            if (
+              !current.enabled ||
+              !current.deliveries.some(
+                (item) =>
+                  item.status === "verified" &&
+                  (!input.area || item.area === input.area),
+              )
+            )
+              throw new RequestError(
+                409,
+                "No matching verified deliveries are ready to package. Run the owning PM after its integration deployment is ready.",
+              );
+            preparePromotion(name, input.area as string | undefined);
+            json(res, 202, deliveryView(name));
+          } else if (req.method === "POST" && action === "advance") {
+            if (Object.keys(await body(req)).length)
+              throw new RequestError(
+                400,
+                "Use an empty object to check integration delivery.",
+              );
+            advanceIntegration(name);
+            json(res, 202, deliveryView(name));
+          } else if (req.method === "POST" && action === "production") {
+            const input = await body(req);
+            if (
+              Object.keys(input).some(
+                (key) =>
+                  ![
+                    "revision",
+                    "deliveryIds",
+                    "productionPr",
+                    "completedStateId",
+                    "scopeComplete",
+                  ].includes(key),
+              ) ||
+              input.scopeComplete !== true
+            )
+              throw new RequestError(
+                400,
+                "Review and confirm the complete delivery scope before tracking production.",
+              );
+            try {
+              await delivery.declareProduction(
+                name,
+                input as unknown as Parameters<
+                  typeof delivery.declareProduction
+                >[1],
+              );
+            } catch {
+              throw new RequestError(
+                409,
+                "Production scope was not saved. Refresh deliveries, select every deliverable for the ticket, choose its completed state and the staging-to-production PR, then review again.",
+              );
+            }
+            void reconcileDeliveries();
+            json(res, 202, deliveryView(name));
+          } else
+            throw new RequestError(405, "Choose a supported delivery action.");
+          return;
+        }
+        const setupSuggestions =
+          /^\/api\/projects\/([a-z][a-z0-9-]*)\/pms\/([a-z][a-z0-9-]*)\/setup-suggestions$/.exec(
+            url.pathname,
+          );
+        if (setupSuggestions) {
+          if (req.method === "GET")
+            json(
+              res,
+              200,
+              readSetupSuggestions(
+                root,
+                setupSuggestions[1]!,
+                setupSuggestions[2]!,
+              ),
+            );
+          else if (req.method === "POST") {
+            try {
+              json(
+                res,
+                200,
+                applySetupSuggestions(
+                  root,
+                  setupSuggestions[1]!,
+                  setupSuggestions[2]!,
+                  await body(req),
+                ),
+              );
+            } catch (error) {
+              if (error instanceof ConfigEditorError)
+                throw new RequestError(error.status, error.message);
+              throw error;
+            }
+          } else
+            throw new RequestError(
+              405,
+              "Use GET to review or POST to apply setup suggestions.",
+            );
+          return;
+        }
+        const reviewAction =
+          /^\/api\/projects\/([a-z][a-z0-9-]*)\/review(?:\/([A-Za-z0-9-]+)\/approve)?$/.exec(
+            url.pathname,
+          );
+        if (reviewAction) {
+          if (req.method === "GET" && !reviewAction[2])
+            json(res, 200, await projectReview.list(reviewAction[1]!));
+          else if (req.method === "POST" && reviewAction[2]) {
+            const input = await body(req);
+            if (Object.keys(input).some((key) => key !== "revision"))
+              throw new RequestError(400, "Use the reviewed ticket revision.");
+            json(
+              res,
+              200,
+              await projectReview.approve(
+                reviewAction[1]!,
+                reviewAction[2],
+                input.revision,
+              ),
+            );
+          } else
+            throw new RequestError(405, "Choose a supported review action.");
+          return;
+        }
+        if (url.pathname === "/api/operations") {
+          if (req.method !== "GET")
+            throw new RequestError(405, "Use GET for the review inbox.");
+          const [jobs, context, runnerState] = await Promise.all([
+            runners().jobs(),
+            readinessContext(),
+            runners().status(),
+          ]);
+          json(res, 200, {
+            projects: listProjectNames(root).map((name) => {
+              try {
+                return projectOperations(
+                  root,
+                  name,
+                  jobs,
+                  context,
+                  runnerState.execution,
+                  delivery.deliveryStatus(name).deliveries,
+                );
+              } catch {
+                return {
+                  project: name,
+                  unavailable: true,
+                  inbox: [
+                    {
+                      id: "setup:configuration",
+                      kind: "setup",
+                      title: `${name} needs configuration repair`,
+                      detail:
+                        "This project's saved settings or delivery records could not be read. Other projects remain available; existing files have been preserved.",
+                      action: {
+                        label: "Open configuration",
+                        href: "/settings",
+                      },
+                    },
+                  ],
+                };
+              }
+            }),
+          });
+          return;
+        }
+        const projectOps =
+          /^\/api\/projects\/([a-z][a-z0-9-]*)\/(operations|execution|decisions)(?:\/([a-f0-9-]+))?$/.exec(
+            url.pathname,
+          );
+        if (projectOps) {
+          const name = projectOps[1]!,
+            action = projectOps[2]!;
+          if (
+            action === "operations" &&
+            req.method === "GET" &&
+            !projectOps[3]
+          ) {
+            const [jobs, context, runnerState] = await Promise.all([
+              runners().jobs(),
+              readinessContext(),
+              runners().status(),
+            ]);
+            json(
+              res,
+              200,
+              projectOperations(
+                root,
+                name,
+                jobs,
+                context,
+                runnerState.execution,
+                delivery.deliveryStatus(name).deliveries,
+              ),
+            );
+          } else if (
+            action === "execution" &&
+            req.method === "POST" &&
+            !projectOps[3]
+          ) {
+            const input = await body(req);
+            try {
+              json(res, 200, { ok: true, ...saveExecution(root, name, input) });
+            } catch (error) {
+              if (error instanceof ConfigEditorError)
+                throw new RequestError(error.status, error.message);
+              throw new RequestError(
+                400,
+                "Check run limits: concurrency 1–4, daily runs 1–1000, daily runtime 1–10080 minutes, and job duration 1–45 minutes.",
+              );
+            }
+          } else if (
+            action === "decisions" &&
+            req.method === "POST" &&
+            !projectOps[3]
+          ) {
+            const input = await body(req);
+            if (
+              Object.keys(input).some(
+                (key) => !["text", "revision"].includes(key),
+              )
+            )
+              throw new RequestError(400, "Use text and the current revision.");
+            json(res, 200, projectKnowledge.add(name, input));
+          } else if (
+            action === "decisions" &&
+            req.method === "DELETE" &&
+            projectOps[3]
+          ) {
+            const input = await body(req);
+            if (Object.keys(input).some((key) => key !== "revision"))
+              throw new RequestError(400, "Use the current revision.");
+            json(
+              res,
+              200,
+              projectKnowledge.remove(name, projectOps[3], input.revision),
+            );
+          } else
+            throw new RequestError(
+              405,
+              "Choose a supported project operation.",
+            );
+          return;
+        }
+        const cancelJob = /^\/api\/jobs\/(job-[a-f0-9-]+)\/cancel$/.exec(
+          url.pathname,
+        );
+        if (cancelJob) {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to cancel a run.");
+          if (Object.keys(await body(req)).length)
+            throw new RequestError(400, "Cancel takes an empty JSON object.");
+          json(res, 202, { job: await runners().cancel(cancelJob[1]!) });
+          runners().start();
           return;
         }
         if (url.pathname === "/api/jobs") {
@@ -2053,11 +2767,17 @@ export function createDashboardServer(
       }
     } catch (error) {
       const status =
-        error instanceof RequestError || error instanceof LocalRunnerError
+        error instanceof RequestError ||
+        error instanceof LocalRunnerError ||
+        error instanceof ProjectKnowledgeError ||
+        error instanceof RemoteWorkerError
           ? error.status
           : 500;
       const message =
-        error instanceof RequestError || error instanceof LocalRunnerError
+        error instanceof RequestError ||
+        error instanceof LocalRunnerError ||
+        error instanceof ProjectKnowledgeError ||
+        error instanceof RemoteWorkerError
           ? error.message
           : "Dashboard request failed. Check your local configuration files and permissions.";
       if (!res.headersSent) json(res, status, { error: message });
@@ -2067,13 +2787,18 @@ export function createDashboardServer(
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
   server.once("listening", () => {
+    void syncRemoteWorkers();
+    for (const name of listProjectNames(root)) continuePromotions(name);
     if (
       options.runners ||
       existsSync(join(root, ".run", "local-runners", "state.json"))
     )
       runners().start();
   });
+  const deliveryTimer = setInterval(() => void reconcileDeliveries(), 60_000);
+  deliveryTimer.unref();
   server.once("close", () => {
+    clearInterval(deliveryTimer);
     void Promise.resolve(manager?.stop()).finally(() => activityStore.close());
   });
   return server;
@@ -2169,6 +2894,7 @@ export async function runDashboard(
   const background = process.env.SHIPGREMLINS_CONTROLLER_BACKGROUND === "1";
   const controllerFile = join(root, ".run", "controller.json");
   const server = createDashboardServer(root, packageRoot, session, addresses, {
+    publicUrl: process.env.SHIPGREMLINS_DASHBOARD_URL,
     ...(supervised ? { restart: () => restartDashboard?.() } : {}),
     background,
     shutdown: () => stopDashboard?.(),
@@ -2245,6 +2971,10 @@ export async function runDashboard(
         }
       }
       const url = `http://127.0.0.1:${address.port}/#session=${session}`;
+      if (process.env.SHIPGREMLINS_DASHBOARD_URL)
+        io.log(
+          `HTTPS proxy dashboard: ${new URL(process.env.SHIPGREMLINS_DASHBOARD_URL).origin}/#session=${session}`,
+        );
       if (lan) {
         io.log("Open a LAN link on another device:");
         for (const host of addresses)

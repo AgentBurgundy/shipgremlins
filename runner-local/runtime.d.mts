@@ -10,6 +10,7 @@ export function jobEnvironments(
 export function enforceDeadline(
   stop: () => void,
   exit?: (code: number) => void,
+  minutes?: number,
 ): () => void;
 export function restoreGitConfig(directory: string, repoUrl: string): void;
 export function preparePublication(

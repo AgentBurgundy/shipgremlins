@@ -86,6 +86,36 @@ function world() {
 }
 
 describe("production completion audit", () => {
+  it("supports exact registered local-worker branches while rejecting a moved head", async () => {
+    const { ctx, manifest } = world();
+    ctx.forge.seedPull(
+      TEST_REPO,
+      {
+        number: 1,
+        headRef: "gremlins/job-local",
+        headSha: SHA.head,
+        state: "merged",
+        baseRef: "pm-staging",
+        mergedAt: "2026-10-01T12:00:00Z",
+        mergeCommitSha: SHA.source,
+      },
+      ["app.ts"],
+    );
+    Object.assign(manifest.tickets[0]!.deliverables[0]!, {
+      implementationBranch: "gremlins/job-local",
+      implementationHeadSha: SHA.head,
+    });
+    expect(
+      (await auditProduction(ctx, manifest)).tickets[0]?.classification,
+    ).toBe("production-confirmed");
+    manifest.tickets[0]!.deliverables[0]!.implementationHeadSha = "e".repeat(
+      40,
+    );
+    expect(
+      (await auditProduction(ctx, manifest)).tickets[0]?.classification,
+    ).not.toBe("production-confirmed");
+    expect(ctx.linear.stateUpdates).toEqual([]);
+  });
   it("uses a nonempty approved complete scope, never arbitrary comments or verified labels", async () => {
     const { ctx, ticket } = world();
     ticket.labels.push("pm-verified");

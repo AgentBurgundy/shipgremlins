@@ -3,7 +3,8 @@ import { validConnectionId } from "./oauthConnection/profileId.ts";
 export { validConnectionId } from "./oauthConnection/profileId.ts";
 
 export type ProjectWorkflow =
-  { kind: "pull-request"; baseBranch: string } | { kind: "promotion" };
+  | { kind: "pull-request"; baseBranch: string }
+  | { kind: "promotion"; candidateEnvironment?: string };
 export type ProjectVerification =
   { mode: "repository" } | { mode: "browser"; environment: string };
 
@@ -243,8 +244,23 @@ export function parseProjectCapabilities(
         baseBranch: raw.workflow.baseBranch,
       };
     } else if (raw.workflow.kind === "promotion") {
-      keys(raw.workflow, ["kind"]);
-      result.workflow = { kind: "promotion" };
+      keys(raw.workflow, ["kind", "candidateEnvironment"]);
+      if (
+        raw.workflow.candidateEnvironment !== undefined &&
+        (typeof raw.workflow.candidateEnvironment !== "string" ||
+          !/^[a-z][a-z0-9-]{0,62}$/.test(raw.workflow.candidateEnvironment))
+      )
+        throw new Error(
+          "Candidate environment must name an existing nonproduction target.",
+        );
+      result.workflow = {
+        kind: "promotion",
+        ...(raw.workflow.candidateEnvironment !== undefined
+          ? {
+              candidateEnvironment: raw.workflow.candidateEnvironment as string,
+            }
+          : {}),
+      };
     } else throw new Error("workflow.kind must be pull-request or promotion.");
   }
   if (raw.environments !== undefined) {
@@ -289,6 +305,41 @@ export function parseProjectCapabilities(
     throw new Error(
       "Choose repository verification or select a named browser environment.",
     );
+  }
+  if (
+    result.workflow?.kind === "promotion" &&
+    result.workflow.candidateEnvironment
+  ) {
+    const name = result.workflow.candidateEnvironment,
+      target = result.environments?.[name];
+    if (
+      !target ||
+      target.role === "production" ||
+      !["railway", "vercel"].includes(target.kind)
+    )
+      throw new Error(
+        "Candidate environment must be a named nonproduction Vercel or Railway target.",
+      );
+    const inspection =
+      result.verification?.mode === "browser"
+        ? result.environments?.[result.verification.environment]
+        : undefined;
+    if (
+      result.verification?.mode === "browser" &&
+      name === result.verification.environment
+    )
+      throw new Error(
+        "Choose a candidate environment separate from integration.",
+      );
+    if (
+      target.kind === "railway" &&
+      inspection?.kind === "railway" &&
+      target.environmentId === inspection.environmentId &&
+      target.serviceId === inspection.serviceId
+    )
+      throw new Error(
+        "Railway candidate and integration targets must use separate service instances.",
+      );
   }
   return result;
 }

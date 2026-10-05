@@ -43,6 +43,7 @@ function browser(path = "/") {
   }
   const pages = [
     "overview",
+    "inbox",
     "connections",
     "projects",
     "runners",
@@ -73,6 +74,7 @@ function browser(path = "/") {
     project: string;
     pm: string;
     tab: string;
+    run: string;
     destroy(): void;
   }
   const window = {
@@ -146,6 +148,25 @@ function browser(path = "/") {
 }
 
 describe("dashboard page navigation", () => {
+  it("retains project operation tabs and exact activity run links through reload and back", () => {
+    const view = browser("/projects/shop?tab=limits");
+    const pages = view.initialize();
+    expect(pages.tab).toBe("limits");
+    expect(view.window.location.search).toBe("?tab=limits");
+    pages.navigate("/inbox");
+    expect(pages.current).toBe("inbox");
+    pages.navigate("/activity?run=job-one");
+    expect(pages.run).toBe("job-one");
+    expect(view.window.location.search).toBe("?run=job-one");
+    pages.navigate("/activity");
+    expect(pages.run).toBe("");
+    view.window.location = new URL(
+      "http://localhost:4311/projects/shop?tab=knowledge",
+    );
+    view.windowEvents.get("popstate")!();
+    expect(pages.project).toBe("shop");
+    expect(pages.tab).toBe("knowledge");
+  });
   it("opens a separate project and PM workspace directly and retains tab identity across back navigation", () => {
     const view = browser("/projects/storefront?pm=checkout&tab=discovery");
     const pages = view.initialize();

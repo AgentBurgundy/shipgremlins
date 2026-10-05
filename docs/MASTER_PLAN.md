@@ -1,6 +1,6 @@
 # ShipGremlins master plan
 
-Updated October 4, 2026. This document preserves the original planning baseline
+Updated October 5, 2026. This document preserves the original planning baseline
 and the longer-term roadmap. ShipGremlins is the current project name. The audit
 below describes the original system, not today's shipped capabilities; consult
 [implementation status](IMPLEMENTATION_STATUS.md) for release-specific progress.
@@ -9,6 +9,13 @@ The current PM workspace direction builds on that plan: project pages in the
 sidebar, structured owner briefs, a repository discovery run, and durable feature,
 queue, and memory documents. See [PM workflow](PM_WORKFLOW.md). Discovery informs
 future work without granting ticket approval or rewriting the owner's mandate.
+
+The owner's October 5 direction supersedes the earlier whole-branch proposal:
+the **owning PM** verifies fixes on its next patrol, then **selective cherry-picks**
+package only reviewed work for staging. There is no separate verification PM.
+The current [operations plan](OPERATIONS_PLAN.md) covers the build, and
+[delivery guide](DELIVERY_WORKFLOW.md) records the concrete GitLab/Railway flow
+and its remaining candidate-deployment setup.
 
 PM Hub should give a developer a persistent team of AI product managers and developers. Each PM owns a mandate, explores the real application, records evidence, proposes useful work, and verifies improvements. Developers implement approved Linear tickets in the background. A deterministic controller manages execution, recovery, and promotion. The owner keeps building while the system handles routine work and surfaces decisions that actually need attention.
 
@@ -160,22 +167,26 @@ Environment checks must establish isolated credentials, mail/payment sandboxes, 
 
 ### Promotion mode
 
-The owner's requested default is a literal **`pm-staging` → `staging` PR/MR**. A direct branch PR includes the entire delta, so the complete delta must qualify. One verified ticket cannot justify promoting unverified neighbors.
+The requested promotion mode is **selective**: code runs and is tested in
+`pm-staging`, then the owning PM's verified changes are cherry-picked onto a
+release branch created from `staging`. A direct `pm-staging` → `staging` PR would
+include unreviewed neighbors and must not replace that selection.
 
 Proposed sequence:
 
 1. Integrate approved developer changes into `pm-staging`, serialize merges, and re-evaluate checks as the integration base changes.
-2. Bring in the current staging base and establish a promotion lease. Freeze integration merges and sync writes for the candidate's review window; developers may continue on isolated branches.
-3. Record the integration head, staging base, full change manifest, policy version, acceptance revisions, environment/configuration versions, and required checks.
+2. Let the owning PM review its approved fixes against the exact ready integration deployment, with independent replay receipts for its acceptance criteria.
+3. Assemble selected passing changes on the current staging base. Record the source merges, staging base, candidate head, change manifest, acceptance revisions, environment/configuration versions, and required checks. Hold overlaps, dependencies and conflicts that are not proven safe.
 4. Deploy and test that candidate before opening the staging PR. Branch-triggered or explicit candidate jobs must work without a PR already existing.
 5. Run the independent verifier with clean accounts/fixtures against the recorded deployment. Retain browser screenshots, assertions, relevant logs, and test outputs.
 6. The controller validates evidence, check identities, approval scope, artifacts, and unchanged branch/environment versions. Only then open the promotion PR/MR and publish a mandatory release-verification check.
-7. Keep the source frozen while the promotion is open. If either branch, relevant environment, acceptance criteria, or candidate content changes, invalidate the check and close/supersede the proposal until re-verification passes. Never append unverified content to an already approved proposal.
+7. If the candidate, staging base, relevant environment or acceptance scope changes, require fresh verification. Stage updates separately so unverified content cannot be appended to an already reviewed promotion branch. Integration work can continue independently.
 8. The owner merges into staging; record provenance and perform staging smoke checks. Production remains a separate owner-controlled promotion. Track its merge to update Linear.
 
-The freeze is an explicit throughput tradeoff for literal branch-to-branch promotion. Show its owner and expiry in the dashboard. On expiry or cancellation, withdraw the proposal and release the freeze; never merge automatically to clear a queue. Enforce this through provider protections and controller credentials, not a database flag alone.
-
-The existing selective `pm-release/...` cherry-pick mechanism may remain as an explicitly configured legacy mode during migration. A future snapshot/selective mode can reduce blocking across many PMs, but it must independently test the assembled candidate and its dependency closure. File overlap and cherry-pick success alone cannot prove independence. It must not silently replace the requested direct-branch behavior.
+The `pm-release/...` mechanism implements this selective model. File overlap and
+cherry-pick success alone cannot prove independence: test the assembled candidate
+and its dependency closure. Keep provider protections and staging/production
+owner review in place. A literal whole-branch mode is not the requested default.
 
 ### Required evidence
 
@@ -371,9 +382,16 @@ Daily capacity planning starts with `PM count × runs per day × average run dur
 
 The accepted default is `gremlins setup` → save connections → choose the app repository → **Create runner on this machine** → browser-verified Ready. Use `--lan` for a homelab. The machine is the CLI/dashboard server, not the device displaying its dashboard. GitHub and GitLab hold app source; **the local controller and Docker execute jobs directly**. No fork, automation repository, provider CI registration, or CI secret provisioning is required for this path.
 
-Implemented foundations include a durable local queue, per-worker concurrency one, up to four slots, idempotent scheduled/ticket work, approval rechecks before launch, PNG-backed browser verification, pause/drain/repair/remove controls, and retained logs/artifacts. `gremlins start`, `status`, and `stop` manage a detached controller. Existing containers survive controller stops and updates; a returning controller inspects them before proceeding. A pre-launch infrastructure failure gets one retry; failed agents are not blindly replayed.
+Implemented foundations include a durable queue, one job per worker, up to four local/remote slots, idempotent scheduled/ticket work, approval rechecks, real browser readiness, pause/drain/repair/cancel controls, and retained logs/artifacts. `gremlins start`, `status`, and `stop` manage a detached controller. Confirmed pre-execution failures have bounded retries/backoff; ambiguous launches and failed agents are not blindly replayed. Remote jobs have expiring leases and stop if their controller cannot renew them.
 
-Local developers propose draft PRs/MRs against the project's configured base after configured checks. They do not merge, promote staging, or mark tickets Done. Signed promotion and explicit production-reconciliation tools remain separate. Full local release parity, durable shared-memory updates, cloud execution, automatic OS service installation, and live GitHub/GitLab/Railway certification remain work to complete. Disable legacy CI schedules when migrating a project locally.
+Local developers propose draft PRs/MRs after configured checks. In promotion mode,
+the controller can advance eligible fixes to integration, arrange owning-PM review,
+and prepare selective candidates. Candidate hosting and trusted signing still need
+explicit configuration. The owner confirms full production scope before periodic
+completion reconciliation. Shared project knowledge, remote Docker workers and
+project limits are now implemented; automatic cloud provisioning, OS service
+installation, and complete live provider certification remain open. Disable legacy
+CI schedules when migrating a project locally.
 
 ### Flexible project decision — October 4, 2026
 

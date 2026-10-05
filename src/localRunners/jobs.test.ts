@@ -112,6 +112,43 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("supplies bounded shared observations and captures approved ticket identity before publication", async () => {
+    const beforeDeveloper = vi.fn(
+      async (
+        _job: LocalJob,
+        payload: import("./docker.ts").DockerJobPayload,
+        approved: LinearTicket,
+      ) => {
+        expect(approved.id).toBe(ticket.id);
+        expect(approved.labels).toContain("pm-approved");
+        return payload;
+      },
+    );
+    const sharedContext = vi.fn(
+      () => "Sibling observations: " + "x".repeat(50000),
+    );
+    const preparation = createJobPreparation({
+      root,
+      env,
+      beforeDeveloper,
+      sharedContext,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [],
+      }),
+      preview: async () => "https://app-preview.vercel.app",
+    });
+    const payload = await preparation.prepareJob(job);
+    expect(beforeDeveloper).toHaveBeenCalledOnce();
+    expect(sharedContext).toHaveBeenCalledWith(
+      expect.objectContaining({ dir: expect.any(String) }),
+      expect.objectContaining({ key: "core" }),
+      job,
+    );
+    expect(payload.prompt).toContain("SHARED PROJECT OBSERVATIONS");
+    expect(payload.prompt).toContain("[Shared context truncated");
+    expect(payload.prompt).not.toContain("x".repeat(25000));
+  });
   it("admits code-only discovery before Linear/hosting verification and leases only source plus AI credentials", async () => {
     edit("project.json", (raw) => {
       raw.verified = null;
@@ -676,6 +713,52 @@ describe("local job preparation", () => {
       raw.areas.core.enabled = false;
     });
     expect(await scheduler.scheduledJobs()).toEqual([]);
+  });
+  it("ranks approved urgent tickets before older low-priority tickets without changing WIP or identities", async () => {
+    const file = join(root, "projects/app/areas.json"),
+      areas = JSON.parse(readFileSync(file, "utf8"));
+    areas.areas.core.wipLimit = 2;
+    writeFileSync(file, JSON.stringify(areas));
+    const tickets = [
+      {
+        ...ticket,
+        id: "low",
+        identifier: "APP-1",
+        priority: 4,
+        createdAt: "2025-01-01T00:00:00Z",
+      },
+      {
+        ...ticket,
+        id: "urgent",
+        identifier: "APP-2",
+        priority: 1,
+        createdAt: "2026-10-03T00:00:00Z",
+      },
+      {
+        ...ticket,
+        id: "none",
+        identifier: "APP-3",
+        priority: 0,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ];
+    const scheduler = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket: async () => null,
+        listTickets: async () => tickets,
+      }),
+      now: () => new Date("2026-10-04T09:00:45Z"),
+    });
+    const jobs = (await scheduler.scheduledJobs()).filter(
+      (item) => item.type === "developer",
+    );
+    expect(jobs.map((item) => item.ticket)).toEqual(["APP-2", "APP-1"]);
+    expect(jobs.map((item) => item.idempotencyKey)).toEqual([
+      "developer:app:urgent",
+      "developer:app:low",
+    ]);
   });
 });
 

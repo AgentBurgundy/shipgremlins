@@ -341,15 +341,17 @@ export function createCandidateVerifier(
             "Screenshot artifact digest does not match",
           );
       const v = promotionVercel(ctx.project.config);
-      if (!v)
+      if (!v && !ctx.resolveDeployment)
         throw new AttestationError(
           "This project's workflow has no supported revision-bound promotion target",
         );
-      const deployment = await ctx.vercel.latestDeployment(
-        v.projectId,
-        v.teamId ?? null,
-        candidate.branch,
-      );
+      const deployment = ctx.resolveDeployment
+        ? await ctx.resolveDeployment(candidate.branch, candidate.sha)
+        : await ctx.vercel.latestDeployment(
+            v!.projectId,
+            v!.teamId ?? null,
+            candidate.branch,
+          );
       if (
         !deployment ||
         deployment.state !== "READY" ||

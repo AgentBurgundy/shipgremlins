@@ -18,7 +18,12 @@ export interface CompletionScope {
   approvedBy: string;
   approvedAt: string;
   completedStateId: string;
-  deliverables: { implementationPr: number; productionPr: number }[];
+  deliverables: {
+    implementationPr: number;
+    productionPr: number;
+    implementationBranch?: string;
+    implementationHeadSha?: string;
+  }[];
 }
 
 /** State/labels are deliberately excluded: QA and reconciliation change them. */
@@ -80,10 +85,34 @@ export function parseCompletionManifest(input: unknown): CompletionManifest {
           return fail(`${key} must be a positive PR number`);
       }
       const implementationPr = item.implementationPr as number;
+      if (
+        (item.implementationBranch === undefined) !==
+        (item.implementationHeadSha === undefined)
+      )
+        return fail(
+          "local implementation identity requires both branch and head SHA",
+        );
+      if (
+        item.implementationBranch !== undefined &&
+        (typeof item.implementationBranch !== "string" ||
+          !/^gremlins\/job-[a-z0-9-]{1,58}$/.test(item.implementationBranch) ||
+          typeof item.implementationHeadSha !== "string" ||
+          !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(item.implementationHeadSha))
+      )
+        return fail("local implementation branch or head SHA is invalid");
       if (pulls.has(implementationPr))
         return fail(`duplicate implementation PR #${implementationPr}`);
       pulls.add(implementationPr);
-      return { implementationPr, productionPr: item.productionPr as number };
+      return {
+        implementationPr,
+        productionPr: item.productionPr as number,
+        ...(item.implementationBranch === undefined
+          ? {}
+          : {
+              implementationBranch: item.implementationBranch as string,
+              implementationHeadSha: item.implementationHeadSha as string,
+            }),
+      };
     });
     return {
       ticketId,

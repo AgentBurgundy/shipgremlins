@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { browserSmoke } from "./runner-smoke.mjs";
+import { startLeaseWatchdog } from "./lease.mjs";
 import { chromium } from "playwright";
 import { createActivityWriter } from "./activity.mjs";
 import {
@@ -19,6 +20,7 @@ import {
   sanitizeKnowledge,
 } from "./discovery.mjs";
 import { runCheckedDelivery, validateDelivery } from "./delivery.mjs";
+import { validateReviewPlan } from "./review-receipts.mjs";
 import {
   enforceDeadline,
   jobEnvironments,
@@ -40,7 +42,8 @@ const stop = () => {
 process.once("SIGTERM", stop);
 process.once("SIGINT", stop);
 let timedOut = false;
-const clearDeadline = enforceDeadline(() => {
+let clearLease = () => {};
+let clearDeadline = enforceDeadline(() => {
   timedOut = true;
   stop();
 });
@@ -184,10 +187,36 @@ try {
   }
   if (stopping) process.exit(0);
   const input = JSON.parse(readFileSync("/work/job.json", "utf8"));
+  if (input.remoteLease !== undefined && typeof input.remoteLease !== "boolean")
+    throw new Error("Invalid remote lease.");
+  if (input.remoteLease)
+    clearLease = startLeaseWatchdog({
+      stop: () => {
+        timedOut = true;
+        stop();
+      },
+    });
   unlinkSync("/work/job.json");
   if (!input || !["verify", "pm", "developer"].includes(input.kind))
     throw new Error("Unsupported job kind.");
   kind = input.kind;
+  if (input.maxRuntimeMinutes !== undefined) {
+    if (
+      !Number.isInteger(input.maxRuntimeMinutes) ||
+      input.maxRuntimeMinutes < 1 ||
+      input.maxRuntimeMinutes > 45
+    )
+      throw new Error("Invalid job runtime limit.");
+    clearDeadline();
+    clearDeadline = enforceDeadline(
+      () => {
+        timedOut = true;
+        stop();
+      },
+      undefined,
+      input.maxRuntimeMinutes,
+    );
+  }
   const discovery = input.pmMode === "discovery";
   if (input.pmMode !== undefined && (!discovery || kind !== "pm"))
     throw new Error("Invalid PM mode.");
@@ -198,6 +227,13 @@ try {
     throw new Error("Invalid browser verification mode.");
   activity.emit("progress", "Job started", `Starting ${kind} work.`, "running");
   if (kind === "developer") validateDelivery(input.delivery);
+  if (input.reviewPlan !== undefined) {
+    if (kind !== "pm" || discovery || input.browserVerification !== true)
+      throw new Error("Delivery review requires a normal browser PM patrol.");
+    validateReviewPlan(input.reviewPlan);
+    if (input.reviewPlan.jobId !== input.nonce)
+      throw new Error("Delivery review belongs to another job.");
+  }
   if (kind === "verify") {
     await browserSmoke("/output", input.nonce);
     activity.emit(
@@ -300,6 +336,10 @@ try {
     const baseSha = (
       await run("git", ["rev-parse", "HEAD"], { cwd: "/work/repo", env })
     ).trim();
+    if (input.reviewPlan && baseSha !== input.reviewPlan.deployment.sha)
+      throw new Error(
+        "Integration moved before checkout. Queue a patrol after its deployment settles.",
+      );
     if (kind === "developer")
       await run("git", ["checkout", "-b", input.delivery.branch], {
         cwd: "/work/repo",
@@ -458,7 +498,7 @@ try {
 } catch (error) {
   const message = redact(
     timedOut
-      ? "Job exceeded the 45-minute time limit."
+      ? "Job exceeded its configured runtime limit."
       : error instanceof Error
         ? error.message
         : "Job failed.",
@@ -480,6 +520,7 @@ try {
   activity.emit("result", "Job failed", message, "failed");
   process.exitCode = timedOut ? 124 : stopping ? 130 : 1;
 } finally {
+  clearLease();
   clearDeadline();
   // Text artifacts can contain echoed environment values even when tool logs do not.
   function clean(directory, depth = 0) {

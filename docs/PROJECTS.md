@@ -195,8 +195,16 @@ The Connections section stores account credentials and shows configured state. P
 
 Manual values live in the configuration directory's `.env`; OAuth connections use their encrypted local state and matching keys. Keep private backups of both. Never put token values or service-account JSON in `project.json`. Hosting discovery runs on the controller. Application preview bypass and test sign-in access, where configured, are distinct from the provider's account credential.
 
-## Promotion remains an explicit advanced workflow
+## Choose selective promotion when your app needs it
 
-Legacy Vercel projects keep their staged promotion behavior. New projects use ordinary draft PRs/MRs. Selecting `workflow: {"kind":"promotion"}` requires distinct production, staging, and integration branches plus the separate deployment and evidence setup. The UI preserves these legacy settings and lets you review branch names.
+New projects use ordinary draft PRs/MRs. Selecting `workflow: {"kind":"promotion"}` requires distinct production, staging, and integration branches plus deployment and evidence setup. Project Delivery tracks approved drafts, owning-PM verification and selectively cherry-picked candidates. GitHub and GitLab source are independent of the hosting provider.
 
-Railway and Cloud Run discovery do not imply promotion support equivalent to the legacy Vercel path. The local queue does not auto-merge production or mark a ticket Done when a job succeeds. [Signed promotion gates](VERIFICATION.md) and [production completion](LINEAR_LIFECYCLE.md) remain separate reviewed operations.
+Vercel and Railway integration review require actual deployed branch/SHA metadata.
+Select a named candidate target on the Delivery page using
+`workflow.candidateEnvironment`. A Railway candidate must use a separate service
+or environment so its deployment cannot overwrite the fixed `pm-staging` target.
+Candidate deployment and trusted signing are still explicit setup steps; direct
+URLs and Cloud Run discovery alone cannot authorize promotion. The controller
+never auto-merges production or marks Done merely because a job succeeded.
+Follow [the delivery setup](DELIVERY_WORKFLOW.md), [candidate gate](VERIFICATION.md),
+and [production completion](LINEAR_LIFECYCLE.md).

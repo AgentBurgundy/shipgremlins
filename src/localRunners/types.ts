@@ -37,10 +37,17 @@ export interface LocalJob extends LocalJobInput {
   message?: string;
   retries?: number;
   exitCode?: number;
+  nextAttemptAt?: string;
+  failure?: import("./recovery.ts").JobFailure;
+  cancelRequestedAt?: string;
+  budget?: import("./budgets.ts").JobBudget;
+  reconciliationAttempts?: number;
+  launchAttemptedAt?: string;
 }
 
 export interface LocalWorker {
   id: string;
+  remoteId?: string;
   name: string;
   status: "provisioning" | "ready" | "busy" | "paused" | "error";
   busy: boolean;
@@ -60,4 +67,5 @@ export interface LocalRunnerStatus {
   runners: LocalWorker[];
   jobs: LocalJob[];
   operation: RunnerOperation;
+  execution?: import("./budgets.ts").ProjectExecutionUsage[];
 }

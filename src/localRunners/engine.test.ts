@@ -29,6 +29,37 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6eH8AAAAASUVORK5CYII=",
   "base64",
 );
+it("persists remote worker bindings and checks project scope before preparing credentials", async () => {
+  const f = fixture(),
+    prepareWorker = vi.fn(async () => {});
+  f.options.docker.prepareWorker = prepareWorker;
+  f.options.docker.canRun = (_remote, project) => project === "allowed";
+  const remoteId = `remote-${randomUUID()}`,
+    worker = await f.engine.addRemote(remoteId, "Cloud gremlin");
+  expect(await f.engine.addRemote(remoteId, "Cloud gremlin")).toEqual(worker);
+  await f.engine.tick();
+  const verification = (await f.engine.jobs())[0]!;
+  f.finish(verification.id);
+  await f.engine.tick();
+  const blocked = await f.engine.enqueue({
+      type: "pm",
+      project: "blocked",
+      area: "core",
+    }),
+    allowed = await f.engine.enqueue({
+      type: "pm",
+      project: "allowed",
+      area: "core",
+    });
+  const restarted = createLocalRunners(f.options);
+  await restarted.tick();
+  expect(await restarted.job(blocked.id)).toMatchObject({ status: "queued" });
+  expect(await restarted.job(allowed.id)).toMatchObject({ status: "running" });
+  expect(f.options.prepareJob).toHaveBeenCalledTimes(1);
+  expect(prepareWorker).toHaveBeenLastCalledWith(worker.id, remoteId);
+  expect(f.mock.ensureImage).not.toHaveBeenCalled();
+  expect(f.calls.at(-1)?.payload.project).toBe("allowed");
+});
 it("persists explicit one-off job admission across a controller restart", async () => {
   const f = fixture();
   const queued = await f.engine.enqueue({
@@ -45,6 +76,284 @@ it("persists explicit one-off job admission across a controller restart", async 
   await expect(
     restarted.enqueue({ type: "verify", runOnce: true }),
   ).rejects.toThrow();
+});
+
+it("backs off confirmed pre-execution infrastructure failures durably and exhausts only two retries", async () => {
+  const f = fixture();
+  f.mock.ensureImage.mockRejectedValue(new Error("private outage details"));
+  await f.engine.create();
+  await f.engine.tick();
+  const job = (await f.engine.jobs())[0]!;
+  expect(job).toMatchObject({
+    status: "queued",
+    retries: 1,
+    failure: { category: "infrastructure", retryable: true },
+  });
+  await f.engine.tick();
+  expect(f.mock.ensureImage).toHaveBeenCalledTimes(1);
+  const restarted = createLocalRunners(f.options);
+  f.advance(15000);
+  await restarted.tick();
+  expect(await restarted.job(job.id)).toMatchObject({
+    status: "queued",
+    retries: 2,
+  });
+  f.advance(59999);
+  await restarted.tick();
+  expect(f.mock.ensureImage).toHaveBeenCalledTimes(2);
+  f.advance(1);
+  await restarted.tick();
+  expect(await restarted.job(job.id)).toMatchObject({
+    status: "failed",
+    retries: 2,
+    failure: { category: "infrastructure", retryable: false },
+  });
+  expect(f.mock.startJob).not.toHaveBeenCalled();
+  expect(readFileSync(f.stateFile, "utf8")).not.toContain("private outage");
+});
+
+it("cancels queued work durably and only stops the requested running owned job", async () => {
+  const f = fixture();
+  await f.ready();
+  const queued = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  expect(await f.engine.cancel(queued.id)).toMatchObject({
+    status: "canceled",
+  });
+  await createLocalRunners(f.options).tick();
+  expect(f.calls.some((call) => call.id === queued.id)).toBe(false);
+  expect(f.mock.stopJob).not.toHaveBeenCalled();
+  const running = await f.engine.enqueue({
+    type: "developer",
+    project: "demo",
+    ticket: "APP-10",
+  });
+  await f.engine.tick();
+  const result = await f.engine.cancel(running.id);
+  expect(result).toMatchObject({
+    status: "canceled",
+    cancelRequestedAt: expect.any(String),
+  });
+  expect(f.mock.stopJob).toHaveBeenCalledExactlyOnceWith(running.id);
+  expect(f.containers.has(running.id)).toBe(true);
+  expect(f.mock.removeJob).not.toHaveBeenCalled();
+  expect(await f.engine.cancel(running.id)).toMatchObject({
+    status: "canceled",
+  });
+  expect(f.mock.stopJob).toHaveBeenCalledTimes(1);
+});
+
+it("records cancellation while preparation holds the engine lock and never launches afterward", async () => {
+  const f = fixture();
+  await f.ready();
+  let release!: (payload: DockerJobPayload) => void;
+  const prepareJob = vi.fn(
+    () =>
+      new Promise<DockerJobPayload>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const cleanup = vi.fn(async () => {});
+  const engine = createLocalRunners({
+    ...f.options,
+    prepareJob,
+    releaseJobResources: cleanup,
+  });
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  const tick = engine.tick();
+  await vi.waitFor(() => expect(prepareJob).toHaveBeenCalledOnce());
+  const canceled = await engine.cancel(job.id);
+  expect(canceled.cancelRequestedAt).toBeDefined();
+  release({ kind: "pm" });
+  await tick;
+  expect(await engine.job(job.id)).toMatchObject({ status: "canceled" });
+  expect(f.calls.some((call) => call.id === job.id)).toBe(false);
+  expect(cleanup).toHaveBeenCalledWith(job.id);
+});
+it("stops the owned job immediately when cancellation arrives during locked completion work", async () => {
+  const f = fixture();
+  await f.ready();
+  let rejectCompletion!: (error: Error) => void;
+  const complete = vi.fn(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectCompletion = reject;
+      }),
+  );
+  const engine = createLocalRunners({
+    ...f.options,
+    reconcileCompletedJob: complete,
+  });
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  f.finish(job.id);
+  const tick = engine.tick();
+  await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+  await engine.cancel(job.id);
+  expect(f.mock.stopJob).toHaveBeenCalledExactlyOnceWith(job.id);
+  rejectCompletion(new Error("Review stopped"));
+  await tick;
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({ status: "canceled" });
+});
+
+it("keeps cancellation pending and credentials reserved during Docker outage, then finishes after restart", async () => {
+  const f = fixture();
+  await f.ready();
+  const cleanup = vi.fn(async () => {});
+  const engine = createLocalRunners({
+    ...f.options,
+    releaseJobResources: cleanup,
+  });
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  f.mock.stopJob.mockRejectedValueOnce(new Error("offline"));
+  expect(await engine.cancel(job.id)).toMatchObject({
+    status: "running",
+    cancelRequestedAt: expect.any(String),
+  });
+  expect(cleanup).not.toHaveBeenCalledWith(job.id);
+  const restarted = createLocalRunners({
+    ...f.options,
+    releaseJobResources: cleanup,
+  });
+  await restarted.tick();
+  expect(await restarted.job(job.id)).toMatchObject({ status: "canceled" });
+  expect(cleanup).toHaveBeenCalledWith(job.id);
+});
+
+it("persists daily run limits across restart, isolates projects, and resumes on the next UTC day", async () => {
+  const f = fixture();
+  await f.ready();
+  const options = {
+    ...f.options,
+    executionLimits: () => ({ maxDailyRuns: 1, maxJobMinutes: 2 }),
+  };
+  const engine = createLocalRunners(options);
+  const first = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  expect(f.calls.at(-1)?.payload.maxRuntimeMinutes).toBe(2);
+  f.advance(60000);
+  f.finish(first.id);
+  await engine.tick();
+  const second = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "other",
+  });
+  const restarted = createLocalRunners(options);
+  await restarted.tick();
+  expect(await restarted.job(second.id)).toMatchObject({
+    status: "queued",
+    message: expect.stringContaining("daily run limit"),
+  });
+  const independent = await restarted.enqueue({
+    type: "pm",
+    project: "another",
+    area: "core",
+  });
+  await restarted.tick();
+  expect(await restarted.job(independent.id)).toMatchObject({
+    status: "running",
+  });
+  f.finish(independent.id);
+  await restarted.tick();
+  expect(
+    (await restarted.status()).execution?.find(
+      (item) => item.project === "demo",
+    ),
+  ).toMatchObject({ runsStarted: 1, runtimeMinutes: 1 });
+  f.advance(86400000);
+  await restarted.tick();
+  expect(await restarted.job(second.id)).toMatchObject({ status: "running" });
+});
+
+it("stops only the job whose project runtime limit expires and accounts its reserved runtime", async () => {
+  const f = fixture();
+  await f.ready();
+  const engine = createLocalRunners({
+    ...f.options,
+    executionLimits: () => ({ maxDailyRuntimeMinutes: 1, maxJobMinutes: 10 }),
+  });
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  expect(f.calls.at(-1)?.payload.maxRuntimeMinutes).toBe(1);
+  f.advance(60000);
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({
+    status: "failed",
+    failure: { category: "runtime-limit" },
+    budget: { runtimeMs: 60000 },
+  });
+  expect(f.mock.stopJob).toHaveBeenCalledWith(job.id);
+  const queued = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "other",
+  });
+  await engine.tick();
+  expect(await engine.job(queued.id)).toMatchObject({
+    status: "queued",
+    message: expect.stringContaining("daily runtime budget"),
+  });
+});
+
+it("retries completion reconciliation without executing the agent or publication again", async () => {
+  const f = fixture();
+  await f.ready();
+  const reconcileCompletedJob = vi.fn(async () => {
+    throw new Error("provider unavailable");
+  });
+  const engine = createLocalRunners({ ...f.options, reconcileCompletedJob });
+  const job = await engine.enqueue({
+    type: "developer",
+    project: "demo",
+    ticket: "APP-20",
+  });
+  await engine.tick();
+  f.finish(job.id);
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({
+    status: "running",
+    reconciliationAttempts: 1,
+  });
+  const starts = f.mock.startJob.mock.calls.length;
+  await engine.tick();
+  expect(reconcileCompletedJob).toHaveBeenCalledTimes(1);
+  f.advance(30000);
+  const restarted = createLocalRunners({ ...f.options, reconcileCompletedJob });
+  await restarted.tick();
+  f.advance(60000);
+  await restarted.tick();
+  expect(await restarted.job(job.id)).toMatchObject({
+    status: "failed",
+    reconciliationAttempts: 3,
+    failure: { category: "completion", retryable: false },
+  });
+  expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
 });
 
 it("persists discovery admission and completes only after retry-safe knowledge adoption", async () => {
@@ -164,6 +473,14 @@ function fixture() {
     })),
     readArtifact: vi.fn(async () => PNG),
     removeJob: vi.fn(async () => undefined),
+    stopJob: vi.fn(async (id: string) => {
+      const container = containers.get(id);
+      if (container) {
+        container.running = false;
+        container.status = "exited";
+        container.exitCode = 143;
+      }
+    }),
   };
   const options = {
     root,
@@ -333,7 +650,7 @@ describe("durable local worker engine", () => {
     await engine.stop();
   });
 
-  it("releases an orphaned prelaunch lease before retrying the same job after restart", async () => {
+  it("releases a lease after an ambiguous launch disappears without repeating potentially published work", async () => {
     const f = fixture();
     await f.ready();
     const events: string[] = [];
@@ -362,10 +679,11 @@ describe("durable local worker engine", () => {
       releaseJobResources,
     });
     await restarted.tick();
-    expect(events).toEqual(["acquire", "release", "acquire"]);
+    expect(events).toEqual(["acquire", "release"]);
     expect(await restarted.job(id)).toMatchObject({
-      status: "running",
-      retries: 1,
+      status: "failed",
+      retries: 0,
+      failure: { category: "ambiguous-launch", retryable: false },
     });
     await engine.stop();
     await restarted.stop();
@@ -786,7 +1104,7 @@ describe("durable local worker engine", () => {
     );
   });
 
-  it("retries one failed launch before a container exists, then stops", async () => {
+  it("does not repeat an uncertain Docker launch even if its container is missing", async () => {
     const f = fixture();
     f.mock.startJob.mockRejectedValue(
       new Error("private error never print token=secret"),
@@ -794,11 +1112,11 @@ describe("durable local worker engine", () => {
     await f.engine.create();
     await f.engine.tick();
     const job = (await f.engine.status()).jobs[0]!;
-    expect(job).toMatchObject({ status: "queued", retries: 1 });
+    expect(job).toMatchObject({ status: "failed", retries: 0 });
     await f.engine.tick();
     expect((await f.engine.job(job.id))?.status).toBe("failed");
     await f.engine.tick();
-    expect(f.mock.startJob).toHaveBeenCalledTimes(2);
+    expect(f.mock.startJob).toHaveBeenCalledTimes(1);
     expect(readFileSync(f.stateFile, "utf8")).not.toContain("private error");
   });
 

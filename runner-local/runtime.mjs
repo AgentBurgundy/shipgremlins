@@ -86,13 +86,15 @@ export function restoreGitConfig(directory, repoUrl) {
   );
 }
 
-export function enforceDeadline(stop, exit = process.exit) {
+export function enforceDeadline(stop, exit = process.exit, minutes = 45) {
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 45)
+    throw new Error("Invalid job runtime limit.");
   let forced;
   const timer = setTimeout(() => {
     stop();
     forced = setTimeout(() => exit(124), 10_000);
     forced.unref();
-  }, MAX_JOB_MS);
+  }, minutes * 60_000);
   timer.unref();
   return () => {
     clearTimeout(timer);

@@ -1,6 +1,6 @@
 # ShipGremlins alpha implementation status
 
-Updated October 4, 2026. The master plan is a product roadmap, not a statement that
+Updated October 5, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
 Project telemetry now includes optional read adapters for Sentry logs/error
@@ -58,14 +58,14 @@ production model output remains dependent on the connected Claude account.
 | Capability       | Current state                                                                                                                                                                                                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |
-| Recovery         | Durable local queue, idempotent schedule/ticket keys, cross-process lock, inspection of existing containers after restart, and one retry before launch. Failed agent jobs require review. Legacy dispatcher recovery remains separate.                            |
-| Promotion        | Separate legacy Vercel release tools enforce checks and signed browser evidence for an assembled candidate. Local workers stop at draft PRs/MRs targeting the configured base branch; no automatic staging promotion.                                             |
-| Linear Done      | Read-only audit and explicit, dry-run-first reconciliation using an operator-reviewed complete deliverable manifest; merged production PR and Git-tree proof required                                                                                             |
+| Recovery         | Durable queue and usage ledger, classified startup retries with backoff, ambiguous-launch holds, record-only reconciliation retries and confirmed cancellation. Failed agent jobs require review.                                                                 |
+| Promotion        | Local promotion projects track approved drafts, exact integration deployment, owning-PM review and selective candidates. Independent checks and browser evidence gate promotion; candidate deployment and trusted signing remain explicit setup requirements.     |
+| Linear Done      | Read-only CLI audit, explicit CLI reconciliation, and dashboard polling after owner confirmation of the complete deliverable scope; actual production merge and Git-tree proof required.                                                                          |
 | Test fixtures    | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                                                                            |
 | Setup            | Global `gremlins` command (`shipgremlins` / `hub` compatibility aliases), compact ASCII greeting, resumable initialization, LAN dashboard, validated config editor, file locations and connection tokens; PMs start disabled                                      |
 | Updates          | CLI and dashboard checks/install/rollback; pinned official commit with successful CI, isolated runtime installation, startup/config validation, atomic selection and supervised dashboard restart                                                                 |
 | Local hosting    | Foreground dashboard/controller or `gremlins start`, `stop`, and `status`; explicit LAN mode; manual service-manager setup for reboot persistence. Runtime upgrades preserve configuration and running Docker jobs.                                               |
-| Runners          | Dashboard creates local Docker capacity, verifies Chromium screenshot evidence, pauses/drains, repairs and removes idle workers; logs/artifacts and archived job history persist. One job per worker, up to four slots. No provider CI registration is required.  |
+| Runners          | Local or enrolled remote Docker capacity, project-scoped credentials, revocation and expiring execution leases. Real Chromium readiness checks. One job per worker, up to four total slots. No provider CI registration required.                                 |
 | Activity history | Local Docker PostgreSQL store with idempotent run/event persistence, visible tool activity, summaries, checks, redacted logs, and bounded artifact retention. Queue control still uses private local files.                                                       |
 | Slack            | Branded PM and developer lifecycle notifications, instance-wide incoming webhook/OAuth connection and per-project override. Attempts are durably claimed before sending; no repeat after restart, no guaranteed delivery. See [Slack setup and limits](SLACK.md). |
 | Website          | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                                                                           |
@@ -84,18 +84,33 @@ fed into later patrols. Invalid or stale results cannot replace current context.
 Prompt templates now ask for product outcomes, ranked evidence, feature coverage,
 and useful memory without ticket quotas or self-approval. See [PM workflow](PM_WORKFLOW.md).
 
+Version 0.11 adds project Review, Knowledge, Delivery and Run limits, plus a workspace
+inbox. Review re-fetches Linear scope before approval. Discovery suggests commands
+and ownership with evidence and revision-guarded apply. Shared owner decisions and
+current sibling summaries feed bounded project context. Overlapping coding work is
+serialized. Configured project concurrency, daily runs/runtime and job duration
+are enforced; dollar cost is not inferred from Claude subscription access.
+
+Remote worker enrollment supports Linux, macOS and Windows hosts running Linux
+Docker containers. Workers connect outbound, keep one fenced lease per job, and
+stop after their execution lease expires. This is not a native macOS/iOS runner,
+automatic GCP provisioning, or a multi-controller distributed database queue.
+See [operations](PROJECT_OPERATIONS.md), [remote workers](REMOTE_WORKERS.md), and
+the [delivery workflow and Railway setup](DELIVERY_WORKFLOW.md).
+
 ## What still needs implementation
 
-The trusted verifier must be provisioned separately. The tools verify signed
-receipts; this release does not automatically install a browser verifier, manage
-its protected keys, or supply authenticated test accounts for arbitrary apps.
+The trusted **promotion-candidate** verifier and signer must be provisioned separately.
+Owning-PM integration reviews do use a separate browser replay container. The candidate
+gate verifies signed receipts; this release does not automatically provision its
+deployment/verifier, manage protected signing keys, or supply authenticated test accounts for arbitrary apps.
 Existing PM/developer environments must never receive the private signing key.
 
 Local jobs support GitHub and GitLab source connections, optional URL/Vercel/Railway/
 Cloud Run browser targets, Linear, and Claude Code. Hosting adapters discover
 existing ready environments; they do not provision infrastructure or deploy changes.
 Railway and Cloud Run contracts are covered by mocked provider tests, not live
-account certification. Exact-candidate promotion across all hosting providers,
+account certification. Automatic exact-candidate deployment across hosting providers,
 other AI runtimes, semantic image generation, automatic fixture cleanup, automatic
 OS service installation, cloud fleet management, and production lifecycle webhooks
 remain roadmap work.
@@ -105,8 +120,9 @@ distributed database leases and a guaranteed-delivery outbox are not implemented
 The CLI installs globally from GitHub; no npm registry package is published.
 Local credentials are supplied to local jobs, not copied into provider CI stores.
 
-The separate promotion tools retain the per-area selective `pm-release/*` model. Whole-branch
-`pm-staging` → staging releases are planned. CI adapters currently use aggregate
+Promotion retains the per-area selective `pm-release/*` model. The controller never
+substitutes a whole-branch `pm-staging` → staging merge for selected reviewed fixes.
+CI adapters currently use aggregate
 check state; named required-check publisher enforcement remains open. Provider
 branch protections and human staging/production merge decisions remain necessary.
 
@@ -136,5 +152,5 @@ Before enabling schedules for a real project, configure isolated test data and
 accounts, run doctor and worker verification, and supervise one complete PM/developer
 flow. For the separate release tools, provision the trusted verification boundary,
 disable conflicting Linear completion automation, and perform a reviewed release.
-The local controller does not supply that full release automation yet. See [setup](SETUP.md), [verification](VERIFICATION.md)
+The controller does not provision candidate hosting or a trusted signer. See [setup](SETUP.md), [verification](VERIFICATION.md)
 and [Linear lifecycle](LINEAR_LIFECYCLE.md) for the concrete contracts.

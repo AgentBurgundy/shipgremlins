@@ -102,6 +102,7 @@ function cli(args, alias = "gremlins") {
 assert.match(cli(["--help"]), /SHIPGREMLINS/);
 assert.match(cli(["dashboard", "--help"]), /--lan/);
 assert.match(cli(["update", "--help"]), /--rollback/);
+assert.match(cli(["worker", "--help"]), /--enrollment-code/);
 assert.match(cli(["--version"]), /ShipGremlins \d/);
 assert.match(cli(["--version"], "hub"), /ShipGremlins \d/);
 assert.match(cli(["--version"], "shipgremlins"), /ShipGremlins \d/);
@@ -204,6 +205,11 @@ assert(
   existsSync(join(installedPackage, "runner-local", "Dockerfile")),
   "Local worker image source is packaged",
 );
+for (const module of ["review-job.mjs", "review-receipts.mjs", "lease.mjs"])
+  assert(
+    existsSync(join(installedPackage, "runner-local", module)),
+    `Trusted worker module is packaged: ${module}`,
+  );
 // Exercise detached startup/reattach/authenticated stop through the real OS shim.
 try {
   const started = cli(["--home", config, "start", "--no-open"]);

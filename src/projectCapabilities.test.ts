@@ -13,6 +13,39 @@ import {
 } from "./projectCapabilities.ts";
 
 describe("project capabilities", () => {
+  it("requires a distinct nonproduction provider target for candidate verification", () => {
+    const raw = {
+      workflow: { kind: "promotion", candidateEnvironment: "candidate" },
+      verification: { mode: "browser", environment: "integration" },
+      environments: {
+        integration: {
+          kind: "railway",
+          role: "preview",
+          projectId: "project",
+          environmentId: "integration",
+          serviceId: "web",
+        },
+        candidate: {
+          kind: "railway",
+          role: "preview",
+          projectId: "project",
+          environmentId: "candidate",
+          serviceId: "web",
+        },
+      },
+    };
+    expect(parseProjectCapabilities(raw).workflow).toEqual({
+      kind: "promotion",
+      candidateEnvironment: "candidate",
+    });
+    raw.environments.candidate.role = "production";
+    expect(() => parseProjectCapabilities(raw)).toThrow("nonproduction");
+    raw.environments.candidate.role = "preview";
+    raw.environments.candidate.environmentId = "integration";
+    expect(() => parseProjectCapabilities(raw)).toThrow(
+      "separate service instances",
+    );
+  });
   it("does not allow controller or custom hosting credentials into browser jobs", () => {
     const config = makeProject().config;
     config.vercel = {

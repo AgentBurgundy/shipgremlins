@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { validateDelivery } from "../../runner-local/delivery.mjs";
+import { validateReviewPlan } from "../../runner-local/review-receipts.mjs";
 
 export interface DockerJobPayload {
   kind: "verify" | "pm" | "developer";
@@ -15,6 +16,11 @@ export interface DockerJobPayload {
   /** Browser tools remain available; repository mode does not require screenshots. */
   browserVerification?: boolean;
   pmMode?: "discovery";
+  maxRuntimeMinutes?: number;
+  project?: string;
+  remoteLease?: boolean;
+  remoteLeaseDeadline?: number;
+  reviewPlan?: import("../delivery/types.ts").PmReviewPlan;
   credentials?: Record<string, string>;
   commands?: Partial<
     Record<"install" | "test" | "lint" | "typecheck" | "build", string | null>
@@ -40,6 +46,11 @@ export interface DockerJobInspection {
 export interface DockerArtifacts {
   result: Record<string, unknown> | null;
   files: Array<{ name: string; size: number; sha256?: string; png?: boolean }>;
+}
+export interface DockerReview {
+  proof: Buffer;
+  result: { ok: true; kind: "pm"; nonce: string; commitSha: string };
+  files: DockerArtifacts["files"];
 }
 export interface DockerRunOptions {
   stdin?: string;
@@ -69,6 +80,15 @@ export interface DockerRunners {
   artifacts(id: string): Promise<DockerArtifacts>;
   readArtifact(id: string, name: string): Promise<Buffer>;
   removeJob(id: string): Promise<void>;
+  stopJob(id: string): Promise<void>;
+  refreshLease?(id: string, ttlMs: number): Promise<void>;
+  prepareWorker?(workerId: string, remoteId?: string): Promise<void>;
+  canRun?(remoteId: string | undefined, project?: string): boolean;
+  verifyReview?(
+    id: string,
+    plan: import("../delivery/types.ts").PmReviewPlan,
+    options?: { bypass?: string; remoteLease?: boolean },
+  ): Promise<DockerReview>;
 }
 
 const MANAGED = "io.shipgremlins.managed";
@@ -94,6 +114,12 @@ function name(id: string) {
 }
 function volume(id: string) {
   return `gremlins-output-${idValue(id)}`;
+}
+function reviewName(id: string) {
+  return `gremlins-review-${idValue(id)}`;
+}
+function reviewVolume(id: string) {
+  return `gremlins-review-output-${idValue(id)}`;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -160,7 +186,7 @@ const runDocker: DockerRun = async (args, options = {}) =>
     if (options.stdin !== undefined) child.stdin?.end(options.stdin);
   });
 
-function validatePayload(payload: DockerJobPayload): string {
+export function validatePayload(payload: DockerJobPayload): string {
   if (
     !record(payload) ||
     !["verify", "pm", "developer"].includes(payload.kind) ||
@@ -175,6 +201,11 @@ function validatePayload(payload: DockerJobPayload): string {
           "prompt",
           "browserVerification",
           "pmMode",
+          "maxRuntimeMinutes",
+          "project",
+          "remoteLease",
+          "remoteLeaseDeadline",
+          "reviewPlan",
           "credentials",
           "commands",
           "memory",
@@ -183,6 +214,40 @@ function validatePayload(payload: DockerJobPayload): string {
     )
   )
     throw new Error("Invalid local job payload.");
+  if (
+    payload.project !== undefined &&
+    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(payload.project)
+  )
+    throw new Error("Invalid job project.");
+  if (
+    payload.remoteLease !== undefined &&
+    typeof payload.remoteLease !== "boolean"
+  )
+    throw new Error("Invalid remote lease.");
+  if (
+    payload.remoteLeaseDeadline !== undefined &&
+    (!payload.remoteLease || !Number.isSafeInteger(payload.remoteLeaseDeadline))
+  )
+    throw new Error("Invalid remote lease deadline.");
+  if (payload.reviewPlan !== undefined) {
+    if (
+      payload.kind !== "pm" ||
+      payload.pmMode ||
+      payload.browserVerification !== true ||
+      payload.reviewPlan.jobId !== payload.nonce
+    )
+      throw new Error(
+        "Delivery review requires its admitted browser PM patrol.",
+      );
+    validateReviewPlan(payload.reviewPlan);
+  }
+  if (
+    payload.maxRuntimeMinutes !== undefined &&
+    (!Number.isInteger(payload.maxRuntimeMinutes) ||
+      payload.maxRuntimeMinutes < 1 ||
+      payload.maxRuntimeMinutes > 45)
+  )
+    throw new Error("Job runtime limit must be between 1 and 45 minutes.");
   if (
     payload.browserVerification !== undefined &&
     typeof payload.browserVerification !== "boolean"
@@ -295,8 +360,9 @@ export function createDockerRunners(options: {
   };
   async function inspectOwned(
     id: string,
+    review = false,
   ): Promise<Record<string, unknown> | null> {
-    const container = name(id);
+    const container = review ? reviewName(id) : name(id);
     const response = await run([
       "inspect",
       "--format",
@@ -322,6 +388,7 @@ export function createDockerRunners(options: {
       data.Name !== `/${container}` ||
       labels[MANAGED] !== "true" ||
       labels[JOB] !== id ||
+      (review && labels["io.shipgremlins.review"] !== "true") ||
       typeof labels[WORKER] !== "string"
     )
       throw new Error(
@@ -329,13 +396,13 @@ export function createDockerRunners(options: {
       );
     return data;
   }
-  async function ownedVolume(id: string): Promise<boolean> {
+  async function ownedVolume(id: string, review = false): Promise<boolean> {
     const response = await run([
       "volume",
       "inspect",
       "--format",
       "{{json .}}",
-      volume(id),
+      review ? reviewVolume(id) : volume(id),
     ]);
     if (response.code !== 0) {
       if (/no such volume/i.test(response.stderr)) return false;
@@ -350,18 +417,24 @@ export function createDockerRunners(options: {
     const labels = record(data) && record(data.Labels) ? data.Labels : {};
     if (
       !record(data) ||
-      data.Name !== volume(id) ||
+      data.Name !== (review ? reviewVolume(id) : volume(id)) ||
       labels[MANAGED] !== "true" ||
-      labels[JOB] !== id
+      labels[JOB] !== id ||
+      (review && labels["io.shipgremlins.review"] !== "true")
     )
       throw new Error(
         "Refusing to access an output volume not owned by this local job.",
       );
     return true;
   }
-  async function helper(id: string, extra: string[], maxBytes?: number) {
-    const data = await inspectOwned(id);
-    if (!data || !(await ownedVolume(id)))
+  async function helper(
+    id: string,
+    extra: string[],
+    maxBytes?: number,
+    review = false,
+  ) {
+    const data = await inspectOwned(id, review);
+    if (!data || !(await ownedVolume(id, review)))
       throw new Error("Job artifacts are unavailable.");
     if (record(data.State) && data.State.Running === true)
       throw new Error("Artifacts become available after the job finishes.");
@@ -381,8 +454,9 @@ export function createDockerRunners(options: {
         "ALL",
         "--security-opt",
         "no-new-privileges",
+        ...(review ? ["--env", "GREMLINS_TRUSTED_REVIEW=1"] : []),
         "--mount",
-        `type=volume,source=${volume(id)},target=/output,readonly`,
+        `type=volume,source=${review ? reviewVolume(id) : volume(id)},target=/output,readonly`,
         "--entrypoint",
         "node",
         config.Image,
@@ -545,6 +619,29 @@ export function createDockerRunners(options: {
       try {
         const started = await run(["start", container]);
         if (started.code !== 0) throw new Error();
+        if (input.payload.remoteLease) {
+          const ttlMs = Math.min(
+            120000,
+            (input.payload.remoteLeaseDeadline ?? Date.now() + 30000) -
+              Date.now(),
+          );
+          if (ttlMs < 1000)
+            throw new Error("Remote lease expired before launch.");
+          const lease = await run(
+            [
+              "exec",
+              "--interactive",
+              "--user",
+              "0",
+              container,
+              "node",
+              "/opt/gremlins/lease.mjs",
+              "renew",
+            ],
+            { stdin: JSON.stringify({ ttlMs }), timeoutMs: 15000 },
+          );
+          if (lease.code !== 0) throw new Error();
+        }
         const accepted = await run(
           [
             "exec",
@@ -607,7 +704,26 @@ export function createDockerRunners(options: {
         !(value.result === null || record(value.result))
       )
         throw new Error("Invalid job artifact metadata.");
-      return value as unknown as DockerArtifacts;
+      const result = value as unknown as DockerArtifacts;
+      const trusted = await inspectOwned(id, true);
+      if (
+        trusted &&
+        record(trusted.State) &&
+        trusted.State.Running === false &&
+        trusted.State.ExitCode === 0
+      ) {
+        const review = JSON.parse(
+          await helper(id, [], 1024 * 1024, true),
+        ) as DockerArtifacts;
+        result.files.push(
+          ...review.files.filter(
+            (file) =>
+              file.name === "pm-review-proof.json" ||
+              file.name.startsWith("review-screenshots/"),
+          ),
+        );
+      }
+      return result;
     },
     async readArtifact(id, artifact) {
       if (
@@ -619,7 +735,15 @@ export function createDockerRunners(options: {
           .some((part) => !part || part === "." || part === "..")
       )
         throw new Error("Invalid artifact name.");
-      const base64 = await helper(id, ["read", artifact], 15 * 1024 * 1024);
+      const review =
+        artifact === "pm-review-proof.json" ||
+        artifact.startsWith("review-screenshots/");
+      const base64 = await helper(
+        id,
+        ["read", artifact],
+        15 * 1024 * 1024,
+        review,
+      );
       if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64.trim()))
         throw new Error("Invalid artifact data.");
       const bytes = Buffer.from(base64.trim(), "base64");
@@ -627,15 +751,222 @@ export function createDockerRunners(options: {
         throw new Error("Artifact is too large.");
       return bytes;
     },
+    async stopJob(id) {
+      for (const review of [false, true]) {
+        const data = await inspectOwned(id, review);
+        if (!data || !record(data.State) || data.State.Running !== true)
+          continue;
+        if (
+          (
+            await run(
+              ["stop", "--time", "20", review ? reviewName(id) : name(id)],
+              { timeoutMs: 30_000 },
+            )
+          ).code !== 0
+        )
+          throw new Error(
+            "The owned job could not be stopped; cancellation remains pending.",
+          );
+      }
+    },
+    async refreshLease(id, ttlMs) {
+      if (!Number.isInteger(ttlMs) || ttlMs < 1000 || ttlMs > 120000)
+        throw new Error("Invalid remote lease duration.");
+      for (const review of [false, true]) {
+        const data = await inspectOwned(id, review);
+        if (!data || !record(data.State) || data.State.Running !== true)
+          continue;
+        const renewed = await run(
+          [
+            "exec",
+            "--interactive",
+            "--user",
+            "0",
+            review ? reviewName(id) : name(id),
+            "node",
+            "/opt/gremlins/lease.mjs",
+            "renew",
+          ],
+          { stdin: JSON.stringify({ ttlMs }), timeoutMs: 15000 },
+        );
+        if (renewed.code !== 0)
+          throw new Error("The remote job lease could not be renewed.");
+      }
+    },
+    async verifyReview(id, plan, reviewOptions = {}) {
+      validateReviewPlan(plan);
+      if (plan.jobId !== id)
+        throw new Error("Review plan belongs to another job.");
+      const original = await inspectOwned(id);
+      if (
+        !original ||
+        !record(original.State) ||
+        original.State.Running !== false ||
+        original.State.ExitCode !== 0 ||
+        !(await ownedVolume(id))
+      )
+        throw new Error(
+          "Stop and finish the model job before independent review.",
+        );
+      const planHash = createHash("sha256")
+        .update(JSON.stringify(plan))
+        .digest("hex");
+      let trusted = await inspectOwned(id, true);
+      if (trusted) {
+        const config = trusted.Config as { Labels: Record<string, string> };
+        if (config.Labels["io.shipgremlins.review-plan"] !== planHash)
+          throw new Error("Independent review belongs to another plan.");
+      } else {
+        if (await ownedVolume(id, true))
+          throw new Error(
+            "An unfinished independent review needs operator reconciliation.",
+          );
+        const image = await api.ensureImage(),
+          originalConfig = original.Config as {
+            Labels: Record<string, string>;
+          };
+        const created = await run([
+          "volume",
+          "create",
+          "--label",
+          `${MANAGED}=true`,
+          "--label",
+          `${JOB}=${id}`,
+          "--label",
+          "io.shipgremlins.review=true",
+          reviewVolume(id),
+        ]);
+        if (created.code !== 0)
+          throw new Error("Could not create independent review storage.");
+        const args = [
+          "create",
+          "--name",
+          reviewName(id),
+          "--restart=no",
+          "--label",
+          `${MANAGED}=true`,
+          "--label",
+          `${JOB}=${id}`,
+          "--label",
+          `${WORKER}=${originalConfig.Labels[WORKER]}`,
+          "--label",
+          "io.shipgremlins.review=true",
+          "--label",
+          `io.shipgremlins.review-plan=${planHash}`,
+          "--user",
+          "1000:1000",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "--pids-limit",
+          "256",
+          "--memory",
+          "2g",
+          "--cpus",
+          "1",
+          "--shm-size",
+          "512m",
+          "--mount",
+          `type=volume,source=${volume(id)},target=/input,readonly`,
+          "--mount",
+          `type=volume,source=${reviewVolume(id)},target=/output`,
+          "--entrypoint",
+          "node",
+          image,
+          "/opt/gremlins/review-job.mjs",
+        ];
+        if (
+          (await run(args)).code !== 0 ||
+          (await run(["start", reviewName(id)])).code !== 0
+        )
+          throw new Error("Could not start independent browser review.");
+        if (reviewOptions.remoteLease) await api.refreshLease!(id, 120000);
+        const received = await run(
+          [
+            "exec",
+            "--interactive",
+            "--user",
+            "1000:1000",
+            reviewName(id),
+            "node",
+            "/opt/gremlins/receive-job.mjs",
+          ],
+          {
+            stdin: JSON.stringify({
+              kind: "pm",
+              plan,
+              bypass: reviewOptions.bypass,
+              remoteLease: !!reviewOptions.remoteLease,
+            }),
+            timeoutMs: 30000,
+          },
+        );
+        if (received.code !== 0) {
+          await api.stopJob(id);
+          throw new Error("Independent review input could not be received.");
+        }
+      }
+      trusted = await inspectOwned(id, true);
+      if (record(trusted?.State) && trusted.State.Running === true) {
+        const waited = await run(["wait", reviewName(id)], {
+          timeoutMs: 11 * 60 * 1000,
+        });
+        if (waited.code !== 0) {
+          await api.stopJob(id);
+          throw new Error("Independent review timed out.");
+        }
+      }
+      trusted = await inspectOwned(id, true);
+      if (
+        !record(trusted?.State) ||
+        trusted.State.Running !== false ||
+        trusted.State.ExitCode !== 0
+      )
+        throw new Error(
+          "Independent browser review failed; promotion remains blocked.",
+        );
+      const artifacts = JSON.parse(
+        await helper(id, [], 1024 * 1024, true),
+      ) as DockerArtifacts;
+      const proof = await api.readArtifact(id, "pm-review-proof.json");
+      if (proof.length > 1024 * 1024)
+        throw new Error("Independent review proof is too large.");
+      return {
+        proof,
+        result: {
+          ok: true,
+          kind: "pm",
+          nonce: id,
+          commitSha: plan.deployment.sha,
+        },
+        files: artifacts.files,
+      };
+    },
     async removeJob(id) {
-      const data = await inspectOwned(id);
-      if (data && record(data.State) && data.State.Running === true)
-        throw new Error("A running job must finish before it can be removed.");
-      if (data && (await run(["rm", name(id)])).code !== 0)
-        throw new Error("The job container could not be removed.");
-      if (await ownedVolume(id))
-        if ((await run(["volume", "rm", volume(id)])).code !== 0)
-          throw new Error("The job output volume could not be removed.");
+      for (const review of [true, false]) {
+        const data = await inspectOwned(id, review);
+        if (data && record(data.State) && data.State.Running === true)
+          throw new Error(
+            "A running job must finish before it can be removed.",
+          );
+        if (
+          data &&
+          (await run(["rm", review ? reviewName(id) : name(id)])).code !== 0
+        )
+          throw new Error("The job container could not be removed.");
+        if (await ownedVolume(id, review))
+          if (
+            (
+              await run([
+                "volume",
+                "rm",
+                review ? reviewVolume(id) : volume(id),
+              ])
+            ).code !== 0
+          )
+            throw new Error("The job output volume could not be removed.");
+      }
       secrets.delete(id);
     },
   };

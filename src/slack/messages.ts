@@ -8,6 +8,8 @@ export interface JobNotificationEvent {
   type: "started" | "succeeded" | "failed";
   job: LocalJob;
   workerName?: string;
+  /** Credential-free owner dashboard origin; never a session link. */
+  dashboardUrl?: string;
   result?: {
     summary?: string;
     findingsCount?: number;
@@ -136,6 +138,7 @@ export function buildJobNotification(event: JobNotificationEvent): {
   const role = coding ? "Coding Gremlin" : "PM Gremlin";
   const result = notificationResult(event.result);
   const prUrl = safeHttpsLink(result?.prUrl);
+  const dashboard = safeHttpsLink(event.dashboardUrl);
   const state =
     event.type === "started"
       ? "On the job"
@@ -228,6 +231,27 @@ export function buildJobNotification(event: JobNotificationEvent): {
         },
       ],
     });
+  if (dashboard) {
+    const review = new URL(
+      job.project ? `/projects/${encodeURIComponent(job.project)}` : "/inbox",
+      dashboard,
+    ).href;
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          action_id: "open_gremlin_review",
+          text: {
+            type: "plain_text",
+            text: "Open project review",
+            emoji: true,
+          },
+          url: review,
+        },
+      ],
+    });
+  }
   blocks.push({
     type: "context",
     elements: [
@@ -306,7 +330,10 @@ export async function sendJobNotification(
         )
         .map(([, value]) => value!),
     );
-    let encoded = JSON.stringify(event);
+    let encoded = JSON.stringify({
+      ...event,
+      dashboardUrl: safeHttpsLink(env.SHIPGREMLINS_DASHBOARD_URL),
+    });
     // Replace JSON-escaped credential bytes, preserving a valid JSON payload.
     for (const secret of secrets
       .filter((value) => value.length >= 4)

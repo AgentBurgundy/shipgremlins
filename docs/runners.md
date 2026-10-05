@@ -34,7 +34,8 @@ summary and recorded checks before approving its proposals.
 prints its link and `gremlins stop` stops scheduling without killing running jobs.
 The queue is stored in `.run/local-runners/` under the selected configuration root.
 When the controller returns, it inspects containers before taking further action.
-Only a failure before launch gets one infrastructure retry; an agent's failed
+Confirmed pre-execution infrastructure failures get bounded retries with durable
+backoff; an ambiguous launch is held for inspection. An agent's failed
 exit or disappeared, previously confirmed container does not trigger duplicate
 work. Old completed metadata is archived and remains available.
 
@@ -43,13 +44,20 @@ queue records and process arguments; logs redact known token values. The Docker
 socket and the operator's home/configuration directories are not mounted inside
 job containers. After configured checks pass, the worker publishes the developer's
 unique branch as a draft PR/MR to the configured base branch; legacy promotion projects use their integration branch. The model does not publish directly.
-Jobs have a 45-minute execution limit. Human review and merges remain required. This local path does not yet
-provide the legacy promotion/reconciliation loop automatically.
+Jobs default to a 45-minute execution limit; project Run limits can lower it.
+Staging and production remain owner reviews. Explicit promotion projects can use
+the [owning-PM delivery workflow](DELIVERY_WORKFLOW.md); repository-only projects
+retain the simpler draft workflow.
 
 For server boot persistence and migration from CI schedules, use the
 [setup guide](SETUP.md). Docker Desktop on Windows/macOS runs the Linux worker
 environment. Full cross-platform Docker/provider certification and cloud-fleet
 management remain separate from the CLI/helper unit tests.
+
+For another computer or Docker host on a cloud VM, use **Enroll remote worker** in
+the dashboard. The [remote guide](REMOTE_WORKERS.md) covers private enrollment,
+HTTPS/explicit LAN setup, scoped projects, revocation and lease expiry. The local
+and remote workers share the controller's four-slot capacity limit.
 
 ## Advanced GitHub Actions and GCE reference
 

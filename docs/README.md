@@ -10,6 +10,9 @@ For current project pages, structured owner briefs, repository discovery, and
 durable learned context, use [PM workflow](PM_WORKFLOW.md). The historical
 self-approval and memory-branch descriptions below do not apply to local workers.
 
+Current local operations also have a [project control room](PROJECT_OPERATIONS.md),
+[owning-PM selective delivery](DELIVERY_WORKFLOW.md), and [remote Docker workers](REMOTE_WORKERS.md).
+
 For current PM log and analytics access, see [project telemetry](TELEMETRY.md):
 Sentry logs/errors, Datadog logs, and per-area Mixpanel Insights reports.
 

@@ -4,9 +4,16 @@ Current execution decision: local Docker workers are the default, with no fork,
 automation repository, GitHub Actions, or GitLab CI requirement. The local queue,
 background controller, browser verification, worker controls, and job logs/artifacts
 are implemented foundations. The provider-CI and cloud items below are advanced
-follow-up work. Local automatic staging promotion/production reconciliation,
-automatic boot-service installation, and full live provider certification remain
+follow-up work. Candidate-hosting provisioning, automatic boot-service installation,
+and full live provider certification remain
 open. See [implementation status](IMPLEMENTATION_STATUS.md) for the boundary.
+
+The October 5 operations release adds owning-PM delivery review and selective
+candidate preparation, owner-confirmed production scope polling, remote Docker
+worker enrollment, project limits/recovery, shared knowledge, discovery suggestions,
+and a project review inbox. These are implemented slices of the phases below, not
+certification that every phase is complete. The [operations plan](OPERATIONS_PLAN.md)
+and [delivery guide](DELIVERY_WORKFLOW.md) give their acceptance criteria and limits.
 
 Implemented in 0.6: repository-first projects, configurable PR base branches and
 commands, and optional named URL/Vercel/Railway/Cloud Run environments. Shared
@@ -43,14 +50,14 @@ Exit: scenario tests demonstrate fail-closed gates and a non-deadlocking repair;
 
 Goal: jobs, approvals, evidence, and releases survive restarts and provider failures.
 
-| ID    | Work                            | Acceptance criteria                                                                                                                                        |
-| ----- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P1-01 | Database and event/outbox model | Versioned migrations, transactional claims, replayable events, idempotent side effects, backup/restore test                                                |
-| P1-02 | Provider contracts              | Extract source control, execution, hosting, tickets, runtime, and storage seams; retain current GitHub/Vercel behavior under tests                         |
-| P1-03 | Scheduler and run leases        | Per-project/PM budgets and concurrency; heartbeat/queue deadlines; fencing; cancellation; no duplicate job after crash between dispatch and acknowledgment |
-| P1-04 | Candidate promotion coordinator | Literal whole-branch mode freezes head, tests deployment before PR creation, protects required check, invalidates on head/base/environment drift           |
-| P1-05 | Linear release reconciler       | Ticket → changes → release → production provenance; Done only for complete production inclusion; squash/port/partial-release/revert cases pass             |
-| P1-06 | Project migration               | Import file config and legacy state; shadow comparison; one active scheduler; reversible cutover with no duplicate dispatch                                |
+| ID    | Work                            | Acceptance criteria                                                                                                                                               |
+| ----- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1-01 | Database and event/outbox model | Versioned migrations, transactional claims, replayable events, idempotent side effects, backup/restore test                                                       |
+| P1-02 | Provider contracts              | Extract source control, execution, hosting, tickets, runtime, and storage seams; retain current GitHub/Vercel behavior under tests                                |
+| P1-03 | Scheduler and run leases        | Per-project/PM budgets and concurrency; heartbeat/queue deadlines; fencing; cancellation; no duplicate job after crash between dispatch and acknowledgment        |
+| P1-04 | Candidate promotion coordinator | Selectively cherry-picks owning-PM verified fixes onto staging, tests the assembled deployment before PR creation, and invalidates on head/base/environment drift |
+| P1-05 | Linear release reconciler       | Ticket → changes → release → production provenance; Done only for complete production inclusion; squash/port/partial-release/revert cases pass                    |
+| P1-06 | Project migration               | Import file config and legacy state; shadow comparison; one active scheduler; reversible cutover with no duplicate dispatch                                       |
 
 Dependencies: P1-01 underpins P1-03/04/05. Provider normalization in P1-02 and P0 evidence enable the promotion coordinator. P1-05 uses [the lifecycle contract](LINEAR_LIFECYCLE.md). Migration is last.
 

@@ -22,6 +22,21 @@ import {
 import { publicActivityLogs, type ActivityStore } from "../storage/activity.ts";
 import { validConnectionId } from "../oauthConnection/profileId.ts";
 import {
+  infrastructureRetry,
+  validFailure,
+  type FailureCategory,
+} from "./recovery.ts";
+import {
+  reserveBudget,
+  settleBudget,
+  usageFor,
+  validLedger,
+  validJobBudget,
+  validateLimits,
+  type UsageLedger,
+  type ExecutionLimits,
+} from "./budgets.ts";
+import {
   createDockerRunners,
   type DockerJobPayload,
   type DockerRunners,
@@ -66,6 +81,7 @@ interface State {
   /** True only after Docker confirms that this owned container exists. */
   launched: Record<string, boolean>;
   operation: RunnerOperation;
+  usage?: UsageLedger;
 }
 
 export class LocalRunnerError extends Error {
@@ -100,13 +116,22 @@ export interface LocalRunnersOptions {
   activityStore?: ActivityStore;
   notify?: (event: JobNotificationEvent) => Promise<NotificationResult>;
   clock?: () => Date;
+  executionLimits?: (project: string) => ExecutionLimits;
+  admissionBlocker?: (job: LocalJob, active: LocalJob[]) => string | undefined;
+  reconcileCompletedJob?: (
+    job: LocalJob,
+    result: Record<string, unknown>,
+    docker: DockerRunners,
+  ) => Promise<void>;
 }
 
 export interface LocalRunners {
   status(): Promise<LocalRunnerStatus>;
   create(): Promise<LocalWorker>;
+  addRemote(remoteId: string, name: string): Promise<LocalWorker>;
   action(id: string, action: WorkerAction): Promise<LocalWorker | void>;
   enqueue(input: LocalJobInput): Promise<LocalJob>;
+  cancel(id: string): Promise<LocalJob>;
   jobs(): Promise<LocalJob[]>;
   job(id: string | number): Promise<LocalJob | null>;
   logs(id: string): Promise<string[]>;
@@ -264,7 +289,7 @@ function validJob(job: unknown): job is LocalJob {
     job.retries !== undefined &&
     (!Number.isInteger(job.retries) ||
       Number(job.retries) < 0 ||
-      Number(job.retries) > 1)
+      Number(job.retries) > 2)
   )
     return false;
   if (
@@ -272,9 +297,24 @@ function validJob(job: unknown): job is LocalJob {
     (typeof job.message !== "string" || job.message.length > 1000)
   )
     return false;
-  for (const field of ["startedAt", "finishedAt"])
+  for (const field of [
+    "startedAt",
+    "finishedAt",
+    "nextAttemptAt",
+    "cancelRequestedAt",
+    "launchAttemptedAt",
+  ])
     if (job[field] !== undefined && !validDate(job[field])) return false;
   if (job.exitCode !== undefined && !Number.isInteger(job.exitCode))
+    return false;
+  if (job.failure !== undefined && !validFailure(job.failure)) return false;
+  if (job.budget !== undefined && !validJobBudget(job.budget)) return false;
+  if (
+    job.reconciliationAttempts !== undefined &&
+    (!Number.isInteger(job.reconciliationAttempts) ||
+      Number(job.reconciliationAttempts) < 0 ||
+      Number(job.reconciliationAttempts) > 3)
+  )
     return false;
   return !Object.keys(job).some(
     (key) =>
@@ -290,6 +330,12 @@ function validJob(job: unknown): job is LocalJob {
         "message",
         "retries",
         "exitCode",
+        "nextAttemptAt",
+        "failure",
+        "cancelRequestedAt",
+        "budget",
+        "reconciliationAttempts",
+        "launchAttemptedAt",
       ].includes(key),
   );
 }
@@ -300,6 +346,9 @@ function validWorker(worker: unknown): worker is LocalWorker {
     typeof worker.id === "string" &&
     ID.test(worker.id) &&
     worker.id.startsWith("worker-") &&
+    (worker.remoteId === undefined ||
+      (typeof worker.remoteId === "string" &&
+        /^remote-[a-f0-9-]{36}$/.test(worker.remoteId))) &&
     typeof worker.name === "string" &&
     /^[A-Za-z0-9 -]{1,80}$/.test(worker.name) &&
     ["provisioning", "ready", "busy", "paused", "error"].includes(
@@ -314,6 +363,7 @@ function validWorker(worker: unknown): worker is LocalWorker {
     Object.keys(worker).every((key) =>
       [
         "id",
+        "remoteId",
         "name",
         "status",
         "busy",
@@ -370,6 +420,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   const history = join(base, "history");
   const keys = join(base, "keys");
   const notifications = join(base, "notifications");
+  const cancellations = join(base, "cancellations");
   const docker =
     options.docker ?? createDockerRunners({ packageRoot: options.packageRoot });
   const clock = options.clock ?? (() => new Date());
@@ -581,6 +632,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       runners: [],
       jobs: [],
       launched: {},
+      usage: {},
       operation: {
         phase: "idle",
         message: "Create a local worker to get started.",
@@ -604,6 +656,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         !Array.isArray(state.jobs) ||
         !state.jobs.every(validJob) ||
         !record(state.launched) ||
+        (state.usage !== undefined && !validLedger(state.usage)) ||
         Object.entries(state.launched).some(
           ([id, value]) => !ID.test(id) || typeof value !== "boolean",
         ) ||
@@ -626,6 +679,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
               "jobs",
               "launched",
               "operation",
+              "usage",
             ].includes(key),
         )
       )
@@ -656,6 +710,18 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   }
 
   function save(state: State): void {
+    state.usage ??= {};
+    const oldest = new Date(clock().getTime() - 31 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    const activeDays = new Set(
+      state.jobs
+        .filter((job) => job.status === "running" && job.budget)
+        .map((job) => `${job.budget!.day}:${job.project}`),
+    );
+    for (const key of Object.keys(state.usage))
+      if (key.slice(0, 10) < oldest && !activeDays.has(key))
+        delete state.usage[key];
     const terminal = state.jobs.filter((job) => TERMINAL.has(job.status));
     const archive = terminal.slice(
       0,
@@ -886,10 +952,14 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     worker: LocalWorker | undefined,
     message: string,
     exitCode?: number,
+    category: FailureCategory = "worker-exit",
   ): void {
     job.status = "failed";
     job.message = message;
     job.finishedAt = now();
+    job.failure = { category, at: now(), retryable: false };
+    job.nextAttemptAt = undefined;
+    settleBudget(job, (state.usage ??= {}), clock());
     if (exitCode !== undefined) job.exitCode = exitCode;
     if (worker) {
       if (job.type === "verify") worker.verifiedAt = undefined;
@@ -907,27 +977,152 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     job: LocalJob,
     worker: LocalWorker | undefined,
   ): void {
-    if (!state.launched[job.id] && (job.retries ?? 0) < 1) {
-      job.retries = 1;
+    const retry = infrastructureRetry(
+      job.retries ?? 0,
+      state.launched[job.id] === true || Boolean(job.launchAttemptedAt),
+      clock(),
+    );
+    if (retry) {
+      settleBudget(job, (state.usage ??= {}), clock(), true);
+      job.budget = undefined;
+      Object.assign(job, retry);
+      job.failure = { category: "infrastructure", at: now(), retryable: true };
       job.status = "queued";
       job.startedAt = undefined;
-      job.message =
-        "The container did not start. One infrastructure retry is queued.";
+      job.message = `Infrastructure was unavailable before execution. Retry ${retry.retries} of 2 waits until ${retry.nextAttemptAt}.`;
       if (worker) {
         idleWorker(worker);
         if (job.type === "verify" && !worker.paused)
           worker.status = "provisioning";
       }
+      if (job.type !== "verify") job.workerId = undefined;
     } else
       failed(
         state,
         job,
         worker,
         "The job container is unavailable. It was not automatically repeated to avoid duplicate work.",
+        undefined,
+        state.launched[job.id] || job.launchAttemptedAt
+          ? "ambiguous-launch"
+          : "infrastructure",
       );
   }
 
+  function cancellation(
+    job: LocalJob,
+  ): { at: string; reason: "user" | "runtime-limit" } | null {
+    const file = join(cancellations, `${job.id}.json`);
+    safePath(file);
+    if (!existsSync(file)) return null;
+    const value = jsonFile(file, 1024);
+    if (
+      !record(value) ||
+      !validDate(value.at) ||
+      !["user", "runtime-limit"].includes(String(value.reason))
+    )
+      throw new LocalRunnerError(
+        "A cancellation record needs repair; no work was repeated.",
+        500,
+      );
+    return value as { at: string; reason: "user" | "runtime-limit" };
+  }
+  function requestCancellation(
+    job: LocalJob,
+    reason: "user" | "runtime-limit",
+  ) {
+    const existing = cancellation(job);
+    if (existing) return existing;
+    const request = { at: now(), reason };
+    writeJson(join(cancellations, `${job.id}.json`), request);
+    return request;
+  }
+  async function reconcileCancellation(
+    state: State,
+    job: LocalJob,
+  ): Promise<boolean> {
+    const request = cancellation(job);
+    if (!request) return false;
+    job.cancelRequestedAt = request.at;
+    if (job.status === "running") {
+      try {
+        const container = await docker.inspectJob(job.id);
+        if (container.exists && container.running) {
+          await docker.stopJob(job.id);
+          const stopped = await docker.inspectJob(job.id);
+          if (stopped.exists && stopped.running) throw new Error();
+        }
+      } catch {
+        job.message =
+          "Cancellation is recorded. Waiting for Docker to confirm this job has stopped; its worker and credentials remain reserved.";
+        return true;
+      }
+    }
+    const worker = state.runners.find((item) => item.id === job.workerId);
+    if (request.reason === "runtime-limit")
+      failed(
+        state,
+        job,
+        worker,
+        "This run reached its configured runtime limit and was stopped. Review any output or draft publication before starting new work.",
+        124,
+        "runtime-limit",
+      );
+    else {
+      settleBudget(job, (state.usage ??= {}), clock(), job.status === "queued");
+      job.status = "canceled";
+      job.finishedAt = now();
+      job.nextAttemptAt = undefined;
+      job.message =
+        "Canceled. The local container is stopped; existing outputs and any external changes are preserved for review.";
+      delete state.launched[job.id];
+      if (worker) {
+        if (job.type === "verify") worker.verifiedAt = undefined;
+        idleWorker(worker);
+      }
+    }
+    return true;
+  }
+
+  function executionUsage(state: State, project: string, ignoreId?: string) {
+    return usageFor(
+      project,
+      validateLimits(options.executionLimits?.(project) ?? {}),
+      (state.usage ??= {}),
+      state.jobs.filter((job) => job.id !== ignoreId),
+      clock(),
+    );
+  }
+  function canLaunch(state: State, job: LocalJob): boolean {
+    if (job.nextAttemptAt && Date.parse(job.nextAttemptAt) > clock().getTime())
+      return false;
+    if (job.type === "verify" || !job.project) return true;
+    try {
+      const blocked = options.admissionBlocker?.(
+        job,
+        state.jobs.filter(
+          (item) => item.status === "running" && item.id !== job.id,
+        ),
+      );
+      if (blocked) {
+        job.message = blocked.slice(0, 1000);
+        return false;
+      }
+      const usage = executionUsage(state, job.project, job.id);
+      if (usage.blockedReason) {
+        job.message = usage.blockedReason;
+        return false;
+      }
+      return true;
+    } catch {
+      job.message =
+        "Execution limits could not be read. Repair project settings before this queued job can run.";
+      return false;
+    }
+  }
+
   async function reconcile(state: State, job: LocalJob): Promise<void> {
+    if (await reconcileCancellation(state, job)) return;
     const worker = state.runners.find((item) => item.id === job.workerId);
     let container: Awaited<ReturnType<DockerRunners["inspectJob"]>>;
     try {
@@ -946,6 +1141,15 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     }
     state.launched[job.id] = true;
     if (container.running) {
+      if (
+        job.budget &&
+        clock().getTime() - Date.parse(job.budget.startedAt) >=
+          job.budget.maxMinutes * 60000
+      ) {
+        requestCancellation(job, "runtime-limit");
+        await reconcileCancellation(state, job);
+        return;
+      }
       if (worker) {
         worker.busy = true;
         worker.status = worker.paused ? "paused" : "busy";
@@ -962,6 +1166,9 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       );
       return;
     }
+    settleBudget(job, (state.usage ??= {}), clock());
+    if (job.nextAttemptAt && Date.parse(job.nextAttemptAt) > clock().getTime())
+      return;
     if (job.type === "verify") {
       try {
         const artifacts = await docker.artifacts(job.id);
@@ -1008,6 +1215,39 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
             throw new Error();
           await options.completeJob?.({ ...job, finishedAt: now() }, docker);
         }
+        if (options.reconcileCompletedJob) {
+          try {
+            await options.reconcileCompletedJob(
+              { ...job, finishedAt: now() },
+              result,
+              docker,
+            );
+          } catch {
+            job.reconciliationAttempts = (job.reconciliationAttempts ?? 0) + 1;
+            if (job.reconciliationAttempts < 3) {
+              job.failure = {
+                category: "completion",
+                at: now(),
+                retryable: true,
+              };
+              job.nextAttemptAt = new Date(
+                clock().getTime() + 30_000 * job.reconciliationAttempts,
+              ).toISOString();
+              job.message =
+                "Worker finished. Delivery reconciliation is pending; only its completion record will be retried, never the agent or publication.";
+              return;
+            }
+            failed(
+              state,
+              job,
+              worker,
+              "Worker finished but delivery reconciliation needs attention. Inspect the existing draft and evidence; the agent and publication were not repeated.",
+              undefined,
+              "completion",
+            );
+            return;
+          }
+        }
       } catch {
         failed(
           state,
@@ -1016,6 +1256,8 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           job.pmMode === "discovery"
             ? "Discovery could not save a matching knowledge snapshot. Previous knowledge was preserved; review its artifacts and current PM brief before retrying."
             : "The agent exited without a matching completion record or knowledge snapshot. Inspect its logs and artifacts before retrying; previous knowledge was preserved.",
+          undefined,
+          "completion",
         );
         return;
       }
@@ -1023,6 +1265,8 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     job.status = "succeeded";
     job.exitCode = 0;
     job.finishedAt = now();
+    job.nextAttemptAt = undefined;
+    job.failure = undefined;
     job.message =
       job.type === "verify"
         ? "Chromium started and a matching screenshot was verified."
@@ -1044,6 +1288,12 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     worker: LocalWorker,
   ): Promise<void> {
     if (stopping) return;
+    if (await reconcileCancellation(state, job)) {
+      save(state);
+      if (job.status !== "running") await releaseResources(job);
+      return;
+    }
+    if (!canLaunch(state, job)) return;
     const keepQueued = async () => {
       job.status = "queued";
       job.startedAt = undefined;
@@ -1063,6 +1313,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     job.workerId = worker.id;
     job.status = "running";
     job.startedAt = now();
+    job.nextAttemptAt = undefined;
     job.message = "Preparing an isolated job container.";
     worker.busy = true;
     worker.status = worker.verifiedAt ? "busy" : "provisioning";
@@ -1079,7 +1330,9 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         await keepQueued();
         return;
       }
-      if (!imageReady) {
+      if (docker.prepareWorker)
+        await docker.prepareWorker(worker.id, worker.remoteId);
+      else if (!imageReady) {
         await docker.ensureImage();
         imageReady = true;
       }
@@ -1118,6 +1371,12 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         job.status = "queued";
         job.startedAt = undefined;
         job.message = error.message;
+        job.failure = {
+          category: "credential-wait",
+          at: now(),
+          retryable: true,
+        };
+        job.nextAttemptAt = new Date(clock().getTime() + 30_000).toISOString();
         delete state.launched[job.id];
         idleWorker(worker);
         save(state);
@@ -1129,6 +1388,8 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         job,
         worker,
         "This job could not be prepared. Check project configuration and saved connections. No agent was started.",
+        undefined,
+        "configuration",
       );
       save(state);
       await releaseResources(job);
@@ -1138,10 +1399,56 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       await keepQueued();
       return;
     }
+    if (await reconcileCancellation(state, job)) {
+      save(state);
+      if (job.status !== "running") await releaseResources(job);
+      return;
+    }
+    if (job.project) {
+      let limits: ExecutionLimits;
+      try {
+        limits = validateLimits(options.executionLimits?.(job.project) ?? {});
+      } catch {
+        failed(
+          state,
+          job,
+          worker,
+          "Execution limits changed during preparation. Repair the project settings before starting a new run.",
+          undefined,
+          "configuration",
+        );
+        save(state);
+        await releaseResources(job);
+        return;
+      }
+      job.budget =
+        reserveBudget(
+          job.project,
+          limits,
+          (state.usage ??= {}),
+          state.jobs.filter((item) => item.id !== job.id),
+          clock(),
+        ) ?? undefined;
+      if (!job.budget) {
+        job.status = "queued";
+        job.startedAt = undefined;
+        job.message = executionUsage(state, job.project, job.id).blockedReason;
+        idleWorker(worker);
+        save(state);
+        await releaseResources(job);
+        return;
+      }
+      payload.maxRuntimeMinutes = job.budget.maxMinutes;
+      save(state);
+    }
     try {
+      job.launchAttemptedAt = now();
+      save(state);
+      if (job.project) payload.project = job.project;
       await docker.startJob({ id: job.id, workerId: worker.id, payload });
       state.launched[job.id] = true;
       job.message = "Running in an isolated Docker container.";
+      job.failure = undefined;
       worker.status = "busy";
     } catch {
       try {
@@ -1154,6 +1461,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         // An ambiguous launch is reconciled by deterministic container ID on the
         // next tick; it must never be blindly retried while Docker is unreachable.
         job.message = "Waiting for Docker to confirm whether this job started.";
+        job.failure = {
+          category: "ambiguous-launch",
+          at: now(),
+          retryable: false,
+        };
       }
     }
     save(state);
@@ -1178,6 +1490,8 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         }
       }
       save(state);
+      for (const job of state.jobs.filter((item) => item.status === "queued"))
+        await reconcileCancellation(state, job);
       for (const job of state.jobs.filter((item) => TERMINAL.has(item.status)))
         await releaseResources(job);
       if (stopping) {
@@ -1227,14 +1541,17 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
             (item) =>
               item.status === "queued" &&
               item.type === "verify" &&
-              item.workerId === worker.id,
+              item.workerId === worker.id &&
+              canLaunch(state, item),
           ) ??
           (worker.verifiedAt
             ? state.jobs.find(
                 (item) =>
                   item.status === "queued" &&
                   item.type !== "verify" &&
-                  (!item.workerId || item.workerId === worker.id),
+                  (!item.workerId || item.workerId === worker.id) &&
+                  (docker.canRun?.(worker.remoteId, item.project) ?? true) &&
+                  canLaunch(state, item),
               )
             : undefined);
         if (job) await launch(state, job, worker);
@@ -1268,7 +1585,19 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           if (archived) state.jobs.push(archived);
         }
       }
-    return state.jobs.sort((a, b) => b.runId - a.runId);
+    return state.jobs.map(visibleJob).sort((a, b) => b.runId - a.runId);
+  }
+  function visibleJob(job: LocalJob): LocalJob {
+    if (TERMINAL.has(job.status)) return job;
+    const request = cancellation(job);
+    return request
+      ? {
+          ...job,
+          cancelRequestedAt: request.at,
+          message:
+            "Cancellation requested. Waiting for this job's local container to stop.",
+        }
+      : job;
   }
 
   async function findJob(id: string | number): Promise<LocalJob | null> {
@@ -1281,7 +1610,9 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     if (!ID.test(id) || !id.startsWith("job-"))
       throw new LocalRunnerError("Choose a valid local job.");
     return (
-      read().jobs.find((job) => job.id === id) ??
+      read()
+        .jobs.map(visibleJob)
+        .find((job) => job.id === id) ??
       archivedJob(id) ??
       (await options.activityStore?.getRun(id).catch(() => null)) ??
       null
@@ -1301,9 +1632,31 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         runners: state.runners,
         jobs: state.jobs
           .slice()
+          .map(visibleJob)
           .sort((a, b) => b.runId - a.runId)
           .slice(0, 100),
         operation: state.operation,
+        execution: [
+          ...new Set(
+            state.jobs.flatMap((job) => (job.project ? [job.project] : [])),
+          ),
+        ].map((project) => {
+          try {
+            return executionUsage(state, project);
+          } catch {
+            return {
+              project,
+              day: now().slice(0, 10),
+              limits: {},
+              runsStarted: 0,
+              runtimeMinutes: 0,
+              reservedRuntimeMinutes: 0,
+              runningJobs: 0,
+              blockedReason:
+                "Execution settings are unavailable; no new jobs will launch.",
+            };
+          }
+        }),
       };
     },
     create: () =>
@@ -1328,6 +1681,36 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           message: "Worker created. Its browser check is queued.",
           runnerId: worker.id,
         };
+        save(state);
+        return worker;
+      }),
+    addRemote: (remoteId, name) =>
+      exclusive((state) => {
+        if (
+          !/^remote-[a-f0-9-]{36}$/.test(remoteId) ||
+          !/^[A-Za-z0-9 -]{1,80}$/.test(name)
+        )
+          throw new LocalRunnerError("Choose a valid enrolled remote worker.");
+        const existing = state.runners.find(
+          (worker) => worker.remoteId === remoteId,
+        );
+        if (existing) return existing;
+        if (state.runners.length >= MAX_WORKERS)
+          throw new LocalRunnerError(
+            "This workspace already has four worker slots.",
+            409,
+          );
+        const worker: LocalWorker = {
+          id: `worker-${randomUUID()}`,
+          remoteId,
+          name,
+          status: "provisioning",
+          busy: false,
+          paused: false,
+          createdAt: now(),
+        };
+        state.runners.push(worker);
+        verify(state, worker);
         save(state);
         return worker;
       }),
@@ -1397,6 +1780,38 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         save(state);
         return job;
       }),
+    async cancel(id) {
+      const job = await requireJob(id);
+      if (TERMINAL.has(job.status)) return job;
+      const request = requestCancellation(job, "user");
+      try {
+        return await exclusive(async (state) => {
+          const current = state.jobs.find((item) => item.id === id);
+          if (!current) return job;
+          if (!TERMINAL.has(current.status)) {
+            await reconcileCancellation(state, current);
+            save(state);
+            if (TERMINAL.has(current.status)) await releaseResources(current);
+          }
+          return current;
+        });
+      } catch (error) {
+        if (error instanceof LocalRunnerError && error.status === 409) {
+          // A bounded completion phase can hold the queue lock. The durable
+          // request is already saved, so stop only this admitted job now and
+          // leave state/credential reconciliation to the queue transaction.
+          if (job.status === "running" && job.launchAttemptedAt)
+            await docker.stopJob(job.id).catch(() => {});
+          return {
+            ...job,
+            cancelRequestedAt: request.at,
+            message:
+              "Cancellation recorded. The controller will stop this job before admitting more work.",
+          };
+        }
+        throw error;
+      }
+    },
     jobs: allJobs,
     job: findJob,
     async logs(id) {

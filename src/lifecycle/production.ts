@@ -202,7 +202,10 @@ export async function auditProduction(
         if (
           implementation.author !== ctx.botLogin ||
           implementation.headRef.toLowerCase() !==
-            developerBranch(ticket.identifier) ||
+            (required.implementationBranch ??
+              developerBranch(ticket.identifier)) ||
+          (required.implementationHeadSha !== undefined &&
+            implementation.headSha !== required.implementationHeadSha) ||
           ![
             branches.integration,
             branches.staging,
