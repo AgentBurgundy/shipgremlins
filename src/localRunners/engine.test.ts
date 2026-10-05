@@ -1644,6 +1644,9 @@ describe("durable local worker engine", () => {
     expect(readdirSync(external)).toEqual([]);
   });
 
+  // This durability stress case flushes 502 real usage records in addition to
+  // history/notification files. Allow slower Windows CI disks to finish those
+  // writes; bounded capture/admission behavior has separate regression coverage.
   it("archives older terminal metadata without losing job history or retry-key deduplication", async () => {
     const f = fixture();
     const first = await f.engine.enqueue({
@@ -1728,7 +1731,7 @@ describe("durable local worker engine", () => {
         join(f.root, ".run", "local-runners", "history", `${first.id}.json`),
       ),
     ).toBe(true);
-  });
+  }, 60_000);
 
   it("stops controller polling without stopping any running job container", async () => {
     const f = fixture();
