@@ -55,7 +55,21 @@ import {
   createDockerRunners,
   type DockerRunners,
 } from "../localRunners/docker.ts";
-import { createJobPreparation } from "../localRunners/jobs.ts";
+import {
+  createJobPreparation,
+  JobReadinessError,
+} from "../localRunners/jobs.ts";
+import {
+  inspectPmReadiness,
+  setPmAutomation,
+  PmControlError,
+  type ReadinessContext,
+} from "../setup/pmReadiness.ts";
+import {
+  createPmPlanner,
+  PmPlannerError,
+  type PmPlanner,
+} from "../pmPlanner/index.ts";
 import type { LocalJobInput, WorkerAction } from "../localRunners/types.ts";
 import {
   doctorChecks,
@@ -235,6 +249,7 @@ export interface DashboardOptions {
   linearConnectionFor?: (connectionId?: string) => LinearConnection;
   vercelConnectionFor?: (connectionId?: string) => VercelConnection;
   linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
+  pmPlanner?: PmPlanner;
 }
 
 export function createDashboardServer(
@@ -368,6 +383,8 @@ export function createDashboardServer(
       linearConnectionFor,
       vercelConnectionFor,
     });
+  const pmPlanner =
+    options.pmPlanner ?? createPmPlanner({ root, packageRoot, sourceControl });
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
   let manager: LocalRunners | undefined = options.runners;
@@ -381,6 +398,44 @@ export function createDashboardServer(
       beforeLaunch: () => activityStore.ensure(),
       releaseJobResources: preparation.releaseJobResources,
     }));
+  async function readinessContext(
+    sources?: SourceStatus[],
+    services?: Awaited<ReturnType<typeof serviceStatuses>>,
+  ): Promise<ReadinessContext> {
+    let localMode = false;
+    try {
+      localMode = loadHub(root).runners.mode === "local";
+    } catch {
+      /* Setup page explains the missing configuration. */
+    }
+    const [sourceConnections, serviceConnections, workers] = await Promise.all([
+      sources ?? sourceControl.status(),
+      services ?? serviceStatuses(),
+      Promise.resolve()
+        .then(() => runners().status())
+        .then((status) => status.runners)
+        .catch(() => []),
+    ]);
+    return {
+      env: { ...readConnections(root), ...process.env },
+      sourceConnections,
+      serviceConnections,
+      workers,
+      localMode,
+    };
+  }
+  function projectReadiness(name: string, context: ReadinessContext) {
+    const projectDocument = readEditableConfig(
+        root,
+        `projects/${name}/project.json`,
+      ),
+      areasDocument = readEditableConfig(root, `projects/${name}/areas.json`);
+    return {
+      projectRevision: projectDocument.revision,
+      areasRevision: areasDocument.revision,
+      readiness: inspectPmReadiness(loadProject(root, name), context),
+    };
+  }
   let dockerState: Awaited<ReturnType<DockerRunners["preflight"]>> | undefined;
   let dockerCheckedAt = 0;
   async function runnerStatus() {
@@ -916,17 +971,36 @@ export function createDashboardServer(
               "Choose a project and PM area or approved Linear ticket.",
             );
           const jobInput = input as unknown as LocalJobInput;
+          jobInput.runOnce = true;
+          if (jobInput.type === "pm") {
+            const ready = projectReadiness(
+              jobInput.project!,
+              await readinessContext(),
+            ).readiness.areas.find((area) => area.key === jobInput.area);
+            if (!ready)
+              throw new RequestError(
+                400,
+                "Choose an existing PM before starting its run.",
+              );
+            if (!ready.canRun)
+              throw new RequestError(
+                409,
+                ready.blockers.map((item) => item.message).join(" "),
+              );
+          }
           let validated: Awaited<ReturnType<typeof preparation.validate>>;
           try {
             validated = await preparation.validate(jobInput);
-          } catch {
+          } catch (error) {
             throw new RequestError(
               400,
-              "This job is not ready. Check doctor verification, the enabled PM area, credentials and the ticket's approval/project labels.",
+              error instanceof JobReadinessError
+                ? error.message
+                : "This job is not ready. Verify the project, review its PM mapping and mandate, and check the selected connections and ticket approval.",
             );
           }
+          jobInput.linearBinding = validated.linearBinding;
           if (validated.ticket) {
-            jobInput.linearBinding = validated.linearBinding;
             jobInput.area = validated.area.key;
             jobInput.ticket = validated.ticket.identifier;
             const previous = (await runners().jobs()).filter((job) => {
@@ -1078,6 +1152,10 @@ export function createDashboardServer(
           const saved = readConnections(root);
           const sourceConnections = await sourceControl.status();
           const serviceConnections = await serviceStatuses();
+          const readiness = await readinessContext(
+            sourceConnections,
+            serviceConnections,
+          );
           const configWarnings: string[] = [];
           let hubRepo: string | null = null;
           if (existsSync(join(root, "hub.json"))) {
@@ -1098,6 +1176,7 @@ export function createDashboardServer(
             try {
               const project = loadProject(root, name);
               const verification = effectiveVerification(project.config);
+              const snapshot = projectReadiness(name, readiness);
               return {
                 name,
                 repo: project.config.repo,
@@ -1118,6 +1197,7 @@ export function createDashboardServer(
                 branches: project.config.branches,
                 verified: project.config.verified,
                 linear: linearProvisioning.status(name),
+                ...snapshot,
                 areas: project.areas.map(
                   ({
                     key,
@@ -1139,6 +1219,9 @@ export function createDashboardServer(
                     schedule,
                     wipLimit,
                     mixpanelReportId,
+                    readiness: snapshot.readiness.areas.find(
+                      (item) => item.key === key,
+                    ),
                   }),
                 ),
               };
@@ -1470,6 +1553,129 @@ export function createDashboardServer(
             result: JSON.parse(output.join("\n")),
             linear,
           });
+          return;
+        }
+        const pmReadiness =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/readiness$/.exec(
+            url.pathname,
+          );
+        if (pmReadiness) {
+          if (req.method !== "GET")
+            throw new RequestError(405, "Use GET for project readiness.");
+          json(res, 200, {
+            project: pmReadiness[1],
+            ...projectReadiness(pmReadiness[1]!, await readinessContext()),
+          });
+          return;
+        }
+        const pmStatus =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/areas\/([a-z][a-z0-9-]{0,62})\/status$/.exec(
+            url.pathname,
+          );
+        if (pmStatus) {
+          if (req.method !== "POST")
+            throw new RequestError(
+              405,
+              "Use POST to enable or pause PM automation.",
+            );
+          const input = await body(req);
+          if (
+            Object.keys(input).some(
+              (key) =>
+                !["enabled", "revision", "projectRevision"].includes(key),
+            )
+          )
+            throw new RequestError(
+              400,
+              "Provide enabled and the current project/PM revisions.",
+            );
+          try {
+            json(
+              res,
+              200,
+              await setPmAutomation(
+                root,
+                pmStatus[1]!,
+                pmStatus[2]!,
+                input as {
+                  enabled: boolean;
+                  revision: string;
+                  projectRevision: string;
+                },
+                {
+                  context: readinessContext,
+                  validate: async () => {
+                    await preparation.validate({
+                      type: "pm",
+                      project: pmStatus[1],
+                      area: pmStatus[2],
+                      runOnce: true,
+                    });
+                  },
+                },
+              ),
+            );
+          } catch (error) {
+            if (
+              error instanceof PmControlError ||
+              error instanceof ConfigEditorError
+            )
+              throw new RequestError(error.status, error.message);
+            if (error instanceof JobReadinessError)
+              throw new RequestError(409, error.message);
+            throw new RequestError(
+              400,
+              "PM automation could not be changed. Refresh its readiness and check the selected connections.",
+            );
+          }
+          return;
+        }
+        const pmPlan =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/pm-plan$/.exec(
+            url.pathname,
+          );
+        if (pmPlan) {
+          if (req.method !== "POST")
+            throw new RequestError(
+              405,
+              "Use POST to draft a PM from its mandate.",
+            );
+          const input = await body(req);
+          if (
+            Object.keys(input).length !== 1 ||
+            typeof input.mandate !== "string"
+          )
+            throw new RequestError(
+              400,
+              "Provide the PM mandate to generate a draft.",
+            );
+          const controller = new AbortController();
+          const abort = () => {
+            if (!res.writableEnded) controller.abort();
+          };
+          req.once("aborted", abort);
+          res.once("close", abort);
+          try {
+            json(
+              res,
+              200,
+              await pmPlanner.plan({
+                project: pmPlan[1]!,
+                mandate: input.mandate,
+                signal: controller.signal,
+              }),
+            );
+          } catch (error) {
+            throw new RequestError(
+              error instanceof PmPlannerError ? error.status : 500,
+              error instanceof PmPlannerError
+                ? error.message
+                : "The PM draft could not be generated. Your mandate and existing PMs were preserved.",
+            );
+          } finally {
+            req.removeListener("aborted", abort);
+            res.removeListener("close", abort);
+          }
           return;
         }
         const mappingRepair =

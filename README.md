@@ -108,7 +108,21 @@ gremlins --help
 
 Configuration lives in the nearest existing configuration directory, or `~/.shipgremlins` outside one. Use `gremlins --home PATH setup` to choose another location. Add your app repository directly; local mode does not require `--hub-repo`.
 
-Save connections, add your app, and choose **Create runner on this machine**. That machine is the CLI/dashboard server, even when you visit it from a phone. A worker becomes Ready only after Chromium produces verified screenshot evidence. Review each mandate, choose **Verify connections** (or run `gremlins doctor my-app`), and enable the areas you want to schedule. New PMs start disabled.
+Follow the project's setup steps: connect source control, Linear, and Claude Code;
+review its repository, commands, and PM mapping; then **Verify connections** and
+create a local worker. The worker runs on the CLI/dashboard server, even when you
+visit from a phone. Ready requires actual Chromium screenshot evidence.
+
+New PMs start with automation paused. Use **Run once** to try a mapped, verified
+PM without turning on its schedule. Review Activity, then choose **Enable
+automation** for recurring patrols and background approved-ticket pickup. **Pause
+automation** stops new automatic work; manual runs remain separate. A manual
+Coding run still requires an open, approved ticket in the PM's Linear project.
+
+On the PM creation form, write your brief and choose **Fill with AI** for suggested
+ownership paths, a name, metric, UTC schedule, and WIP limit. Review the draft and
+choose **Apply suggestions** to fill the form. Your original mandate is preserved;
+AI fill does not create the PM, change Linear, enable automation, or run a job.
 
 Connect GitHub or GitLab with a device code in **Source control**, then select your repository. GitHub requires installing the App on the repositories you choose. The controller manages token refresh and waits when active work still needs the old credential. Existing manual tokens and self-hosted GitLab remain available as advanced setup options.
 

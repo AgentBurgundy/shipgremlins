@@ -29,6 +29,23 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6eH8AAAAASUVORK5CYII=",
   "base64",
 );
+it("persists explicit one-off job admission across a controller restart", async () => {
+  const f = fixture();
+  const queued = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+    runOnce: true,
+  });
+  const restarted = createLocalRunners(f.options);
+  expect(await restarted.job(queued.id)).toMatchObject({
+    runOnce: true,
+    status: "queued",
+  });
+  await expect(
+    restarted.enqueue({ type: "verify", runOnce: true }),
+  ).rejects.toThrow();
+});
 
 function fixture() {
   const root = mkdtempSync(

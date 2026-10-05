@@ -13,7 +13,18 @@ the **Default connection**; manual-token fallback belongs only to that default.
 
 When you add an app while Linear is connected, ShipGremlins creates a Linear team for that app and a Linear project for its initial PM mandate. Choose **Reuse an existing team** to keep your existing organization, or **Set up later** to save local configuration without creating anything in Linear.
 
-Add another PM with a name, mandate, ownership paths, schedule, and WIP limit. ShipGremlins saves it disabled and creates its Linear project under the app's team. Review the mandate and run **Verify connections** before enabling it. Schedules use UTC.
+Add another PM with a name, mandate, ownership paths, schedule, and WIP limit.
+**Fill with AI** can suggest the form fields from your brief and repository paths;
+review and **Apply suggestions** before the separate **Create PM** action. The
+original mandate is never replaced, and generating or applying a draft creates
+no Linear resources.
+
+Creating the PM saves it with automation paused and creates its Linear project
+under the app's team. Review its mapping and run **Verify connections**, then
+**Run once** to inspect a supervised result. **Enable automation** opts into UTC
+patrols and automatic approved-ticket pickup; **Pause automation** stops new
+automatic work. Explicit PM and approved Coding runs remain available while
+paused. Neither control approves a ticket or marks it Done.
 
 Existing area `linearProjectId` values are preserved. For an older app, explicit Linear setup can infer a team when all mapped projects share exactly one team. Otherwise choose the shared team yourself. It will not move or delete existing Linear projects. An explicitly reused PM project must belong to the configured team.
 
@@ -38,8 +49,10 @@ projects again.
 journal together. Concurrent edits are rejected. Unrelated project settings,
 mandates, and credentials are preserved. This does not move, create, or delete
 anything in Linear. Leaving a PM unmapped pauses it; saving a valid mapping does
-not automatically enable a paused PM. Review enabled PMs and verify connections
-before resuming work. Explicit provisioning remains available for creating
+not automatically enable a paused PM. An intentionally unmapped, paused PM does
+not block verification of other configured PMs. It cannot run or be enabled until
+its mapping is repaired. Verify connections after mapping changes, then use
+**Run once** or explicitly resume automation. Explicit provisioning remains available for creating
 missing resources.
 
 ## Vercel preview access

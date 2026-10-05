@@ -32,9 +32,9 @@ automatically.
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Linear and Claude Code in Connections. Hosting connections are optional. See [source-control setup](SOURCE_CONTROL.md).
 2. Add the **app repository** and a short local ID such as `my-app`. When Linear is connected, setup creates an app team and a project for its first PM. Reuse an existing team or choose setup later when needed. [Linear and Vercel connections](LINEAR_VERCEL.md) explains mappings and retry recovery. Local Docker execution is the default. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
 3. Review the PR base branch, install/test commands, and PM mandate. New projects default to repository-only verification. For browser work, add a named preview/staging target using a direct URL, Vercel, Railway, or Cloud Run. Keep credentials in Connections. Existing projects have **Edit settings**. See [project and hosting settings](PROJECTS.md).
-4. Choose **Create runner on this machine**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
-5. Choose **Verify connections** for the project, or run `gremlins doctor my-app`. Review the area's settings and enable it in Configuration. PMs start disabled and unverified.
-6. Queue a supervised PM run. Inspect logs and artifacts before relying on the schedule. Developer jobs require an open, approved Linear ticket in an enabled area; approval is checked again immediately before launch.
+4. Choose **Create local worker**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
+5. Follow the project's remaining setup steps and choose **Verify connections**, or run `gremlins doctor my-app`. Check the PM's Linear mapping and ownership. New PMs start with automation paused; you do not need to edit JSON to try one.
+6. Choose **Run once** for a supervised PM investigation. Inspect Activity and its evidence. When ready, choose **Enable automation** for recurring patrols and automatic pickup of approved tickets. A manual Coding run requires an open, approved ticket in the matching Linear project; approval is checked again before launch, even when automation is paused.
 
 Approval uses `pm-approved`; proposals use `pm-proposal`. Area labels remain `pm:core`, `pm:security`, and similar. After the agent's work passes configured checks, the worker publishes its unique branch and opens a **draft** PR or MR targeting the configured base branch. Legacy promotion projects target their integration branch. The agent does not publish directly. The local queue does not merge changes or mark tickets Done.
 
@@ -45,6 +45,46 @@ Optional [project telemetry](TELEMETRY.md) lets PMs read scoped Sentry logs/erro
 Connect an optional [Slack channel](SLACK.md) once for PM patrol results, coding drafts ready for review, and blockers from every project. Choose Add to Slack in Connections, or save an incoming webhook when the OAuth broker is unavailable. Projects inherit that channel; leave optional project overrides empty unless a project needs a different channel. Slack is not required to run gremlins. Browser readiness checks do not post messages.
 
 The local runtime prepares a PostgreSQL activity store before launching work. This adds a local Docker service and persistent volume; it is managed on the CLI/dashboard server. Visible tool activity, result summaries, checks, redacted logs, and bounded artifacts appear in the dashboard. Private model reasoning is not stored or displayed. Activity storage failures are separate from the recorded outcome of an already-running job; Docker output remains available.
+
+## Run once and automation are separate
+
+A PM is a saved product mandate. A worker is the Docker capacity that executes
+it. Creating one does not implicitly create or enable the other.
+
+| Action                | Result                                                                                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Run once**          | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.               |
+| **Run Coding**        | Queues work on one open ticket with `pm-approved`, the matching area label, and the PM's Linear project. Manual coding does not require automation to be enabled. |
+| **Enable automation** | Allows that PM's UTC patrol schedule and background pickup of its approved tickets while the controller runs.                                                     |
+| **Pause automation**  | Stops new scheduled patrols and automatic approved-ticket pickup. It does not cancel an already-running job.                                                      |
+| **Pause worker**      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                   |
+
+Use the guided setup actions beside the selected project when something is
+missing. Connect source control and Claude Code in Connections; repair the
+project's Linear connection, team, or PM mappings in Edit settings; then verify
+the project and create or resume a verified worker. Hosting setup is required
+only for a selected browser environment. Slack and product signals are optional.
+A saved credential, an enabled schedule, and a ready worker are different states.
+
+### Fill a PM draft with AI
+
+Choose **Create PM**, select its project, and describe the investigation in your
+own words. **Fill with AI** combines that brief with a bounded view of the
+repository's paths to suggest a name, mandate ID, ownership paths, shared
+touchpoints, metric, UTC schedule, and WIP limit. Review the rationale and any
+warnings, especially when the repository view was truncated.
+
+AI fill uses the saved Claude Code connection and source access, with a disposable
+Docker container on your controller. The first request may need to build the
+worker image. It reads repository paths, not source-file contents. The first PM
+patrol follows the configuration you saved; it does not fill or rewrite ownership.
+
+**Apply suggestions** copies the reviewed fields into the form and preserves your
+original mandate. It does not save configuration, create Linear resources, enable
+automation, or start work. Choose **Create PM** separately after reviewing the
+form. Changes to the selected project or form while a suggestion is pending make
+it stale; generate another draft instead of overwriting those edits. You can
+always fill in the form manually.
 
 ## Connections and configuration
 
@@ -117,7 +157,7 @@ gremlins doctor my-app
 
 Use generated `projects/PROJECT/.env.example` names for project-specific secrets. Save their values privately in the configuration `.env`, or select a file explicitly with `gremlins --env-file .env doctor my-app`. Automatic connection loading accepts supported keys and does not apply arbitrary entries such as `NODE_OPTIONS`.
 
-The controller reads enabled areas' five-field schedules in **UTC** and considers approved open tickets. Each scheduled slot/ticket attempt has an idempotency key. Jobs have a 45-minute execution limit. Failed agent jobs are not automatically replayed; a failure before container launch gets one infrastructure retry. Manual requests for an already queued/running PM or ticket are rejected.
+The controller reads automation-enabled areas' five-field schedules in **UTC** and considers their approved open tickets. Paused areas are excluded from automatic work; explicit manual runs do not enable them. Each scheduled slot/ticket attempt has an idempotency key. Jobs have a 45-minute execution limit. Failed agent jobs are not automatically replayed; a failure before container launch gets one infrastructure retry. Manual requests for an already queued/running PM or ticket are rejected.
 
 An area's WIP limit includes approved tickets awaiting review: a completed worker job does not close its ticket or free that slot. Failed work also needs review and an explicit retry. Close or otherwise resolve reviewed tickets through the project's lifecycle before expecting later approved tickets to move forward. Never mark a ticket Done merely to free capacity before its production deliverables are merged.
 

@@ -152,6 +152,9 @@
   let linearModeEdited = false;
   let pmKeyEdited = false;
   let pmCreating = false;
+  let pmPlanning = false;
+  let pmDraft = null;
+  const areaActions = new Map();
   let projectLayoutInitialized = false;
   let newProjectSettings = window.createProjectSettings(
     $("new-project-settings"),
@@ -326,6 +329,8 @@
     renderLinearSetup();
     renderProjectProvider();
     updateProjectEditorControls();
+    pmDraft?.setLocked(locked || pmCreating);
+    if (currentStatus) renderStatus(currentStatus);
   }
 
   function restoreButton(id, label, symbol) {
@@ -641,9 +646,11 @@
       repo.textContent = `${project.provider === "gitlab" ? "GitLab" : "GitHub"} · ${project.repo}`;
       const badge = document.createElement("span");
       badge.className = "project-row-badge";
-      badge.textContent = project.verified
-        ? "Verified settings"
-        : "Needs verification";
+      badge.textContent = project.readiness?.canRun
+        ? "Ready to run"
+        : project.readiness?.blockers?.[0]?.action === "worker"
+          ? "Needs a worker"
+          : "Finish setup";
       title.append(badge);
       name.append(title, repo);
       const actions = element("div", "project-actions");
@@ -666,8 +673,7 @@
         ["pm", "Run PM"],
         ["developer", "Run Coding"],
       ]) {
-        const needsPm =
-          type === "pm" && !(project.areas || []).some((area) => area.enabled);
+        const needsPm = type === "pm" && !(project.areas || []).length;
         const button = element(
           "button",
           `small-button launch-${type}`,
@@ -1726,6 +1732,9 @@
       $("job-project").value = launch.dataset.launchProject;
       $("job-type").value = launch.dataset.launchCrew;
       renderJobAreas();
+      if (launch.dataset.launchArea)
+        $("job-area").value = launch.dataset.launchArea;
+      updateRunnerControls();
       pages.navigate("/runners#job-form");
       (launch.dataset.launchCrew === "pm"
         ? $("job-area")
@@ -1755,6 +1764,7 @@
         error: !result.ok,
         checks: result.checks || [],
       });
+      await refreshStatus();
     } catch (error) {
       projectChecks.set(name, { error: true, message: error.message });
     } finally {
@@ -1802,27 +1812,53 @@
         (runner.status === "busy" && runner.verifiedAt),
     );
     const project = $("job-project").value;
+    const selected = currentStatus?.projects?.find(
+      (item) => item.name === project,
+    );
+    const area = selected?.readiness?.areas?.find(
+      (item) => item.key === $("job-area").value,
+    );
     const pm = $("job-type").value === "pm";
     $("run-job").disabled =
-      !workersAvailable || !project || (pm && !$("job-area").value);
+      locked ||
+      runnerRequestBusy ||
+      !workersAvailable ||
+      !project ||
+      (pm
+        ? !$("job-area").value || !area?.canRun
+        : !selected?.readiness?.canRun || !$("job-ticket").value.trim());
     $("job-ticket").required = !pm;
     $("job-ticket").disabled = pm;
     $("job-area").disabled = !pm;
     $("job-area-field").hidden = !pm;
     $("job-ticket-field").hidden = pm;
-    $("run-job").textContent = pm ? "Run PM Gremlin ↗" : "Run Coding Gremlin ↗";
+    $("run-job").textContent = runnerRequestBusy
+      ? "Queuing…"
+      : pm
+        ? "Run PM once ↗"
+        : "Run Coding once ↗";
     for (const button of document.querySelectorAll("[data-crew-type]"))
       button.setAttribute(
         "aria-pressed",
         String(button.dataset.crewType === $("job-type").value),
       );
-    $("job-guidance").textContent = !workersAvailable
-      ? "Create or resume a verified worker before queuing a job."
-      : !project
-        ? "Add a project above, then complete its settings in Configuration."
+    const blockers = pm
+      ? area?.blockers || selected?.readiness?.blockers
+      : selected?.readiness?.blockers;
+    $("job-guidance").textContent = !project
+      ? "Add a project in Projects to get started."
+      : blockers?.length
+        ? "Finish the setup steps below to start this run."
         : pm && !$("job-area").value
-          ? "Enable a PM mandate in this project’s areas.json before running it."
-          : "Uses saved settings on this server. Unsaved configuration drafts are not included.";
+          ? "Create a PM mandate in Projects first."
+          : pm
+            ? "Investigates this mandate once. Automation stays as it is."
+            : "Implements one approved ticket. Approval and ownership are checked before queuing; automation stays as it is.";
+    $("job-setup-guide").replaceChildren(
+      ...(selected
+        ? [window.renderCrewSetup(selected, { blockers, compact: true })]
+        : []),
+    );
     for (const button of document.querySelectorAll("[data-runner-action]")) {
       const runner = runnerStatus?.runners?.find(
         (item) => item.id === button.dataset.runnerId,
@@ -1864,17 +1900,26 @@
     const project = currentStatus?.projects?.find(
       (item) => item.name === $("job-project").value,
     );
-    const areas = (project?.areas || []).filter((area) => area.enabled);
+    const areas = project?.areas || [];
     select.replaceChildren();
     for (const area of areas)
-      select.append(new Option(area.name || area.key, area.key));
-    if (!areas.length) select.append(new Option("No enabled PM mandates", ""));
+      select.append(
+        new Option(
+          `${area.name || area.key}${area.enabled ? " · automation on" : " · paused"}`,
+          area.key,
+        ),
+      );
+    if (!areas.length) select.append(new Option("Create a PM first", ""));
     if (areas.some((area) => area.key === chosen)) select.value = chosen;
     updateRunnerControls();
   }
 
   function renderRunners(status) {
+    const workersChanged =
+      JSON.stringify(runnerStatus?.runners) !== JSON.stringify(status.runners);
     runnerStatus = status;
+    if (workersChanged && currentStatus && !loading)
+      refreshStatus().catch(() => {});
     renderOverview();
     const runners = Array.isArray(status.runners) ? status.runners : [];
     const jobs = Array.isArray(status.jobs) ? status.jobs : [];
@@ -2225,6 +2270,8 @@
     await runWorkerAction("remove", id);
   });
   $("job-project").addEventListener("change", renderJobAreas);
+  $("job-area").addEventListener("change", updateRunnerControls);
+  $("job-ticket").addEventListener("input", updateRunnerControls);
   $("job-type").addEventListener("change", updateRunnerControls);
   for (const button of document.querySelectorAll("[data-crew-type]"))
     button.addEventListener("click", () => {
@@ -2255,7 +2302,7 @@
       const result = await api("/api/jobs", body);
       message(
         $("job-message"),
-        "Job queued. Follow its output below; it will use the saved configuration on your server.",
+        "Job queued. Opening Activity so you can follow its progress. Automation is unchanged.",
       );
       if (type === "developer") $("job-ticket").value = "";
       await refreshRunners();
@@ -2521,101 +2568,10 @@
     return "Your local configuration was saved. Use Retry Linear setup beside the app to finish the missing mappings.";
   }
   function projectLinearDetails(project) {
-    const areaList = Array.isArray(project.areas) ? project.areas : [];
-    const linear = project.linear || { status: "needs-connection" };
-    const container = element("div", "project-linear-details");
-    const disclosure = element("details", "project-linear-drawer");
-    const state = projectDetailsState.get(project.name);
-    disclosure.open = state?.open === true;
-    const summary = element("summary", "project-linear-summary");
-    summary.dataset.projectControl = "linear-summary";
-    summary.append(element("span", "", "Linear & PMs"));
-    const mappingReady =
-      linear.status === "ready" &&
-      areaList.every((area) =>
-        /^[a-f0-9-]{36}$/i.test(area.linearProjectId || ""),
-      );
-    const mappingState = mappingBusy.has(project.name)
-      ? "Setting up"
-      : mappingReady
-        ? "Mapped"
-        : linear.status === "error"
-          ? "Needs attention"
-          : linear.teamId
-            ? "PM setup needed"
-            : "Team not mapped";
-    summary.append(
-      element(
-        "span",
-        "project-linear-summary-status",
-        `${mappingState} · ${areaList.length} PM ${areaList.length === 1 ? "mandate" : "mandates"}`,
-      ),
-    );
-    disclosure.append(summary, container);
-    const heading = element("div", "project-mapping-heading");
-    const label = element(
-      "span",
-      "mapping-label",
-      linear.teamName ||
-        (linear.teamId ? "Linear team connected" : "Linear team not set up"),
-    );
-    const logo = element("img", "mapping-logo");
-    logo.src = "/assets/brands/linear.svg";
-    logo.width = 14;
-    logo.height = 14;
-    logo.alt = "";
-    label.prepend(logo);
-    const create = element("button", "small-button launch-pm", "+ Create PM");
-    create.type = "button";
-    create.dataset.createPmProject = project.name;
-    create.dataset.projectControl = "create-pm";
-    heading.append(label, create);
-    container.append(heading);
-    if (linear.teamId)
-      container.append(element("p", "mapping-id", `Team ${linear.teamId}`));
-    const manage = element("button", "small-button", "Manage Linear mappings");
-    manage.type = "button";
-    manage.dataset.editProject = project.name;
-    manage.dataset.editLinear = "true";
-    manage.dataset.projectControl = "manage-linear";
-    container.append(manage);
-    if (areaList.length) {
-      const details = element("details", "project-pms");
-      details.open = state?.pmsOpen === true;
-      details.append(
-        element(
-          "summary",
-          "",
-          `${areaList.length} PM ${areaList.length === 1 ? "mandate" : "mandates"}`,
-        ),
-      );
-      details.querySelector("summary").dataset.projectControl = "pm-summary";
-      const list = element("ul", "pm-mapping-list");
-      for (const area of areaList) {
-        const row = element("li", "");
-        row.append(element("strong", "", area.name || area.key));
-        row.append(
-          element(
-            "span",
-            "",
-            `${area.enabled ? "Enabled" : "Disabled"} · pm:${area.key}`,
-          ),
-        );
-        row.append(
-          element(
-            "small",
-            "",
-            /^[a-f0-9-]{36}$/i.test(area.linearProjectId || "")
-              ? `Linear project ${area.linearProjectId}`
-              : "Linear project not mapped yet",
-          ),
-        );
-        list.append(row);
-      }
-      details.append(list);
-      container.append(details);
-    }
-    return disclosure;
+    return window.renderProjectCrew(project, {
+      locked: formsLocked,
+      areaActions,
+    });
   }
   function renderPmProjects() {
     const select = $("pm-project");
@@ -2660,6 +2616,10 @@
       teamSelect.value = previousTeam;
     $("pm-create-fields").disabled =
       formsLocked || pmCreating || !(currentStatus?.projects || []).length;
+    $("create-pm").disabled = pmPlanning;
+    pmDraft?.setLocked(
+      formsLocked || pmCreating || !(currentStatus?.projects || []).length,
+    );
     const project = (currentStatus?.projects || []).find(
       (item) => item.name === $("pm-project").value,
     );
@@ -2755,7 +2715,54 @@
     "click",
     refreshLinearResources,
   );
-  $("pm-project").addEventListener("change", refreshLinearResources);
+  const readPmDraft = () => ({
+    project: $("pm-project").value,
+    mandate: $("pm-mandate").value,
+    name: $("pm-name").value,
+    key: $("pm-key").value,
+    paths: $("pm-paths").value,
+    sharedTouchpoints: $("pm-shared-paths").value,
+    metric: $("pm-metric").value,
+    schedule: $("pm-schedule").value,
+    wipLimit: $("pm-wip").value,
+  });
+  pmDraft = window.createPmDraft($("pm-ai-draft"), {
+    api,
+    getInput: readPmDraft,
+    onBusy: (busy) => {
+      pmPlanning = busy;
+      renderLinearSetup();
+    },
+    onError: (error) =>
+      message(
+        $("pm-create-message"),
+        typeof error === "string" ? error : error.message,
+        true,
+      ),
+    onApply: (draft, snapshot) => {
+      if (JSON.stringify(snapshot) !== JSON.stringify(readPmDraft()))
+        return false;
+      for (const [key, id] of Object.entries({
+        name: "pm-name",
+        key: "pm-key",
+        paths: "pm-paths",
+        sharedTouchpoints: "pm-shared-paths",
+        metric: "pm-metric",
+        schedule: "pm-schedule",
+        wipLimit: "pm-wip",
+      }))
+        $(id).value = Array.isArray(draft[key])
+          ? draft[key].join("\n")
+          : String(draft[key]);
+      pmKeyEdited = true;
+      $("pm-advanced").open = true;
+      return true;
+    },
+  });
+  $("pm-project").addEventListener("change", () => {
+    pmDraft.reset();
+    refreshLinearResources();
+  });
   $("pm-key").addEventListener("input", () => {
     pmKeyEdited = Boolean($("pm-key").value);
   });
@@ -2773,13 +2780,108 @@
         event.target.value,
       );
   });
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-setup-action]");
+    if (!button || button.disabled || formsLocked) return;
+    const project = currentStatus?.projects?.find(
+      (item) => item.name === button.dataset.setupProject,
+    );
+    if (!project) return;
+    try {
+      const action = button.dataset.setupAction;
+      if (["source", "ai", "linear"].includes(action)) {
+        if (action === "linear") {
+          rememberService("linear", project.linear?.connectionId || "default");
+          await refreshService("linear");
+        }
+        pages.navigate(
+          `/connections#${action === "source" ? "source-control" : action === "ai" ? "model-connections" : "linear-connection"}`,
+        );
+      } else if (action === "worker") {
+        pages.navigate("/runners#workers");
+        $("create-runner").focus({ preventScroll: true });
+      } else if (action === "verify") {
+        pages.navigate("/projects");
+        [...$("project-list").querySelectorAll("[data-verify-project]")]
+          .find((item) => item.dataset.verifyProject === project.name)
+          ?.click();
+      } else if (
+        ["mapping", "mandate"].includes(action) &&
+        !project.areas?.length
+      ) {
+        pages.navigate("/projects#pm-create-drawer");
+        $("pm-project").value = project.name;
+        pmDraft.reset();
+        $("pm-create-drawer").open = true;
+        renderLinearSetup();
+        $("pm-mandate").focus();
+        await refreshLinearResources();
+      } else if (
+        action === "mandate" ||
+        button.dataset.setupStep === "schedule" ||
+        button.dataset.setupStep === "configuration"
+      ) {
+        pages.navigate("/settings#config-form");
+        await requestEditorAction(
+          "switch",
+          button.dataset.setupStep === "configuration"
+            ? "hub.json"
+            : `projects/${project.name}/areas.json`,
+        );
+      } else {
+        await openProjectSettings(project.name, button);
+        if (action === "mapping") focusProjectSection("linear");
+      }
+    } catch (error) {
+      message($("global-message"), error.message, true);
+    }
+  });
+  $("project-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-toggle-area]");
+    if (!button || button.disabled || formsLocked) return;
+    const project = currentStatus?.projects?.find(
+      (item) => item.name === button.dataset.areaProject,
+    );
+    if (!project) return;
+    const area = button.dataset.toggleArea;
+    const key = `${project.name}/${area}`;
+    const enabled = button.dataset.enableArea === "true";
+    if (areaActions.get(key)?.busy) return;
+    areaActions.set(key, { busy: true });
+    renderStatus(currentStatus);
+    try {
+      await api(
+        `/api/projects/${encodeURIComponent(project.name)}/areas/${encodeURIComponent(area)}/status`,
+        {
+          enabled,
+          revision: project.areasRevision,
+          projectRevision: project.projectRevision,
+        },
+      );
+      areaActions.set(key, {
+        message: enabled
+          ? "Automation enabled. Scheduled patrols and approved-ticket pickup run while your controller and worker are available."
+          : "Automation paused. Current jobs keep running; you can still Run once.",
+      });
+      await refreshStatus();
+    } catch (error) {
+      areaActions.set(key, { error: true, message: error.message });
+      await refreshStatus().catch(() => {});
+    } finally {
+      const state = areaActions.get(key);
+      if (state) state.busy = false;
+      renderStatus(currentStatus);
+    }
+  });
   $("project-list").addEventListener("click", async (event) => {
     const create = event.target.closest("[data-create-pm-project]");
     if (create) {
       $("pm-project").value = create.dataset.createPmProject;
+      pmDraft.reset();
       $("pm-create-drawer").open = true;
       renderLinearSetup();
       $("pm-name").focus();
+      await refreshLinearResources();
       return;
     }
     const button = event.target.closest("[data-setup-linear-project]");
@@ -2814,7 +2916,7 @@
   });
   $("pm-create-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (pmCreating || formsLocked) return;
+    if (pmCreating || pmPlanning || formsLocked) return;
     const project = $("pm-project").value;
     const input = {
       key: $("pm-key").value.trim(),
@@ -2869,11 +2971,12 @@
         90000,
       );
       $("pm-create-form").reset();
+      pmDraft?.reset();
       pmKeyEdited = false;
       $("pm-project").value = project;
       message(
         $("pm-create-message"),
-        `${input.name} is saved and disabled. ${linearResultMessage(result.linear)} Review its settings and verify the app before enabling it.`,
+        `${input.name} is saved and paused. ${linearResultMessage(result.linear)} Its card shows what's left: finish setup, Run once, or Enable automation.`,
         result.linear?.status === "error",
       );
       await refreshStatus();
@@ -4102,6 +4205,9 @@
 
   function hasUnsavedInputs() {
     return (
+      pmPlanning ||
+      pmCreating ||
+      pmDraft?.hasDraft() ||
       isEditorDirty() ||
       [...profileControls.values()].some((control) => control.isDirty()) ||
       Boolean(mixpanelReports?.isDirty()) ||

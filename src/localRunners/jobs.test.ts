@@ -422,17 +422,148 @@ describe("local job preparation", () => {
       setup({ ...ticket, ...override }).prepareJob(job),
     ).rejects.toThrow("must be open, approved");
   });
-  it("requires a reviewed enabled area and verified project before a manual PM job", async () => {
+  it("keeps scheduled PMs paused while permitting explicit one-off PM and approved Coding runs", async () => {
     edit("areas.json", (raw) => {
       raw.areas.core.enabled = false;
     });
     await expect(
       setup().validate({ type: "pm", project: "app", area: "core" }),
     ).rejects.toThrow("enabled PM area");
+    const manual = setup();
+    expect(
+      await manual.validate({
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+      }),
+    ).toMatchObject({
+      area: { enabled: false },
+      linearBinding: { connectionId: "default" },
+    });
+    expect(
+      await manual.prepareJob({
+        ...job,
+        type: "pm",
+        area: "core",
+        runOnce: true,
+      }),
+    ).toMatchObject({ kind: "pm" });
+    expect(await manual.validate({ ...job, runOnce: true })).toMatchObject({
+      ticket: { id: ticket.id },
+      area: { enabled: false },
+    });
+    expect(await manual.prepareJob({ ...job, runOnce: true })).toMatchObject({
+      kind: "developer",
+    });
+    expect(await manual.scheduledJobs()).toEqual([]);
+    expect(
+      JSON.parse(readFileSync(join(root, "projects/app/areas.json"), "utf8"))
+        .areas.core.enabled,
+    ).toBe(false);
     edit("project.json", (raw) => {
       raw.verified = null;
     });
     await expect(setup().validate(job)).rejects.toThrow("doctor");
+  });
+  it("does not let Run once bypass missing mapping, mandate, or AI credentials", async () => {
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      area: "core",
+      runOnce: true,
+    };
+    edit("areas.json", (raw) => {
+      raw.areas.core.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
+    });
+    await expect(setup().validate(input)).rejects.toThrow("Map this PM");
+    edit("areas.json", (raw) => {
+      raw.areas.core.linearProjectId = ticket.projectId!;
+    });
+    writeFileSync(join(root, "projects/app/core/mandate.md"), "  ");
+    await expect(setup().validate(input)).rejects.toThrow("mandate");
+    writeFileSync(
+      join(root, "projects/app/core/mandate.md"),
+      "Test account security.",
+    );
+    const missingAi = createJobPreparation({
+      root,
+      env: { ...env, CLAUDE_CODE_OAUTH_TOKEN: "" },
+    });
+    await expect(missingAi.validate(input)).rejects.toThrow("Claude Code");
+  });
+  it("checks manual PM mapping ownership and pins its workspace again before launch", async () => {
+    const projectPath = join(root, "projects/app/project.json");
+    const raw = JSON.parse(readFileSync(projectPath, "utf8"));
+    raw.linear = { teamId: "11111111-1111-4111-8111-111111111111" };
+    writeFileSync(projectPath, JSON.stringify(raw));
+    const credential = {
+      token: "scoped-linear",
+      authorization: "Bearer scoped-linear",
+      method: "oauth" as const,
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+    };
+    const acquireLease = vi.fn(async () => credential);
+    const releaseLease = vi.fn(async () => {});
+    const getProject = vi.fn(async () => ({
+      id: "linear-project",
+      name: "Core",
+      url: "https://linear.app/example/project/core",
+      teamIds: [raw.linear.teamId],
+    }));
+    const sourceAcquire = vi.fn(async () => ({
+      token: "source",
+      method: "token" as const,
+    }));
+    const prepared = createJobPreparation({
+      root,
+      env,
+      linearConnection: {
+        resolveCredential: async () => credential,
+        acquireLease,
+        releaseLease,
+      },
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [],
+        getProject,
+      }),
+      sourceControl: { acquireLease: sourceAcquire },
+      preview: async () => "https://preview.example.com",
+    });
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      area: "core",
+      runOnce: true,
+    };
+    const validated = await prepared.validate(input);
+    expect(validated.linearBinding).toEqual({
+      connectionId: "default",
+      workspaceId: credential.workspaceId,
+    });
+    const queued = { ...job, ...input, linearBinding: validated.linearBinding };
+    getProject.mockResolvedValueOnce({
+      id: "linear-project",
+      name: "Wrong team",
+      url: "https://linear.app/example/project/core",
+      teamIds: ["other-team"],
+    });
+    await expect(prepared.prepareJob(queued)).rejects.toThrow("another team");
+    expect(acquireLease).toHaveBeenCalledWith({
+      jobId: job.id,
+      minutes: 50,
+      workspaceId: credential.workspaceId,
+    });
+    expect(releaseLease).toHaveBeenCalledWith(job.id);
+    expect(sourceAcquire).not.toHaveBeenCalled();
+    getProject.mockResolvedValueOnce({
+      id: "linear-project",
+      name: "Wrong team",
+      url: "https://linear.app/example/project/core",
+      teamIds: ["other-team"],
+    });
+    await expect(prepared.validate(input)).rejects.toThrow("another team");
   });
   it("uses GitLab nested namespaces without requiring GitHub credentials", async () => {
     edit("project.json", (raw) => {

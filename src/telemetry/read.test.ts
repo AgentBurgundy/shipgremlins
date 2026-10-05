@@ -402,6 +402,8 @@ describe("Mixpanel analytics", () => {
     const areaPath = join(root, "projects/shop/areas.json");
     const areas = JSON.parse(readFileSync(areaPath, "utf8"));
     areas.areas.core.enabled = true;
+    areas.areas.core.linearProjectId = "linear-core-test";
+    areas.areas.core.mandate = "Review checkout telemetry and reproduce gaps.";
     writeFileSync(areaPath, JSON.stringify(areas));
     saveConnections(root, env);
     const preparation = createJobPreparation({
@@ -415,6 +417,16 @@ describe("Mixpanel analytics", () => {
         SENTRY_AUTH_TOKEN_OTHER: "other-project-secret",
       },
       preview: async () => "https://preview.example.com",
+      linear: () => ({
+        getTicket: async () => null,
+        listTickets: async () => [],
+        getProject: async () => ({
+          id: "linear-core-test",
+          name: "Core",
+          url: "https://linear.app/test/project/core",
+          teamIds: [],
+        }),
+      }),
       telemetryFetch: async (url) =>
         response(url.includes("mixpanel") ? report : { data: [] }),
     });

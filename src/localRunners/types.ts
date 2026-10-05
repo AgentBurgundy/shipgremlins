@@ -19,6 +19,8 @@ export interface LocalJobInput {
     workspaceId?: string;
     ticketId?: string;
   };
+  /** Explicit controller-authorized one-off; it does not enable scheduled automation. */
+  runOnce?: boolean;
 }
 
 export interface LocalJob extends LocalJobInput {

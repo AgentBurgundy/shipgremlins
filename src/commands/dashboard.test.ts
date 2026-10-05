@@ -38,6 +38,7 @@ import {
 import { initializeSetup } from "../setup/files.ts";
 import { LinearApi } from "../services/linear.ts";
 import { readEditableConfig } from "../setup/configEditor.ts";
+import { PmPlannerError } from "../pmPlanner/index.ts";
 import {
   SourceControlError,
   type SourceControl,
@@ -141,6 +142,215 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it("exposes readiness, runs a paused PM once, and toggles automation without clearing verification", async () => {
+    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const enqueue = vi.fn(async () => ({ id: "manual-job", status: "queued" }));
+    const runners = {
+      status: vi.fn(async () => ({
+        runners: [
+          {
+            id: "worker-one",
+            name: "Local",
+            status: "ready",
+            busy: false,
+            paused: false,
+            verifiedAt: "2026-10-05",
+            createdAt: "2026-10-05",
+          },
+        ],
+        jobs: [],
+        operation: { phase: "idle", message: "Ready" },
+      })),
+      enqueue,
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+    } as unknown as LocalRunners;
+    const linearBinding = {
+      connectionId: "default",
+      workspaceId: randomUUID(),
+    };
+    const validate = vi.fn(async () => ({
+      area: { key: "core" },
+      linearBinding,
+    }));
+    const { url, root } = await start(packageRoot, [], {
+      runners,
+      jobs: { validate } as unknown as ReturnType<typeof createJobPreparation>,
+      linearConnection: oauthFixture("linear"),
+      vercelConnection: oauthFixture("vercel"),
+      sourceControl: sourceFixture(),
+    });
+    initializeSetup(root, packageRoot, { project: "demo", repo: "org/app" });
+    writeFileSync(
+      join(root, ".env"),
+      "CLAUDE_CODE_OAUTH_TOKEN=test-only-saved-ai\n",
+    );
+    const projectPath = join(root, "projects/demo/project.json"),
+      areasPath = join(root, "projects/demo/areas.json");
+    const project = JSON.parse(readFileSync(projectPath, "utf8"));
+    project.verified = "2026-10-05";
+    writeFileSync(projectPath, JSON.stringify(project));
+    const areas = JSON.parse(readFileSync(areasPath, "utf8"));
+    areas.areas.core.linearProjectId = randomUUID();
+    areas.areas.core.mandate =
+      "Review account boundaries using isolated test accounts.";
+    writeFileSync(areasPath, JSON.stringify(areas));
+    const snapshot = (await (
+      await fetch(`${url}/api/projects/demo/readiness`, { headers: auth })
+    ).json()) as {
+      projectRevision: string;
+      areasRevision: string;
+      readiness: unknown;
+    };
+    expect(snapshot.readiness).toMatchObject({
+      configured: true,
+      verified: true,
+      workerReady: true,
+      canRun: true,
+      areas: [{ enabled: false, canRun: true }],
+    });
+    expect(
+      (
+        await post(`${url}/api/jobs`, {
+          type: "pm",
+          project: "demo",
+          area: "core",
+          runOnce: true,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(`${url}/api/jobs`, {
+          type: "pm",
+          project: "demo",
+          area: "core",
+        })
+      ).status,
+    ).toBe(202);
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "pm",
+        area: "core",
+        runOnce: true,
+        linearBinding,
+      }),
+    );
+    expect(JSON.parse(readFileSync(areasPath, "utf8")).areas.core.enabled).toBe(
+      false,
+    );
+    const endpoint = `${url}/api/projects/demo/areas/core/status`,
+      input = {
+        enabled: true,
+        revision: snapshot.areasRevision,
+        projectRevision: snapshot.projectRevision,
+      };
+    expect(
+      (
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (await post(endpoint, input, { Origin: "https://untrusted.example" }))
+        .status,
+    ).toBe(403);
+    const response = await post(endpoint, input);
+    expect(response.status).toBe(200);
+    const enabled = (await response.json()) as { revision: string };
+    expect(JSON.parse(readFileSync(projectPath, "utf8")).verified).toBe(
+      "2026-10-05",
+    );
+    expect((await post(endpoint, input)).status).toBe(409);
+    expect(
+      (
+        await post(endpoint, {
+          ...input,
+          enabled: false,
+          revision: enabled.revision,
+        })
+      ).status,
+    ).toBe(200);
+    writeFileSync(join(root, ".env"), "CLAUDE_CODE_OAUTH_TOKEN=\n");
+    const blocked = await post(`${url}/api/jobs`, {
+      type: "pm",
+      project: "demo",
+      area: "core",
+    });
+    expect(blocked.status).toBe(409);
+    expect(await blocked.text()).toContain("Claude Code");
+  });
+  it("protects mandate planning and returns only a draft without creating PM files", async () => {
+    const plan = {
+      draft: {
+        name: "Account guardian",
+        key: "accounts",
+        paths: ["src/accounts"],
+        sharedTouchpoints: [],
+        metric: "/accounts",
+        schedule: "0 13 * * 1-5",
+        wipLimit: 2,
+      },
+      rationale: "The mandate targets account flows.",
+      repository: {
+        provider: "github" as const,
+        repo: "org/app",
+        branch: "main",
+        pathCount: 5,
+        truncated: false,
+      },
+      warnings: [],
+    };
+    const planner = { plan: vi.fn(async () => plan) };
+    const { url, root } = await start(undefined, [], { pmPlanner: planner });
+    const endpoint = `${url}/api/projects/demo/pm-plan`;
+    expect(
+      (
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mandate: "Review accounts." }),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (await post(endpoint, { mandate: "Review accounts.", enabled: true }))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await post(
+          endpoint,
+          { mandate: "Review accounts." },
+          { Origin: "https://untrusted.example" },
+        )
+      ).status,
+    ).toBe(403);
+    const response = await post(endpoint, { mandate: "Review accounts." });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(plan);
+    expect(planner.plan).toHaveBeenCalledWith({
+      project: "demo",
+      mandate: "Review accounts.",
+      signal: expect.any(AbortSignal),
+    });
+    expect(() =>
+      readFileSync(join(root, "projects/demo/areas.json")),
+    ).toThrow();
+    planner.plan.mockRejectedValueOnce(
+      new PmPlannerError(
+        "Save the AI connection before planning.",
+        "missing_ai",
+        409,
+      ),
+    );
+    const failure = await post(endpoint, { mandate: "Review accounts." });
+    expect(failure.status).toBe(409);
+    expect(await failure.text()).toContain("Save the AI connection");
+  });
   it("serves only the known dashboard page routes on direct reload with API protection intact", async () => {
     const { url } = await start();
     for (const route of [

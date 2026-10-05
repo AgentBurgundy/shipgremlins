@@ -4,6 +4,32 @@ ShipGremlins can work on a repository without a hosted web app. Hosting is optio
 
 Run `gremlins setup`, or `gremlins setup --lan --port 4311` on a server. In **Projects**, choose your GitHub or GitLab repository, review its commands, and select how to verify work. Existing projects have an **Edit settings** button. Connections holds credentials; project settings hold resource IDs and credential variable names.
 
+## Get one PM ready, then automate
+
+Start from the selected project's guided setup actions. Source control selects
+the app repository; Connections supplies Claude Code and the chosen Linear
+account; Edit settings holds commands, optional browser targets, and Linear
+mappings. Verify the project, then create or resume a verified Docker worker.
+Each action addresses a specific missing requirement instead of treating every
+optional integration as mandatory.
+
+Create a PM with a clear brief and ownership boundaries. **Fill with AI** proposes
+a draft using that brief and repository paths. Review its rationale, scope, and
+warnings, then **Apply suggestions** if useful. The original mandate remains
+unchanged. Applying a draft only fills the form; **Create PM** is the separate
+save/provisioning action, and the new PM starts with automation paused.
+
+Use **Run once** to test a mapped PM after verification. Paused automation does
+not prevent an explicit run. Inspect its Activity before selecting **Enable
+automation**. That control enables both the PM's UTC patrol schedule and automatic
+pickup of approved Coding tickets for its area. **Pause automation** stops new
+automatic work and keeps the mandate, mapping, and history; existing work is not
+canceled. Manual Coding runs remain available for open, properly approved tickets.
+
+A worker's Pause/Resume controls capacity, separately from PM automation. A ready
+worker does not enable a mandate, and an enabled mandate cannot bypass missing
+connections, verification, or ticket approval.
+
 ## Different projects, different accounts
 
 Connections is a directory of available access, not one mandatory account for every

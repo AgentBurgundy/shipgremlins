@@ -42,16 +42,27 @@ import {
 import { resolveEnvironment } from "../hosting/index.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import { listConnectionIds } from "../oauthConnection/profiles.ts";
+import { hasPmMandate, hasPmMapping } from "../setup/pmReadiness.ts";
+
+export class JobReadinessError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "JobReadinessError";
+  }
+}
 
 export interface JobPreparationOptions {
   telemetryFetch?: TelemetryDeps["fetch"];
   root: string;
   env?: NodeJS.ProcessEnv;
-  linear?: (key: string) => Pick<LinearClient, "getTicket" | "listTickets">;
+  linear?: (
+    key: string,
+  ) => Pick<LinearClient, "getTicket" | "listTickets"> &
+    Partial<Pick<LinearApi, "getProject">>;
   preview?: (project: Project, token: string) => Promise<string | null>;
   now?: () => Date;
   sourceControl?: Pick<SourceControl, "acquireLease"> &
-    Partial<Pick<SourceControl, "releaseLease">>;
+    Partial<Pick<SourceControl, "releaseLease" | "resolveCredential">>;
   linearConnection?: Pick<
     LinearConnection,
     "resolveCredential" | "acquireLease" | "releaseLease"
@@ -204,19 +215,70 @@ export function createJobPreparation(options: JobPreparationOptions) {
   const linear = (key: string) =>
     options.linear?.(key) ?? new LinearApi({ apiKey: key });
 
+  async function checkPmMapping(
+    project: Project,
+    area: AreaConfig,
+    authorization: string,
+  ) {
+    const client = linear(authorization);
+    if (!client.getProject) return;
+    const remote = await client.getProject(area.linearProjectId);
+    if (
+      !remote ||
+      (project.config.linear?.teamId &&
+        !remote.teamIds.includes(project.config.linear.teamId))
+    )
+      throw new JobReadinessError(
+        "This PM's Linear project is unavailable or belongs to another team. Repair its mapping in Edit project before running it.",
+      );
+  }
+
   function projectFor(input: LocalJobInput): Project {
-    if (!input.project) throw new Error("Choose a project.");
+    if (!input.project) throw new JobReadinessError("Choose a project.");
     validateName(input.project, "project");
     const project = loadProject(root, input.project);
     if (loadHub(root).runners.mode !== "local")
-      throw new Error(
+      throw new JobReadinessError(
         "This workspace uses CI runners. Set runners.mode to local in Configuration to use Docker workers.",
       );
     if (!project.config.verified)
-      throw new Error(
-        "Run gremlins doctor for this project before starting agent jobs.",
+      throw new JobReadinessError(
+        "Run Verify connections for this project (or gremlins doctor) before starting agent jobs.",
       );
     return project;
+  }
+  async function manualPrerequisites(
+    project: Project,
+    area: AreaConfig,
+    input: LocalJobInput,
+    checkConnections: boolean,
+  ) {
+    if (!hasPmMapping(area))
+      throw new JobReadinessError(
+        "Map this PM to a Linear project in Edit project → Linear mappings before running it.",
+      );
+    if (!hasPmMandate(project, area))
+      throw new JobReadinessError(
+        "Write and review this PM's mandate before running it.",
+      );
+    if (!input.runOnce || !checkConnections) return;
+    if (!connections().CLAUDE_CODE_OAUTH_TOKEN?.trim())
+      throw new JobReadinessError(
+        "Save a Claude Code connection in Connections before running a gremlin.",
+      );
+    try {
+      await sourceControl.resolveCredential?.({
+        provider: project.config.provider ?? "github",
+        serverUrl: project.config.serverUrl,
+        repository: project.config.repo,
+        minValidityMs: 5 * 60_000,
+        write: input.type === "developer",
+      });
+    } catch {
+      throw new JobReadinessError(
+        "Restore source-control access to this repository, then verify the project before running it.",
+      );
+    }
   }
 
   async function validate(
@@ -252,13 +314,46 @@ export function createJobPreparation(options: JobPreparationOptions) {
         "The project's Linear account changed after this job was queued. Review the ticket in the selected workspace and queue a new job.",
       );
     if (input.type === "pm") {
-      const area = project.areas.find(
-        (item) => item.key === input.area && item.enabled,
-      );
+      const area = project.areas.find((item) => item.key === input.area);
       if (!area)
-        throw new Error(
-          "Choose an enabled PM area after reviewing its mandate.",
+        throw new JobReadinessError(
+          "Choose an existing PM area after reviewing its mandate.",
         );
+      if (!area.enabled && !input.runOnce)
+        throw new JobReadinessError(
+          "Choose an enabled PM area for scheduled work, or use Run once while its automation is paused.",
+        );
+      await manualPrerequisites(project, area, input, !requireQueuedBinding);
+      if (input.runOnce && !requireQueuedBinding) {
+        try {
+          const credential = await linearFor(connectionId).resolveCredential({
+            minValidityMs: 5 * 60_000,
+            workspaceId:
+              input.linearBinding?.workspaceId ??
+              project.config.linear?.workspaceId,
+          });
+          await checkPmMapping(project, area, credential.authorization);
+          return {
+            project,
+            area,
+            linearBinding: {
+              connectionId,
+              ...((credential.workspaceId ?? project.config.linear?.workspaceId)
+                ? {
+                    workspaceId:
+                      credential.workspaceId ??
+                      project.config.linear?.workspaceId,
+                  }
+                : {}),
+            },
+          };
+        } catch (error) {
+          if (error instanceof JobReadinessError) throw error;
+          throw new JobReadinessError(
+            "Connect this project's selected Linear account or restore workspace access before running its PM.",
+          );
+        }
+      }
       return { project, area };
     }
     if (
@@ -282,7 +377,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const area =
       ticket &&
       project.areas.find(
-        (item) => item.enabled && approvedForArea(ticket, item),
+        (item) =>
+          (item.enabled || input.runOnce) && approvedForArea(ticket, item),
       );
     if (
       input.linearBinding?.ticketId &&
@@ -292,9 +388,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
         "The queued ticket no longer matches its validated Linear issue. Review it and queue a new job.",
       );
     if (!ticket || !area)
-      throw new Error(
-        "The ticket must be open, approved, and belong to an enabled area of this project. Proposal and needs-human tickets cannot run.",
+      throw new JobReadinessError(
+        "The ticket must be open, approved, and mapped to this project's PM area. Enable automation for scheduled work; manual runs can use paused areas. Proposal and needs-human tickets cannot run.",
       );
+    await manualPrerequisites(project, area, input, !requireQueuedBinding);
     return {
       project,
       area,
@@ -425,13 +522,19 @@ export function createJobPreparation(options: JobPreparationOptions) {
       const linearCredential = await selectedLinear.acquireLease({
         jobId: job.id,
         minutes: 50,
-        ...((project.config.linear?.workspaceId ?? linearWorkspaceId)
+        ...((job.linearBinding?.workspaceId ??
+        project.config.linear?.workspaceId ??
+        linearWorkspaceId)
           ? {
               workspaceId:
-                project.config.linear?.workspaceId ?? linearWorkspaceId,
+                job.linearBinding?.workspaceId ??
+                project.config.linear?.workspaceId ??
+                linearWorkspaceId,
             }
           : {}),
       });
+      if (job.type === "pm")
+        await checkPmMapping(project, area, linearCredential.authorization);
       credentials.LINEAR_API_KEY = linearCredential.token;
       instructions.push(
         linearCredential.method === "oauth"

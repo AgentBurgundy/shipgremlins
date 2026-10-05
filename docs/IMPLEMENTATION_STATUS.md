@@ -45,6 +45,16 @@ repair of existing Linear teams and PM projects. The dashboard has category tabs
 a mobile navigation drawer, and operational overview counts. Provider integration
 tests use fake accounts; live permissions still require Verify connections.
 
+Version 0.9 makes PM automation controllable from each project card. Explicit
+manual PM and Coding runs work while automation is paused; scheduled patrols and
+background approved-ticket pickup still respect the pause. Readiness shows the
+next missing connection, mapping, verification, or worker step. Fill with AI uses
+the saved Claude Code connection and a bounded repository tree to suggest PM
+defaults in an isolated Docker container. Suggestions require review and an
+explicit apply/save; the first patrol does not rewrite ownership. Tests cover
+draft validation and the real Docker isolation path with a synthetic model;
+production model output remains dependent on the connected Claude account.
+
 | Capability       | Current state                                                                                                                                                                                                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |

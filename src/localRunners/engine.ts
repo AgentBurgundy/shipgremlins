@@ -54,6 +54,7 @@ const INPUT_KEYS = [
   "pr",
   "idempotencyKey",
   "linearBinding",
+  "runOnce",
 ];
 
 interface State {
@@ -127,6 +128,11 @@ function validInput(value: unknown): value is LocalJobInput {
   )
     return false;
   if (Object.keys(value).some((key) => !INPUT_KEYS.includes(key))) return false;
+  if (
+    value.runOnce !== undefined &&
+    (typeof value.runOnce !== "boolean" || value.type === "verify")
+  )
+    return false;
   if (value.linearBinding !== undefined) {
     const binding = value.linearBinding;
     if (

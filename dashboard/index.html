@@ -18,6 +18,8 @@
     <script src="/update-banner.js" defer></script>
     <script src="/connection-profiles.js" defer></script>
     <script src="/linear-settings.js" defer></script>
+    <script src="/pm-draft.js" defer></script>
+    <script src="/crew-guidance.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
   </head>
@@ -1729,7 +1731,8 @@
                       and boundaries.
                     </p>
                   </div>
-                  <details class="pm-advanced">
+                  <div id="pm-ai-draft"></div>
+                  <details class="pm-advanced" id="pm-advanced">
                     <summary>Ownership, schedule &amp; work limits</summary>
                     <div class="project-form-grid">
                       <div class="field">
@@ -1808,8 +1811,8 @@
                   </details>
                   <div class="form-bottom">
                     <p>
-                      Creates a disabled PM. Review its mandate and verify your
-                      app before enabling scheduled work.
+                      Saves a paused PM. Run it once when setup is ready, or
+                      enable automation from its card for recurring work.
                     </p>
                     <button
                       class="button button-dark"
@@ -1853,7 +1856,8 @@
                 <span class="eyebrow muted">THE WORKBENCH</span>
                 <h3>Start a run</h3>
                 <p>
-                  Choose an investigator or a builder, then give them a project.
+                  Run once without changing automation. PMs investigate a
+                  mandate; Coding Gremlins implement one approved Linear ticket.
                 </p>
               </div>
             </div>
@@ -1944,8 +1948,10 @@
                       aria-describedby="job-ticket-help"
                     />
                     <p id="job-ticket-help">
-                      Use a ticket labeled pm-approved. Approval is checked
-                      before development begins.
+                      Paste a Linear identifier such as ENG-123. It must belong
+                      to one of this project's PMs and have its pm:area and
+                      pm-approved labels. A paused PM can still receive a manual
+                      run.
                     </p>
                   </div>
                 </div>
@@ -1959,6 +1965,7 @@
                   </button>
                 </div>
               </fieldset>
+              <div id="job-setup-guide" class="job-setup-guide"></div>
               <div
                 class="form-message"
                 id="job-message"
