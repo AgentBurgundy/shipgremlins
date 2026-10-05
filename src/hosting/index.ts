@@ -1,6 +1,7 @@
 import type { VercelConnection } from "../vercelConnection/index.ts";
 import {
   validBranch,
+  validConnectionId,
   validEnvironmentUrl,
   validProjectSecretName,
   type EnvironmentTarget,
@@ -22,6 +23,9 @@ export interface HostingOptions {
   branch: string;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   vercelConnection?: Pick<VercelConnection, "resolveCredential">;
+  vercelConnectionFor?: (
+    connectionId?: string,
+  ) => Pick<VercelConnection, "resolveCredential">;
   /** Dependency injection for tests/embedded controllers; never dashboard input. */
   googleAccessToken?: (
     credentials: GoogleServiceAccount | undefined,
@@ -149,8 +153,18 @@ async function vercel(
   let accessToken: string;
   let teamId = target.teamId;
   try {
-    if (options.vercelConnection) {
-      const credential = await options.vercelConnection.resolveCredential({
+    const connection =
+      options.vercelConnectionFor?.(target.connectionId) ??
+      (!target.connectionId || target.connectionId === "default"
+        ? options.vercelConnection
+        : undefined);
+    if (target.connectionId && target.connectionId !== "default" && !connection)
+      throw new HostingError(
+        "The selected Vercel account is unavailable. Reconnect that account.",
+        "credentials",
+      );
+    if (connection) {
+      const credential = await connection.resolveCredential({
         projectId: target.projectId,
         teamId: target.teamId,
       });
@@ -486,6 +500,11 @@ export async function resolveEnvironment(
     throw new HostingError("Invalid hosting project identifier.", "invalid");
   switch (target.kind) {
     case "vercel":
+      if (
+        target.connectionId !== undefined &&
+        !validConnectionId(target.connectionId)
+      )
+        throw new HostingError("Invalid Vercel account identifier.", "invalid");
       if (target.teamId != null && !resource(target.teamId))
         throw new HostingError("Invalid Vercel team identifier.", "invalid");
       if (!validBranch(target.branch ?? options.branch))

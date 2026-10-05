@@ -153,6 +153,35 @@ afterEach(() => {
 });
 
 describe("durable local worker engine", () => {
+  it("persists validated account bindings across controller restart and rejects arbitrary binding fields", async () => {
+    const f = fixture();
+    const linearBinding = {
+      connectionId: "client-one",
+      workspaceId: "workspace-one",
+      ticketId: "issue-one",
+    };
+    const queued = await f.engine.enqueue({
+      type: "developer",
+      project: "my-app",
+      ticket: "ENG-123",
+      linearBinding,
+    });
+    await f.engine.stop();
+    const restarted = createLocalRunners(f.options);
+    expect((await restarted.job(queued.id))?.linearBinding).toEqual(
+      linearBinding,
+    );
+    await expect(
+      restarted.enqueue({
+        type: "developer",
+        project: "my-app",
+        ticket: "ENG-123",
+        linearBinding: { ...linearBinding, token: "must-not-store" },
+      } as LocalJobInput),
+    ).rejects.toThrow(/valid local job/);
+    expect(readFileSync(f.stateFile, "utf8")).not.toContain("must-not-store");
+    await restarted.stop();
+  });
   it("defers credential refresh contention without consuming retries or starting an agent", async () => {
     const f = fixture();
     await f.ready();

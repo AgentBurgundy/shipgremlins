@@ -1,4 +1,6 @@
 import type { ProjectConfig } from "./config.ts";
+import { validConnectionId } from "./oauthConnection/profileId.ts";
+export { validConnectionId } from "./oauthConnection/profileId.ts";
 
 export type ProjectWorkflow =
   { kind: "pull-request"; baseBranch: string } | { kind: "promotion" };
@@ -14,6 +16,7 @@ export type EnvironmentTarget = {
       kind: "vercel";
       projectId: string;
       teamId?: string | null;
+      connectionId?: string;
       bypassSecret?: string;
       branch?: string;
     }
@@ -134,7 +137,14 @@ function parseTarget(value: unknown): EnvironmentTarget {
         );
       break;
     case "vercel":
-      keys(value, [...common, "projectId", "teamId", "bypassSecret", "branch"]);
+      keys(value, [
+        ...common,
+        "projectId",
+        "teamId",
+        "connectionId",
+        "bypassSecret",
+        "branch",
+      ]);
       if (
         !resource(value.projectId) ||
         (value.teamId != null && !resource(value.teamId))
@@ -143,6 +153,11 @@ function parseTarget(value: unknown): EnvironmentTarget {
           "Vercel environment requires a projectId and an optional teamId.",
         );
       optionalSecret(value.bypassSecret);
+      if (
+        value.connectionId !== undefined &&
+        !validConnectionId(value.connectionId)
+      )
+        throw new Error("Vercel connectionId must name a saved account.");
       if (
         value.bypassSecret !== undefined &&
         !validWorkerSecretName(value.bypassSecret)

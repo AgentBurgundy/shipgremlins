@@ -10,19 +10,40 @@
     <link rel="icon" type="image/svg+xml" href="/assets/mark.svg" />
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/update-banner.css" />
+    <link rel="stylesheet" href="/workspace.css" />
     <script src="/signals-settings.js" defer></script>
     <script src="/project-settings.js" defer></script>
     <script src="/pages.js" defer></script>
     <script src="/connections-view.js" defer></script>
     <script src="/update-banner.js" defer></script>
+    <script src="/connection-profiles.js" defer></script>
+    <script src="/linear-settings.js" defer></script>
     <script src="/app.js" defer></script>
+    <script src="/shell.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#main">Skip to setup</a>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <button
+      id="nav-backdrop"
+      class="nav-backdrop"
+      type="button"
+      aria-label="Close navigation"
+      hidden
+    ></button>
     <div class="workspace">
-      <aside class="sidebar" aria-label="Workspace navigation">
+      <aside
+        class="sidebar"
+        id="workspace-navigation"
+        aria-label="Workspace navigation"
+      >
         <a class="brand" href="/overview" aria-label="ShipGremlins overview">
-          <span class="brand-mark" aria-hidden="true">{g}</span>
+          <img
+            class="brand-mark"
+            src="/assets/mark.svg"
+            width="36"
+            height="36"
+            alt=""
+          />
           <span
             >Ship<span class="brand-light">Gremlins</span
             ><small>YOUR PRODUCT CREW</small></span
@@ -31,26 +52,53 @@
         <div class="workspace-label">WORKSPACE</div>
         <nav class="navigation" aria-label="Main">
           <a class="nav-item" href="/overview"
-            ><span aria-hidden="true">◈</span> Overview</a
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+            Overview</a
           >
 
           <a class="nav-item" href="/connections"
-            ><span aria-hidden="true">⌘</span> Connections
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="m9 15 6-6m-4-3 1-1a5 5 0 0 1 7 7l-3 3m-5 3-1 1a5 5 0 0 1-7-7l3-3"
+              />
+            </svg>
+            Connections
             <span class="nav-count" id="connection-count">—</span></a
           >
           <a class="nav-item" href="/projects"
-            ><span aria-hidden="true">▤</span> Projects
-            <span class="nav-count" id="project-count">—</span></a
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"
+              />
+            </svg>
+            Projects <span class="nav-count" id="project-count">—</span></a
           >
           <a class="nav-item" href="/runners"
-            ><span aria-hidden="true">◉</span> Your gremlins
-            <span class="nav-count" id="runner-count">—</span></a
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m7 8-4-4v9a9 9 0 0 0 18 0V4l-4 4M8 17c2 2 6 2 8 0" />
+              <circle cx="8" cy="12" r="1" />
+              <circle cx="16" cy="12" r="1" />
+            </svg>
+            Your gremlins <span class="nav-count" id="runner-count">—</span></a
           >
           <a class="nav-item" href="/activity"
-            ><span aria-hidden="true">↗</span> Activity</a
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 12h4l3-8 4 16 3-8h4" />
+            </svg>
+            Activity</a
           >
           <a class="nav-item" href="/settings"
-            ><span aria-hidden="true">⚙</span> Settings</a
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h2m6 0h8M4 17h8m6 0h2" />
+              <circle cx="9" cy="7" r="3" />
+              <circle cx="15" cy="17" r="3" />
+            </svg>
+            Settings</a
           >
         </nav>
         <div class="sidebar-bottom">
@@ -69,11 +117,23 @@
 
       <div class="main-shell">
         <header class="topbar">
-          <span
-            >Mission control <span class="topbar-separator">/</span>
+          <button
+            id="nav-toggle"
+            class="nav-toggle"
+            type="button"
+            aria-label="Open navigation"
+            aria-controls="workspace-navigation"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <span class="breadcrumbs"
+            >Workspace <span class="topbar-separator">/</span>
             <strong data-page-title>Overview</strong></span
           ><span class="local-pill"
-            ><span aria-hidden="true"></span> SELF-HOSTED</span
+            ><span aria-hidden="true"></span> Self-hosted</span
           >
         </header>
         <main id="main" tabindex="-1">
@@ -86,16 +146,16 @@
             aria-labelledby="welcome-title"
           >
             <div class="hero-copy">
-              <span class="eyebrow"
-                ><span aria-hidden="true">✦</span> A LITTLE CHAOS. A LOT OF
-                CARE.</span
-              >
+              <span class="eyebrow">YOUR WORKSPACE</span>
               <h1 id="welcome-title">Meet your new<br />product crew.</h1>
-              <p>
+              <p id="welcome-description">
                 Connect your tools. Add your app.<br class="desktop-break" />
                 PM Gremlins find the gaps. Coding Gremlins build the fixes.
               </p>
-              <a class="button button-dark" href="#source-control"
+              <a
+                id="overview-primary-action"
+                class="button button-dark"
+                href="#source-control"
                 >Set up your crew <span aria-hidden="true">↗</span></a
               >
             </div>
@@ -117,6 +177,38 @@
             </div>
           </section>
 
+          <section
+            class="overview-metrics"
+            data-page="overview"
+            aria-label="Workspace at a glance"
+          >
+            <a class="metric-card" href="/projects"
+              ><span>Projects</span
+              ><strong id="overview-project-count">—</strong
+              ><small
+                >Your connected repositories
+                <span aria-hidden="true">↗</span></small
+              ></a
+            >
+            <a class="metric-card" href="/projects#pm-create-drawer"
+              ><span>PM mandates</span><strong id="overview-pm-count">—</strong
+              ><small
+                >Your crew’s areas of focus
+                <span aria-hidden="true">↗</span></small
+              ></a
+            >
+            <a class="metric-card" href="/runners#workers"
+              ><span>Verified workers</span
+              ><strong id="overview-worker-count">—</strong
+              ><small id="overview-worker-note"
+                >Checking worker status…</small
+              ></a
+            >
+            <a class="metric-card" href="/activity"
+              ><span>Active jobs</span><strong id="overview-job-count">—</strong
+              ><small id="overview-job-note">Checking current work…</small></a
+            >
+          </section>
           <section
             class="setup-status"
             data-page="overview"
@@ -162,8 +254,7 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">THE CONNECTIONS</span>
-                <h2 id="connections-title">Your crew’s toolkit.</h2>
+                <h2 id="connections-title">Connections</h2>
                 <p>
                   Connect once. Choose what each project can use. Your
                   credentials stay on your server.
@@ -1355,14 +1446,24 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">03 / THE PLAYGROUND</span>
-                <h2 id="projects-title">Which app are we improving?</h2>
+                <h2 id="projects-title">Projects</h2>
                 <p>
-                  Add a GitHub or GitLab app repository to create its local
-                  project configuration.
+                  Manage your repositories, PM mandates, and delivery settings.
                 </p>
               </div>
-              <span class="section-symbol" aria-hidden="true">▤</span>
+              <div class="page-actions">
+                <a
+                  class="small-button"
+                  href="#pm-create-drawer"
+                  data-open-disclosure
+                  >Create PM</a
+                ><a
+                  class="button button-dark"
+                  href="#new-project-drawer"
+                  data-open-disclosure
+                  ><span aria-hidden="true">+</span> Add project</a
+                >
+              </div>
             </div>
             <div
               id="project-list"
@@ -1482,6 +1583,14 @@
                   </div>
                   <div id="new-project-settings"></div>
                   <div class="project-linear-setup">
+                    <div class="field">
+                      <label for="project-linear-connection"
+                        >Linear connection</label
+                      ><select id="project-linear-connection">
+                        <option value="default">Default connection</option>
+                      </select>
+                      <p>Choose the account or workspace for this project.</p>
+                    </div>
                     <div class="field">
                       <label for="project-linear-mode"
                         >Linear team for this app</label
@@ -1729,93 +1838,20 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">04 / A PLACE TO WORK</span>
-                <h2 id="runners-title">Small crew. Real work.</h2>
+                <h2 id="runners-title">Your gremlins</h2>
                 <p>
-                  Local Docker workers run browsers and agents on your
-                  ShipGremlins server.
+                  Send a PM to investigate, or a Coding Gremlin to work on an
+                  approved ticket.
                 </p>
               </div>
-              <span class="section-symbol" aria-hidden="true">◉</span>
-            </div>
-            <div class="machine-card">
-              <div>
-                <span class="eyebrow muted">THIS MACHINE</span>
-                <h3 id="machine-name">Checking your server…</h3>
-                <p id="machine-description">One job at a time per worker.</p>
-              </div>
-              <span class="runtime-badge" id="docker-state"
-                >Checking Docker</span
+              <a class="small-button" href="#workers"
+                >Manage workers <span aria-hidden="true">↓</span></a
               >
             </div>
-            <p class="runner-guidance" id="docker-guidance">
-              This is the machine running your dashboard, even when you open
-              this page from another device.
-            </p>
-            <div class="runner-toolbar">
-              <p>
-                Creating a worker builds its image and verifies a real browser
-                job before it becomes ready.
-              </p>
-              <div class="button-row">
-                <button
-                  class="small-button"
-                  type="button"
-                  id="refresh-runners"
-                  disabled
-                >
-                  Refresh</button
-                ><button
-                  class="button button-dark"
-                  type="button"
-                  id="create-runner"
-                  disabled
-                >
-                  Create local worker <span aria-hidden="true">+</span>
-                </button>
-              </div>
-            </div>
-            <div
-              class="form-message"
-              id="runner-message"
-              role="status"
-              hidden
-            ></div>
-            <div
-              class="operation-notice"
-              id="runner-operation"
-              role="status"
-              hidden
-            ></div>
-            <div
-              class="worker-list"
-              id="runner-list"
-              aria-label="Local Docker workers"
-            ></div>
-            <div
-              class="discard-prompt worker-remove"
-              id="remove-runner-prompt"
-              hidden
-            >
-              <p id="remove-runner-description"></p>
-              <div class="button-row">
-                <button class="small-button" id="keep-runner" type="button">
-                  Keep worker</button
-                ><button
-                  class="small-button danger-button"
-                  id="confirm-remove-runner"
-                  type="button"
-                >
-                  Remove worker
-                </button>
-              </div>
-            </div>
-            <p class="runner-guidance" id="runner-credentials"></p>
-            <ul class="runner-limitations" id="runner-limitations" hidden></ul>
             <div class="jobs-heading">
               <div>
                 <span class="eyebrow muted">THE WORKBENCH</span>
-                <h3>Two crews. One better product.</h3>
+                <h3>Start a run</h3>
                 <p>
                   Choose an investigator or a builder, then give them a project.
                 </p>
@@ -1930,6 +1966,90 @@
                 hidden
               ></div>
             </form>
+            <section class="workers-section" id="workers">
+              <div class="section-heading">
+                <h3>Workers</h3>
+                <p>Machines that run your crew’s jobs.</p>
+              </div>
+              <div class="machine-card">
+                <div>
+                  <span class="eyebrow muted">THIS MACHINE</span>
+                  <h3 id="machine-name">Checking your server…</h3>
+                  <p id="machine-description">One job at a time per worker.</p>
+                </div>
+                <span class="runtime-badge" id="docker-state"
+                  >Checking Docker</span
+                >
+              </div>
+              <p class="runner-guidance" id="docker-guidance">
+                This is the machine running your dashboard, even when you open
+                this page from another device.
+              </p>
+              <div class="runner-toolbar">
+                <p>
+                  Creating a worker builds its image and verifies a real browser
+                  job before it becomes ready.
+                </p>
+                <div class="button-row">
+                  <button
+                    class="small-button"
+                    type="button"
+                    id="refresh-runners"
+                    disabled
+                  >
+                    Refresh</button
+                  ><button
+                    class="button button-dark"
+                    type="button"
+                    id="create-runner"
+                    disabled
+                  >
+                    Create local worker <span aria-hidden="true">+</span>
+                  </button>
+                </div>
+              </div>
+              <div
+                class="form-message"
+                id="runner-message"
+                role="status"
+                hidden
+              ></div>
+              <div
+                class="operation-notice"
+                id="runner-operation"
+                role="status"
+                hidden
+              ></div>
+              <div
+                class="worker-list"
+                id="runner-list"
+                aria-label="Local Docker workers"
+              ></div>
+              <div
+                class="discard-prompt worker-remove"
+                id="remove-runner-prompt"
+                hidden
+              >
+                <p id="remove-runner-description"></p>
+                <div class="button-row">
+                  <button class="small-button" id="keep-runner" type="button">
+                    Keep worker</button
+                  ><button
+                    class="small-button danger-button"
+                    id="confirm-remove-runner"
+                    type="button"
+                  >
+                    Remove worker
+                  </button>
+                </div>
+              </div>
+              <p class="runner-guidance" id="runner-credentials"></p>
+              <ul
+                class="runner-limitations"
+                id="runner-limitations"
+                hidden
+              ></ul>
+            </section>
           </section>
 
           <section
@@ -1940,8 +2060,7 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">05 / FOLLOW THE WORK</span>
-                <h2 id="activity-title">See what your crew is up to.</h2>
+                <h2 id="activity-title">Activity</h2>
                 <p>
                   Visible tool calls, progress, checks, and evidence from
                   running and past jobs.
@@ -2065,11 +2184,10 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">06 / YOUR WORKSPACE</span>
-                <h2 id="configuration-title">Make it your own.</h2>
+                <h2 id="configuration-title">Settings</h2>
                 <p>
-                  Edit your crew’s configuration right here, even when your
-                  server is across the room.
+                  Keep your installation current and manage workspace
+                  configuration.
                 </p>
               </div>
               <span class="section-symbol code-symbol" aria-hidden="true"
@@ -2077,167 +2195,6 @@
               >
             </div>
 
-            <div class="folder-grid">
-              <div class="folder-card">
-                <span class="folder-label">Configuration folder</span>
-                <code id="configuration-path">Loading…</code>
-                <p>Your hub settings, projects, and saved connections.</p>
-                <div class="folder-actions">
-                  <button
-                    type="button"
-                    class="small-button"
-                    data-copy-path="configuration"
-                    disabled
-                  >
-                    Copy path
-                  </button>
-                  <button
-                    type="button"
-                    class="small-button"
-                    data-open-folder="configuration"
-                    hidden
-                  >
-                    Open folder <span aria-hidden="true">↗</span>
-                  </button>
-                </div>
-              </div>
-              <div class="folder-card">
-                <span class="folder-label">Installation folder</span>
-                <code id="installation-path">Loading…</code>
-                <p>The ShipGremlins CLI, dashboard, and bundled templates.</p>
-                <div class="folder-actions">
-                  <button
-                    type="button"
-                    class="small-button"
-                    data-copy-path="installation"
-                    disabled
-                  >
-                    Copy path
-                  </button>
-                  <button
-                    type="button"
-                    class="small-button"
-                    data-open-folder="installation"
-                    hidden
-                  >
-                    Open folder <span aria-hidden="true">↗</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <p class="folder-guidance" id="folder-guidance">
-              These paths belong to the machine running ShipGremlins.
-            </p>
-            <div
-              class="form-message"
-              id="folder-message"
-              role="status"
-              hidden
-            ></div>
-
-            <div class="notice" id="config-warnings" role="status" hidden></div>
-            <form id="config-form">
-              <fieldset id="config-fields" disabled>
-                <legend class="sr-only">Configuration editor</legend>
-                <div class="editor-toolbar">
-                  <div class="field editor-file-field">
-                    <label for="config-file">Configuration file</label>
-                    <select id="config-file" aria-describedby="editor-help">
-                      <option value="">Loading files…</option>
-                    </select>
-                  </div>
-                  <span class="editor-state" id="editor-state" role="status"
-                    >No file loaded</span
-                  >
-                </div>
-                <p id="editor-help" class="editor-help">
-                  Choose a JSON file to edit. Changes are validated before
-                  saving.
-                </p>
-                <div class="editor-frame">
-                  <div class="editor-caption">
-                    <label for="config-content" id="editor-file-label"
-                      >File contents</label
-                    ><span aria-hidden="true">JSON</span>
-                  </div>
-                  <textarea
-                    id="config-content"
-                    rows="16"
-                    wrap="off"
-                    autocomplete="off"
-                    autocapitalize="none"
-                    spellcheck="false"
-                    aria-describedby="editor-help"
-                    placeholder="Your configuration will appear here."
-                    disabled
-                  ></textarea>
-                  <div class="editor-foot">
-                    <span id="editor-lines">0 lines</span
-                    ><span>Saved on your server</span>
-                  </div>
-                </div>
-                <div class="editor-actions">
-                  <p>
-                    Future jobs use saved settings. Review enabled mandates and
-                    schedules before saving.
-                  </p>
-                  <div class="editor-buttons">
-                    <button
-                      class="button button-quiet"
-                      type="button"
-                      id="config-reload"
-                    >
-                      Reload
-                    </button>
-                    <button
-                      class="button button-dark"
-                      type="submit"
-                      id="config-save"
-                      disabled
-                    >
-                      Save changes <span aria-hidden="true">↗</span>
-                    </button>
-                  </div>
-                </div>
-              </fieldset>
-            </form>
-            <div class="discard-prompt" id="discard-prompt" role="alert" hidden>
-              <div>
-                <strong>Keep your changes?</strong>
-                <p id="discard-description"></p>
-              </div>
-              <div class="discard-actions">
-                <button class="small-button" type="button" id="keep-editing">
-                  Keep editing</button
-                ><button
-                  class="small-button discard-button"
-                  type="button"
-                  id="discard-changes"
-                >
-                  Discard changes
-                </button>
-              </div>
-            </div>
-            <div
-              class="form-message"
-              id="config-message"
-              role="status"
-              hidden
-            ></div>
-            <div class="editor-draft-tools">
-              <span
-                >Connection secrets are managed in
-                <a href="#connections">Connections</a>.</span
-              ><button
-                type="button"
-                class="text-button"
-                id="copy-draft"
-                disabled
-              >
-                Copy draft
-              </button>
-            </div>
-            <span id="config-copy-status" class="sr-only" role="status"></span>
             <section
               class="updates-card"
               id="updates"
@@ -2246,7 +2203,7 @@
               <div class="updates-heading">
                 <div>
                   <span class="eyebrow muted">SHIPGREMLINS UPDATES</span>
-                  <h3 id="updates-title">Keep your crew current.</h3>
+                  <h3 id="updates-title">Software updates</h3>
                 </div>
                 <span class="update-phase" id="update-phase"
                   >Waiting for session</span
@@ -2306,6 +2263,195 @@
                 restarting.
               </p>
             </section>
+            <details id="advanced-settings" class="advanced-settings">
+              <summary>
+                <span>Files &amp; advanced configuration</span
+                ><small>Folders, project files, and workspace JSON</small>
+              </summary>
+              <div class="advanced-settings-body">
+                <div class="folder-grid">
+                  <div class="folder-card">
+                    <span class="folder-label">Configuration folder</span>
+                    <code id="configuration-path">Loading…</code>
+                    <p>Your hub settings, projects, and saved connections.</p>
+                    <div class="folder-actions">
+                      <button
+                        type="button"
+                        class="small-button"
+                        data-copy-path="configuration"
+                        disabled
+                      >
+                        Copy path
+                      </button>
+                      <button
+                        type="button"
+                        class="small-button"
+                        data-open-folder="configuration"
+                        hidden
+                      >
+                        Open folder <span aria-hidden="true">↗</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="folder-card">
+                    <span class="folder-label">Installation folder</span>
+                    <code id="installation-path">Loading…</code>
+                    <p>
+                      The ShipGremlins CLI, dashboard, and bundled templates.
+                    </p>
+                    <div class="folder-actions">
+                      <button
+                        type="button"
+                        class="small-button"
+                        data-copy-path="installation"
+                        disabled
+                      >
+                        Copy path
+                      </button>
+                      <button
+                        type="button"
+                        class="small-button"
+                        data-open-folder="installation"
+                        hidden
+                      >
+                        Open folder <span aria-hidden="true">↗</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <p class="folder-guidance" id="folder-guidance">
+                  These paths belong to the machine running ShipGremlins.
+                </p>
+                <div
+                  class="form-message"
+                  id="folder-message"
+                  role="status"
+                  hidden
+                ></div>
+
+                <div
+                  class="notice"
+                  id="config-warnings"
+                  role="status"
+                  hidden
+                ></div>
+                <form id="config-form">
+                  <fieldset id="config-fields" disabled>
+                    <legend class="sr-only">Configuration editor</legend>
+                    <div class="editor-toolbar">
+                      <div class="field editor-file-field">
+                        <label for="config-file">Configuration file</label>
+                        <select id="config-file" aria-describedby="editor-help">
+                          <option value="">Loading files…</option>
+                        </select>
+                      </div>
+                      <span class="editor-state" id="editor-state" role="status"
+                        >No file loaded</span
+                      >
+                    </div>
+                    <p id="editor-help" class="editor-help">
+                      Choose a JSON file to edit. Changes are validated before
+                      saving.
+                    </p>
+                    <div class="editor-frame">
+                      <div class="editor-caption">
+                        <label for="config-content" id="editor-file-label"
+                          >File contents</label
+                        ><span aria-hidden="true">JSON</span>
+                      </div>
+                      <textarea
+                        id="config-content"
+                        rows="16"
+                        wrap="off"
+                        autocomplete="off"
+                        autocapitalize="none"
+                        spellcheck="false"
+                        aria-describedby="editor-help"
+                        placeholder="Your configuration will appear here."
+                        disabled
+                      ></textarea>
+                      <div class="editor-foot">
+                        <span id="editor-lines">0 lines</span
+                        ><span>Saved on your server</span>
+                      </div>
+                    </div>
+                    <div class="editor-actions">
+                      <p>
+                        Future jobs use saved settings. Review enabled mandates
+                        and schedules before saving.
+                      </p>
+                      <div class="editor-buttons">
+                        <button
+                          class="button button-quiet"
+                          type="button"
+                          id="config-reload"
+                        >
+                          Reload
+                        </button>
+                        <button
+                          class="button button-dark"
+                          type="submit"
+                          id="config-save"
+                          disabled
+                        >
+                          Save changes <span aria-hidden="true">↗</span>
+                        </button>
+                      </div>
+                    </div>
+                  </fieldset>
+                </form>
+                <div
+                  class="discard-prompt"
+                  id="discard-prompt"
+                  role="alert"
+                  hidden
+                >
+                  <div>
+                    <strong>Keep your changes?</strong>
+                    <p id="discard-description"></p>
+                  </div>
+                  <div class="discard-actions">
+                    <button
+                      class="small-button"
+                      type="button"
+                      id="keep-editing"
+                    >
+                      Keep editing</button
+                    ><button
+                      class="small-button discard-button"
+                      type="button"
+                      id="discard-changes"
+                    >
+                      Discard changes
+                    </button>
+                  </div>
+                </div>
+                <div
+                  class="form-message"
+                  id="config-message"
+                  role="status"
+                  hidden
+                ></div>
+                <div class="editor-draft-tools">
+                  <span
+                    >Connection secrets are managed in
+                    <a href="#connections">Connections</a>.</span
+                  ><button
+                    type="button"
+                    class="text-button"
+                    id="copy-draft"
+                    disabled
+                  >
+                    Copy draft
+                  </button>
+                </div>
+                <span
+                  id="config-copy-status"
+                  class="sr-only"
+                  role="status"
+                ></span>
+              </div>
+            </details>
           </section>
 
           <section
@@ -2322,11 +2468,10 @@
             />
             <div>
               <span class="eyebrow muted">NEXT UP</span>
-              <h2 id="next-title">Ready is better than probably ready.</h2>
+              <h2 id="next-title">Check your project connections</h2>
               <p>
-                After saving your connections and project, verify provider
-                access and finish the project settings. Create a local worker
-                above, then run a PM when its mandate is ready.
+                Run a live check before your crew gets to work. You can also
+                verify connections from any project’s settings.
               </p>
               <div class="command-line">
                 <code id="doctor-command">gremlins doctor PROJECT</code
@@ -2367,7 +2512,26 @@
           <div>
             <span class="eyebrow muted">PROJECT SETTINGS</span>
             <h2 id="project-settings-title">Edit project</h2>
-            <p id="project-settings-repo" class="runner-guidance"></p>
+            <div class="project-editor-identity">
+              <span
+                id="project-settings-provider"
+                class="identity-provider"
+              ></span
+              ><strong id="project-settings-repo"></strong>
+            </div>
+            <p id="project-settings-name" class="project-editor-id"></p>
+            <nav
+              class="project-editor-sections"
+              aria-label="Project settings sections"
+            >
+              <button type="button" data-project-section="project">
+                Project setup</button
+              ><button type="button" data-project-section="linear">
+                Linear mappings</button
+              ><button type="button" data-project-section="signals">
+                Product signals
+              </button>
+            </nav>
           </div>
           <button
             type="button"
@@ -2422,6 +2586,7 @@
             </button>
           </div>
         </div>
+        <div id="edit-linear-settings"></div>
         <div class="settings-dialog-footer">
           <button
             type="button"

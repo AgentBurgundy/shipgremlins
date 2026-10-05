@@ -6,6 +6,7 @@ import {
 } from "node:crypto";
 import { isIP } from "node:net";
 import { readConnections } from "../setup/connections.ts";
+import { normalizeConnectionId } from "./profileId.ts";
 import {
   createOAuthStore,
   validToken,
@@ -106,6 +107,7 @@ function openEnvelope(
 }
 export interface ConnectionOptions {
   root: string;
+  connectionId?: string;
   session?: string;
   env?: NodeJS.ProcessEnv;
   fetch?: typeof fetch;
@@ -116,7 +118,8 @@ export function createOAuthConnection(
   provider: OAuthProvider,
   options: ConnectionOptions,
 ): OAuthConnection {
-  const store = createOAuthStore(options.root, provider),
+  const connectionId = normalizeConnectionId(options.connectionId);
+  const store = createOAuthStore(options.root, provider, connectionId),
     now = options.now ?? Date.now,
     fetcher = options.fetch ?? fetch;
   const env = options.env ?? process.env;
@@ -186,8 +189,32 @@ export function createOAuthConnection(
     return value;
   }
   function manual() {
+    if (connectionId !== "default") return undefined;
     const value = env[manualKey] ?? readConnections(options.root)[manualKey];
     return validToken(value) ? value : undefined;
+  }
+  function requireProfile(state: OAuthState) {
+    if (connectionId !== "default" && state.label === undefined)
+      throw new OAuthConnectionError(
+        "This saved connection no longer exists. Select an existing connection or add one in Connections.",
+        "profile_not_found",
+        404,
+      );
+  }
+  function checkWorkspace(
+    connection: SavedConnection,
+    input: CredentialRequest,
+  ) {
+    if (
+      provider === "linear" &&
+      input.workspaceId &&
+      input.workspaceId !== connection.workspace.id
+    )
+      throw new OAuthConnectionError(
+        "This Linear connection belongs to a different workspace. Choose the matching connection or repair this project's Linear mappings.",
+        "workspace_mismatch",
+        403,
+      );
   }
   function publicStatus(
     connection: SavedConnection | undefined,
@@ -230,7 +257,7 @@ export function createOAuthConnection(
           ? { message: "Using the manually configured API token." }
           : !enabled
             ? {
-                message: `${label} OAuth setup is temporarily unavailable. A manually configured API token still works.`,
+                message: `${label} OAuth setup is temporarily unavailable.${connectionId === "default" ? " A manually configured API token still works." : " Try connecting this account again shortly."}`,
               }
             : {}),
     };
@@ -298,11 +325,14 @@ export function createOAuthConnection(
       body: new URLSearchParams(values).toString(),
     });
   }
-  async function verifyLinear(connection: SavedConnection) {
+  async function verifyLinear(
+    connection: SavedConnection,
+    authorization = `Bearer ${connection.accessToken}`,
+  ) {
     const identity = await request("https://api.linear.app/graphql", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${connection.accessToken}`,
+        authorization,
         "content-type": "application/json",
       },
       body: JSON.stringify({
@@ -475,6 +505,8 @@ export function createOAuthConnection(
     jobId?: string,
     minutes?: number,
   ): Promise<OAuthCredential> {
+    if (input.workspaceId !== undefined && !identifier(input.workspaceId))
+      throw new OAuthConnectionError("Invalid Linear workspace identifier.");
     if (jobId && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(jobId))
       throw new OAuthConnectionError("Invalid job identifier.");
     const minimum = jobId
@@ -483,6 +515,7 @@ export function createOAuthConnection(
     if (!Number.isFinite(minimum) || minimum < 0 || minimum > 60 * 60_000)
       throw new OAuthConnectionError("Invalid credential validity window.");
     return store.locked(async (state, save) => {
+      requireProfile(state);
       if (!state.connection) {
         const value = manual();
         if (!value)
@@ -491,13 +524,27 @@ export function createOAuthConnection(
             "not_connected",
             400,
           );
+        let workspaceId: string | undefined;
+        if (provider === "linear" && input.workspaceId) {
+          const identity: SavedConnection = {
+            accessToken: value,
+            workspace: { id: "", name: "" },
+            account: { id: "", name: "" },
+            leases: [],
+          };
+          await verifyLinear(identity, value);
+          checkWorkspace(identity, input);
+          workspaceId = identity.workspace.id;
+        }
         return {
           token: value,
           authorization: provider === "linear" ? value : `Bearer ${value}`,
           method: "token",
+          ...(workspaceId ? { workspaceId } : {}),
         };
       }
       const connection = state.connection;
+      checkWorkspace(connection, input);
       connection.leases = connection.leases.filter(
         (lease) => lease.expiresAt > now(),
       );
@@ -511,6 +558,7 @@ export function createOAuthConnection(
           await save(state);
         }
         await checkProject(connection, input);
+        checkWorkspace(connection, input);
         if (connection.expiresAt && connection.expiresAt - now() < minimum) {
           await refresh(state, save, minimum);
           if (connection.expiresAt - now() < minimum)
@@ -545,13 +593,18 @@ export function createOAuthConnection(
           ? { expiresAt: new Date(connection.expiresAt).toISOString() }
           : {}),
         ...(provider === "vercel" ? { teamId: connection.teamId ?? null } : {}),
+        ...(provider === "linear"
+          ? { workspaceId: connection.workspace.id }
+          : {}),
       };
     });
   }
   const api: OAuthConnection = {
     async status(options) {
+      const state = await store.read();
+      requireProfile(state);
       return publicStatus(
-        (await store.read()).connection,
+        state.connection,
         options?.checkAvailability === false
           ? (availability?.value ?? false)
           : await available(),
@@ -560,6 +613,7 @@ export function createOAuthConnection(
     async connect(returnUrl) {
       const target = dashboardUrl(returnUrl);
       return store.locked(async (state, save) => {
+        requireProfile(state);
         requireIdle(state.connection);
         const key = randomBytes(32).toString("base64url"),
           nonce = randomBytes(24).toString("base64url"),
@@ -631,6 +685,7 @@ export function createOAuthConnection(
     },
     async complete(envelope) {
       return store.locked(async (state, save) => {
+        requireProfile(state);
         const pending = state.pending;
         if (
           !pending ||
@@ -783,6 +838,7 @@ export function createOAuthConnection(
     },
     async disconnect() {
       return store.locked(async (state, save) => {
+        requireProfile(state);
         requireIdle(state.connection);
         // Removing this machine's credentials must not uninstall other machines' integration.
         delete state.connection;

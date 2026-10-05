@@ -160,22 +160,32 @@ async function dispatch(args: string[]): Promise<number> {
     typeof values.project === "string"
       ? [loadProject(ROOT, values.project)]
       : loadAllProjects(ROOT);
-  const [{ runDispatcher }, { clientsFromEnv }, { realGit }] =
+  const [{ runDispatcher }, { withProjectClients }, { realGit }] =
     await Promise.all([
       import("./dispatcher/index.ts"),
-      import("./services/index.ts"),
+      import("./services/projectClients.ts"),
       import("./git.ts"),
     ]);
-  const clients = clientsFromEnv(process.env);
   const out: { project: string; rows: DigestRow[] }[] = [];
   for (const project of projects) {
     console.log(
       `${project.config.name} (${project.config.repo})${dryRun ? " [dry-run]" : ""}`,
     );
-    const ctx = makeCtx(project, clients, { dryRun });
-    const rows = await runDispatcher(
-      ctx,
-      await promoteOptsFor(ctx, targetDir, realGit, project.config.commands),
+    const rows = await withProjectClients(
+      { root: ROOT, env: process.env },
+      project.config,
+      async (clients) => {
+        const ctx = makeCtx(project, clients, { dryRun });
+        return runDispatcher(
+          ctx,
+          await promoteOptsFor(
+            ctx,
+            targetDir,
+            realGit,
+            project.config.commands,
+          ),
+        );
+      },
     );
     printRows(rows);
     out.push({ project: project.config.name, rows });
@@ -219,25 +229,34 @@ async function promote(args: string[]): Promise<number> {
   }
   const targetDir =
     typeof values.target === "string" ? values.target : "target";
-  const [{ runPromote }, { clientsFromEnv }, { realGit }] = await Promise.all([
-    import("./dispatcher/promote.ts"),
-    import("./services/index.ts"),
-    import("./git.ts"),
-  ]);
-  const ctx = makeCtx(project, clientsFromEnv(process.env), { dryRun: false });
-  const opts = await promoteOptsFor(
-    ctx,
-    targetDir,
-    realGit,
-    project.config.commands,
-    values.area,
+  const [{ runPromote }, { withProjectClients }, { realGit }] =
+    await Promise.all([
+      import("./dispatcher/promote.ts"),
+      import("./services/projectClients.ts"),
+      import("./git.ts"),
+    ]);
+  return withProjectClients(
+    { root: ROOT, env: process.env },
+    project.config,
+    async (clients) => {
+      const ctx = makeCtx(project, clients, { dryRun: false });
+      const opts = await promoteOptsFor(
+        ctx,
+        targetDir,
+        realGit,
+        project.config.commands,
+        String(values.area),
+      );
+      if (!opts) {
+        io.error(
+          `${targetDir}/ is not a git checkout of ${project.config.repo}`,
+        );
+        return 1;
+      }
+      printRows(await runPromote(ctx, opts));
+      return 0;
+    },
   );
-  if (!opts) {
-    io.error(`${targetDir}/ is not a git checkout of ${project.config.repo}`);
-    return 1;
-  }
-  printRows(await runPromote(ctx, opts));
-  return 0;
 }
 
 async function slack(args: string[]): Promise<number> {
@@ -267,13 +286,24 @@ async function slack(args: string[]): Promise<number> {
 }
 
 async function ticket(args: string[]): Promise<number> {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    io.error("LINEAR_API_KEY is not set");
-    return 1;
-  }
   const { LinearApi } = await import("./services/linear.ts");
-  return runTicket(new LinearApi({ apiKey }), args, io);
+  return withSelectedLinear(args, (apiKey) =>
+    runTicket(new LinearApi({ apiKey }), parseFlags(args).positionals, io),
+  );
+}
+
+async function withSelectedLinear<T>(
+  args: string[],
+  action: (authorization: string) => Promise<T>,
+  positionalProject?: string,
+): Promise<T> {
+  const { values } = parseFlags(args);
+  const name =
+    positionalProject ??
+    (typeof values.project === "string" ? values.project : undefined);
+  const config = name ? loadProject(ROOT, name).config : undefined;
+  const { withLinearCredential } = await import("./services/projectClients.ts");
+  return withLinearCredential({ root: ROOT, env: process.env }, config, action);
 }
 
 async function tickets(args: string[]): Promise<number> {
@@ -284,43 +314,45 @@ async function tickets(args: string[]): Promise<number> {
     );
     return 1;
   }
-  const [{ runTickets }, { clientsFromEnv }] = await Promise.all([
+  const [{ runTickets }, { withProjectClients }] = await Promise.all([
     import("./commands/tickets.ts"),
-    import("./services/index.ts"),
+    import("./services/projectClients.ts"),
   ]);
   const project = loadProject(ROOT, values.project);
-  const ctx = makeCtx(project, clientsFromEnv(process.env), {
-    dryRun: values.apply !== true,
-  });
-  return runTickets(ctx, args, io);
+  return withProjectClients(
+    { root: ROOT, env: process.env },
+    project.config,
+    async (clients) => {
+      const ctx = makeCtx(project, clients, {
+        dryRun: values.apply !== true,
+      });
+      return runTickets(ctx, args, io);
+    },
+  );
 }
 
-async function linearProjects(): Promise<number> {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    io.error("LINEAR_API_KEY is not set");
-    return 1;
-  }
+async function linearProjects(args: string[]): Promise<number> {
   const { LinearApi } = await import("./services/linear.ts");
-  const projects = await new LinearApi({ apiKey }).listProjects();
-  if (projects.length === 0) {
-    console.log("no projects visible to this key");
+  return withSelectedLinear(args, async (apiKey) => {
+    const projects = await new LinearApi({ apiKey }).listProjects();
+    if (projects.length === 0) {
+      console.log("no projects visible to this key");
+      return 0;
+    }
+    for (const p of projects)
+      console.log(`${p.id}  ${p.name}  [${p.teams.join(", ")}]  ${p.url}`);
     return 0;
-  }
-  for (const p of projects)
-    console.log(`${p.id}  ${p.name}  [${p.teams.join(", ")}]  ${p.url}`);
-  return 0;
+  });
 }
 
 async function linearProject(args: string[]): Promise<number> {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    io.error("LINEAR_API_KEY is not set");
-    return 1;
-  }
   const { LinearApi } = await import("./services/linear.ts");
   const { runLinearProject } = await import("./commands/linearProject.ts");
-  return runLinearProject(ROOT, new LinearApi({ apiKey }), args, io);
+  return withSelectedLinear(
+    args,
+    (apiKey) => runLinearProject(ROOT, new LinearApi({ apiKey }), args, io),
+    parseFlags(args).positionals[0],
+  );
 }
 
 function validate(): number {
@@ -359,7 +391,7 @@ Saved dashboard connections are loaded automatically; exported variables take pr
   dispatch [--project <name>] [--dry-run] [--target target]   sync → line → heal → repair → merge → dispatch → promote
   promote --project <name> --area <key> [--target target]     cherry-pick verified merges into ONE PR to staging
   slack <report.json>                                         post a PM run's report to the project's webhook
-  ticket <identifier>                                         print a Linear ticket as markdown (developer.yml)
+  ticket <identifier> [--project NAME]                         print a Linear ticket using the project's account
   tickets audit|reconcile --project NAME [--manifest FILE] [--json] [--apply]  production completion audit; writes need --apply
   evidence <command>                                        inspect and attest trusted verification evidence
   fixture csv|png --output PATH                             create deterministic upload-test files; see --help
@@ -369,8 +401,8 @@ Saved dashboard connections are loaded automatically; exported variables take pr
   add-project <name> --repo owner/name [--area core]          seed projects/<name>/ from the templates
   doctor <name>                                               check the checklist live; stamps "verified"
   signin-code --project <name> [--bootstrap --preview-url U]  seed a one-time sign-in code for the project's test account on the preview; prints {email, code}
-  upload <file> [--alt "text"]                                upload a screenshot to Linear; prints ![alt](assetUrl), verified
-  linear-projects                                             list the Linear projects this key sees (id, name, team)
+  upload <file> [--alt "text"] [--project NAME]                 upload a screenshot to the selected Linear account
+  linear-projects [--project NAME]                             list Linear projects in the selected account
   linear-project <project> <area> [--id <uuid|url>] [--team K] create (or --id: update) the area's Linear project from its linear-project.md; writes the id to areas.json
   validate                                                    load hub.json + every projects/*`;
 
@@ -474,7 +506,7 @@ export async function main(argv: string[]): Promise<number> {
     case "doctor":
       return runDoctor(ROOT, args, io);
     case "linear-projects":
-      return linearProjects();
+      return linearProjects(args);
     case "linear-project":
       return linearProject(args);
     case "signin-code": {
@@ -490,7 +522,9 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "upload": {
       const { runUpload } = await import("./commands/upload.ts");
-      return runUpload(args, process.env, io);
+      return withSelectedLinear(args, (authorization) =>
+        runUpload(args, { ...process.env, LINEAR_API_KEY: authorization }, io),
+      );
     }
     case "validate":
       return validate();

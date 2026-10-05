@@ -181,6 +181,40 @@ describe("workspace browser credential safety", () => {
 });
 
 describe("selected project capabilities in doctor", () => {
+  it("allows deliberately paused unmapped PMs but still checks mapped and enabled PMs", async () => {
+    const selected = project();
+    selected.areas = [
+      {
+        key: "paused",
+        enabled: false,
+        linearProjectId: "PASTE_LINEAR_PROJECT_ID",
+      },
+      { key: "enabled", enabled: true, linearProjectId: "enabled-project" },
+      {
+        key: "mapped-paused",
+        enabled: false,
+        linearProjectId: "mapped-project",
+      },
+    ] as Project["areas"];
+    const queried: string[] = [];
+    const deps = {
+      env: { GITHUB_TOKEN: "source", LINEAR_API_KEY: "linear" },
+      today: () => "2026-10-05",
+      fetch: async (url: string, init?: RequestInit) => {
+        if (url.includes("linear.app"))
+          queried.push(JSON.parse(String(init?.body)).variables.id);
+        return Response.json({ data: { project: { name: "Mapped PM" } } });
+      },
+    };
+    const checks = await doctorChecks(selected, deps);
+    expect(checks.every((check) => check.ok)).toBe(true);
+    expect(queried).toEqual(["enabled-project", "mapped-project"]);
+    selected.areas[0]!.enabled = true;
+    const blocked = await doctorChecks(selected, deps);
+    expect(blocked.find((check) => check.name === "no placeholders")?.ok).toBe(
+      false,
+    );
+  });
   const project = (
     verification: unknown = { mode: "repository" },
     environments: unknown = {},

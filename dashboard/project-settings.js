@@ -30,6 +30,7 @@
           ? "preview"
           : "";
     let branchEdited = false;
+    let connections = options.connections || [];
     const fields = {};
     const root = document.createElement("div");
     root.className = "project-settings";
@@ -123,6 +124,12 @@
     const providerFields = node("div", "project-form-grid");
     const definitions = [
       [
+        "connectionId",
+        "Vercel connection",
+        "Use the saved account or team connection for this environment. Manage accounts in Connections.",
+        [["", "Default connection"]],
+      ],
+      [
         "url",
         "Test URL",
         "An HTTP(S) address reachable from the Docker worker. For a host service, use an address the container can reach.",
@@ -135,7 +142,7 @@
       [
         "teamId",
         "Vercel team ID (optional)",
-        "Leave blank to use the connected integration’s team.",
+        "Leave blank to use this connection’s team. A team outside its access requires a different connection.",
       ],
       [
         "branch",
@@ -276,7 +283,7 @@
     container.replaceChildren(root);
     const providerKeys = {
       url: ["url"],
-      vercel: ["projectId", "teamId", "bypassSecret", "branch"],
+      vercel: ["connectionId", "projectId", "teamId", "bypassSecret", "branch"],
       railway: [
         "projectId",
         "environmentId",
@@ -293,8 +300,27 @@
       railway: ["projectId", "environmentId", "serviceId"],
       "cloud-run": ["projectId", "region", "service"],
     };
+    const connectionChoices = (selected = fields.connectionId.value) => {
+      const profiles = connections.filter((item) => item.provider === "vercel");
+      if (!profiles.some((item) => item.id === "default"))
+        profiles.unshift({ id: "default", label: "Default connection" });
+      if (selected && !profiles.some((item) => item.id === selected))
+        profiles.push({ id: selected, label: selected + " · unavailable" });
+      fields.connectionId.replaceChildren(
+        ...profiles.map(
+          (item) =>
+            new Option(
+              (item.label || item.id) +
+                (item.workspace?.name ? " · " + item.workspace.name : ""),
+              item.id === "default" ? "" : item.id,
+            ),
+        ),
+      );
+      fields.connectionId.value = selected === "default" ? "" : selected;
+    };
     const loadTarget = (name) => {
       const target = environments[name] || {};
+      connectionChoices(target.connectionId || "");
       fields.environment.value = name || "preview";
       fields.role.value = target.role === "staging" ? "staging" : "preview";
       for (const [key] of definitions)
@@ -340,6 +366,10 @@
       }
     };
     fields.target.addEventListener("change", render);
+    fields.connectionId.addEventListener("change", () => {
+      fields.projectId.value = "";
+      fields.teamId.value = "";
+    });
     fields.workflow.addEventListener("change", render);
     fields.baseBranch.addEventListener("input", () => {
       branchEdited = true;
@@ -382,6 +412,10 @@
     return {
       isDirty: () => signature() !== baseline || signals.isDirty(),
       setProjectName: (name) => signals.setProjectName(name),
+      setConnections(value) {
+        connections = value;
+        connectionChoices();
+      },
       focusProvider: (provider) => signals.focusProvider(provider),
       setDefaultBranch(value) {
         if (!branchEdited && value) {

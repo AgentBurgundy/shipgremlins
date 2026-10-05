@@ -9,12 +9,22 @@ import {
   writeFileSync,
   openSync,
   closeSync,
+  fsyncSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
 } from "node:fs";
-import { join, dirname, resolve, parse } from "node:path";
+import { join, dirname, resolve, parse, basename } from "node:path";
+import { tmpdir } from "node:os";
 import { CronExpressionParser } from "cron-parser";
 import { loadProject } from "../config.ts";
+import { validConnectionId } from "../projectCapabilities.ts";
 import { ID_RE } from "../telemetry/config.ts";
-import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
+import {
+  readEditableConfig,
+  saveEditableConfig,
+  MAX_CONFIG_BYTES,
+} from "./configEditor.ts";
 import { validateName } from "./files.ts";
 import type {
   LinearApi,
@@ -36,6 +46,8 @@ export interface LinearMappingStatus {
   message?: string;
   teamId?: string;
   teamName?: string;
+  connectionId?: string;
+  workspaceId?: string;
 }
 export class LinearProvisioningError extends Error {
   constructor(
@@ -49,6 +61,7 @@ export class LinearProvisioningError extends Error {
 interface Intent {
   schema: 1;
   workspaceId: string;
+  connectionId?: string;
   team: {
     id: string;
     name: string;
@@ -58,6 +71,24 @@ interface Intent {
   };
   areas: Record<string, { id: string; created: boolean }>;
   error?: boolean;
+}
+export interface LinearMappingRepair {
+  projectRevision: string;
+  areasRevision: string;
+  teamId: string;
+  areaProjects: Record<string, string | null>;
+  connectionId?: string;
+}
+type RepairFile = {
+  name: "project" | "areas" | "journal";
+  before: string | null;
+  after: string;
+};
+interface RepairTransaction {
+  schema: 1;
+  id: string;
+  phase: "pending" | "committed";
+  files: RepairFile[];
 }
 const UUID =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -86,14 +117,20 @@ function safe(path: string) {
   return path;
 }
 function atomic(file: string, value: unknown) {
+  atomicText(file, JSON.stringify(value, null, 2) + "\n");
+}
+function atomicText(file: string, content: string) {
   safe(file);
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(temporary, JSON.stringify(value, null, 2) + "\n", {
-      flag: "wx",
-      mode: 0o600,
-    });
+    const fd = openSync(temporary, "wx", 0o600);
+    try {
+      writeFileSync(fd, content);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     safe(file);
     renameSync(temporary, file);
   } finally {
@@ -103,13 +140,105 @@ function atomic(file: string, value: unknown) {
 
 export function createLinearProvisioning(options: {
   root: string;
-  client: () => Promise<LinearProvisioningClient>;
+  /** Project-aware credential selection; omitted for the default resource picker. */
+  client: (
+    project?: string,
+    connectionId?: string,
+  ) => Promise<LinearProvisioningClient>;
+  /** Local file adapter for deterministic transaction-failure tests. */
+  mappingWrite?: (file: string, content: string) => void;
 }) {
   const { root } = options;
   const directory = join(root, ".run", "linear", "provisioning");
   function statePath(project: string) {
     validateName(project, "project");
     return safe(join(directory, `${project}.json`));
+  }
+  const repairPath = (project: string) => {
+    validateName(project, "project");
+    return safe(join(directory, `${project}.repair.json`));
+  };
+  const repairFilePath = (project: string, name: RepairFile["name"]) =>
+    name === "journal"
+      ? statePath(project)
+      : safe(
+          join(
+            root,
+            "projects",
+            project,
+            `${name === "project" ? "project" : "areas"}.json`,
+          ),
+        );
+  function contents(file: string): string | null {
+    safe(file);
+    return existsSync(file) ? readFileSync(file, "utf8") : null;
+  }
+  function finishRepair(project: string, transaction: RepairTransaction) {
+    const destination = safe(
+      join(directory, `${project}.repair-${transaction.id}.json`),
+    );
+    if (existsSync(destination))
+      throw new LinearProvisioningError(
+        "The mapping recovery archive already exists. Preserve both journals and resolve the duplicate before retrying.",
+        409,
+      );
+    renameSync(repairPath(project), destination);
+  }
+  function recoverRepair(project: string) {
+    const path = repairPath(project);
+    if (!existsSync(path)) return;
+    let transaction: RepairTransaction;
+    try {
+      if (lstatSync(path).size > 600 * 1024) throw new Error();
+      const value = JSON.parse(readFileSync(path, "utf8"));
+      if (
+        !object(value) ||
+        value.schema !== 1 ||
+        typeof value.id !== "string" ||
+        !UUID.test(value.id) ||
+        !["pending", "committed"].includes(String(value.phase)) ||
+        !Array.isArray(value.files) ||
+        value.files.length !== 3
+      )
+        throw new Error();
+      const names = new Set<string>();
+      for (const entry of value.files) {
+        if (
+          !object(entry) ||
+          !["project", "areas", "journal"].includes(String(entry.name)) ||
+          names.has(String(entry.name)) ||
+          typeof entry.after !== "string" ||
+          Buffer.byteLength(entry.after) > 128 * 1024 ||
+          (typeof entry.before !== "string" &&
+            !(entry.before === null && entry.name === "journal")) ||
+          (typeof entry.before === "string" &&
+            Buffer.byteLength(entry.before) > 128 * 1024)
+        )
+          throw new Error();
+        names.add(String(entry.name));
+      }
+      transaction = value as unknown as RepairTransaction;
+      if (transaction.phase === "pending") {
+        for (const entry of transaction.files) {
+          const current = contents(repairFilePath(project, entry.name));
+          if (current !== entry.before && current !== entry.after)
+            throw new Error();
+        }
+        // Restore project.json last so its old verification cannot authorize partial mappings.
+        for (const entry of [...transaction.files].reverse()) {
+          const target = repairFilePath(project, entry.name);
+          if (contents(target) === entry.before) continue;
+          if (entry.before === null) unlinkSync(target);
+          else atomicText(target, entry.before);
+        }
+      }
+      finishRepair(project, transaction);
+    } catch {
+      throw new LinearProvisioningError(
+        "A previous mapping repair needs recovery. Its original files are preserved in the local repair journal; resolve concurrent file edits before retrying.",
+        409,
+      );
+    }
   }
   function read(project: string): Intent | null {
     const file = statePath(project);
@@ -122,6 +251,8 @@ export function createLinearProvisioning(options: {
         raw.schema !== 1 ||
         typeof raw.workspaceId !== "string" ||
         !UUID.test(raw.workspaceId) ||
+        (raw.connectionId !== undefined &&
+          !validConnectionId(raw.connectionId)) ||
         !object(raw.team) ||
         typeof raw.team.id !== "string" ||
         !UUID.test(raw.team.id) ||
@@ -185,6 +316,7 @@ export function createLinearProvisioning(options: {
     }
     try {
       writeFileSync(fd, String(process.pid));
+      recoverRepair(project);
       return await action();
     } finally {
       closeSync(fd);
@@ -206,14 +338,50 @@ export function createLinearProvisioning(options: {
     });
   }
   function status(project: string): LinearMappingStatus {
+    if (existsSync(repairPath(project)))
+      return {
+        status: "error",
+        message:
+          "A mapping repair was interrupted. Save the mapping again to recover its preserved local transaction.",
+      };
     const config = loadProject(root, project);
     const state = read(project);
     const team = config.config.linear;
+    if (
+      state &&
+      ((state.connectionId !== undefined &&
+        state.connectionId !== (team?.connectionId ?? "default")) ||
+        (team?.workspaceId && state.workspaceId !== team.workspaceId) ||
+        (team?.teamId && state.team.id !== team.teamId) ||
+        config.areas.some(
+          (area) =>
+            !missingId(area.linearProjectId) &&
+            Object.hasOwn(state.areas, area.key) &&
+            state.areas[area.key]!.id !== area.linearProjectId,
+        ))
+    )
+      return {
+        status: "error",
+        teamId: team?.teamId,
+        teamName: team?.teamName,
+        connectionId: team?.connectionId,
+        workspaceId: team?.workspaceId,
+        message:
+          "Linear mappings and the saved setup journal differ. Use Edit project to repair the account, team, and PM mappings together.",
+      };
     const ready =
-      !!team && config.areas.every((area) => !missingId(area.linearProjectId));
+      !!team?.teamId &&
+      config.areas.every((area) => !missingId(area.linearProjectId));
     return {
       status: ready ? "ready" : state?.error ? "error" : "skipped",
-      ...(team ? { teamId: team.teamId, teamName: team.teamName } : {}),
+      ...(team
+        ? {
+            teamId: team.teamId,
+            teamName: team.teamName,
+            connectionId: team.connectionId,
+            workspaceId: team.workspaceId,
+          }
+        : {}),
       ...(!ready
         ? {
             message: state?.error
@@ -223,6 +391,266 @@ export function createLinearProvisioning(options: {
         : {}),
     };
   }
+  async function repairMappings(project: string, input: LinearMappingRepair) {
+    if (
+      !object(input) ||
+      Object.keys(input).some(
+        (key) =>
+          ![
+            "projectRevision",
+            "areasRevision",
+            "teamId",
+            "areaProjects",
+            "connectionId",
+          ].includes(key),
+      ) ||
+      typeof input.projectRevision !== "string" ||
+      !/^[a-f0-9]{64}$/.test(input.projectRevision) ||
+      typeof input.areasRevision !== "string" ||
+      !/^[a-f0-9]{64}$/.test(input.areasRevision) ||
+      typeof input.teamId !== "string" ||
+      !UUID.test(input.teamId) ||
+      (input.connectionId !== undefined &&
+        !validConnectionId(input.connectionId)) ||
+      !object(input.areaProjects)
+    )
+      throw new LinearProvisioningError(
+        "Provide the current project and PM revisions, an existing Linear team, and every PM's project selection.",
+      );
+    return locked(project, async () => {
+      const projectDocument = readEditableConfig(
+        root,
+        `projects/${project}/project.json`,
+      );
+      const areaDocument = readEditableConfig(
+        root,
+        `projects/${project}/areas.json`,
+      );
+      const tiersDocument = readEditableConfig(
+        root,
+        `projects/${project}/tiers.json`,
+      );
+      const conflict = () =>
+        new LinearProvisioningError(
+          "Project or PM settings changed. Reload both files and review your selections before saving again.",
+          409,
+        );
+      if (
+        projectDocument.revision !== input.projectRevision ||
+        areaDocument.revision !== input.areasRevision
+      )
+        throw conflict();
+      const projectValue: unknown = JSON.parse(projectDocument.content),
+        areaValue: unknown = JSON.parse(areaDocument.content);
+      if (
+        !object(projectValue) ||
+        !object(areaValue) ||
+        !object(areaValue.areas)
+      )
+        throw new LinearProvisioningError(
+          "Repair the project's JSON structure before changing Linear mappings.",
+        );
+      const keys = Object.keys(areaValue.areas);
+      if (
+        Object.keys(input.areaProjects).length !== keys.length ||
+        keys.some((key) => !Object.hasOwn(input.areaProjects, key))
+      )
+        throw new LinearProvisioningError(
+          "Select a Linear project or Unmapped for every current PM. Reload if the PM list changed.",
+        );
+      const selectedIds = new Set<string>();
+      for (const key of keys) {
+        validateName(key, "area");
+        const id = input.areaProjects[key];
+        if (
+          !object(areaValue.areas[key]) ||
+          (id !== null && (typeof id !== "string" || !UUID.test(id)))
+        )
+          throw new LinearProvisioningError(
+            "Each PM selection must be an existing Linear project UUID or Unmapped.",
+          );
+        if (id !== null) {
+          if (selectedIds.has(id!.toLowerCase()))
+            throw new LinearProvisioningError(
+              "Choose a different Linear project for each PM; duplicate mappings are not allowed.",
+            );
+          selectedIds.add(id!.toLowerCase());
+        }
+      }
+      const previousState = read(project);
+      const journalBefore = contents(statePath(project));
+      const selectedConnection =
+        input.connectionId ??
+        (object(projectValue.linear) &&
+        typeof projectValue.linear.connectionId === "string"
+          ? projectValue.linear.connectionId
+          : "default");
+      if (!validConnectionId(selectedConnection))
+        throw new LinearProvisioningError(
+          "Choose a saved Linear account before repairing mappings.",
+        );
+      const client = await options.client(project, selectedConnection);
+      const workspace = await client.organization();
+      const team = await client.getTeam(input.teamId);
+      if (
+        !UUID.test(workspace.id) ||
+        !team ||
+        team.id.toLowerCase() !== input.teamId.toLowerCase()
+      )
+        throw new LinearProvisioningError(
+          "The selected Linear team is unavailable in the connected workspace.",
+        );
+      const nextState: Intent = {
+        ...previousState,
+        schema: 1,
+        workspaceId: workspace.id,
+        connectionId: selectedConnection,
+        team: {
+          ...previousState?.team,
+          id: team.id,
+          name: team.name,
+          key: team.key,
+          created: true,
+          reuse: true,
+        },
+        areas: { ...previousState?.areas },
+      };
+      for (const key of keys) {
+        const chosen = input.areaProjects[key];
+        const value = areaValue.areas[key] as Record<string, unknown>;
+        if (chosen === null) {
+          value.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
+          value.enabled = false;
+          nextState.areas[key] = {
+            ...previousState?.areas[key],
+            id: randomUUID(),
+            created: false,
+          };
+        } else {
+          const resource = await client.getProject(chosen!);
+          if (
+            !resource ||
+            resource.id.toLowerCase() !== chosen!.toLowerCase() ||
+            !resource.teamIds.some(
+              (id) => id.toLowerCase() === team.id.toLowerCase(),
+            )
+          )
+            throw new LinearProvisioningError(
+              "Every selected PM project must be accessible and belong to the selected Linear team.",
+            );
+          value.linearProjectId = resource.id;
+          nextState.areas[key] = {
+            ...previousState?.areas[key],
+            id: resource.id,
+            created: true,
+          };
+        }
+      }
+      projectValue.linear = {
+        ...(object(projectValue.linear) ? projectValue.linear : {}),
+        teamId: team.id,
+        teamName: team.name,
+        workspaceId: workspace.id,
+        connectionId: selectedConnection,
+      };
+      projectValue.verified = null;
+      delete nextState.error;
+      const nextProject = JSON.stringify(projectValue, null, 2) + "\n",
+        nextAreas = JSON.stringify(areaValue, null, 2) + "\n",
+        nextJournal = JSON.stringify(nextState, null, 2) + "\n";
+      if (
+        [nextProject, nextAreas].some(
+          (content) => Buffer.byteLength(content) > MAX_CONFIG_BYTES,
+        ) ||
+        Buffer.byteLength(nextJournal) > 128 * 1024
+      )
+        throw new LinearProvisioningError(
+          "The repaired configuration exceeds its file-size limit. No mappings were changed.",
+        );
+      const temporaryParent = realpathSync(tmpdir());
+      const stage = mkdtempSync(
+        join(temporaryParent, "gremlins-linear-repair-"),
+      );
+      try {
+        const stagedProject = join(stage, "projects", project);
+        mkdirSync(stagedProject, { recursive: true, mode: 0o700 });
+        for (const [name, content] of [
+          ["project.json", nextProject],
+          ["areas.json", nextAreas],
+          ["tiers.json", tiersDocument.content],
+        ])
+          writeFileSync(join(stagedProject, name!), content!, { mode: 0o600 });
+        loadProject(stage, project);
+      } catch {
+        throw new LinearProvisioningError(
+          "The repaired mapping does not pass project validation. Check the project and PM settings; nothing was saved.",
+        );
+      } finally {
+        if (
+          dirname(stage) === temporaryParent &&
+          basename(stage).startsWith("gremlins-linear-repair-")
+        )
+          rmSync(stage, { recursive: true, force: true });
+      }
+      for (const document of [projectDocument, areaDocument, tiersDocument])
+        if (
+          readEditableConfig(root, document.path).revision !== document.revision
+        )
+          throw conflict();
+      if (contents(statePath(project)) !== journalBefore) throw conflict();
+      const transaction: RepairTransaction = {
+        schema: 1,
+        id: randomUUID(),
+        phase: "pending",
+        files: [
+          {
+            name: "project",
+            before: projectDocument.content,
+            after: nextProject,
+          },
+          { name: "areas", before: areaDocument.content, after: nextAreas },
+          { name: "journal", before: journalBefore, after: nextJournal },
+        ],
+      };
+      try {
+        atomic(repairPath(project), transaction);
+        for (const entry of transaction.files) {
+          const target = repairFilePath(project, entry.name);
+          if (contents(target) !== entry.before) throw conflict();
+          (options.mappingWrite ?? atomicText)(target, entry.after);
+        }
+        transaction.phase = "committed";
+        atomic(repairPath(project), transaction);
+        finishRepair(project, transaction);
+      } catch (error) {
+        recoverRepair(project);
+        if (error instanceof LinearProvisioningError) throw error;
+        throw new LinearProvisioningError(
+          "Mapping repair could not be saved. Original local files were restored; no Linear resources were created or deleted.",
+          500,
+        );
+      }
+      const savedProject = readEditableConfig(root, projectDocument.path),
+        savedAreas = readEditableConfig(root, areaDocument.path);
+      return {
+        ok: true,
+        projectRevision: savedProject.revision,
+        areasRevision: savedAreas.revision,
+        team: { id: team.id, name: team.name },
+        project: savedProject,
+        areas: savedAreas,
+        linear: status(project),
+        message:
+          "Linear mappings saved. Unmapped PMs are disabled. Verify the project before running jobs.",
+      };
+    }).catch((error) => {
+      if (error instanceof LinearProvisioningError) throw error;
+      throw new LinearProvisioningError(
+        "Linear mappings could not be validated or saved. Check the connection and local configuration; no remote resources were created or deleted.",
+        502,
+      );
+    });
+  }
   async function provision(
     project: string,
     input: { teamId?: string } = {},
@@ -230,11 +658,17 @@ export function createLinearProvisioning(options: {
     return locked(project, async () => {
       let state = read(project);
       const config = loadProject(root, project);
+      const connectionId = config.config.linear?.connectionId ?? "default";
+      if (state?.connectionId && state.connectionId !== connectionId)
+        throw new LinearProvisioningError(
+          "The saved Linear setup belongs to another account. Use Edit project to repair its team and PM mappings together.",
+          409,
+        );
       if (input.teamId !== undefined && !UUID.test(input.teamId))
         throw new LinearProvisioningError(
           "Choose a Linear team UUID from this workspace.",
         );
-      const client = await options.client();
+      const client = await options.client(project);
       try {
         const workspace = await client.organization();
         if (!UUID.test(workspace.id)) throw new Error();
@@ -312,6 +746,7 @@ export function createLinearProvisioning(options: {
           state = {
             schema: 1,
             workspaceId: workspace.id,
+            connectionId,
             team: {
               id,
               name: team?.name ?? project,
@@ -346,16 +781,22 @@ export function createLinearProvisioning(options: {
         }
         if (team.id !== state.team.id) throw new Error();
         state.team.created = true;
+        state.connectionId = connectionId;
         state.team.name = team.name;
         atomic(statePath(project), state);
         edit(project, "project.json", (value) => {
           const existing = value.linear;
-          if (object(existing) && existing.teamId !== team!.id)
+          if (
+            object(existing) &&
+            existing.teamId !== undefined &&
+            existing.teamId !== team!.id
+          )
             throw new LinearProvisioningError(
               "Team mapping changed during setup. Refresh before retrying.",
               409,
             );
           value.linear = {
+            ...(object(existing) ? existing : {}),
             teamId: team!.id,
             teamName: team!.name,
             workspaceId: workspace.id,
@@ -528,11 +969,11 @@ export function createLinearProvisioning(options: {
         );
       if (input.linearProjectId) {
         const remote = await (
-          await options.client()
+          await options.client(project)
         ).getProject(String(input.linearProjectId));
         if (
           !remote ||
-          (config.config.linear &&
+          (config.config.linear?.teamId &&
             !remote.teamIds.includes(config.config.linear.teamId))
         )
           throw new LinearProvisioningError(
@@ -570,6 +1011,8 @@ export function createLinearProvisioning(options: {
     status,
     provision,
     addArea,
-    resources: async () => (await options.client()).resources(),
+    repairMappings,
+    resources: async (project?: string, connectionId?: string) =>
+      (await options.client(project, connectionId)).resources(),
   };
 }

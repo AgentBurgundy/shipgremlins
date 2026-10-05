@@ -2,6 +2,13 @@
 
 Run `gremlins setup`, or `gremlins setup --lan` on a homelab server. In Connections, choose **Connect Linear** and, if your browser environment uses Vercel, **Connect Vercel**. Approve the requested access and return to the same dashboard. Authorizations stay on the machine running ShipGremlins. Manual API keys remain available under advanced settings. Repository-only projects need no hosting connection; see [project and hosting choices](PROJECTS.md).
 
+The provider cards support multiple named connections. Use **Add another account
+or workspace**, name the connection, then authorize it. The dropdown in that card
+selects the account you are managing; it does not reassign any project. Choose
+connections explicitly in project settings. Different apps can use different
+Linear workspaces or Vercel teams at the same time. Existing credentials remain
+the **Default connection**; manual-token fallback belongs only to that default.
+
 ## One app team, one project per PM
 
 When you add an app while Linear is connected, ShipGremlins creates a Linear team for that app and a Linear project for its initial PM mandate. Choose **Reuse an existing team** to keep your existing organization, or **Set up later** to save local configuration without creating anything in Linear.
@@ -16,7 +23,24 @@ If setup stops halfway, your local app and PM remain saved. Use **Retry Linear s
 
 No bulk migration runs when you connect Linear, open the dashboard, or start the controller. Team/project provisioning follows an explicit app, PM, or retry action. The configuration-only `gremlins setup init` command remains offline; finish its Linear mapping from the dashboard.
 
-Creating teams depends on your Linear workspace's permissions and limits. Choose reuse before creation if you need an existing team. Once a creation attempt has a reserved ID, retries keep that ID; switching to a different team is refused because the first request might already have succeeded. Restore access and retry the saved operation. ShipGremlins does not request Linear's admin scope solely to bypass workspace restrictions. Linear's [GraphQL API](https://linear.app/developers/graphql) and [official schema](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql) define the supported mutations and caller-provided IDs.
+Creating teams depends on your Linear workspace's permissions and limits. Choose reuse before creation if you need an existing team. Once a creation attempt has a reserved ID, retries keep that ID because the first request might already have succeeded. Use the explicit mapping repair below to select different existing resources. ShipGremlins does not request Linear's admin scope solely to bypass workspace restrictions. Linear's [GraphQL API](https://linear.app/developers/graphql) and [official schema](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql) define the supported mutations and caller-provided IDs.
+
+## Repair an incorrect Linear setup
+
+Open the app's **Edit settings → Linear mappings**. The header identifies the
+local project and source repository. Choose its Linear connection, an existing
+team, and an existing Linear project for each PM. The form shows names, marks
+missing or wrong-team selections, and checks that the selected account can access
+the resources. Selecting a different account requires choosing its team and PM
+projects again.
+
+**Save Linear mappings** updates the local app binding, PM mappings, and recovery
+journal together. Concurrent edits are rejected. Unrelated project settings,
+mandates, and credentials are preserved. This does not move, create, or delete
+anything in Linear. Leaving a PM unmapped pauses it; saving a valid mapping does
+not automatically enable a paused PM. Review enabled PMs and verify connections
+before resuming work. Explicit provisioning remains available for creating
+missing resources.
 
 ## Vercel preview access
 
@@ -27,7 +51,7 @@ card's personal-token form. Vercel's [token guide](https://vercel.com/kb/guide/h
 explains the available scopes. You do not need to copy an environment-variable
 assignment or edit a file.
 
-Choose the Vercel account/team and projects available to the integration. In Edit settings, select Vercel and enter its project ID and optional team ID. New targets are stored in named `environments`; legacy `vercel` settings remain supported. An OAuth installation's team is used when no team ID is configured. Set the target's preview branch separately from the PR base when needed. Verify connections checks the selected project, and browser jobs look up its ready preview before launching.
+Choose the Vercel account/team and projects available to the integration. In Edit settings, select Vercel, choose its saved connection, and enter its project ID and optional team ID. New targets are stored in named `environments`; legacy `vercel` settings remain supported. An OAuth installation's team is used when no team ID is configured. A team outside that installation requires another connection. Set the target's preview branch separately from the PR base when needed. Verify connections checks the selected project, and browser jobs look up its ready preview before launching.
 
 Connecting Vercel does not create deployments or test accounts. The selected branch must already have a ready preview deployment; a production deployment is not a preview. Vercel is optional: repository verification requires no hosting, and browser targets also support Railway, Cloud Run, or a direct test URL. Provider discovery does not provision or deploy your app.
 
@@ -42,7 +66,7 @@ need no bypass secret. See [Vercel's automation bypass guide](https://vercel.com
 
 Linear uses OAuth with PKCE, and the controller exchanges and refreshes tokens locally. Vercel's confidential integration exchange runs through the ShipGremlins connection broker and returns an encrypted result to the requesting dashboard. The dashboard checks its session and the pending request before saving it. Browser return fragments are removed after processing.
 
-Encrypted provider state and its local key live together under `.run/oauth/linear/` and `.run/oauth/vercel/`. Back up each complete directory privately. Do not copy encrypted state without its key. Manual keys remain in the configuration `.env`; saved OAuth takes precedence, and a broken OAuth connection does not silently fall back to an older manual key.
+Encrypted default provider state and its local key live together under `.run/oauth/linear/` and `.run/oauth/vercel/`. Named connections have separate state, keys, pending authorizations, and job reservations in each provider's `connections/CONNECTION_ID/` subdirectory. Back up each complete provider directory privately. Do not copy encrypted state without its key. Manual keys remain in the configuration `.env`; only the default connection supports that fallback. Saved OAuth takes precedence, and a broken OAuth connection does not silently fall back to an older manual key.
 
 The controller uses Vercel tokens for deployment lookup; they are not included in the Docker job payload. Linear access tokens are supplied to workers so PMs can file proposals. Refresh tokens and provider client secrets stay out of worker payloads. Linear and source-control credentials have durable 50-minute job reservations for the 45-minute worker limit; new work waits when refreshing would invalidate a running job's credential. Reservations are released after completion or a failed preparation.
 

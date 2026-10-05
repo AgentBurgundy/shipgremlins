@@ -13,6 +13,7 @@ import { parseFlags, type Io } from "./crons.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
 import { createLinearConnection } from "../linearConnection/index.ts";
 import { createVercelConnection } from "../vercelConnection/index.ts";
+import { listConnectionIds } from "../oauthConnection/profiles.ts";
 
 export interface SetupDeps extends PreflightDeps {
   projectSettings?: Record<string, unknown>;
@@ -206,14 +207,25 @@ export async function runSetup(
       (await createSourceControl({ root: directory, env: deps.env }).status());
     const oauthConnections =
       deps.oauthConnections ??
-      (await Promise.all([
-        createLinearConnection({ root: directory, env: deps.env }).status({
-          checkAvailability: false,
-        }),
-        createVercelConnection({ root: directory, env: deps.env }).status({
-          checkAvailability: false,
-        }),
-      ]));
+      (
+        await Promise.all(
+          (["linear", "vercel"] as const).map(async (provider) => {
+            const ids = await listConnectionIds(directory, provider);
+            return Promise.all(
+              ids.map(async (id) => ({
+                ...(await (
+                  provider === "linear"
+                    ? createLinearConnection
+                    : createVercelConnection
+                )({ root: directory, env: deps.env, connectionId: id }).status({
+                  checkAvailability: false,
+                })),
+                connectionId: id,
+              })),
+            );
+          }),
+        )
+      ).flat();
     const report = inspectSetup(
       directory,
       { ...deps, sourceConnections, oauthConnections },

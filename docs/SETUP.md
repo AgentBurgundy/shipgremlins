@@ -18,6 +18,11 @@ The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your g
 browser Back/Forward and reload. Moving between pages keeps unfinished forms in
 memory; save them before closing or restarting the dashboard.
 
+Overview shows your projects, PM mandates, verified workers, and active jobs.
+Connections has category tabs; mobile navigation opens from the menu button.
+Your gremlins starts with the launch form, with worker management below. Settings
+puts software updates first and keeps files and JSON under advanced configuration.
+
 An update banner appears across the dashboard when a release is available. You
 can install from that banner, see installation progress, and restart once the new
 runtime is ready. Update details and rollback remain in Settings. A visible open
@@ -50,6 +55,14 @@ generate it on your laptop and save it in your server's dashboard. Hosting cards
 link directly to token creation; project-specific fields explain their purpose,
 such as Vercel preview access. A saved credential is not proof of live access:
 finish with **Verify connections** on the project.
+
+Linear and Vercel support named connections for separate accounts or workspaces.
+Add and authorize them in Connections, then select the right connection in each
+project's settings. Choosing a card's account only changes which connection you
+are managing. Each app keeps its own Linear team, PM mappings, hosting provider,
+and environment. Existing projects keep the Default connection. See
+[project account selection](PROJECTS.md#different-projects-different-accounts) and
+[repairing Linear mappings](LINEAR_VERCEL.md#repair-an-incorrect-linear-setup).
 
 Supported tokens are saved in the configuration directory's `.env`. Existing values are not returned to the browser. Blank fields preserve saved values; exported variables take precedence. Files use owner-only permissions where supported. The file is not encrypted: keep the directory private and out of Git.
 

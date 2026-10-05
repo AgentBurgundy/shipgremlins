@@ -114,6 +114,12 @@ Connect GitHub or GitLab with a device code in **Source control**, then select y
 
 Connect Linear from the dashboard. New apps can create a Linear team, and each PM mandate gets its own Linear project. Existing mappings are preserved and interrupted provisioning resumes with the same IDs. [Connection and mapping guide →](docs/LINEAR_VERCEL.md)
 
+**Different clients, different accounts.** Save multiple named Linear and Vercel
+connections, then select the account each project uses. One app can use your own
+Linear team and Vercel installation while another uses a client's workspace and
+Railway. The project editor keeps its name and repository visible and lets you
+repair Linear team/PM mappings without moving or deleting provider resources.
+
 **Any repository first. Hosting when you need it.** New projects use repository checks and draft PRs/MRs to a chosen base branch. Edit the install/test/build commands for your stack. Add a named preview or staging URL for browser work, or select Vercel, Railway, or Cloud Run discovery. Credentials belong in Connections; resource IDs and settings belong to each project. Existing projects have **Edit settings**, with conflict protection and preserved unrelated configuration. [Project and hosting guide →](docs/PROJECTS.md)
 
 The local runtime provisions its PostgreSQL activity store when preparing work. The dashboard retains visible tool activity, summaries, checks, logs, and bounded artifacts. Private model reasoning is not exposed. Slack delivery runs separately from job execution and records each attempt so restarts do not repeat messages.

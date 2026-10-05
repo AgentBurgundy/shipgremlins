@@ -82,33 +82,46 @@ await createSourceStore(configurationRoot).locked(async (state, save) => {
   await save(state);
 });
 for (const provider of ["linear", "vercel"]) {
-  await createOAuthStore(configurationRoot, provider).locked(
-    async (state, save) => {
-      state.connection = {
-        accessToken: `fixture-${provider}-access-preserve`,
-        ...(provider === "linear"
-          ? { refreshToken: "fixture-linear-refresh-preserve" }
-          : {}),
-        expiresAt: Date.now() + 24 * 60 * 60_000,
-        workspace: {
-          id: "c9d8b18e-179c-4d2e-9897-20a38dadfd67",
-          name: "Fixture workspace",
-        },
-        account: { id: "fixture-account", name: "Fixture operator" },
-        leases: [
-          { jobId: "job-in-progress", expiresAt: Date.now() + 50 * 60_000 },
-        ],
-      };
-      await save(state);
-    },
-  );
-  const encrypted = readFileSync(
-    join(configurationRoot, ".run", "oauth", provider, "connection.enc"),
-  );
-  assert.equal(
-    encrypted.includes(Buffer.from(`fixture-${provider}-access-preserve`)),
-    false,
-  );
+  for (const connectionId of ["default", "client"]) {
+    await createOAuthStore(configurationRoot, provider, connectionId).locked(
+      async (state, save) => {
+        state.label =
+          connectionId === "client" ? "Client workspace" : "Default";
+        state.connection = {
+          accessToken: `fixture-${provider}-${connectionId}-access-preserve`,
+          ...(provider === "linear"
+            ? { refreshToken: "fixture-linear-refresh-preserve" }
+            : {}),
+          expiresAt: Date.now() + 24 * 60 * 60_000,
+          workspace: {
+            id: "c9d8b18e-179c-4d2e-9897-20a38dadfd67",
+            name: "Fixture workspace",
+          },
+          account: { id: "fixture-account", name: "Fixture operator" },
+          leases: [
+            { jobId: "job-in-progress", expiresAt: Date.now() + 50 * 60_000 },
+          ],
+        };
+        await save(state);
+      },
+    );
+    const encrypted = readFileSync(
+      join(
+        configurationRoot,
+        ".run",
+        "oauth",
+        provider,
+        ...(connectionId === "default" ? [] : ["connections", connectionId]),
+        "connection.enc",
+      ),
+    );
+    assert.equal(
+      encrypted.includes(
+        Buffer.from(`fixture-${provider}-${connectionId}-access-preserve`),
+      ),
+      false,
+    );
+  }
 }
 const provisioningDirectory = join(
   configurationRoot,
@@ -209,12 +222,22 @@ assert.equal(resolveRuntime(bootstrap, home), bootstrap);
 assert.equal(selectedVersion(), `ShipGremlins ${previousVersion}`);
 assert.deepEqual(snapshot(configurationRoot), originalConfiguration);
 for (const provider of ["linear", "vercel"]) {
-  const preserved = await createOAuthStore(configurationRoot, provider).read();
-  assert.equal(
-    preserved.connection?.accessToken,
-    `fixture-${provider}-access-preserve`,
-  );
-  assert.equal(preserved.connection?.leases[0]?.jobId, "job-in-progress");
+  for (const connectionId of ["default", "client"]) {
+    const preserved = await createOAuthStore(
+      configurationRoot,
+      provider,
+      connectionId,
+    ).read();
+    assert.equal(
+      preserved.connection?.accessToken,
+      `fixture-${provider}-${connectionId}-access-preserve`,
+    );
+    assert.equal(preserved.connection?.leases[0]?.jobId, "job-in-progress");
+    assert.equal(
+      preserved.label,
+      connectionId === "client" ? "Client workspace" : "Default",
+    );
+  }
 }
 console.log(
   "PASS real staged update: isolated npm install, candidate startup/config checks, activation, bootstrap rollback, unchanged PM files, encrypted OAuth keys/connections, Linear provisioning journal, credentials and local queue storage.",

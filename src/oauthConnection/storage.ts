@@ -13,6 +13,7 @@ import {
 import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { OAuthConnectionError, type OAuthProvider } from "./types.ts";
+import { normalizeConnectionId } from "./profileId.ts";
 
 export interface SavedConnection {
   accessToken: string;
@@ -42,6 +43,7 @@ export interface PendingConnection {
 }
 export interface OAuthState {
   schema: 1;
+  label?: string;
   connection?: SavedConnection;
   pending?: PendingConnection;
 }
@@ -62,6 +64,17 @@ const identity = (value: unknown) =>
   value.name.length <= 200;
 function validate(value: unknown): OAuthState {
   if (!object(value) || value.schema !== 1) throw new Error();
+  if (
+    value.label !== undefined &&
+    (typeof value.label !== "string" ||
+      !value.label.trim() ||
+      value.label.length > 100 ||
+      [...value.label].some(
+        (character) =>
+          character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+      ))
+  )
+    throw new Error();
   const connection = value.connection,
     pending = value.pending;
   if (
@@ -93,7 +106,7 @@ function validate(value: unknown): OAuthState {
     throw new Error();
   return value as unknown as OAuthState;
 }
-function safePath(file: string): string {
+export function safeOAuthPath(file: string): string {
   for (let current = resolve(file); ;) {
     if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new OAuthConnectionError(
@@ -106,6 +119,7 @@ function safePath(file: string): string {
   }
   return file;
 }
+const safePath = safeOAuthPath;
 async function privateFile(file: string, content: Buffer | string) {
   const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
   try {
@@ -140,14 +154,27 @@ async function privateFile(file: string, content: Buffer | string) {
   }
 }
 /** Tokens remain local; the separate key must accompany encrypted state in backups. */
-export function createOAuthStore(root: string, provider: OAuthProvider) {
+export function createOAuthStore(
+  root: string,
+  provider: OAuthProvider,
+  connectionId?: string,
+) {
   if (!["linear", "vercel"].includes(provider))
     throw new OAuthConnectionError("Invalid OAuth provider.");
-  const directory = join(resolve(root), ".run", "oauth", provider);
+  const id = normalizeConnectionId(connectionId);
+  const directory = join(
+    resolve(root),
+    ".run",
+    "oauth",
+    provider,
+    ...(id === "default" ? [] : ["connections", id]),
+  );
   const stateFile = join(directory, "connection.enc"),
     keyFile = join(directory, "key"),
     lockFile = join(directory, "state.lock");
-  const aad = Buffer.from(`shipgremlins-${provider}-storage-v1`);
+  const aad = Buffer.from(
+    `shipgremlins-${provider}-storage-v1${id === "default" ? "" : `:${id}`}`,
+  );
   async function encryptionKey(create = false) {
     try {
       const value = await readFile(safePath(keyFile));

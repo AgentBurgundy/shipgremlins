@@ -13,6 +13,12 @@ export interface LocalJobInput {
   pr?: number;
   /** Stable scheduled slot or ticket attempt; never a credential. */
   idempotencyKey?: string;
+  /** Controller-validated account/workspace/ticket identity; never a credential. */
+  linearBinding?: {
+    connectionId: string;
+    workspaceId?: string;
+    ticketId?: string;
+  };
 }
 
 export interface LocalJob extends LocalJobInput {

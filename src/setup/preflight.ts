@@ -41,10 +41,10 @@ export interface PreflightDeps {
     SourceStatus,
     "provider" | "serverUrl" | "connected" | "method" | "needsReconnect"
   >[];
-  oauthConnections?: Pick<
+  oauthConnections?: (Pick<
     OAuthStatus,
     "provider" | "connected" | "method" | "needsReconnect"
-  >[];
+  > & { id?: string; connectionId?: string })[];
 }
 
 /** Commands are fixed, bounded and read-only. Tool output is reduced to a version, never echoed. */
@@ -78,7 +78,12 @@ export function inspectSetup(
   if (selectedProject) validateName(selectedProject, "project");
   const checks: SetupCheck[] = [];
   const secretNames = new Set<string>();
-  const oauthProviders = new Set<"linear" | "vercel">(["linear"]);
+  const oauthAccounts = new Map<
+    string,
+    { provider: "linear" | "vercel"; id: string }
+  >();
+  const requireAccount = (provider: "linear" | "vercel", id = "default") =>
+    oauthAccounts.set(`${provider}:${id}`, { provider, id });
   let requiresPromotion = false;
   const add = (
     id: string,
@@ -164,6 +169,7 @@ export function inspectSetup(
       "fail",
       "No projects configured. Open gremlins setup or run gremlins setup init --project my-app --repo your-org/my-app. Use a lowercase project ID such as my-app, not a domain.",
     );
+  if (names.length === 0) requireAccount("linear");
   if (
     names.length === 0 &&
     !deps.sourceConnections?.some(
@@ -176,6 +182,7 @@ export function inspectSetup(
     try {
       validateName(name, "project");
       const project = loadProject(root, name);
+      requireAccount("linear", project.config.linear?.connectionId);
       const verification = effectiveVerification(project.config);
       requiresPromotion ||=
         effectiveWorkflow(project.config).kind === "promotion";
@@ -207,7 +214,7 @@ export function inspectSetup(
       if (verification.mode === "browser") {
         const target = verification.target;
         if (target.kind === "vercel") {
-          oauthProviders.add("vercel");
+          requireAccount("vercel", target.connectionId);
           if (target.bypassSecret) secretNames.add(target.bypassSecret);
         }
         if (target.kind === "railway")
@@ -234,7 +241,9 @@ export function inspectSetup(
           Object.values(verification.target).some(
             (value) => typeof value === "string" && value.startsWith("PASTE_"),
           )) ||
-        project.areas.some((area) => area.linearProjectId.startsWith("PASTE_"));
+        project.areas.some(
+          (area) => area.enabled && area.linearProjectId.startsWith("PASTE_"),
+        );
       add(
         `connections:${name}`,
         placeholders ? "fail" : "pass",
@@ -264,19 +273,28 @@ export function inspectSetup(
       );
     }
   }
-  for (const provider of oauthProviders) {
+  for (const { provider, id } of oauthAccounts.values()) {
     const secretName =
       provider === "linear" ? "LINEAR_API_KEY" : "VERCEL_TOKEN";
     const connection = deps.oauthConnections?.find(
-      (item) => item.provider === provider && item.method === "oauth",
+      (item) =>
+        item.provider === provider &&
+        (item.connectionId ?? item.id ?? "default") === id &&
+        item.method === "oauth",
     );
     if (connection)
       add(
-        `oauth:${provider}`,
+        `oauth:${provider}${id === "default" ? "" : `:${id}`}`,
         connection.connected && !connection.needsReconnect ? "pass" : "fail",
         connection.connected && !connection.needsReconnect
           ? `${provider === "linear" ? "Linear" : "Vercel"} OAuth is saved; doctor checks live project access.`
           : `Reconnect ${provider === "linear" ? "Linear" : "Vercel"} in the dashboard. The saved OAuth connection needs attention.`,
+      );
+    else if (id !== "default")
+      add(
+        `oauth:${provider}:${id}`,
+        "fail",
+        `Connect the selected ${provider === "linear" ? "Linear" : "Vercel"} account (${id}) in the dashboard. A workspace token does not replace a named account.`,
       );
     else secretNames.add(secretName);
   }

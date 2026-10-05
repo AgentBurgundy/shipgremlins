@@ -13,6 +13,7 @@ import {
   parseProjectCapabilities,
   validateWorkerSecretReferences,
   validBranch,
+  validConnectionId,
   type ProjectCapabilities,
 } from "./projectCapabilities.ts";
 
@@ -31,7 +32,12 @@ export interface HubConfig {
 
 export interface ProjectConfig extends ProjectCapabilities {
   /** The Linear team for this app; existing area project IDs remain authoritative. */
-  linear?: { teamId: string; workspaceId?: string; teamName?: string };
+  linear?: {
+    teamId?: string;
+    workspaceId?: string;
+    teamName?: string;
+    connectionId?: string;
+  };
   telemetry?: TelemetryConfig;
   name: string;
   repo: string;
@@ -40,7 +46,12 @@ export interface ProjectConfig extends ProjectCapabilities {
   serverUrl?: string;
   branches: { production: string; staging: string; integration: string };
   /** Legacy Vercel configuration. New projects use named environments. */
-  vercel?: { projectId: string; teamId: string | null; bypassSecret: string };
+  vercel?: {
+    projectId: string;
+    teamId: string | null;
+    bypassSecret: string;
+    connectionId?: string;
+  };
   database: "neon-vercel-integration" | "none";
   slackWebhookSecret: string;
   runnerLabel: string | null;
@@ -368,6 +379,17 @@ export function loadProject(root: string, name: string): Project {
     ...(vercel
       ? {
           vercel: {
+            ...(vercel.connectionId === undefined
+              ? {}
+              : {
+                  connectionId: need(
+                    pf,
+                    vercel,
+                    "connectionId",
+                    validConnectionId,
+                    "a saved account ID",
+                  ),
+                }),
             projectId: need(
               pf,
               vercel,
@@ -584,8 +606,26 @@ function parseLinearMapping(
     /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
       v,
     );
+  if (value.teamId === undefined && !validConnectionId(value.connectionId))
+    throw new ConfigError(
+      file,
+      '"linear" needs a teamId or saved connectionId',
+    );
   return {
-    teamId: need(file, value, "teamId", id, "a Linear team UUID"),
+    ...(value.teamId === undefined
+      ? {}
+      : { teamId: need(file, value, "teamId", id, "a Linear team UUID") }),
+    ...(value.connectionId === undefined
+      ? {}
+      : {
+          connectionId: need(
+            file,
+            value,
+            "connectionId",
+            validConnectionId,
+            "a saved account ID",
+          ),
+        }),
     ...(value.workspaceId === undefined
       ? {}
       : {

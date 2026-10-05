@@ -4,6 +4,26 @@ ShipGremlins can work on a repository without a hosted web app. Hosting is optio
 
 Run `gremlins setup`, or `gremlins setup --lan --port 4311` on a server. In **Projects**, choose your GitHub or GitLab repository, review its commands, and select how to verify work. Existing projects have an **Edit settings** button. Connections holds credentials; project settings hold resource IDs and credential variable names.
 
+## Different projects, different accounts
+
+Connections is a directory of available access, not one mandatory account for every
+project. In the Linear or Vercel card, **Add another account or workspace**, give it
+a name, and authorize it. Adding a connection does not change existing projects.
+
+Each project chooses its own Linear connection and team under **Edit settings →
+Linear mappings**. Each Vercel environment chooses its own saved connection,
+project, and team. Another project can use Railway, Cloud Run, a direct URL, or no
+hosting at all. Railway targets can reference separate saved token variables.
+
+The editor keeps the project name and repository visible while you work. Use its
+section shortcuts for project setup, Linear mappings, and product signals.
+Changing a Vercel connection clears the draft resource IDs so you can enter the
+project and team accessible through that account before saving.
+
+Existing projects continue using the **Default connection** unless you explicitly
+select another one. A missing or revoked named connection never falls back to a
+different account. Verify the project after changing its access or mappings.
+
 ## Start with repository checks
 
 New projects default to repository verification and draft pull or merge requests against `main`. The repository picker suggests its default branch. Change that branch if your review process uses another one.
@@ -26,6 +46,10 @@ New projects default to repository verification and draft pull or merge requests
 This is an execution-settings excerpt, not a replacement for the full generated project file. Repository mode does not require a Vercel account, a preview URL, or three release branches. It produces repository findings and configured check results; it cannot claim browser screenshots of an app it did not visit.
 
 Install and test commands must be explicit nonempty commands. Lint, typecheck, and build are optional. Node defaults are examples, not automatic stack detection. Use commands appropriate to your project and ensure the worker image contains their toolchain. For example, a Python project can create its own virtual environment during install and use that environment for tests. A configured command does not install Go, Rust, Java, or another language runtime by itself.
+
+For the ShipGremlins repository itself, use `npm ci`, `npm test`, `npm run lint`,
+and `npm run typecheck` in their corresponding fields. Leave Build blank; it runs
+from TypeScript source. Its worker needs Node.js 22.12 or newer.
 
 ## Add a browser environment
 
@@ -61,6 +85,7 @@ The URL must be reachable **from the worker container**. `localhost` points to t
 {
   "role": "preview",
   "kind": "vercel",
+  "connectionId": "acme-vercel",
   "projectId": "prj_example",
   "teamId": "team_example",
   "branch": "staging",

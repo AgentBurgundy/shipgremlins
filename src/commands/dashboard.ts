@@ -68,6 +68,7 @@ import { createSourceControl } from "../sourceControl/index.ts";
 import {
   effectiveVerification,
   effectiveWorkflow,
+  validConnectionId,
 } from "../projectCapabilities.ts";
 import {
   createLinearConnection,
@@ -77,12 +78,20 @@ import {
   createVercelConnection,
   type VercelConnection,
 } from "../vercelConnection/index.ts";
-import { OAuthConnectionError } from "../oauthConnection/types.ts";
+import {
+  OAuthConnectionError,
+  type OAuthProvider,
+} from "../oauthConnection/types.ts";
+import {
+  listConnectionProfiles,
+  createConnectionProfile,
+} from "../oauthConnection/profiles.ts";
 import { LinearApi } from "../services/linear.ts";
 import {
   createLinearProvisioning,
   LinearProvisioningError,
   type LinearMappingStatus,
+  type LinearMappingRepair,
 } from "../setup/linearProvisioning.ts";
 import {
   SourceControlError,
@@ -223,6 +232,8 @@ export interface DashboardOptions {
   sourceControl?: SourceControl;
   linearConnection?: LinearConnection;
   vercelConnection?: VercelConnection;
+  linearConnectionFor?: (connectionId?: string) => LinearConnection;
+  vercelConnectionFor?: (connectionId?: string) => VercelConnection;
   linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
 }
 
@@ -251,25 +262,83 @@ export function createDashboardServer(
     options.linearConnection ?? createLinearConnection({ root, session });
   const vercelConnection =
     options.vercelConnection ?? createVercelConnection({ root, session });
+  const linearAccounts = new Map<string, LinearConnection>([
+    ["default", linearConnection],
+  ]);
+  const vercelAccounts = new Map<string, VercelConnection>([
+    ["default", vercelConnection],
+  ]);
+  function selectedConnection(provider: OAuthProvider, id = "default") {
+    if (!validConnectionId(id))
+      throw new OAuthConnectionError("Choose a valid saved account ID.");
+    const accounts = provider === "linear" ? linearAccounts : vercelAccounts;
+    let connection = accounts.get(id);
+    if (!connection) {
+      connection =
+        provider === "linear"
+          ? (options.linearConnectionFor?.(id) ??
+            createLinearConnection({ root, session, connectionId: id }))
+          : (options.vercelConnectionFor?.(id) ??
+            createVercelConnection({ root, session, connectionId: id }));
+      accounts.set(id, connection);
+    }
+    return connection;
+  }
+  const linearConnectionFor = (id?: string) => selectedConnection("linear", id);
+  const vercelConnectionFor = (id?: string) => selectedConnection("vercel", id);
+  async function requireProfile(provider: OAuthProvider, id: string) {
+    if (
+      !validConnectionId(id) ||
+      !(await listConnectionProfiles(root, provider)).some(
+        (profile) => profile.id === id,
+      )
+    )
+      throw new OAuthConnectionError(
+        "The selected saved account is missing. Add or reconnect it before continuing.",
+        "missing_connection",
+        409,
+      );
+  }
+  const serviceStatuses = async (checkAvailability = false) =>
+    Promise.all(
+      (await listConnectionProfiles(root)).map(async (profile) => ({
+        ...(await selectedConnection(profile.provider, profile.id).status({
+          checkAvailability,
+        })),
+        ...profile,
+      })),
+    );
   const linearProvisioning =
     options.linearProvisioning ??
     createLinearProvisioning({
       root,
-      client: async () =>
-        new LinearApi({
+      client: async (project, explicitConnection) => {
+        const mapping =
+          project && explicitConnection === undefined
+            ? loadProject(root, project).config.linear
+            : undefined;
+        return new LinearApi({
           apiKey: (
-            await linearConnection.resolveCredential({
+            await linearConnectionFor(
+              explicitConnection ?? mapping?.connectionId,
+            ).resolveCredential({
               minValidityMs: 5 * 60_000,
+              ...(explicitConnection === undefined && mapping?.workspaceId
+                ? { workspaceId: mapping.workspaceId }
+                : {}),
             })
           ).authorization,
-        }),
+        });
+      },
     });
   async function provisionLinear(
     project: string,
     teamId?: string,
   ): Promise<LinearMappingStatus> {
     try {
-      const status = await linearConnection.status({
+      const status = await linearConnectionFor(
+        loadProject(root, project).config.linear?.connectionId,
+      ).status({
         checkAvailability: false,
       });
       if (!status.connected)
@@ -296,6 +365,8 @@ export function createDashboardServer(
       sourceControl,
       linearConnection,
       vercelConnection,
+      linearConnectionFor,
+      vercelConnectionFor,
     });
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
@@ -319,31 +390,34 @@ export function createDashboardServer(
     }
     const saved = readConnections(root);
     const sources = await sourceControl.status();
-    const serviceConnections = await Promise.all([
-      linearConnection.status({ checkAvailability: false }),
-      vercelConnection.status({ checkAvailability: false }),
-    ]);
+    const serviceConnections = await serviceStatuses();
     const blockedSources = new Set<string>();
-    const required = new Set(["CLAUDE_CODE_OAUTH_TOKEN", "LINEAR_API_KEY"]);
-    for (const connection of serviceConnections) {
-      const name =
-        connection.provider === "linear" ? "LINEAR_API_KEY" : "VERCEL_TOKEN";
-      if (connection.connected && !connection.needsReconnect)
-        required.delete(name);
-      else if (connection.method === "oauth") blockedSources.add(name);
+    const required = new Set(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    function requireService(provider: OAuthProvider, id = "default") {
+      const connection = serviceConnections.find(
+        (item) => item.provider === provider && item.id === id,
+      );
+      if (connection?.connected && !connection.needsReconnect) return;
+      const key =
+        id === "default"
+          ? provider === "linear"
+            ? "LINEAR_API_KEY"
+            : "VERCEL_TOKEN"
+          : `${provider === "linear" ? "Linear" : "Vercel"} account: ${id}`;
+      required.add(key);
+      if (id !== "default" || connection?.method === "oauth")
+        blockedSources.add(key);
     }
+    if (!listProjectNames(root).length) requireService("linear");
     for (const name of listProjectNames(root)) {
       try {
         const project = loadProject(root, name);
+        requireService("linear", project.config.linear?.connectionId);
         const verification = effectiveVerification(project.config);
         if (verification.mode === "browser") {
           const target = verification.target;
           if (target.kind === "vercel") {
-            const connection = serviceConnections.find(
-              (item) => item.provider === "vercel",
-            );
-            if (!connection?.connected || connection.needsReconnect)
-              required.add("VERCEL_TOKEN");
+            requireService("vercel", target.connectionId);
             if (target.bypassSecret) required.add(target.bypassSecret);
           }
           if (target.kind === "railway")
@@ -544,15 +618,81 @@ export function createDashboardServer(
           }
           return;
         }
+        if (url.pathname === "/api/service-connections") {
+          try {
+            if (url.search)
+              throw new RequestError(
+                400,
+                "Saved account requests do not accept query parameters.",
+              );
+            if (req.method === "GET")
+              json(res, 200, { connections: await serviceStatuses() });
+            else if (req.method === "POST") {
+              const input = await body(req);
+              if (
+                Object.keys(input).some(
+                  (key) => !["provider", "id", "label"].includes(key),
+                ) ||
+                !["linear", "vercel"].includes(String(input.provider)) ||
+                !validConnectionId(input.id) ||
+                typeof input.label !== "string"
+              )
+                throw new RequestError(
+                  400,
+                  "Provide a provider, saved account ID, and display name.",
+                );
+              const profile = await createConnectionProfile(root, {
+                provider: input.provider as OAuthProvider,
+                id: input.id,
+                label: input.label,
+              });
+              json(res, 200, {
+                ...(await selectedConnection(
+                  profile.provider,
+                  profile.id,
+                ).status({ checkAvailability: false })),
+                ...profile,
+              });
+            } else
+              throw new RequestError(
+                405,
+                "Use GET or POST for saved accounts.",
+              );
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            if (error instanceof OAuthConnectionError)
+              throw new RequestError(error.status, error.message);
+            throw new RequestError(
+              400,
+              "Saved accounts could not be loaded or changed. Check the account name and local configuration.",
+            );
+          }
+          return;
+        }
         const serviceAction =
           /^\/api\/(linear|vercel)(?:\/(connect|complete|resources))?$/.exec(
             url.pathname,
           );
         if (serviceAction) {
-          const connection =
-            serviceAction[1] === "linear" ? linearConnection : vercelConnection;
           const action = serviceAction[2];
           try {
+            if (
+              [...url.searchParams.keys()].some(
+                (key) => key !== "connection",
+              ) ||
+              url.searchParams.getAll("connection").length > 1
+            )
+              throw new RequestError(400, "Use one saved connection ID.");
+            const connectionId =
+              url.searchParams.get("connection") ?? "default";
+            await requireProfile(
+              serviceAction[1] as OAuthProvider,
+              connectionId,
+            );
+            const connection = selectedConnection(
+              serviceAction[1] as OAuthProvider,
+              connectionId,
+            );
             if (req.method === "GET" && !action)
               json(res, 200, await connection.status());
             else if (
@@ -560,7 +700,11 @@ export function createDashboardServer(
               action === "resources" &&
               serviceAction[1] === "linear"
             )
-              json(res, 200, await linearProvisioning.resources());
+              json(
+                res,
+                200,
+                await linearProvisioning.resources(undefined, connectionId),
+              );
             else if (req.method === "DELETE" && !action) {
               if (Object.keys(await body(req)).length)
                 throw new RequestError(
@@ -782,14 +926,23 @@ export function createDashboardServer(
             );
           }
           if (validated.ticket) {
+            jobInput.linearBinding = validated.linearBinding;
             jobInput.area = validated.area.key;
             jobInput.ticket = validated.ticket.identifier;
-            const previous = (await runners().jobs()).filter(
-              (job) =>
-                job.type === "developer" &&
-                job.project === jobInput.project &&
-                job.ticket === jobInput.ticket,
-            );
+            const previous = (await runners().jobs()).filter((job) => {
+              if (job.type !== "developer" || job.project !== jobInput.project)
+                return false;
+              const oldBinding = job.linearBinding,
+                currentBinding = jobInput.linearBinding;
+              // Identifiers such as ENG-123 can belong to unrelated workspaces.
+              // Older jobs without immutable identity retain the conservative guard.
+              if (!oldBinding?.ticketId || !currentBinding?.ticketId)
+                return job.ticket === jobInput.ticket;
+              if (oldBinding.ticketId !== currentBinding.ticketId) return false;
+              if (oldBinding.workspaceId && currentBinding.workspaceId)
+                return oldBinding.workspaceId === currentBinding.workspaceId;
+              return oldBinding.connectionId === currentBinding.connectionId;
+            });
             if (
               previous.some((job) =>
                 ["queued", "running", "succeeded"].includes(job.status),
@@ -924,10 +1077,7 @@ export function createDashboardServer(
           assertNoSymlinks(join(root, "hub.json"));
           const saved = readConnections(root);
           const sourceConnections = await sourceControl.status();
-          const serviceConnections = await Promise.all([
-            linearConnection.status({ checkAvailability: false }),
-            vercelConnection.status({ checkAvailability: false }),
-          ]);
+          const serviceConnections = await serviceStatuses();
           const configWarnings: string[] = [];
           let hubRepo: string | null = null;
           if (existsSync(join(root, "hub.json"))) {
@@ -1134,6 +1284,7 @@ export function createDashboardServer(
                   "serverUrl",
                   "linearMode",
                   "linearTeamId",
+                  "linear",
                   "workflow",
                   "verification",
                   "environments",
@@ -1178,6 +1329,55 @@ export function createDashboardServer(
               "Use a lowercase project ID and owner/repository names.",
             );
           const provider = (input.provider ?? "github") as "github" | "gitlab";
+          if (input.linear !== undefined) {
+            const value = input.linear;
+            if (
+              !value ||
+              typeof value !== "object" ||
+              Array.isArray(value) ||
+              Object.keys(value).some((key) => key !== "connectionId") ||
+              !validConnectionId(
+                (value as Record<string, unknown>).connectionId,
+              )
+            )
+              throw new RequestError(
+                400,
+                "Initial Linear settings accept a saved connectionId. Choose a team using the Linear setup controls.",
+              );
+            try {
+              await requireProfile(
+                "linear",
+                (value as { connectionId: string }).connectionId,
+              );
+            } catch {
+              throw new RequestError(
+                400,
+                "Choose an existing saved Linear account before adding this project.",
+              );
+            }
+          }
+          if (
+            input.environments &&
+            typeof input.environments === "object" &&
+            !Array.isArray(input.environments)
+          )
+            for (const target of Object.values(input.environments)) {
+              if (
+                target &&
+                typeof target === "object" &&
+                target.kind === "vercel" &&
+                target.connectionId !== undefined
+              ) {
+                try {
+                  await requireProfile("vercel", target.connectionId);
+                } catch {
+                  throw new RequestError(
+                    400,
+                    "Choose an existing saved Vercel account before adding this project.",
+                  );
+                }
+              }
+            }
           const serverUrl =
             typeof input.serverUrl === "string"
               ? input.serverUrl.replace(/\/$/, "")
@@ -1241,6 +1441,7 @@ export function createDashboardServer(
                   "commands",
                   "branches",
                   "telemetry",
+                  "linear",
                 ]
                   .filter((key) => input[key] !== undefined)
                   .map((key) => [key, input[key]]),
@@ -1269,6 +1470,33 @@ export function createDashboardServer(
             result: JSON.parse(output.join("\n")),
             linear,
           });
+          return;
+        }
+        const mappingRepair =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/linear\/mappings$/.exec(
+            url.pathname,
+          );
+        if (mappingRepair) {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to repair Linear mappings.");
+          const input = await body(req);
+          try {
+            json(
+              res,
+              200,
+              await linearProvisioning.repairMappings(
+                mappingRepair[1]!,
+                input as unknown as LinearMappingRepair,
+              ),
+            );
+          } catch (error) {
+            throw new RequestError(
+              error instanceof LinearProvisioningError ? error.status : 500,
+              error instanceof LinearProvisioningError
+                ? error.message
+                : "Linear mappings could not be saved. Existing local state was preserved.",
+            );
+          }
           return;
         }
         const projectMapping =
@@ -1349,6 +1577,8 @@ export function createDashboardServer(
             sourceControl,
             linearConnection,
             vercelConnection,
+            linearConnectionFor,
+            vercelConnectionFor,
           });
           const ok = checks.every((check) => check.ok);
           if (ok) {

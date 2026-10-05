@@ -170,11 +170,12 @@ export function initializeSetup(
           "branches",
           "commands",
           "telemetry",
+          "linear",
         ].includes(key),
     )
   )
     throw new Error(
-      "Unsupported project settings. Use workflow, verification, environments, branches, commands, and telemetry.",
+      "Unsupported project settings. Use workflow, verification, environments, branches, commands, telemetry, and Linear account settings.",
     );
   if (
     input.serverUrl !== undefined &&

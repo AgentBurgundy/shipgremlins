@@ -6,6 +6,10 @@ import { loadProject, type AreaConfig, type ProjectConfig } from "../config.ts";
 import { parseFlags, type Io } from "./crons.ts";
 import { readMixpanel } from "../telemetry/read.ts";
 import { effectiveVerification } from "../projectCapabilities.ts";
+import {
+  createVercelConnection,
+  type VercelConnection,
+} from "../vercelConnection/index.ts";
 
 function metricTarget(project: ProjectConfig) {
   // A production Vercel environment is an explicit analytics destination only.
@@ -69,14 +73,42 @@ export function extractCount(body: unknown): number | null {
 export async function readMetric(
   project: ProjectConfig,
   area: AreaConfig,
-  opts: { env: NodeJS.ProcessEnv; fetch: FetchLike; now?: () => Date },
+  opts: {
+    env: NodeJS.ProcessEnv;
+    fetch: FetchLike;
+    now?: () => Date;
+    vercelConnectionFor?: (
+      id?: string,
+    ) => Pick<VercelConnection, "resolveCredential">;
+  },
 ): Promise<{ d7: number; d28: number } | null> {
-  const token = opts.env.VERCEL_TOKEN;
-  if (!token || !metricTarget(project)?.teamId) return null;
+  const target = metricTarget(project);
+  if (!target) return null;
+  let token: string | undefined;
+  let teamId = target.teamId;
+  try {
+    if (opts.vercelConnectionFor) {
+      const credential = await opts
+        .vercelConnectionFor(target.connectionId)
+        .resolveCredential({
+          projectId: target.projectId,
+          teamId,
+          minValidityMs: 5 * 60_000,
+        });
+      token = credential.token;
+      teamId ??= credential.teamId;
+    } else if (!target.connectionId || target.connectionId === "default")
+      token = opts.env.VERCEL_TOKEN;
+  } catch {
+    return null;
+  }
+  if (!token || !teamId) return null;
   const now = (opts.now ?? (() => new Date()))();
   const one = async (days: number): Promise<number | null> => {
     try {
-      const res = await opts.fetch(statsUrl(project, area, days, now), {
+      const url = new URL(statsUrl(project, area, days, now));
+      url.searchParams.set("teamId", teamId);
+      const res = await opts.fetch(url.toString(), {
         headers: { authorization: `Bearer ${token}` },
       });
       if (!res.ok) return null;
@@ -118,7 +150,16 @@ export async function runMetric(
     );
     return 0;
   }
-  const counts = await readMetric(project.config, area, deps);
+  const counts = await readMetric(project.config, area, {
+    ...deps,
+    vercelConnectionFor: (connectionId) =>
+      createVercelConnection({
+        root,
+        env: deps.env,
+        fetch: deps.fetch as typeof fetch,
+        connectionId,
+      }),
+  });
   io.log(
     counts
       ? `${area.metric}: 7d ${counts.d7} · 28d ${counts.d28} (Vercel Analytics, production)`

@@ -16,11 +16,13 @@ export interface OAuthCredential {
   method: "oauth" | "token";
   expiresAt?: string;
   teamId?: string | null;
+  workspaceId?: string;
 }
 export interface CredentialRequest {
   minValidityMs?: number;
   projectId?: string;
   teamId?: string | null;
+  workspaceId?: string;
 }
 export interface OAuthConnection {
   status(options?: { checkAvailability?: boolean }): Promise<OAuthStatus>;

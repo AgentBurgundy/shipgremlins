@@ -41,6 +41,7 @@ import {
 } from "../projectCapabilities.ts";
 import { resolveEnvironment } from "../hosting/index.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
+import { listConnectionIds } from "../oauthConnection/profiles.ts";
 
 export interface JobPreparationOptions {
   telemetryFetch?: TelemetryDeps["fetch"];
@@ -55,7 +56,13 @@ export interface JobPreparationOptions {
     LinearConnection,
     "resolveCredential" | "acquireLease" | "releaseLease"
   >;
+  linearConnectionFor?: (
+    connectionId?: string,
+  ) => NonNullable<JobPreparationOptions["linearConnection"]>;
   vercelConnection?: Pick<VercelConnection, "resolveCredential">;
+  vercelConnectionFor?: (
+    connectionId?: string,
+  ) => NonNullable<JobPreparationOptions["vercelConnection"]>;
   resolveEnvironment?: typeof resolveEnvironment;
   hostingFetch?: typeof fetch;
 }
@@ -154,6 +161,40 @@ export function createJobPreparation(options: JobPreparationOptions) {
     options.linearConnection ?? createLinearConnection({ root, env });
   const vercelConnection =
     options.vercelConnection ?? createVercelConnection({ root, env });
+  const linearAccounts = new Map<
+    string,
+    NonNullable<JobPreparationOptions["linearConnection"]>
+  >();
+  const vercelAccounts = new Map<
+    string,
+    NonNullable<JobPreparationOptions["vercelConnection"]>
+  >();
+  function linearFor(connectionId?: string) {
+    const id = connectionId ?? "default";
+    let account = linearAccounts.get(id);
+    if (!account) {
+      account =
+        options.linearConnectionFor?.(id) ??
+        (id === "default"
+          ? linearConnection
+          : createLinearConnection({ root, env, connectionId: id }));
+      linearAccounts.set(id, account);
+    }
+    return account;
+  }
+  function vercelFor(connectionId?: string) {
+    const id = connectionId ?? "default";
+    let account = vercelAccounts.get(id);
+    if (!account) {
+      account =
+        options.vercelConnectionFor?.(id) ??
+        (id === "default"
+          ? vercelConnection
+          : createVercelConnection({ root, env, connectionId: id }));
+      vercelAccounts.set(id, account);
+    }
+    return account;
+  }
   const connections = () => ({
     ...readConnections(root),
     ...Object.fromEntries(
@@ -180,8 +221,36 @@ export function createJobPreparation(options: JobPreparationOptions) {
 
   async function validate(
     input: LocalJobInput,
-  ): Promise<{ project: Project; area: AreaConfig; ticket?: LinearTicket }> {
+    requireQueuedBinding = false,
+  ): Promise<{
+    project: Project;
+    area: AreaConfig;
+    ticket?: LinearTicket;
+    linearWorkspaceId?: string;
+    linearBinding?: LocalJobInput["linearBinding"];
+  }> {
     const project = projectFor(input);
+    const connectionId = project.config.linear?.connectionId ?? "default";
+    if (
+      input.type === "developer" &&
+      requireQueuedBinding &&
+      !input.linearBinding &&
+      connectionId !== "default"
+    )
+      throw new Error(
+        "This queued job predates its named Linear account binding. Review the ticket and queue a new job.",
+      );
+    if (
+      input.linearBinding &&
+      (input.linearBinding.connectionId !== connectionId ||
+        (project.config.linear?.workspaceId &&
+          input.linearBinding.workspaceId &&
+          project.config.linear.workspaceId !==
+            input.linearBinding.workspaceId))
+    )
+      throw new Error(
+        "The project's Linear account changed after this job was queued. Review the ticket in the selected workspace and queue a new job.",
+      );
     if (input.type === "pm") {
       const area = project.areas.find(
         (item) => item.key === input.area && item.enabled,
@@ -200,8 +269,12 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new Error(
         "Choose a PM area or an approved Linear ticket identifier.",
       );
-    const credential = await linearConnection.resolveCredential({
+    const credential = await linearFor(
+      project.config.linear?.connectionId,
+    ).resolveCredential({
       minValidityMs: 5 * 60_000,
+      workspaceId:
+        input.linearBinding?.workspaceId ?? project.config.linear?.workspaceId,
     });
     const ticket = await linear(credential.authorization).getTicket(
       input.ticket,
@@ -211,17 +284,43 @@ export function createJobPreparation(options: JobPreparationOptions) {
       project.areas.find(
         (item) => item.enabled && approvedForArea(ticket, item),
       );
+    if (
+      input.linearBinding?.ticketId &&
+      ticket?.id !== input.linearBinding.ticketId
+    )
+      throw new Error(
+        "The queued ticket no longer matches its validated Linear issue. Review it and queue a new job.",
+      );
     if (!ticket || !area)
       throw new Error(
         "The ticket must be open, approved, and belong to an enabled area of this project. Proposal and needs-human tickets cannot run.",
       );
-    return { project, area, ticket };
+    return {
+      project,
+      area,
+      ticket,
+      linearWorkspaceId: credential.workspaceId,
+      linearBinding: {
+        connectionId,
+        ...((credential.workspaceId ?? project.config.linear?.workspaceId)
+          ? {
+              workspaceId:
+                credential.workspaceId ?? project.config.linear?.workspaceId,
+            }
+          : {}),
+        ticketId: ticket.id,
+      },
+    };
   }
 
   async function prepare(job: LocalJob): Promise<DockerJobPayload> {
     if (job.type === "verify") return { kind: "verify", nonce: job.id };
     // Recheck approval immediately before the worker starts, including queued jobs.
-    const { project, area, ticket } = await validate(job);
+    const { project, area, ticket, linearWorkspaceId } = await validate(
+      job,
+      true,
+    );
+    const selectedLinear = linearFor(project.config.linear?.connectionId);
     const saved = connections();
     const verification = effectiveVerification(project.config);
     const workflow = effectiveWorkflow(project.config);
@@ -243,7 +342,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
     let preview: string | undefined;
     if (verification.mode === "browser") {
       if (options.preview && verification.target.kind === "vercel") {
-        const credential = await vercelConnection.resolveCredential({
+        const credential = await vercelFor(
+          verification.target.connectionId,
+        ).resolveCredential({
           projectId: verification.target.projectId,
           teamId: verification.target.teamId,
           minValidityMs: 5 * 60_000,
@@ -258,6 +359,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
               env: saved,
               fetch: options.hostingFetch,
               vercelConnection,
+              vercelConnectionFor: vercelFor,
               branch: deployedBranch,
             },
           )
@@ -320,9 +422,15 @@ export function createJobPreparation(options: JobPreparationOptions) {
     // Reserve the credential only after slow project/provider preparation. Refresh
     // invalidates old OAuth access tokens, so the reservation covers publication.
     try {
-      const linearCredential = await linearConnection.acquireLease({
+      const linearCredential = await selectedLinear.acquireLease({
         jobId: job.id,
         minutes: 50,
+        ...((project.config.linear?.workspaceId ?? linearWorkspaceId)
+          ? {
+              workspaceId:
+                project.config.linear?.workspaceId ?? linearWorkspaceId,
+            }
+          : {}),
       });
       credentials.LINEAR_API_KEY = linearCredential.token;
       instructions.push(
@@ -374,11 +482,27 @@ export function createJobPreparation(options: JobPreparationOptions) {
   }
 
   async function releaseJobResources(id: string): Promise<void> {
+    // The project may be rebound or removed while a job runs. Account registries
+    // survive controller restarts; matching only the globally unique job ID
+    // releases its original lease without touching another job's reservations.
+    const accountIds = new Set(["default", ...linearAccounts.keys()]);
+    let registryUnavailable = false;
+    try {
+      for (const accountId of await listConnectionIds(root, "linear"))
+        accountIds.add(accountId);
+    } catch {
+      registryUnavailable = true;
+    }
     const outcomes = await Promise.allSettled([
       sourceControl.releaseLease?.(id),
-      linearConnection.releaseLease(id),
+      ...[...accountIds].map((connectionId) =>
+        Promise.resolve().then(() => linearFor(connectionId).releaseLease(id)),
+      ),
     ]);
-    if (outcomes.some((outcome) => outcome.status === "rejected"))
+    if (
+      registryUnavailable ||
+      outcomes.some((outcome) => outcome.status === "rejected")
+    )
       throw new Error(
         "A job credential reservation could not be released; it remains bounded by its expiry.",
       );
@@ -407,12 +531,17 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const now = options.now?.() ?? new Date();
     const minute = now.toISOString().slice(0, 16);
     const jobs: LocalJobInput[] = [];
-    const linearCredential = await linearConnection
-      .resolveCredential({ minValidityMs: 5 * 60_000 })
-      .catch(() => null);
     for (const name of listProjectNames(root)) {
       const project = loadProject(root, name);
       if (!project.config.verified) continue;
+      const linearCredential = await linearFor(
+        project.config.linear?.connectionId,
+      )
+        .resolveCredential({
+          minValidityMs: 5 * 60_000,
+          workspaceId: project.config.linear?.workspaceId,
+        })
+        .catch(() => null);
       for (const area of project.areas.filter((item) => item.enabled)) {
         if (scheduledThisMinute(area.schedule, now))
           jobs.push({
@@ -434,6 +563,13 @@ export function createJobPreparation(options: JobPreparationOptions) {
             project: name,
             area: area.key,
             ticket: ticket.identifier,
+            linearBinding: {
+              connectionId: project.config.linear?.connectionId ?? "default",
+              ...(linearCredential.workspaceId
+                ? { workspaceId: linearCredential.workspaceId }
+                : {}),
+              ticketId: ticket.id,
+            },
             idempotencyKey: `developer:${name}:${ticket.id}`,
           });
       }

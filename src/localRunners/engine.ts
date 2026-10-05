@@ -21,6 +21,7 @@ import {
   type NotificationResult,
 } from "../slack/messages.ts";
 import type { ActivityStore } from "../storage/activity.ts";
+import { validConnectionId } from "../oauthConnection/profileId.ts";
 import {
   createDockerRunners,
   type DockerJobPayload,
@@ -52,6 +53,7 @@ const INPUT_KEYS = [
   "branch",
   "pr",
   "idempotencyKey",
+  "linearBinding",
 ];
 
 interface State {
@@ -125,6 +127,22 @@ function validInput(value: unknown): value is LocalJobInput {
   )
     return false;
   if (Object.keys(value).some((key) => !INPUT_KEYS.includes(key))) return false;
+  if (value.linearBinding !== undefined) {
+    const binding = value.linearBinding;
+    if (
+      !record(binding) ||
+      !validConnectionId(binding.connectionId) ||
+      Object.keys(binding).some(
+        (key) => !["connectionId", "workspaceId", "ticketId"].includes(key),
+      ) ||
+      [binding.workspaceId, binding.ticketId].some(
+        (id) =>
+          id !== undefined &&
+          (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)),
+      )
+    )
+      return false;
+  }
   for (const field of ["project", "area"] as const)
     if (
       value[field] !== undefined &&

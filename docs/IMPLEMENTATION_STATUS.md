@@ -36,6 +36,15 @@ project forms; saved Mixpanel report IDs can be assigned to individual PMs witho
 editing JSON. Project Slack overrides remain optional and inherit the workspace
 connection when unset. Existing credentials and unrelated settings are preserved.
 
+Version 0.8 adds independently encrypted, named Linear and Vercel connections,
+selected per project and used by provisioning, verification, and local jobs.
+Queued developer work pins its Linear account/workspace; changed bindings require
+new approval checks. A missing named account never falls back to the default.
+The project editor identifies the app and repository, and supports revision-guarded
+repair of existing Linear teams and PM projects. The dashboard has category tabs,
+a mobile navigation drawer, and operational overview counts. Provider integration
+tests use fake accounts; live permissions still require Verify connections.
+
 | Capability       | Current state                                                                                                                                                                                                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |

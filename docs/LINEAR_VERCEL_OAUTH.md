@@ -27,10 +27,24 @@ Each connection lives under the configuration directory:
 .run/oauth/linear/key
 .run/oauth/vercel/connection.enc
 .run/oauth/vercel/key
+.run/oauth/linear/connections/CONNECTION_ID/connection.enc
+.run/oauth/linear/connections/CONNECTION_ID/key
+.run/oauth/vercel/connections/CONNECTION_ID/connection.enc
+.run/oauth/vercel/connections/CONNECTION_ID/key
 ```
 
 The files use AES-256-GCM encryption and owner-only file permissions, including Windows ACLs. This is local file encryption, not a hardware key store. Back up both the encrypted connection and its separate key. Keep backups private. Do not commit this directory.
 
-An existing OAuth connection takes precedence over a manual `LINEAR_API_KEY` or `VERCEL_TOKEN`. A revoked OAuth connection fails explicitly; it never silently switches accounts through a manual token. Disconnect forgets this machine's connection and allows its configured manual token to be used again. It does not uninstall a provider integration that another machine may share.
+Each named profile has its own key, authorization handoff, refresh lock, and job reservations. Project Linear settings and Vercel targets reference the saved connection's stable ID. Selecting a profile for management in Connections does not change project bindings. Missing named profiles fail explicitly.
+
+For the default connection, existing OAuth takes precedence over a manual `LINEAR_API_KEY` or `VERCEL_TOKEN`. A revoked OAuth connection fails explicitly; it never silently switches accounts through a manual token. Disconnect forgets only the selected profile's authorization. Only the default connection can resume using its separately configured manual token. It does not uninstall a provider integration that another machine may share.
 
 `gremlins setup --check` reads saved connection metadata without contacting the hosted callback service. `gremlins doctor PROJECT` verifies live access using the same credential resolver as local jobs.
+
+For Linear commands that do not already take a project, pass `--project NAME` to
+use that project's account: `gremlins ticket ENG-123 --project client-app`,
+`gremlins upload evidence.png --project client-app`, or
+`gremlins linear-projects --project client-app`. Without a project, these commands
+use the default account. Developer queue records pin the Linear account, workspace,
+and issue identity; changing those bindings before launch requires fresh approval
+checks instead of reusing an identically numbered ticket from another workspace.

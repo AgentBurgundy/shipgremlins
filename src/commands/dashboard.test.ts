@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import {
   createDashboardServer,
   runDashboard,
@@ -30,8 +31,13 @@ import type {
   OAuthProvider,
 } from "../oauthConnection/types.ts";
 import { OAuthConnectionError } from "../oauthConnection/types.ts";
-import { LinearProvisioningError } from "../setup/linearProvisioning.ts";
+import {
+  createLinearProvisioning,
+  LinearProvisioningError,
+} from "../setup/linearProvisioning.ts";
 import { initializeSetup } from "../setup/files.ts";
+import { LinearApi } from "../services/linear.ts";
+import { readEditableConfig } from "../setup/configEditor.ts";
 import {
   SourceControlError,
   type SourceControl,
@@ -239,6 +245,9 @@ describe("local dashboard HTTP boundary", () => {
         throw new LinearProvisioningError("Retry the saved operation.", 502);
       }),
       addArea: vi.fn(async () => {}),
+      repairMappings: vi.fn(async () => {
+        throw new LinearProvisioningError("Reload current mappings.", 409);
+      }),
     };
     const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
     const { url, root } = await start(packageRoot, [], {
@@ -282,6 +291,34 @@ describe("local dashboard HTTP boundary", () => {
       (await fetch(`${url}/api/linear/resources`, { headers: auth })).status,
     ).toBe(200);
     expect(linearProvisioning.resources).toHaveBeenCalledOnce();
+    expect(
+      (
+        await post(`${url}/api/service-connections`, {
+          provider: "linear",
+          id: "client-two",
+          label: "Second workspace",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await fetch(`${url}/api/linear/resources?connection=client-two`, {
+          headers: auth,
+        })
+      ).status,
+    ).toBe(200);
+    expect(linearProvisioning.resources).toHaveBeenLastCalledWith(
+      undefined,
+      "client-two",
+    );
+    expect(
+      (
+        await fetch(`${url}/api/linear/resources?connection=missing`, {
+          headers: auth,
+        })
+      ).status,
+    ).toBe(409);
+    expect(linearProvisioning.resources).toHaveBeenCalledTimes(2);
     const manual = await post(`${url}/api/projects`, {
       project: "manual",
       repo: "org/app",
@@ -291,6 +328,289 @@ describe("local dashboard HTTP boundary", () => {
       linear: { status: "skipped" },
     });
     expect(linearProvisioning.provision).toHaveBeenCalledTimes(2);
+  });
+  it.each(["linear", "vercel"] as const)(
+    "keeps named %s account actions isolated and returns a secret-free catalog",
+    async (provider) => {
+      const original = oauthFixture(provider),
+        second = oauthFixture(provider);
+      const { url, root } = await start(undefined, [], {
+        [provider === "linear" ? "linearConnection" : "vercelConnection"]:
+          original,
+        [provider === "linear" ? "linearConnectionFor" : "vercelConnectionFor"]:
+          (id: string) => {
+            expect(id).toBe("client-two");
+            return second;
+          },
+        [provider === "linear" ? "vercelConnection" : "linearConnection"]:
+          oauthFixture(provider === "linear" ? "vercel" : "linear"),
+      });
+      expect((await fetch(`${url}/api/service-connections`)).status).toBe(401);
+      expect(
+        (
+          await post(`${url}/api/service-connections`, {
+            provider,
+            id: "client-two",
+            label: "Second account",
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await post(`${url}/api/service-connections`, {
+            provider,
+            id: "client-two",
+            label: "Duplicate",
+          })
+        ).status,
+      ).toBe(409);
+      const catalog = await (
+        await fetch(`${url}/api/service-connections`, { headers: auth })
+      ).text();
+      expect(catalog).toContain('"id":"client-two"');
+      expect(catalog).toContain('"label":"Second account"');
+      expect(catalog).not.toContain("never-public");
+      expect(
+        (await post(`${url}/api/${provider}/connect?connection=client-two`, {}))
+          .status,
+      ).toBe(200);
+      expect(second.connect).toHaveBeenCalledWith(url + "/");
+      expect(original.connect).not.toHaveBeenCalled();
+      expect(
+        (
+          await post(`${url}/api/${provider}/complete?connection=client-two`, {
+            envelope: "named-envelope",
+          })
+        ).status,
+      ).toBe(200);
+      expect(second.complete).toHaveBeenCalledWith("named-envelope");
+      expect(original.complete).not.toHaveBeenCalled();
+      expect(
+        (await post(`${url}/api/${provider}/connect?connection=missing`, {}))
+          .status,
+      ).toBe(409);
+      expect(
+        (
+          await post(
+            `${url}/api/${provider}/connect?connection=default&connection=client-two`,
+            {},
+          )
+        ).status,
+      ).toBe(400);
+      second.disconnect = vi.fn(async () => {
+        throw new OAuthConnectionError("Account has active jobs.", "busy", 409);
+      });
+      expect(
+        (
+          await fetch(`${url}/api/${provider}?connection=client-two`, {
+            method: "DELETE",
+            headers: { ...auth, "Content-Type": "application/json" },
+            body: "{}",
+          })
+        ).status,
+      ).toBe(409);
+      expect(original.disconnect).not.toHaveBeenCalled();
+      expect(
+        readFileSync(
+          join(
+            root,
+            ".run/oauth",
+            provider,
+            "connections/client-two/connection.enc",
+          ),
+          "utf8",
+        ),
+      ).not.toContain("never-public");
+    },
+  );
+  it("persists a project's selected Linear account before deferred setup and rejects nonexistent selections", async () => {
+    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const { url, root } = await start(packageRoot, [], {
+      linearConnectionFor: () => oauthFixture("linear"),
+      vercelConnection: oauthFixture("vercel"),
+      linearConnection: oauthFixture("linear"),
+    });
+    expect(
+      (
+        await post(`${url}/api/service-connections`, {
+          provider: "linear",
+          id: "client-two",
+          label: "Second workspace",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await post(`${url}/api/projects`, {
+          project: "demo",
+          repo: "org/app",
+          linearMode: "later",
+          linear: { connectionId: "client-two" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      JSON.parse(readFileSync(join(root, "projects/demo/project.json"), "utf8"))
+        .linear,
+    ).toEqual({ connectionId: "client-two" });
+    const status = (await (
+      await fetch(`${url}/api/status`, { headers: auth })
+    ).json()) as {
+      projects: { name: string; linear: { connectionId?: string } }[];
+    };
+    expect(status.projects[0]?.linear.connectionId).toBe("client-two");
+    expect(
+      (
+        await post(`${url}/api/projects`, {
+          project: "missing",
+          repo: "org/app",
+          linearMode: "later",
+          linear: { connectionId: "missing" },
+        })
+      ).status,
+    ).toBe(400);
+    expect(() =>
+      readFileSync(join(root, "projects/missing/project.json")),
+    ).toThrow();
+  });
+  it("repairs existing Linear mappings with authenticated revision-guarded saves and no resource creation", async () => {
+    const root = temporary(),
+      packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    initializeSetup(root, packageRoot, { project: "demo", repo: "org/app" });
+    const team = { id: randomUUID(), name: "App team", key: "APP" };
+    const resource = {
+      id: randomUUID(),
+      name: "Core",
+      teamIds: [team.id],
+      url: "https://linear.app/test/project/core",
+    };
+    const client = {
+      organization: vi.fn(async () => ({
+        id: randomUUID(),
+        name: "Workspace",
+      })),
+      getTeam: vi.fn(async () => team),
+      getProject: vi.fn(async () => resource),
+      resources: vi.fn(async () => ({ teams: [team], projects: [resource] })),
+      createTeam: vi.fn(async () => team),
+      createProject: vi.fn(async () => resource),
+    };
+    const server = createDashboardServer(root, packageRoot, session, [], {
+      linearProvisioning: createLinearProvisioning({
+        root,
+        client: async () => client,
+      }),
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const document = async (name: string) =>
+      (
+        await fetch(`${url}/api/config?path=projects%2Fdemo%2F${name}.json`, {
+          headers: auth,
+        })
+      ).json() as Promise<{ revision: string }>;
+    const project = await document("project"),
+      areas = await document("areas");
+    const input = {
+      projectRevision: project.revision,
+      areasRevision: areas.revision,
+      teamId: team.id,
+      areaProjects: { core: resource.id },
+    };
+    const endpoint = `${url}/api/projects/demo/linear/mappings`;
+    expect(
+      (
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (await post(endpoint, input, { Origin: "https://untrusted.example" }))
+        .status,
+    ).toBe(403);
+    expect(client.getTeam).not.toHaveBeenCalled();
+    const response = await post(endpoint, input);
+    expect(response.status).toBe(200);
+    const saved = (await response.json()) as {
+      project: { revision: string; content: string };
+      areas: { revision: string; content: string };
+    };
+    expect(saved).toMatchObject({
+      ok: true,
+      team: { id: team.id, name: team.name },
+      projectRevision: saved.project.revision,
+      areasRevision: saved.areas.revision,
+    });
+    expect(JSON.parse(saved.project.content)).toMatchObject({
+      linear: { teamId: team.id },
+      verified: null,
+    });
+    expect(JSON.parse(saved.areas.content).areas.core.linearProjectId).toBe(
+      resource.id,
+    );
+    expect((await post(endpoint, input)).status).toBe(409);
+    expect(client.createTeam).not.toHaveBeenCalled();
+    expect(client.createProject).not.toHaveBeenCalled();
+  });
+  it("repairs malformed old Linear IDs using an explicitly selected account without loading the broken typed mapping", async () => {
+    const root = temporary(),
+      packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    initializeSetup(root, packageRoot, { project: "demo", repo: "org/app" });
+    const file = join(root, "projects/demo/project.json"),
+      raw = JSON.parse(readFileSync(file, "utf8"));
+    raw.linear = {
+      teamId: "incorrect-team-id",
+      workspaceId: "incorrect-workspace-id",
+    };
+    writeFileSync(file, JSON.stringify(raw));
+    const workspace = { id: randomUUID(), name: "Correct workspace" },
+      team = { id: randomUUID(), name: "Correct team", key: "APP" },
+      projectId = randomUUID();
+    const mocks = [
+      vi
+        .spyOn(LinearApi.prototype, "organization")
+        .mockResolvedValue(workspace),
+      vi.spyOn(LinearApi.prototype, "getTeam").mockResolvedValue(team),
+      vi.spyOn(LinearApi.prototype, "getProject").mockResolvedValue({
+        id: projectId,
+        name: "Core",
+        teamIds: [team.id],
+        url: "https://linear.app/test/project/core",
+      }),
+    ];
+    try {
+      const connection = oauthFixture("linear");
+      const server = createDashboardServer(root, packageRoot, session, [], {
+        linearConnection: connection,
+      });
+      servers.push(server);
+      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const response = await post(`${url}/api/projects/demo/linear/mappings`, {
+        projectRevision: readEditableConfig(root, "projects/demo/project.json")
+          .revision,
+        areasRevision: readEditableConfig(root, "projects/demo/areas.json")
+          .revision,
+        connectionId: "default",
+        teamId: team.id,
+        areaProjects: { core: projectId },
+      });
+      expect(response.status).toBe(200);
+      expect(JSON.parse(readFileSync(file, "utf8")).linear).toMatchObject({
+        teamId: team.id,
+        workspaceId: workspace.id,
+        connectionId: "default",
+      });
+      expect(connection.resolveCredential).toHaveBeenCalledWith({
+        minValidityMs: 5 * 60_000,
+      });
+    } finally {
+      for (const mock of mocks) mock.mockRestore();
+    }
   });
   function sourceFixture() {
     const connected: SourceStatus = {
@@ -812,6 +1132,7 @@ describe("local dashboard HTTP boundary", () => {
     const runners = {
       create,
       enqueue,
+      jobs: vi.fn(async () => []),
       start: vi.fn(),
       stop: vi.fn(async () => {}),
       status: vi.fn(async () => ({
@@ -831,7 +1152,16 @@ describe("local dashboard HTTP boundary", () => {
         message: "Docker ready",
       })),
     } as unknown as DockerRunners;
-    const validate = vi.fn(async () => ({ area: { key: "core" } }));
+    const linearBinding = {
+      connectionId: "client-two",
+      workspaceId: randomUUID(),
+      ticketId: randomUUID(),
+    };
+    const validate = vi.fn(async () => ({
+      area: { key: "core" },
+      ticket: { identifier: "APP-1", id: linearBinding.ticketId },
+      linearBinding,
+    }));
     const jobs = { validate } as unknown as ReturnType<
       typeof createJobPreparation
     >;
@@ -868,11 +1198,24 @@ describe("local dashboard HTTP boundary", () => {
           type: "developer",
           project: "app",
           ticket: "APP-1",
+          linearBinding: { connectionId: "attacker" },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(`${url}/api/jobs`, {
+          type: "developer",
+          project: "app",
+          ticket: "APP-1",
         })
       ).status,
     ).toBe(202);
     expect(validate).toHaveBeenCalledOnce();
     expect(enqueue).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ linearBinding, area: "core", ticket: "APP-1" }),
+    );
     expect((await fetch(`${url}/api/jobs/job-demo/logs`)).status).toBe(401);
     expect(
       await (
@@ -908,6 +1251,92 @@ describe("local dashboard HTTP boundary", () => {
     );
     expect((await screenshot.arrayBuffer()).byteLength).toBe(8);
   });
+  it.each([
+    [
+      "a reused identifier in a different workspace",
+      "different-workspace",
+      202,
+    ],
+    [
+      "the same ticket through another connection to its workspace",
+      "same-workspace",
+      409,
+    ],
+    [
+      "the same immutable ticket after its identifier changed",
+      "renamed-ticket",
+      409,
+    ],
+    ["an unbound legacy job with the same identifier", "legacy", 409],
+  ] as const)(
+    "handles completed developer history for %s",
+    async (_title, scenario, expected) => {
+      const currentBinding = {
+        connectionId: "current-account",
+        workspaceId: randomUUID(),
+        ticketId: randomUUID(),
+      };
+      const oldBinding =
+        scenario === "legacy"
+          ? undefined
+          : scenario === "different-workspace"
+            ? {
+                connectionId: "previous-account",
+                workspaceId: randomUUID(),
+                ticketId: randomUUID(),
+              }
+            : {
+                ...currentBinding,
+                connectionId:
+                  scenario === "same-workspace"
+                    ? "another-account"
+                    : currentBinding.connectionId,
+              };
+      const enqueue = vi.fn(async () => ({ id: "new-job", status: "queued" }));
+      const runners = {
+        jobs: vi.fn(async () => [
+          {
+            id: "old-job",
+            runId: 1,
+            type: "developer",
+            project: "app",
+            ticket: scenario === "renamed-ticket" ? "OLD-123" : "ENG-123",
+            status: "succeeded",
+            createdAt: "2026-10-05T00:00:00Z",
+            linearBinding: oldBinding,
+          },
+        ]),
+        enqueue,
+        start: vi.fn(),
+        stop: vi.fn(async () => {}),
+      } as unknown as LocalRunners;
+      const jobs = {
+        validate: vi.fn(async () => ({
+          area: { key: "core" },
+          ticket: { identifier: "ENG-123", id: currentBinding.ticketId },
+          linearBinding: currentBinding,
+        })),
+      } as unknown as ReturnType<typeof createJobPreparation>;
+      const { url } = await start(undefined, [], { runners, jobs });
+      expect(
+        (
+          await post(`${url}/api/jobs`, {
+            type: "developer",
+            project: "app",
+            ticket: "ENG-123",
+          })
+        ).status,
+      ).toBe(expected);
+      if (expected === 202)
+        expect(enqueue).toHaveBeenCalledWith(
+          expect.objectContaining({
+            linearBinding: currentBinding,
+            idempotencyKey: `developer:app:${currentBinding.ticketId}`,
+          }),
+        );
+      else expect(enqueue).not.toHaveBeenCalled();
+    },
+  );
   it("keeps authentication and exact same-origin checks for explicitly allowed LAN hosts", async () => {
     const { url } = await start(undefined, ["192.168.1.20"]);
     const port = new URL(url).port;

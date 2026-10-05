@@ -75,6 +75,78 @@
   };
   const serviceStatuses = new Map();
   const serviceBusy = new Set();
+  const serviceSelection = { linear: "default", vercel: "default" };
+  const profileControls = new Map();
+  let serviceProfiles = [];
+  const linearResourceCache = new Map();
+  let linearResourcesQueued = false;
+  const validProfileId = (value) =>
+    typeof value === "string" && /^[a-z][a-z0-9-]{0,62}$/.test(value);
+  for (const provider of Object.keys(serviceSelection)) {
+    try {
+      const saved = sessionStorage.getItem(
+        serviceEnvelopes[provider]
+          ? "gremlins-pending-" + provider
+          : "gremlins-selected-" + provider,
+      );
+      if (validProfileId(saved)) serviceSelection[provider] = saved;
+    } catch {
+      /* Default remains available when browser storage is disabled. */
+    }
+  }
+  const serviceUrl = (provider, action = "", id = serviceSelection[provider]) =>
+    "/api/" +
+    provider +
+    (action ? "/" + action : "") +
+    "?connection=" +
+    encodeURIComponent(id || "default");
+  function rememberService(provider, id) {
+    serviceSelection[provider] = id;
+    try {
+      sessionStorage.setItem("gremlins-selected-" + provider, id);
+    } catch {
+      /* Optional preference. */
+    }
+  }
+  function rememberServiceStatus(provider, status) {
+    serviceStatuses.set(provider, status);
+    const profile = serviceProfiles.find(
+      (item) =>
+        item.provider === provider && item.id === serviceSelection[provider],
+    );
+    if (profile) Object.assign(profile, status);
+    profileControls
+      .get(provider)
+      ?.setConnections(serviceProfiles, serviceSelection[provider]);
+  }
+  async function refreshProfileCatalog() {
+    const result = await api("/api/service-connections");
+    serviceProfiles = Array.isArray(result.connections)
+      ? result.connections
+      : [];
+    for (const [provider, control] of profileControls)
+      control.setConnections(serviceProfiles, serviceSelection[provider]);
+    const select = $("project-linear-connection");
+    const selected = select.value || "default";
+    const profiles = serviceProfiles.filter(
+      (item) => item.provider === "linear",
+    );
+    if (!profiles.some((item) => item.id === selected))
+      profiles.push({
+        id: selected,
+        label:
+          selected === "default"
+            ? "Default connection"
+            : selected + " · unavailable",
+      });
+    select.replaceChildren(
+      ...profiles.map((item) => new Option(item.label || item.id, item.id)),
+    );
+    select.value = selected;
+    newProjectSettings.setConnections?.(serviceProfiles);
+    projectEditor.form?.setConnections?.(serviceProfiles);
+    renderLinearSetup();
+  }
   let linearResources = { teams: [], projects: [] };
   let linearResourcesLoading = false;
   let linearModeEdited = false;
@@ -95,9 +167,94 @@
     pending: null,
     trigger: null,
   };
+  function adoptLinearProjectSnapshot(projectName, document) {
+    if (projectEditor.name !== projectName) return false;
+    if (
+      !document ||
+      document.path !== projectEditor.path ||
+      typeof document.content !== "string" ||
+      typeof document.revision !== "string"
+    )
+      return false;
+    const next = JSON.parse(document.content);
+    const unrelated = (value) =>
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(value || {}).filter(
+            ([key]) => !["linear", "verified"].includes(key),
+          ),
+        ),
+      );
+    if (unrelated(projectEditor.config) !== unrelated(next)) {
+      message(
+        $("project-settings-message"),
+        "Linear mappings were saved, but other project settings changed. Your form draft is kept. Reload saved settings before saving it so newer changes are not overwritten.",
+        true,
+      );
+      return false;
+    }
+    projectEditor.config = next;
+    projectEditor.revision = document.revision;
+    return true;
+  }
+  let projectLinearSettings = null;
+  if (window.createProjectLinearSettings && $("edit-linear-settings")) {
+    projectLinearSettings = window.createProjectLinearSettings(
+      $("edit-linear-settings"),
+      {
+        api,
+        onBusy: () => updateProjectEditorControls(),
+        onError: (error) =>
+          message(
+            $("project-settings-message"),
+            error?.message || String(error),
+            true,
+          ),
+        onSaved: async ({ projectName, projectChanged, project }) => {
+          if (projectChanged && projectEditor.name === projectName) {
+            adoptLinearProjectSnapshot(projectName, project);
+            // The Linear panel changes separate fields. Preserve unsaved hosting,
+            // command, and signal edits while updating the main form's revision.
+          }
+          projectChecks.delete(projectName);
+          await refreshStatus();
+        },
+      },
+    );
+  }
+  for (const provider of Object.keys(serviceProviders)) {
+    const container = document.createElement("div");
+    $(provider + "-connection")
+      .querySelector(".service-actions")
+      .before(container);
+    profileControls.set(
+      provider,
+      window.createConnectionProfiles(container, {
+        provider,
+        api,
+        onChange: async (id) => {
+          $(provider + "-disconnect-prompt").hidden = true;
+          rememberService(provider, id);
+          serviceStatuses.delete(provider);
+          await refreshService(provider);
+        },
+        onCreated: async (id) => {
+          rememberService(provider, id);
+          await refreshProfileCatalog();
+          await refreshService(provider);
+          message(
+            $(provider + "-message"),
+            "Connection created. Connect this account below, then select it in your project's settings.",
+          );
+          $(provider + "-connect").focus();
+        },
+      }),
+    );
+  }
   const mappingBusy = new Set();
   const mappingTeamSelections = new Map();
   const mappingMessages = new Map();
+  const projectDetailsState = new Map();
   let jobHistory = [];
   let historyCursor = null;
   let historyLoading = false;
@@ -168,6 +325,7 @@
     renderServiceControls();
     renderLinearSetup();
     renderProjectProvider();
+    updateProjectEditorControls();
   }
 
   function restoreButton(id, label, symbol) {
@@ -246,6 +404,9 @@
   function renderConnectionSummary() {
     if (!currentStatus) return;
     const services = new Set();
+    for (const profile of serviceProfiles)
+      if (profile.connected && !profile.needsReconnect)
+        services.add(profile.provider);
     const providerFor = {
       GITHUB_TOKEN: "github",
       GITLAB_TOKEN: "gitlab",
@@ -277,6 +438,95 @@
     $("connections-summary").textContent =
       `${count} ${count === 1 ? "connection" : "connections"} configured`;
   }
+  function renderOverview() {
+    const projects = Array.isArray(currentStatus?.projects)
+      ? currentStatus.projects
+      : [];
+    const workers = Array.isArray(runnerStatus?.runners)
+      ? runnerStatus.runners
+      : [];
+    const verified = workers.filter(
+      (worker) =>
+        worker.verifiedAt && ["ready", "busy"].includes(worker.status),
+    );
+    const busy = verified.filter((worker) => worker.status === "busy").length;
+    const jobs = Array.isArray(runnerStatus?.jobs) ? runnerStatus.jobs : [];
+    const queued = jobs.filter((job) => job.status === "queued").length;
+    const running = jobs.filter((job) => job.status === "running").length;
+    const text = (id, value) => {
+      const node = $(id);
+      if (node) node.textContent = value;
+    };
+    text(
+      "overview-project-count",
+      currentStatus ? String(projects.length) : "—",
+    );
+    text(
+      "overview-pm-count",
+      currentStatus
+        ? String(
+            projects.reduce(
+              (total, project) =>
+                total +
+                (Array.isArray(project.areas) ? project.areas.length : 0),
+              0,
+            ),
+          )
+        : "—",
+    );
+    text("overview-worker-count", runnerStatus ? String(verified.length) : "—");
+    text(
+      "overview-worker-note",
+      !runnerStatus
+        ? "Worker status has not loaded."
+        : verified.length
+          ? `${verified.length - busy} idle · ${busy} busy · browser verified`
+          : workers.length
+            ? `${workers.length} configured · none currently verified and available`
+            : "Create a worker to run jobs.",
+    );
+    text("overview-job-count", runnerStatus ? String(queued + running) : "—");
+    text(
+      "overview-job-note",
+      runnerStatus
+        ? `${running} running · ${queued} queued`
+        : "Current job status has not loaded.",
+    );
+    text("setup-title", "Workspace status");
+    const setup = $("setup-title")?.closest(".setup-status");
+    if (setup) {
+      setup.setAttribute("aria-label", "Workspace status");
+      const eyebrow = setup.querySelector(".eyebrow");
+      if (eyebrow) eyebrow.textContent = "YOUR WORKSPACE";
+    }
+    if (!currentStatus) return;
+    text(
+      "welcome-title",
+      projects.length
+        ? "Your crew, at a glance."
+        : "Meet your new product crew.",
+    );
+    text(
+      "welcome-description",
+      projects.length
+        ? "See your projects, PM mandates, and current jobs. Launch a gremlin, then follow its work in Activity."
+        : "Connect your tools. Add your app. PM Gremlins find the gaps. Coding Gremlins build the fixes.",
+    );
+    const action = $("overview-primary-action");
+    if (action) {
+      action.href = projects.length
+        ? "/runners#job-form"
+        : "/connections#source-control";
+      const arrow = element("span", "", "↗");
+      arrow.setAttribute("aria-hidden", "true");
+      action.replaceChildren(
+        document.createTextNode(
+          projects.length ? "Run a gremlin " : "Set up your crew ",
+        ),
+        arrow,
+      );
+    }
+  }
   function renderStatus(status) {
     currentStatus = status;
     const connections = Array.isArray(status.connections)
@@ -299,10 +549,7 @@
       : "No projects yet";
     $("connection-step").classList.toggle("complete", sourceSaved);
     $("project-step").classList.toggle("complete", projects.length > 0);
-    $("setup-title").textContent =
-      sourceSaved && projects.length
-        ? "Your workspace is taking shape."
-        : "Make yourself at home.";
+    renderOverview();
     $("config-directory").textContent =
       status.configDirectory || "Not available";
     renderFolders(status);
@@ -359,6 +606,21 @@
             : input.dataset.originalPlaceholder || input.placeholder;
     }
     const list = $("project-list");
+    const focused = list.contains(document.activeElement)
+      ? document.activeElement
+      : null;
+    const focusedProject = focused?.closest("[data-project-name]")?.dataset
+      .projectName;
+    const focusedControl = focused?.dataset.projectControl;
+    for (const card of list.querySelectorAll("[data-project-name]")) {
+      projectDetailsState.set(card.dataset.projectName, {
+        open: card.querySelector(".project-linear-drawer")?.open === true,
+        pmsOpen: card.querySelector(".project-pms")?.open === true,
+      });
+      const mapping = card.querySelector("[data-mapping-project]");
+      if (mapping)
+        mappingTeamSelections.set(card.dataset.projectName, mapping.value);
+    }
     list.replaceChildren();
     if (!projects.length) {
       const empty = document.createElement("p");
@@ -372,41 +634,60 @@
       row.className = "project-row";
       const name = document.createElement("div");
       name.className = "project-row-name";
-      name.textContent = project.name;
+      const title = element("div", "project-title-line");
+      title.append(element("strong", "project-title", project.name));
       const repo = document.createElement("span");
       repo.className = "project-row-repo";
       repo.textContent = `${project.provider === "gitlab" ? "GitLab" : "GitHub"} · ${project.repo}`;
-      name.append(repo);
       const badge = document.createElement("span");
       badge.className = "project-row-badge";
       badge.textContent = project.verified
         ? "Verified settings"
         : "Needs verification";
+      title.append(badge);
+      name.append(title, repo);
       const actions = element("div", "project-actions");
       const verify = element("button", "small-button", "Verify connections");
       verify.type = "button";
       verify.dataset.verifyProject = project.name;
+      verify.dataset.projectControl = "verify";
       const check = projectChecks.get(project.name);
       verify.disabled = check?.busy === true;
       if (check?.busy) verify.textContent = "Verifying…";
       const edit = element("button", "small-button", "Edit settings");
       edit.type = "button";
       edit.dataset.editProject = project.name;
-      actions.append(badge, edit, verify);
+      edit.dataset.projectControl = "edit";
+      const secondary = element("div", "project-secondary-actions");
+      secondary.append(edit, verify);
+      actions.append(secondary);
       const launch = element("div", "button-row project-launch");
       for (const [type, label] of [
         ["pm", "Run PM"],
         ["developer", "Run Coding"],
       ]) {
-        const button = element("button", `small-button launch-${type}`, label);
+        const needsPm =
+          type === "pm" && !(project.areas || []).some((area) => area.enabled);
+        const button = element(
+          "button",
+          `small-button launch-${type}`,
+          needsPm ? "+ Create PM" : label,
+        );
         button.type = "button";
-        button.dataset.launchProject = project.name;
-        button.dataset.launchCrew = type;
+        if (needsPm) button.dataset.createPmProject = project.name;
+        else {
+          button.dataset.launchProject = project.name;
+          button.dataset.launchCrew = type;
+        }
+        button.dataset.projectControl = needsPm
+          ? "create-pm-primary"
+          : `run-${type}`;
         launch.append(button);
       }
       actions.append(launch);
       row.append(name, actions);
       const card = element("div", "project-card");
+      card.dataset.projectName = project.name;
       card.append(row);
       const verification =
         project.verification ||
@@ -421,6 +702,33 @@
           `${verification.mode === "repository" ? "Repository checks · no hosting required" : `Browser target: ${verification.environment}`} · ${workflow.kind === "pull-request" ? `Draft changes → ${workflow.baseBranch}` : "Staged promotion workflow"}`,
         ),
       );
+      const target =
+        verification.mode === "browser"
+          ? project.environments?.[verification.environment] || project.vercel
+          : null;
+      const scopes = [];
+      if (target) {
+        const kind = target.kind || "vercel";
+        if (kind === "vercel")
+          scopes.push(
+            `Vercel project ${target.projectId} · ${target.teamId ? `team ${target.teamId}` : "connected account scope"}`,
+          );
+        else if (kind === "railway")
+          scopes.push(
+            `Railway project ${target.projectId} · environment ${target.environmentId}`,
+          );
+        else if (kind === "cloud-run")
+          scopes.push(
+            `Cloud Run ${target.projectId} · ${target.region}/${target.service}`,
+          );
+        else if (kind === "url") scopes.push(`Test app: ${target.url}`);
+      }
+      if (project.linear?.teamId)
+        scopes.push(
+          `Linear team: ${project.linear.teamName || project.linear.teamId}`,
+        );
+      if (scopes.length)
+        card.append(element("p", "project-scope", scopes.join(" · ")));
       card.append(projectLinearDetails(project));
       if (check) {
         const result = element("div", "project-checks");
@@ -438,6 +746,14 @@
         card.append(result);
       }
       list.append(card);
+    }
+    if (focusedProject && focusedControl) {
+      const card = [...list.querySelectorAll("[data-project-name]")].find(
+        (item) => item.dataset.projectName === focusedProject,
+      );
+      [...(card?.querySelectorAll("[data-project-control]") || [])]
+        .find((item) => item.dataset.projectControl === focusedControl)
+        ?.focus({ preventScroll: true });
     }
     const exampleProject = projects.find((project) =>
       /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(project.name),
@@ -490,6 +806,11 @@
           `The configuration files could not load. ${error.message} Use Reload to try again.`,
           true,
         );
+      }
+      try {
+        await refreshProfileCatalog();
+      } catch (error) {
+        message($("linear-message"), error.message, true);
       }
       await Promise.allSettled([
         initializeUpdates(),
@@ -631,6 +952,9 @@
       repo: $("project-repo").value.trim(),
       provider: $("project-provider").value,
       linearMode: $("project-linear-mode").value,
+      linear: {
+        connectionId: $("project-linear-connection").value || "default",
+      },
     };
     try {
       Object.assign(data, newProjectSettings.read());
@@ -687,6 +1011,8 @@
       newProjectSettings = window.createProjectSettings(
         $("new-project-settings"),
         "new-settings",
+        {},
+        { connections: serviceProfiles },
       );
       projectNameEdited = false;
       linearModeEdited = false;
@@ -1392,6 +1718,7 @@
     const edit = event.target.closest("[data-edit-project]");
     if (edit && !formsLocked) {
       await openProjectSettings(edit.dataset.editProject, edit);
+      if (edit.dataset.editLinear) focusProjectSection("linear");
       return;
     }
     const launch = event.target.closest("[data-launch-project]");
@@ -1548,6 +1875,7 @@
 
   function renderRunners(status) {
     runnerStatus = status;
+    renderOverview();
     const runners = Array.isArray(status.runners) ? status.runners : [];
     const jobs = Array.isArray(status.jobs) ? status.jobs : [];
     const docker = status.machine?.docker;
@@ -2164,8 +2492,21 @@
     }
   });
 
-  function linearConnected() {
-    const status = serviceStatuses.get("linear");
+  function linearConnected(
+    id = $("project-linear-connection").value || "default",
+  ) {
+    const selected =
+      serviceSelection.linear === id ? serviceStatuses.get("linear") : null;
+    const status =
+      selected ||
+      serviceProfiles.find(
+        (item) => item.provider === "linear" && item.id === id,
+      ) ||
+      (id === "default"
+        ? currentStatus?.serviceConnections?.find(
+            (item) => item.provider === "linear",
+          )
+        : null);
     return Boolean(status?.connected && !status.needsReconnect);
   }
   function linearResultMessage(result) {
@@ -2183,6 +2524,34 @@
     const areaList = Array.isArray(project.areas) ? project.areas : [];
     const linear = project.linear || { status: "needs-connection" };
     const container = element("div", "project-linear-details");
+    const disclosure = element("details", "project-linear-drawer");
+    const state = projectDetailsState.get(project.name);
+    disclosure.open = state?.open === true;
+    const summary = element("summary", "project-linear-summary");
+    summary.dataset.projectControl = "linear-summary";
+    summary.append(element("span", "", "Linear & PMs"));
+    const mappingReady =
+      linear.status === "ready" &&
+      areaList.every((area) =>
+        /^[a-f0-9-]{36}$/i.test(area.linearProjectId || ""),
+      );
+    const mappingState = mappingBusy.has(project.name)
+      ? "Setting up"
+      : mappingReady
+        ? "Mapped"
+        : linear.status === "error"
+          ? "Needs attention"
+          : linear.teamId
+            ? "PM setup needed"
+            : "Team not mapped";
+    summary.append(
+      element(
+        "span",
+        "project-linear-summary-status",
+        `${mappingState} · ${areaList.length} PM ${areaList.length === 1 ? "mandate" : "mandates"}`,
+      ),
+    );
+    disclosure.append(summary, container);
     const heading = element("div", "project-mapping-heading");
     const label = element(
       "span",
@@ -2199,69 +2568,20 @@
     const create = element("button", "small-button launch-pm", "+ Create PM");
     create.type = "button";
     create.dataset.createPmProject = project.name;
+    create.dataset.projectControl = "create-pm";
     heading.append(label, create);
     container.append(heading);
     if (linear.teamId)
       container.append(element("p", "mapping-id", `Team ${linear.teamId}`));
-    const missing =
-      linear.status !== "ready" ||
-      areaList.some(
-        (area) => !/^[a-f0-9-]{36}$/i.test(area.linearProjectId || ""),
-      );
-    if (missing) {
-      const controls = element("div", "mapping-actions");
-      if (!linear.teamId) {
-        const label = element(
-          "label",
-          "sr-only",
-          `Linear team for ${project.name}`,
-        );
-        const select = element("select", "mapping-team");
-        select.id = `mapping-team-${project.name}`;
-        label.htmlFor = select.id;
-        select.dataset.mappingProject = project.name;
-        select.append(new Option("Create a team for this app", ""));
-        for (const team of linearResources.teams)
-          select.append(new Option(`${team.name} (${team.key})`, team.id));
-        select.value = mappingTeamSelections.get(project.name) || "";
-        select.disabled =
-          !linearConnected() || mappingBusy.has(project.name) || formsLocked;
-        controls.append(label, select);
-      }
-      const retry = element(
-        "button",
-        "small-button",
-        mappingBusy.has(project.name)
-          ? "Setting up Linear…"
-          : linear.status === "error"
-            ? "Retry Linear setup"
-            : "Set up Linear",
-      );
-      retry.type = "button";
-      retry.dataset.setupLinearProject = project.name;
-      retry.disabled =
-        !linearConnected() || mappingBusy.has(project.name) || formsLocked;
-      controls.append(retry);
-      container.append(controls);
-      const feedback = mappingMessages.get(project.name);
-      const help = element(
-        "p",
-        "runner-guidance",
-        feedback?.text ||
-          (linear.status === "error" ? linear.message : "") ||
-          (linearConnected()
-            ? "Creates only missing team and PM project mappings. Existing IDs are kept."
-            : "Connect Linear above, then finish this app’s team and PM project setup."),
-      );
-      help.classList.toggle(
-        "error",
-        Boolean(feedback?.error || linear.status === "error"),
-      );
-      help.setAttribute("role", feedback?.error ? "alert" : "status");
-      container.append(help);
-    }
+    const manage = element("button", "small-button", "Manage Linear mappings");
+    manage.type = "button";
+    manage.dataset.editProject = project.name;
+    manage.dataset.editLinear = "true";
+    manage.dataset.projectControl = "manage-linear";
+    container.append(manage);
     if (areaList.length) {
       const details = element("details", "project-pms");
+      details.open = state?.pmsOpen === true;
       details.append(
         element(
           "summary",
@@ -2269,6 +2589,7 @@
           `${areaList.length} PM ${areaList.length === 1 ? "mandate" : "mandates"}`,
         ),
       );
+      details.querySelector("summary").dataset.projectControl = "pm-summary";
       const list = element("ul", "pm-mapping-list");
       for (const area of areaList) {
         const row = element("li", "");
@@ -2294,7 +2615,7 @@
       details.append(list);
       container.append(details);
     }
-    return container;
+    return disclosure;
   }
   function renderPmProjects() {
     const select = $("pm-project");
@@ -2310,6 +2631,8 @@
   }
   function renderLinearSetup() {
     const connected = linearConnected();
+    $("project-linear-connection").disabled =
+      formsLocked || linearResourcesLoading;
     const mode = $("project-linear-mode");
     if (!linearModeEdited) mode.value = connected ? "create" : "later";
     for (const option of mode.options)
@@ -2345,9 +2668,10 @@
     projectSelect.replaceChildren(
       new Option("Create a project for this PM", ""),
     );
-    for (const item of linearResources.projects.filter((item) =>
-      item.teamIds?.includes(project?.linear?.teamId),
-    ))
+    for (const item of (
+      linearResourceCache.get(project?.linear?.connectionId || "default")
+        ?.projects || []
+    ).filter((item) => item.teamIds?.includes(project?.linear?.teamId)))
       projectSelect.append(new Option(item.name, item.id));
     if (
       [...projectSelect.options].some(
@@ -2356,43 +2680,73 @@
     )
       projectSelect.value = previousProject;
     projectSelect.disabled =
-      !project?.linear?.teamId || !connected || linearResourcesLoading;
+      !project?.linear?.teamId ||
+      !linearConnected(project?.linear?.connectionId || "default") ||
+      linearResourcesLoading;
     $("pm-linear-help").textContent =
-      connected && project?.linear?.teamId
+      linearConnected(project?.linear?.connectionId || "default") &&
+      project?.linear?.teamId
         ? "Creates a Linear project in this app’s team, or uses the project you select."
-        : "The PM is saved locally first. Connect Linear and use Set up Linear beside the app to create its missing project.";
+        : "The PM is saved locally first. Use Manage Linear mappings in this project's settings to finish its setup.";
   }
   async function refreshLinearResources() {
-    if (!sessionToken || !linearConnected() || linearResourcesLoading) {
-      renderLinearSetup();
+    if (!sessionToken) return;
+    if (linearResourcesLoading) {
+      linearResourcesQueued = true;
       return;
     }
     linearResourcesLoading = true;
-    renderLinearSetup();
-    message(
-      $("linear-resources-message"),
-      "Loading your Linear teams and projects…",
+    const selected = $("project-linear-connection").value || "default";
+    const project = currentStatus?.projects?.find(
+      (item) => item.name === $("pm-project").value,
     );
+    const ids = [
+      ...new Set([selected, project?.linear?.connectionId || "default"]),
+    ];
+    renderLinearSetup();
+    message($("linear-resources-message"), "Loading teams and projects…");
     try {
-      const result = await api("/api/linear/resources");
-      linearResources = {
-        teams: Array.isArray(result.teams) ? result.teams : [],
-        projects: Array.isArray(result.projects) ? result.projects : [],
-      };
-      message(
-        $("linear-resources-message"),
-        linearResources.teams.length
-          ? `${linearResources.teams.length} teams available.`
-          : "No teams available. Create a new team or check your Linear workspace permissions.",
+      const results = await Promise.allSettled(
+        ids.map(async (id) => {
+          const result = await api(serviceUrl("linear", "resources", id));
+          const resources = {
+            teams: Array.isArray(result.teams) ? result.teams : [],
+            projects: Array.isArray(result.projects) ? result.projects : [],
+          };
+          linearResourceCache.set(id, resources);
+          return resources;
+        }),
       );
-      if (currentStatus) renderStatus(currentStatus);
-    } catch (error) {
-      message($("linear-resources-message"), error.message, true);
+      results.forEach((result, index) => {
+        if (result.status === "rejected")
+          linearResourceCache.delete(ids[index]);
+      });
+      linearResources = linearResourceCache.get(selected) || {
+        teams: [],
+        projects: [],
+      };
+      const error = results[ids.indexOf(selected)];
+      if (error?.status === "rejected")
+        message($("linear-resources-message"), error.reason.message, true);
+      else
+        message(
+          $("linear-resources-message"),
+          linearResources.teams.length + " teams available in this connection.",
+        );
     } finally {
       linearResourcesLoading = false;
       renderLinearSetup();
+      if (linearResourcesQueued) {
+        linearResourcesQueued = false;
+        await refreshLinearResources();
+      }
     }
   }
+  $("project-linear-connection").addEventListener("change", () => {
+    $("project-linear-team").value = "";
+    linearResources = { teams: [], projects: [] };
+    refreshLinearResources();
+  });
   $("project-linear-mode").addEventListener("change", () => {
     linearModeEdited = true;
     renderLinearSetup();
@@ -2401,7 +2755,7 @@
     "click",
     refreshLinearResources,
   );
-  $("pm-project").addEventListener("change", renderLinearSetup);
+  $("pm-project").addEventListener("change", refreshLinearResources);
   $("pm-key").addEventListener("input", () => {
     pmKeyEdited = Boolean($("pm-key").value);
   });
@@ -2545,6 +2899,9 @@
       const busy = serviceBusy.has(provider);
       const locked = formsLocked || !sessionToken || busy || restarting;
       const connected = status?.connected && !status.needsReconnect;
+      profileControls.get(provider)?.setLocked(locked);
+      $(`${provider}-token-form`).closest("details").hidden =
+        serviceSelection[provider] !== "default";
       $(`${provider}-connection`).classList.toggle(
         "is-connected",
         Boolean(connected),
@@ -2604,7 +2961,7 @@
     serviceBusy.add(provider);
     renderServiceControls();
     try {
-      serviceStatuses.set(provider, await api(`/api/${provider}`));
+      rememberServiceStatus(provider, await api(serviceUrl(provider)));
       message($(`${provider}-message`), "");
     } catch (error) {
       message($(`${provider}-message`), error.message, true);
@@ -2627,8 +2984,13 @@
     serviceBusy.add(provider);
     renderServiceControls();
     try {
-      await api(`/api/${provider}/complete`, { envelope });
-      serviceStatuses.set(provider, await api(`/api/${provider}`));
+      await api(serviceUrl(provider, "complete"), { envelope });
+      try {
+        sessionStorage.removeItem("gremlins-pending-" + provider);
+      } catch {
+        /* No persisted preference. */
+      }
+      rememberServiceStatus(provider, await api(serviceUrl(provider)));
       message(
         $(`${provider}-message`),
         `${serviceProviders[provider].name} connected. Review the available account and project settings before running your crew.`,
@@ -2678,7 +3040,11 @@
       renderServiceControls();
       message($(`${provider}-message`), "");
       try {
-        const result = await api(`/api/${provider}/connect`, {});
+        sessionStorage.setItem(
+          "gremlins-pending-" + provider,
+          serviceSelection[provider],
+        );
+        const result = await api(serviceUrl(provider, "connect"), {});
         const url = new URL(result.url);
         if (
           url.origin !== "https://shipgremlins.ai" ||
@@ -2709,12 +3075,14 @@
       serviceBusy.add(provider);
       renderServiceControls();
       try {
-        serviceStatuses.set(
+        rememberServiceStatus(
           provider,
-          await api(`/api/${provider}`, {}, "DELETE"),
+          await api(serviceUrl(provider), {}, "DELETE"),
         );
-        if (provider === "linear")
-          linearResources = { teams: [], projects: [] };
+        if (provider === "linear") {
+          linearResourceCache.delete(serviceSelection[provider]);
+          await refreshLinearResources();
+        }
         $(`${provider}-disconnect-prompt`).hidden = true;
         message(
           $(`${provider}-message`),
@@ -2761,7 +3129,7 @@
           $(`${provider}-token-message`),
           `${config.name} token saved on this server. Use Verify connections on your app to check live access.`,
         );
-        serviceStatuses.set(provider, await api(`/api/${provider}`));
+        rememberServiceStatus(provider, await api(serviceUrl(provider)));
         await refreshStatus();
         await refreshRunners();
         if (provider === "linear") await refreshLinearResources();
@@ -3168,6 +3536,7 @@
 
   async function requestEditorAction(action, path = editor.path) {
     if (editor.busy || formsLocked || !sessionToken) return;
+    if ($("advanced-settings")) $("advanced-settings").open = true;
     if (isEditorDirty()) {
       pendingEditorAction = { action, path };
       $("config-file").value = editor.path;
@@ -3227,7 +3596,10 @@
     )
       if (parent.tagName === "DETAILS") parent.open = true;
     const page = target.closest("[data-page]")?.dataset.page;
-    if (page) pages.navigate(`/${page}`);
+    if (page)
+      pages.navigate(
+        `/${page}${target.id ? `#${encodeURIComponent(target.id)}` : ""}`,
+      );
     requestAnimationFrame(() => {
       target.focus();
       target.scrollIntoView({ block: "center" });
@@ -3456,14 +3828,39 @@
     scheduleRunnerPoll();
   }
 
+  function focusProjectSection(section) {
+    const target =
+      section === "linear"
+        ? $("edit-linear-settings")
+        : section === "signals"
+          ? $("edit-project-settings").querySelector(
+              ".project-signals-settings",
+            )
+          : $("edit-project-settings");
+    if (!target) return;
+    target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "start" });
+  }
+  for (const button of document.querySelectorAll("[data-project-section]"))
+    button.addEventListener("click", () =>
+      focusProjectSection(button.dataset.projectSection),
+    );
+
   async function openProjectSettings(name, trigger) {
-    if (projectEditor.busy) return;
+    if (projectEditor.busy || projectLinearSettings?.isBusy()) return;
+    projectLinearSettings?.reset();
     projectEditor.name = name;
     projectEditor.path = `projects/${name}/project.json`;
     projectEditor.trigger = trigger || projectEditor.trigger;
     projectEditor.busy = true;
-    $("edit-project-fields").disabled = true;
+    updateProjectEditorControls();
     $("project-settings-title").textContent = `Edit ${name}`;
+    if ($("project-settings-name"))
+      $("project-settings-name").textContent = name;
+    if ($("project-settings-provider"))
+      $("project-settings-provider").textContent = "Loading source…";
+    $("project-settings-repo").textContent = "Loading repository…";
     if (!$("project-settings-dialog").open)
       $("project-settings-dialog").showModal();
     message($("project-settings-message"), "Loading saved settings…");
@@ -3477,11 +3874,15 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
-        { projectName: projectEditor.name },
+        { projectName: projectEditor.name, connections: serviceProfiles },
       );
       $("project-settings-repo").textContent =
         projectEditor.config.repo || "Project configuration";
+      if ($("project-settings-provider"))
+        $("project-settings-provider").textContent =
+          projectEditor.config.provider === "gitlab" ? "GitLab" : "GitHub";
       message($("project-settings-message"), "");
+      await projectLinearSettings?.load(name);
     } catch (error) {
       projectEditor.form = null;
       $("edit-project-settings").replaceChildren();
@@ -3492,12 +3893,27 @@
       );
     } finally {
       projectEditor.busy = false;
-      $("edit-project-fields").disabled = !projectEditor.form;
+      updateProjectEditorControls();
     }
   }
+  function isProjectEditorDirty() {
+    return Boolean(
+      projectEditor.form?.isDirty() || projectLinearSettings?.isDirty(),
+    );
+  }
+  function updateProjectEditorControls() {
+    const busy = projectEditor.busy || projectLinearSettings?.isBusy();
+    $("edit-project-fields").disabled = Boolean(
+      formsLocked || busy || !projectEditor.form,
+    );
+    $("close-project-settings").disabled = Boolean(busy);
+    $("reload-project-settings").disabled = Boolean(formsLocked || busy);
+    $("advanced-project-settings").disabled = Boolean(formsLocked || busy);
+    projectLinearSettings?.setLocked(formsLocked || projectEditor.busy);
+  }
   async function projectSettingsAction(action, discard = false) {
-    if (projectEditor.busy) return;
-    if (!discard && projectEditor.form?.isDirty()) {
+    if (projectEditor.busy || projectLinearSettings?.isBusy()) return;
+    if (!discard && isProjectEditorDirty()) {
       projectEditor.pending = action;
       $("project-settings-discard").hidden = false;
       $("keep-project-settings").focus();
@@ -3510,6 +3926,7 @@
       return;
     }
     $("project-settings-dialog").close();
+    projectLinearSettings?.reset();
     if (action === "connections") {
       pages.navigate("/connections");
       return;
@@ -3553,7 +3970,13 @@
   );
   $("edit-project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (projectEditor.busy || !projectEditor.form) return;
+    if (
+      formsLocked ||
+      projectEditor.busy ||
+      projectLinearSettings?.isBusy() ||
+      !projectEditor.form
+    )
+      return;
     let content;
     try {
       content =
@@ -3571,7 +3994,7 @@
       return;
     }
     projectEditor.busy = true;
-    $("edit-project-fields").disabled = true;
+    updateProjectEditorControls();
     message($("project-settings-message"), "Saving project settings…");
     try {
       const result = await api(
@@ -3585,8 +4008,17 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
-        { projectName: projectEditor.name },
+        { projectName: projectEditor.name, connections: serviceProfiles },
       );
+      if (projectLinearSettings?.isDirty()) {
+        // Rebase only against this save's exact content/revision. A later GET
+        // could adopt another operator's edit without refreshing our form.
+        projectLinearSettings.rebaseProject?.({
+          path: projectEditor.path,
+          content,
+          revision: result.revision,
+        });
+      } else await projectLinearSettings?.load(projectEditor.name);
       $("project-settings-discard").hidden = true;
       projectChecks.delete(projectEditor.name);
       message(
@@ -3608,7 +4040,7 @@
       );
     } finally {
       projectEditor.busy = false;
-      $("edit-project-fields").disabled = false;
+      updateProjectEditorControls();
     }
   });
   $("reveal-gcp-credentials").addEventListener("click", () => {
@@ -3671,9 +4103,10 @@
   function hasUnsavedInputs() {
     return (
       isEditorDirty() ||
+      [...profileControls.values()].some((control) => control.isDirty()) ||
       Boolean(mixpanelReports?.isDirty()) ||
       newProjectSettings.isDirty() ||
-      (projectEditor.form?.isDirty() && $("project-settings-dialog").open) ||
+      (isProjectEditorDirty() && $("project-settings-dialog").open) ||
       Boolean($("gcp-credentials").value) ||
       [
         ...document.querySelectorAll(
@@ -3710,6 +4143,7 @@
         "Restarting reloads this page and clears unsaved configuration and form entries. Save your changes or copy your draft before restarting.";
       $("discard-changes").textContent = "Restart and discard";
       $("discard-prompt").hidden = false;
+      if ($("advanced-settings")) $("advanced-settings").open = true;
       pages.navigate("/settings#discard-prompt");
       $("keep-editing").focus();
       return;
@@ -3766,7 +4200,7 @@
         isEditorDirty() ||
         Boolean(mixpanelReports?.isDirty()) ||
         newProjectSettings.isDirty() ||
-        (projectEditor.form?.isDirty() && $("project-settings-dialog").open)
+        (isProjectEditorDirty() && $("project-settings-dialog").open)
       )
     )
       return;

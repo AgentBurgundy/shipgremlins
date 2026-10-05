@@ -47,7 +47,13 @@ export interface DoctorDeps {
   today: () => string;
   sourceControl?: Pick<SourceControl, "resolveCredential">;
   linearConnection?: Pick<LinearConnection, "resolveCredential">;
+  linearConnectionFor?: (
+    connectionId?: string,
+  ) => Pick<LinearConnection, "resolveCredential">;
   vercelConnection?: Pick<VercelConnection, "resolveCredential">;
+  vercelConnectionFor?: (
+    connectionId?: string,
+  ) => Pick<VercelConnection, "resolveCredential">;
   resolveEnvironment?: typeof resolveEnvironment;
 }
 
@@ -146,9 +152,11 @@ export async function doctorChecks(
     ...(verification.mode === "browser" && verification.target.kind === "vercel"
       ? [["verification.projectId", verification.target.projectId] as const]
       : []),
-    ...areas.map(
-      (a) => [`areas.${a.key}.linearProjectId`, a.linearProjectId] as const,
-    ),
+    ...areas
+      .filter((a) => a.enabled !== false)
+      .map(
+        (a) => [`areas.${a.key}.linearProjectId`, a.linearProjectId] as const,
+      ),
   ].filter(([, v]) => v.startsWith("PASTE_"));
   add(
     "no placeholders",
@@ -235,6 +243,19 @@ export async function doctorChecks(
           env: deps.env,
           fetch: deps.fetch,
           vercelConnection: deps.vercelConnection,
+          vercelConnectionFor:
+            deps.vercelConnectionFor ??
+            (deps.root
+              ? (connectionId) =>
+                  ((!connectionId || connectionId === "default") &&
+                    deps.vercelConnection) ||
+                  createVercelConnection({
+                    root: deps.root!,
+                    env: deps.env,
+                    fetch: deps.fetch as typeof fetch,
+                    connectionId,
+                  })
+              : undefined),
           branch: inspectionBranch(config),
         },
       );
@@ -267,10 +288,31 @@ export async function doctorChecks(
 
   let lk = deps.env.LINEAR_API_KEY;
   let linearDetail = lk ? "set" : "not set — connect Linear in gremlins setup";
-  if (deps.linearConnection) {
+  if (
+    deps.linearConnection ||
+    deps.linearConnectionFor ||
+    config.linear?.connectionId
+  ) {
     try {
-      const credential = await deps.linearConnection.resolveCredential({
+      const connectionId = config.linear?.connectionId;
+      const connection =
+        deps.linearConnectionFor?.(connectionId) ??
+        (!connectionId || connectionId === "default"
+          ? deps.linearConnection
+          : undefined) ??
+        (deps.root
+          ? createLinearConnection({
+              root: deps.root,
+              env: deps.env,
+              fetch: deps.fetch as typeof fetch,
+              connectionId,
+            })
+          : undefined);
+      if (!connection)
+        throw new Error("The selected Linear account is unavailable.");
+      const credential = await connection.resolveCredential({
         minValidityMs: 5 * 60_000,
+        workspaceId: config.linear?.workspaceId,
       });
       lk = credential.authorization;
       linearDetail =
@@ -289,6 +331,8 @@ export async function doctorChecks(
   add("LINEAR_API_KEY", !!lk, linearDetail);
   if (lk) {
     for (const area of areas) {
+      if (area.enabled === false && area.linearProjectId.startsWith("PASTE_"))
+        continue;
       const r = await probe(deps.fetch, LINEAR, {
         method: "POST",
         headers: { authorization: lk, "content-type": "application/json" },
