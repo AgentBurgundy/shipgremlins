@@ -240,46 +240,89 @@ export function createOAuthStore(
     safePath(lockFile);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     let handle: Awaited<ReturnType<typeof open>> | undefined;
+    let deniedAttempts = 0;
+    const lockToken = randomBytes(16).toString("hex");
+    const notWritable = () =>
+      new OAuthConnectionError("OAuth state is not writable.", "storage_error");
+    async function release(owned: Awaited<ReturnType<typeof open>>) {
+      const identity = await owned.stat().catch(() => undefined);
+      await owned.close();
+      try {
+        const info = await lstat(safePath(lockFile));
+        if (
+          identity &&
+          info.isFile() &&
+          info.nlink === 1 &&
+          info.ino === identity.ino &&
+          info.dev === identity.dev
+        )
+          await unlink(lockFile);
+      } catch {
+        // Never remove a replacement or unsafe lock to recover a failed release.
+      }
+    }
     for (let attempt = 0; attempt < 200; attempt++) {
       try {
         handle = await open(safePath(lockFile), "wx", 0o600);
-        await handle.writeFile(JSON.stringify({ pid: process.pid }));
-        break;
       } catch (error) {
-        if (handle) {
-          await handle.close().catch(() => {});
-          await unlink(lockFile).catch(() => {});
-          handle = undefined;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (
+          process.platform === "win32" &&
+          (code === "EPERM" || code === "EACCES") &&
+          deniedAttempts < 8
+        ) {
+          // Windows can deny CREATE_NEW while the previous lock is delete-pending.
+          // Retry only acquisition; never infer ownership or delete on this error.
+          const delay = Math.min(25 * 2 ** deniedAttempts++, 200);
+          await new Promise((done) => setTimeout(done, delay));
+          continue;
         }
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST")
-          throw new OAuthConnectionError(
-            "OAuth state is not writable.",
-            "storage_error",
-          );
+        if (code !== "EEXIST") throw notWritable();
         try {
           const info = await lstat(safePath(lockFile));
-          const lock = JSON.parse(await readFile(lockFile, "utf8")) as {
+          if (!info.isFile() || info.nlink !== 1 || info.size > 1024)
+            throw notWritable();
+          const content = await readFile(lockFile, "utf8");
+          const lock = JSON.parse(content) as {
             pid?: number;
           };
-          let alive = true;
+          let dead = false;
           try {
-            if (!Number.isSafeInteger(lock.pid)) throw new Error();
+            if (!Number.isSafeInteger(lock.pid) || lock.pid! < 1)
+              throw new Error();
             process.kill(lock.pid!, 0);
           } catch (error) {
-            alive = (error as NodeJS.ErrnoException).code === "EPERM";
+            dead = (error as NodeJS.ErrnoException).code === "ESRCH";
           }
-          if (
-            (!alive && info.mtimeMs < Date.now() - 1000) ||
-            info.mtimeMs < Date.now() - 20 * 60_000
-          ) {
-            await unlink(lockFile);
-            continue;
+          if (dead && info.mtimeMs < Date.now() - 1000) {
+            const current = await lstat(safePath(lockFile));
+            if (
+              current.isFile() &&
+              current.nlink === 1 &&
+              current.ino === info.ino &&
+              current.dev === info.dev &&
+              (await readFile(lockFile, "utf8")) === content
+            ) {
+              await unlink(lockFile);
+              continue;
+            }
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof OAuthConnectionError) throw error;
           /* Another writer can release its lock during inspection. */
         }
         await new Promise((done) => setTimeout(done, 50));
+        continue;
       }
+      try {
+        await handle.writeFile(
+          JSON.stringify({ pid: process.pid, token: lockToken }),
+        );
+      } catch {
+        await release(handle).catch(() => {});
+        throw notWritable();
+      }
+      break;
     }
     if (!handle)
       throw new OAuthConnectionError(
@@ -290,8 +333,7 @@ export function createOAuthStore(
     try {
       return await operation(await read(), save);
     } finally {
-      await handle.close();
-      await unlink(lockFile).catch(() => {});
+      await release(handle);
     }
   }
   return { read, locked };

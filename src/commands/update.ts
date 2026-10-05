@@ -6,7 +6,7 @@ const USAGE = `Usage: gremlins update [--check | --rollback] [--json]
   update --check      check for updates without installing
   update --rollback   return to the previous compatible runtime
 
-Projects, mandates, credentials, and running GitHub Actions jobs stay in place.
+Projects, mandates, credentials, and running jobs stay in place.
 The new runtime is used by the next CLI command or dashboard restart.`;
 
 export async function runUpdate(
