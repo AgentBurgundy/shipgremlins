@@ -61,9 +61,11 @@
   let removeRunnerId = "";
   let selectedJobId = "";
   let jobDetailTrigger = null;
-  let outputLoading = false;
-  let outputRevision = 0;
-  let artifactSignature = "";
+  let jobOutputTimer = null;
+  let jobOutputSuspended = false;
+  const outputErrors = new Map();
+  const outputNotices = new Map();
+  const outputCompleted = new Set();
   const artifactBlobs = new Set();
   const projectChecks = new Map();
   let activityFilter = "all";
@@ -151,6 +153,7 @@
   let linearResourcesLoading = false;
   let linearModeEdited = false;
   let pmKeyEdited = false;
+  let pmLinearContext = "";
   let pmCreating = false;
   let pmPlanning = false;
   let pmDraft = null;
@@ -346,8 +349,12 @@
     body,
     method = body ? "POST" : "GET",
     timeoutMs = 20000,
+    signal,
   ) {
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(path, {
@@ -403,6 +410,7 @@
       throw error;
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
     }
   }
 
@@ -2199,7 +2207,6 @@
       renderRunners(await api("/api/runners"));
       await refreshHistory();
       message($("runner-message"), "");
-      if (selectedJobId) await refreshJobOutput();
     } catch (error) {
       message(
         $("runner-message"),
@@ -2305,8 +2312,15 @@
         "Job queued. Opening Activity so you can follow its progress. Automation is unchanged.",
       );
       if (type === "developer") $("job-ticket").value = "";
+      if (result.job?.id) {
+        jobHistory = [
+          ...jobHistory.filter((job) => job.id !== result.job.id),
+          result.job,
+        ];
+        selectJob(result.job.id);
+        pages.navigate("/activity#job-detail");
+      }
       await refreshRunners();
-      if (result.job?.id) selectJob(result.job.id);
     } catch (error) {
       message($("job-message"), error.message, true);
     } finally {
@@ -2332,9 +2346,12 @@
       throw new Error("The server returned an unsupported artifact address.");
     return url;
   }
-  async function fetchArtifact(jobId, file) {
+  async function fetchArtifact(jobId, file, signal) {
     const url = artifactUrl(jobId, file.url);
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
       const response = await fetch(url, {
@@ -2351,77 +2368,106 @@
       return await response.blob();
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
     }
   }
-  async function renderArtifacts(jobId, files, revision) {
-    const signature = JSON.stringify([jobId, files]);
-    if (artifactSignature === signature) return;
-    clearArtifactBlobs();
-    $("job-artifacts").replaceChildren();
-    if (!files.length) return;
-    for (const file of files) {
-      if (revision !== outputRevision) return;
-      artifactUrl(jobId, file.url);
-      const card = element("article", "artifact-card");
-      card.append(element("h4", "", file.name));
-      if (/\.(png|jpe?g|webp)$/i.test(file.name)) {
-        const blob = await fetchArtifact(jobId, file);
-        if (revision !== outputRevision) return;
-        if (["image/png", "image/jpeg", "image/webp"].includes(blob.type)) {
-          const url = URL.createObjectURL(blob);
-          artifactBlobs.add(url);
-          const preview = element("img", "artifact-preview");
-          preview.src = url;
-          preview.alt = `Browser evidence: ${file.name}`;
-          preview.loading = "lazy";
-          card.append(preview);
+  async function renderArtifacts(jobId, files, context) {
+    const cards = [];
+    const previews = new Set();
+    let committed = false;
+    try {
+      for (const file of files) {
+        if (!context.isCurrent()) return;
+        artifactUrl(jobId, file.url);
+        const card = element("article", "artifact-card");
+        card.append(element("h4", "", file.name));
+        if (/\.(png|jpe?g|webp)$/i.test(file.name)) {
+          const blob = await fetchArtifact(jobId, file, context.signal);
+          if (!context.isCurrent()) return;
+          if (["image/png", "image/jpeg", "image/webp"].includes(blob.type)) {
+            const url = URL.createObjectURL(blob);
+            previews.add(url);
+            const preview = element("img", "artifact-preview");
+            preview.src = url;
+            preview.alt = `Browser evidence: ${file.name}`;
+            preview.loading = "lazy";
+            card.append(preview);
+          }
         }
+        const download = element("button", "small-button", "Download artifact");
+        download.type = "button";
+        download.addEventListener("click", async () => {
+          if (selectedJobId !== jobId || !sessionToken) return;
+          download.disabled = true;
+          try {
+            const blob = await fetchArtifact(jobId, file);
+            if (selectedJobId !== jobId) return;
+            const url = URL.createObjectURL(blob);
+            artifactBlobs.add(url);
+            const link = element("a", "");
+            link.href = url;
+            link.download = file.name;
+            link.click();
+          } catch (error) {
+            if (selectedJobId === jobId)
+              message($("job-output-message"), error.message, true);
+          } finally {
+            download.disabled = false;
+          }
+        });
+        card.append(download);
+        cards.push(card);
       }
-      const download = element("button", "small-button", "Download artifact");
-      download.type = "button";
-      download.addEventListener("click", async () => {
-        download.disabled = true;
-        try {
-          const blob = await fetchArtifact(jobId, file);
-          const url = URL.createObjectURL(blob);
-          artifactBlobs.add(url);
-          const link = element("a", "");
-          link.href = url;
-          link.download = file.name;
-          link.click();
-        } catch (error) {
-          message($("job-output-message"), error.message, true);
-        } finally {
-          download.disabled = false;
-        }
-      });
-      card.append(download);
-      $("job-artifacts").append(card);
+      if (!context.isCurrent()) return;
+      clearArtifactBlobs();
+      for (const url of previews) artifactBlobs.add(url);
+      $("job-artifacts").replaceChildren(...cards);
+      committed = true;
+    } finally {
+      if (!committed) for (const url of previews) URL.revokeObjectURL(url);
     }
-    artifactSignature = signature;
   }
   function renderActivity(activity) {
-    $("activity-summary").textContent =
+    const summary =
       typeof activity.summary === "string" ? activity.summary : "";
+    if ($("activity-summary").textContent !== summary)
+      $("activity-summary").textContent = summary;
     $("activity-summary").hidden = !$("activity-summary").textContent;
     const checks = Array.isArray(activity.checks) ? activity.checks : [];
-    $("activity-checks").replaceChildren();
-    for (const check of checks) {
-      const card = element("div", `activity-check check-${check.status}`);
-      card.append(
-        element(
-          "strong",
-          "",
-          `${check.status === "succeeded" ? "✓" : check.status === "failed" ? "!" : "◌"} ${check.name}`,
-        ),
-      );
-      if (check.detail) card.append(element("p", "", check.detail));
-      $("activity-checks").append(card);
+    const checkSignature = JSON.stringify(checks);
+    if ($("activity-checks").dataset.signature !== checkSignature) {
+      $("activity-checks").replaceChildren();
+      for (const check of checks) {
+        const card = element("div", `activity-check check-${check.status}`);
+        card.append(
+          element(
+            "strong",
+            "",
+            `${check.status === "succeeded" ? "✓" : check.status === "failed" ? "!" : "◌"} ${check.name}`,
+          ),
+        );
+        if (check.detail) card.append(element("p", "", check.detail));
+        $("activity-checks").append(card);
+      }
+      $("activity-checks").dataset.signature = checkSignature;
     }
     $("activity-checks").hidden = !checks.length;
-    $("activity-timeline").replaceChildren();
-    for (const event of activity.events || []) {
+    const timeline = $("activity-timeline");
+    const existing = new Map(
+      [...timeline.children].map((row) => [row.dataset.eventKey, row]),
+    );
+    const rows = [];
+    for (const [index, event] of (activity.events || []).entries()) {
+      const key = `${event.id || index}`;
+      const signature = JSON.stringify(event);
+      const previous = existing.get(key);
+      if (previous?.dataset.signature === signature) {
+        rows.push(previous);
+        continue;
+      }
       const row = element("li", `activity-event event-${event.type}`);
+      row.dataset.eventKey = key;
+      row.dataset.signature = signature;
       const kind = element(
         "span",
         "activity-event-kind",
@@ -2435,76 +2481,175 @@
         row.append(
           element("span", `runtime-badge state-${event.status}`, event.status),
         );
-      $("activity-timeline").append(row);
+      rows.push(row);
     }
-    if (!activity.events?.length)
-      $("activity-timeline").append(
-        element(
-          "li",
-          "activity-empty",
-          "No structured activity yet. Actions appear here as the worker reports them.",
-        ),
+    if (!rows.length)
+      rows.push(
+        existing.get("empty") ||
+          element(
+            "li",
+            "activity-empty",
+            "No structured activity yet. Actions appear here as the worker reports them.",
+          ),
       );
+    if (!activity.events?.length) rows[0].dataset.eventKey = "empty";
+    const retained = new Set(rows);
+    for (const row of [...timeline.children])
+      if (!retained.has(row)) row.remove();
+    rows.forEach((row, index) => {
+      if (timeline.children[index] !== row)
+        timeline.insertBefore(row, timeline.children[index] || null);
+    });
   }
-  async function refreshJobOutput() {
-    if (!selectedJobId || outputLoading || !sessionToken) return;
-    const id = selectedJobId;
-    const revision = outputRevision;
-    outputLoading = true;
-    $("refresh-job-output").disabled = true;
-    try {
-      const [logs, artifacts, activity] = await Promise.all([
-        api(`/api/jobs/${encodeURIComponent(id)}/logs`),
-        api(`/api/jobs/${encodeURIComponent(id)}/artifacts`),
-        api(`/api/jobs/${encodeURIComponent(id)}/activity`).then(
-          (value) => ({ value }),
-          (error) => ({ error }),
-        ),
-      ]);
-      if (revision !== outputRevision) return;
-      const log = $("job-log");
-      const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-      log.textContent = logs.lines?.length
-        ? logs.lines.join("\n")
-        : "No output yet. Logs will appear when the worker starts.";
-      if (atEnd) log.scrollTop = log.scrollHeight;
-      if (activity.error)
-        message(
-          $("activity-message"),
-          `Structured activity is unavailable. ${activity.error.message} Raw output and artifacts are still shown below.`,
-          true,
-        );
-      else {
-        renderActivity(activity.value);
-        message($("activity-message"), "");
-      }
-      await renderArtifacts(id, artifacts.files || [], revision);
-      if (revision === outputRevision) message($("job-output-message"), "");
-    } catch (error) {
-      if (revision === outputRevision)
-        message($("job-output-message"), error.message, true);
-    } finally {
-      outputLoading = false;
-      $("refresh-job-output").disabled = !sessionToken;
-      if (revision !== outputRevision && selectedJobId) refreshJobOutput();
-    }
+  function jobOutputVisible() {
+    return Boolean(
+      selectedJobId &&
+      sessionToken &&
+      !restarting &&
+      !jobOutputSuspended &&
+      !document.hidden &&
+      pages.current === "activity" &&
+      !$("job-detail").hidden,
+    );
+  }
+  function setOutputMessage(id, text, error = false) {
+    const target = $(id);
+    if (target.textContent !== text || target.hidden !== !text)
+      message(target, text, error);
+  }
+  function renderOutputMessages() {
+    const activityError = outputErrors.get("activity");
+    if (outputCompleted.has("activity"))
+      setOutputMessage(
+        "activity-message",
+        activityError
+          ? `Visible activity could not refresh. ${activityError} Any loaded events are kept; use Refresh to try again.`
+          : outputNotices.get("activity") || "",
+        Boolean(activityError),
+      );
+    const resources = ["logs", "artifacts"];
+    const notices = resources.flatMap((resource) => {
+      const error = outputErrors.get(resource);
+      if (error)
+        return [`${resource === "logs" ? "Output" : "Artifacts"}: ${error}`];
+      return outputNotices.has(resource) ? [outputNotices.get(resource)] : [];
+    });
+    setOutputMessage(
+      "job-output-message",
+      notices.join(" "),
+      resources.some((resource) => outputErrors.has(resource)),
+    );
+  }
+  const jobOutput = window.createJobOutput({
+    load: (resource, id, signal) =>
+      api(
+        `/api/jobs/${encodeURIComponent(id)}/${resource}`,
+        undefined,
+        "GET",
+        20000,
+        signal,
+      ),
+    render: async (resource, value, context) => {
+      const notice =
+        (value.partial || value.pending) && typeof value.message === "string"
+          ? value.message
+          : resource === "artifacts" && value.pending
+            ? "Artifacts appear after the run finishes."
+            : "";
+      if (notice) outputNotices.set(resource, notice);
+      else outputNotices.delete(resource);
+      if (resource === "logs") {
+        const log = $("job-log");
+        if (
+          value.partial &&
+          !value.lines?.length &&
+          log.textContent !== "Loading job output…"
+        )
+          return;
+        const text = value.lines?.length
+          ? value.lines.join("\n")
+          : "No output yet. Logs will appear when the worker starts.";
+        if (log.textContent !== text) {
+          const atEnd =
+            log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+          log.textContent = text;
+          if (atEnd) log.scrollTop = log.scrollHeight;
+        }
+      } else if (resource === "activity") {
+        renderActivity(value);
+      } else if (!(
+        value.partial &&
+        !value.files?.length &&
+        $("job-artifacts").children.length
+      ))
+        await renderArtifacts(context.id, value.files || [], context);
+    },
+    onError: (resource, error) => {
+      outputCompleted.add(resource);
+      if (error) outputErrors.set(resource, error.message);
+      else outputErrors.delete(resource);
+      if (
+        error &&
+        resource === "logs" &&
+        $("job-log").textContent === "Loading job output…"
+      )
+        $("job-log").textContent =
+          "Job output is not available yet. Use Refresh to try again.";
+      renderOutputMessages();
+    },
+    onBusy: (busy) => {
+      $("refresh-job-output").disabled = !sessionToken || !selectedJobId;
+      $("job-detail").setAttribute("aria-busy", String(busy));
+    },
+  });
+  function pauseJobOutput() {
+    clearTimeout(jobOutputTimer);
+    jobOutputTimer = null;
+    jobOutput.pause();
+  }
+  function scheduleJobOutput() {
+    clearTimeout(jobOutputTimer);
+    if (!jobOutputVisible()) return;
+    const job = mergedJobs().find((item) => item.id === selectedJobId);
+    jobOutputTimer = setTimeout(
+      () => {
+        if (!jobOutputVisible()) return;
+        jobOutput.refresh();
+        scheduleJobOutput();
+      },
+      ["queued", "running"].includes(job?.status) ? 2000 : 10000,
+    );
+  }
+  function refreshJobOutput() {
+    if (!jobOutputVisible()) return;
+    const pending = jobOutput.resume();
+    scheduleJobOutput();
+    return pending;
   }
   function selectJob(id) {
+    if (!id) return;
+    const changed = id !== selectedJobId;
     selectedJobId = id;
-    outputRevision += 1;
-    artifactSignature = "";
-    clearArtifactBlobs();
-    $("job-artifacts").replaceChildren();
-    $("activity-timeline").replaceChildren();
-    $("activity-summary").hidden = true;
-    $("activity-checks").hidden = true;
-    message($("activity-message"), "Loading visible activity…");
+    jobOutput.select(id);
+    if (changed) {
+      outputErrors.clear();
+      outputNotices.clear();
+      outputCompleted.clear();
+      clearArtifactBlobs();
+      $("job-artifacts").replaceChildren();
+      $("activity-timeline").replaceChildren();
+      $("activity-summary").hidden = true;
+      $("activity-checks").hidden = true;
+      delete $("activity-checks").dataset.signature;
+      setOutputMessage("activity-message", "Loading visible activity…");
+      setOutputMessage("job-output-message", "");
+      $("job-log").textContent = "Loading job output…";
+    }
     $("job-detail").hidden = false;
-    $("job-detail").focus({ preventScroll: true });
+    if (changed) $("job-detail").focus({ preventScroll: true });
     const job = mergedJobs().find((item) => item.id === selectedJobId);
     $("job-detail-title").textContent =
       `${job?.project || "Browser verification"}${job?.runId ? ` · run ${job.runId}` : ""}`;
-    $("job-log").textContent = "Loading job output…";
     renderJobs(runnerStatus?.jobs || []);
     refreshJobOutput();
   }
@@ -2518,8 +2663,11 @@
   $("refresh-job-output").addEventListener("click", refreshJobOutput);
   function closeJobDetail() {
     selectedJobId = "";
-    outputRevision += 1;
-    artifactSignature = "";
+    clearTimeout(jobOutputTimer);
+    jobOutput.close();
+    outputErrors.clear();
+    outputNotices.clear();
+    outputCompleted.clear();
     clearArtifactBlobs();
     $("job-detail").hidden = true;
     $("job-artifacts").replaceChildren();
@@ -2531,6 +2679,14 @@
     (button || $("refresh-runners")).focus({ preventScroll: true });
     jobDetailTrigger = null;
   }
+  window.addEventListener("dashboard:pagechange", () => {
+    if (jobOutputVisible()) refreshJobOutput();
+    else pauseJobOutput();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (jobOutputVisible()) refreshJobOutput();
+    else pauseJobOutput();
+  });
   $("close-job-output").addEventListener("click", closeJobDetail);
   $("job-detail").addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -2624,15 +2780,22 @@
       (item) => item.name === $("pm-project").value,
     );
     const projectSelect = $("pm-linear-project");
-    const previousProject = projectSelect.value;
+    const context = JSON.stringify([
+      project?.name,
+      project?.linear?.connectionId || "default",
+      project?.linear?.teamId,
+    ]);
+    const previousProject =
+      pmLinearContext === context ? projectSelect.value : "";
+    pmLinearContext = context;
     projectSelect.replaceChildren(
-      new Option("Create a project for this PM", ""),
+      new Option("Create a new Linear project for this PM", ""),
     );
     for (const item of (
       linearResourceCache.get(project?.linear?.connectionId || "default")
         ?.projects || []
     ).filter((item) => item.teamIds?.includes(project?.linear?.teamId)))
-      projectSelect.append(new Option(item.name, item.id));
+      projectSelect.append(new Option(`Use existing: ${item.name}`, item.id));
     if (
       [...projectSelect.options].some(
         (option) => option.value === previousProject,
@@ -3929,6 +4092,7 @@
     });
     scheduleUpdatePoll();
     scheduleRunnerPoll();
+    refreshJobOutput();
   }
 
   function focusProjectSection(section) {
@@ -4255,6 +4419,7 @@
       return;
     }
     restarting = true;
+    pauseJobOutput();
     updateBanner.stopRefresh();
     clearTimeout(updatePollTimer);
     clearTimeout(runnerPollTimer);
@@ -4315,6 +4480,9 @@
   });
 
   window.addEventListener("pagehide", () => {
+    jobOutputSuspended = true;
+    pauseJobOutput();
+    jobOutput.invalidate("artifacts");
     updateBanner.stopRefresh();
     clearTimeout(updatePollTimer);
     clearTimeout(runnerPollTimer);
@@ -4330,6 +4498,7 @@
   });
   window.addEventListener("pageshow", (event) => {
     if (!event.persisted || !sessionToken || restarting) return;
+    jobOutputSuspended = false;
     resumeBackgroundChecks();
     Promise.allSettled([
       refreshStatus(),

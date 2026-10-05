@@ -567,7 +567,10 @@ export function createDockerRunners(options: {
       };
     },
     async logs(id) {
-      if (!(await inspectOwned(id))) return "";
+      if (!(await inspectOwned(id)))
+        throw new Error(
+          "The job container is unavailable. Read retained run history instead.",
+        );
       const output = await run(["logs", "--tail", "2000", name(id)]);
       if (output.code !== 0) throw new Error("Local job logs are unavailable.");
       return redact(output.stdout + output.stderr, secrets.get(id));

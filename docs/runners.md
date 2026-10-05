@@ -23,6 +23,13 @@ current job and stops accepting more. Repair queues a fresh browser check. Remov
 refuses busy capacity and preserves completed job containers/output volumes.
 Inspect job logs and artifacts from the dashboard.
 
+Activity streams visible worker events and raw output independently of saved
+history. A slow source keeps its last available output and reports partial
+loading; it does not clear the timeline on each refresh. Finished, sanitized
+artifacts load separately. Closing the detail view stops its polling, not the
+worker. A completed investigation is not proof that all tests passed: review the
+summary and recorded checks before approving its proposals.
+
 `gremlins start --lan` starts a background dashboard/controller; `gremlins status`
 prints its link and `gremlins stop` stops scheduling without killing running jobs.
 The queue is stored in `.run/local-runners/` under the selected configuration root.

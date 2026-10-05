@@ -27,6 +27,10 @@ export interface LinearProjectResource {
   name: string;
   url: string;
   teamIds: string[];
+  description?: string | null;
+  content?: string | null;
+  icon?: string | null;
+  color?: string | null;
 }
 
 const PAGE = 100;
@@ -150,11 +154,15 @@ export class LinearApi implements LinearClient {
           id: string;
           name: string;
           url: string;
+          description?: string | null;
+          content?: string | null;
+          icon?: string | null;
+          color?: string | null;
           teams: { nodes: Array<{ id: string }> };
         }>;
       };
     }>(
-      `query GremlinsProject($id: ID!) { projects(filter: { id: { eq: $id } }, first: 1) { nodes { id name url teams { nodes { id } } } } }`,
+      `query GremlinsProject($id: ID!) { projects(filter: { id: { eq: $id } }, first: 1) { nodes { id name url description content icon color teams { nodes { id } } } } }`,
       { id },
     );
     const project = data.projects.nodes.find((project) => project.id === id);
@@ -164,6 +172,10 @@ export class LinearApi implements LinearClient {
           name: project.name,
           url: project.url,
           teamIds: project.teams.nodes.map((team) => team.id),
+          description: project.description,
+          content: project.content,
+          icon: project.icon,
+          color: project.color,
         }
       : null;
   }
@@ -329,7 +341,12 @@ export class LinearApi implements LinearClient {
       `mutation UpdateProject($id: String!, $input: ProjectUpdateInput!) { projectUpdate(id: $id, input: $input) { success project { id url } } }`,
       { id, input },
     );
-    if (!data.projectUpdate.success) throw new Error("projectUpdate refused");
+    if (
+      !data.projectUpdate.success ||
+      !data.projectUpdate.project ||
+      data.projectUpdate.project.id !== id
+    )
+      throw new Error("projectUpdate refused");
     return data.projectUpdate.project;
   }
 

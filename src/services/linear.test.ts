@@ -96,6 +96,8 @@ describe("LinearApi transport", () => {
       name: "Core",
       description: "Core PM",
       content: "Test core flows",
+      icon: "👾",
+      color: "#c3f66b",
     });
     expect(
       calls.every(
@@ -106,7 +108,73 @@ describe("LinearApi transport", () => {
     expect(calls[1]!.variables.input).toMatchObject({
       id: projectId,
       teamIds: [teamId],
+      content: "Test core flows",
+      icon: "👾",
+      color: "#c3f66b",
     });
+  });
+  it("reads project metadata and patches only selected fields during recovery", async () => {
+    const calls = stubLinear((op, vars) => {
+      if (op === "GremlinsProject")
+        return {
+          projects: {
+            nodes: [
+              {
+                id: "project-1",
+                name: "Core",
+                url: "https://linear.app/test/project/core",
+                description: "Human summary",
+                content: null,
+                icon: null,
+                color: "#c3f66b",
+                teams: { nodes: [{ id: "team-1" }] },
+              },
+            ],
+          },
+        };
+      if (op === "UpdateProject")
+        return {
+          projectUpdate: {
+            success: true,
+            project: {
+              id: vars.id,
+              url: "https://linear.app/test/project/core",
+            },
+          },
+        };
+      throw new Error("Unexpected operation");
+    });
+    const api = client();
+    expect(await api.getProject("project-1")).toMatchObject({
+      description: "Human summary",
+      content: null,
+      icon: null,
+      color: "#c3f66b",
+      teamIds: ["team-1"],
+    });
+    await api.updateProject("project-1", {
+      content: "## Saved mandate",
+      icon: "👾",
+    });
+    expect(calls[1]!.variables).toEqual({
+      id: "project-1",
+      input: { content: "## Saved mandate", icon: "👾" },
+    });
+    expect(calls[0]!.query).toContain("description content icon color");
+  });
+  it("refuses unconfirmed or wrong-ID metadata updates", async () => {
+    stubLinear(() => ({
+      projectUpdate: {
+        success: true,
+        project: {
+          id: "unrelated-project",
+          url: "https://linear.app/test/project/other",
+        },
+      },
+    }));
+    await expect(
+      client().updateProject("expected-project", { icon: "👾" }),
+    ).rejects.toThrow("projectUpdate refused");
   });
   it("paginates resource selections and retains each project's team IDs", async () => {
     let teams = 0;

@@ -26,11 +26,27 @@ patrols and automatic approved-ticket pickup; **Pause automation** stops new
 automatic work. Explicit PM and approved Coding runs remain available while
 paused. Neither control approves a ticket or marks it Done.
 
+New Linear projects arrive with a 👾 icon, ShipGremlins green, and a readable PM
+brief: the saved mandate, repository link, owned paths and shared touchpoints,
+metric, UTC schedule, WIP limit, evidence expectations, and first-patrol checklist.
+The brief explains how PM Gremlins propose findings, people approve them, and
+Coding Gremlins produce tested draft PRs. It states the production rule clearly:
+**Done means the fix is merged into production and required verification passed.**
+The dashboard remains the source of truth for execution settings; later config
+edits do not automatically rewrite your Linear document.
+
 Existing area `linearProjectId` values are preserved. For an older app, explicit Linear setup can infer a team when all mapped projects share exactly one team. Otherwise choose the shared team yourself. It will not move or delete existing Linear projects. An explicitly reused PM project must belong to the configured team.
 
 The app's team is recorded in `projects/APP/project.json` under `linear`; each PM's project remains in `areas.json` under `linearProjectId`. Dashboard-authored instructions use the area's `mandate` field and are supplied alongside its existing `mandate.md` and memory files. These mappings are used for ticket lookup, proposals, and approval checks.
 
 If setup stops halfway, your local app and PM remain saved. Use **Retry Linear setup**. The operation stores UUIDs before requesting remote creation, then looks up those same IDs on retry. A lost response or controller restart therefore does not create another team or project. The recovery journal is `.run/linear/provisioning/`; keep it in backups. Corrupt journals or a different connected workspace block new creation rather than replacing mappings. Fix access or restore the journal before retrying.
+
+For new projects whose journal proves ShipGremlins reserved and created them,
+retry also fills missing brief or branding fields before completing setup.
+Populated fields are preserved in case someone edited Linear during the
+interruption. Reused projects and older mappings without that creation record
+are never automatically rewritten. Explicit mapping repair removes that pending
+metadata ownership, even when you select the same project again.
 
 No bulk migration runs when you connect Linear, open the dashboard, or start the controller. Team/project provisioning follows an explicit app, PM, or retry action. The configuration-only `gremlins setup init` command remains offline; finish its Linear mapping from the dashboard.
 

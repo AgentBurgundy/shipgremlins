@@ -40,6 +40,7 @@ import { initializeSetup } from "../setup/files.ts";
 import { LinearApi } from "../services/linear.ts";
 import { readEditableConfig } from "../setup/configEditor.ts";
 import { PmPlannerError } from "../pmPlanner/index.ts";
+import type { ActivityStore, RunActivity } from "../storage/activity.ts";
 import {
   SourceControlError,
   type SourceControl,
@@ -143,6 +144,170 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it("serves live public activity and logs without waiting for PostgreSQL or running-job artifacts", async () => {
+    const job = {
+      id: "job-live",
+      runId: 1,
+      type: "pm",
+      status: "running",
+      createdAt: "2026-10-05T00:00:00Z",
+    };
+    const event = (id: string, type: string, title: string, detail?: string) =>
+      "GREMLINS_ACTIVITY " +
+      JSON.stringify({
+        id,
+        type,
+        title,
+        detail,
+        timestamp: job.createdAt,
+        status: "succeeded",
+      });
+    const logs = vi.fn(async () => [
+      event("tool-1", "tool", "browser_navigate", "https://example.test"),
+      event("check-1", "check", "Browser check", "Passed"),
+      event("summary-1", "summary", "Agent summary", "Visible summary"),
+      '\u001b[31m{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hidden-reasoning"}]}}',
+      "sk-ant-oat01-synthetic-private-value",
+    ]);
+    const artifacts = vi.fn(async () => {
+      throw new Error("Must not read unfinished artifacts");
+    });
+    const runners = {
+      job: vi.fn(async () => job),
+      jobs: vi.fn(async () => [job]),
+      logs,
+      artifacts,
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+    } as unknown as LocalRunners;
+    const history = vi.fn(() => new Promise<never>(() => {}));
+    const store = {
+      activity: history,
+      listRuns: history,
+      close: vi.fn(async () => {}),
+    } as unknown as ActivityStore;
+    const { url } = await start(undefined, [], {
+      runners,
+      activityStore: store,
+    });
+    const [activityResponse, logResponse, artifactResponse, jobsResponse] =
+      await Promise.all(
+        [
+          "/api/jobs/job-live/activity",
+          "/api/jobs/job-live/logs",
+          "/api/jobs/job-live/artifacts",
+          "/api/jobs",
+        ].map((path) =>
+          fetch(url + path, {
+            headers: auth,
+            signal: AbortSignal.timeout(1200),
+          }),
+        ),
+      );
+    const activity = (await activityResponse!.json()) as RunActivity;
+    expect(activityResponse!.status).toBe(200);
+    expect(activity).toMatchObject({
+      summary: "Visible summary",
+      checks: [{ name: "Browser check", status: "succeeded" }],
+      partial: true,
+    });
+    expect(activity.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "Run running" }),
+        expect.objectContaining({ title: "browser_navigate" }),
+      ]),
+    );
+    const output = JSON.stringify(await logResponse!.json());
+    expect(output).toContain("[REDACTED]");
+    expect(output).not.toMatch(/hidden-reasoning|synthetic-private-value/);
+    expect(await artifactResponse!.json()).toEqual({
+      files: [],
+      pending: true,
+    });
+    expect(await jobsResponse!.json()).toMatchObject({
+      jobs: [job],
+      historyAvailable: false,
+    });
+    expect(logs).toHaveBeenCalledOnce();
+    expect(artifacts).not.toHaveBeenCalled();
+  });
+
+  it("bounds unavailable output reads, preserves lifecycle progress, and coalesces repeated polling", async () => {
+    const job = {
+      id: "job-slow",
+      runId: 1,
+      type: "pm",
+      status: "running",
+      createdAt: "2026-10-05T00:00:00Z",
+    };
+    const logs = vi.fn(() => new Promise<never>(() => {}));
+    const runners = {
+      job: vi.fn(async () => job),
+      logs,
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+    } as unknown as LocalRunners;
+    const store = {
+      activity: vi.fn(() => new Promise<never>(() => {})),
+      close: vi.fn(async () => {}),
+    } as unknown as ActivityStore;
+    const { url } = await start(undefined, [], {
+      runners,
+      activityStore: store,
+    });
+    const responses = await Promise.all(
+      ["activity", "logs", "logs"].map((name) =>
+        fetch(`${url}/api/jobs/job-slow/${name}`, {
+          headers: auth,
+          signal: AbortSignal.timeout(2500),
+        }),
+      ),
+    );
+    expect(responses.map((response) => response.status)).toEqual([
+      200, 503, 503,
+    ]);
+    expect(await responses[0]!.json()).toMatchObject({
+      events: [
+        expect.objectContaining({ title: "Run running", type: "progress" }),
+      ],
+      partial: true,
+    });
+    expect(logs).toHaveBeenCalledOnce();
+  });
+
+  it("does not block completed-job logs behind artifact loading", async () => {
+    const job = {
+      id: "job-complete",
+      runId: 1,
+      type: "pm",
+      status: "succeeded",
+      createdAt: "2026-10-05T00:00:00Z",
+    };
+    const artifacts = vi.fn(() => new Promise<never>(() => {}));
+    const runners = {
+      job: vi.fn(async () => job),
+      logs: vi.fn(async () => ["Completed output"]),
+      artifacts,
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+    } as unknown as LocalRunners;
+    const { url } = await start(undefined, [], { runners });
+    const pending = fetch(`${url}/api/jobs/job-complete/artifacts`, {
+      headers: auth,
+      signal: AbortSignal.timeout(2500),
+    });
+    expect(
+      await (
+        await fetch(`${url}/api/jobs/job-complete/logs`, {
+          headers: auth,
+          signal: AbortSignal.timeout(700),
+        })
+      ).json(),
+    ).toEqual({ lines: ["Completed output"] });
+    expect((await pending).status).toBe(503);
+    expect(artifacts).toHaveBeenCalledOnce();
+  });
+
   it("exposes readiness, runs a paused PM once, and toggles automation without clearing verification", async () => {
     const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
     const enqueue = vi.fn(async () => ({ id: "manual-job", status: "queued" }));
@@ -705,6 +870,7 @@ describe("local dashboard HTTP boundary", () => {
       resources: vi.fn(async () => ({ teams: [team], projects: [resource] })),
       createTeam: vi.fn(async () => team),
       createProject: vi.fn(async () => resource),
+      updateProject: vi.fn(async () => resource),
     };
     const server = createDashboardServer(root, packageRoot, session, [], {
       linearProvisioning: createLinearProvisioning({
@@ -1344,6 +1510,11 @@ describe("local dashboard HTTP boundary", () => {
       create,
       enqueue,
       jobs: vi.fn(async () => []),
+      job: vi.fn(async () => ({
+        id: "job-demo",
+        status: "succeeded",
+        createdAt: "2026-10-05T00:00:00Z",
+      })),
       start: vi.fn(),
       stop: vi.fn(async () => {}),
       status: vi.fn(async () => ({

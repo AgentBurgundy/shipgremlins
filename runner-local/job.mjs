@@ -88,6 +88,13 @@ async function run(command, args, options = {}) {
       command === "/bin/bash" ? args[1] : args.join(" "),
       "running",
     );
+  else
+    activity.emit(
+      "progress",
+      "Agent started",
+      "The agent is working. Public tool calls and updates appear as they are received.",
+      "running",
+    );
   return new Promise((done, reject) => {
     current = spawn(command, args, {
       cwd: options.cwd ?? "/work",
@@ -376,7 +383,7 @@ try {
       deliveryResult.prUrl ??
         (deliveryResult.noChanges
           ? "Checks passed; no code changes were needed."
-          : "Work and verification completed."),
+          : "Worker finished. Review the run summary and evidence for verification results."),
       "succeeded",
     );
   }

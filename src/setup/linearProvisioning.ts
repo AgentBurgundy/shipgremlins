@@ -26,6 +26,7 @@ import {
   MAX_CONFIG_BYTES,
 } from "./configEditor.ts";
 import { validateName } from "./files.ts";
+import { buildLinearProjectContent } from "./linearProjectContent.ts";
 import type {
   LinearApi,
   LinearTeam,
@@ -39,6 +40,7 @@ export type LinearProvisioningClient = Pick<
   | "getProject"
   | "createTeam"
   | "createProject"
+  | "updateProject"
   | "resources"
 >;
 export interface LinearMappingStatus {
@@ -69,7 +71,15 @@ interface Intent {
     created: boolean;
     reuse: boolean;
   };
-  areas: Record<string, { id: string; created: boolean }>;
+  areas: Record<
+    string,
+    {
+      id: string;
+      created: boolean;
+      /** Present only when this controller reserved the ID for creation. */
+      managedBrief?: { version: 1; applied: boolean };
+    }
+  >;
   error?: boolean;
 }
 export interface LinearMappingRepair {
@@ -272,6 +282,13 @@ export function createLinearProvisioning(options: {
           typeof value.created !== "boolean"
         )
           throw new Error();
+        if (
+          value.managedBrief !== undefined &&
+          (!object(value.managedBrief) ||
+            value.managedBrief.version !== 1 ||
+            typeof value.managedBrief.applied !== "boolean")
+        )
+          throw new Error();
       }
       return raw as unknown as Intent;
     } catch {
@@ -371,7 +388,14 @@ export function createLinearProvisioning(options: {
       };
     const ready =
       !!team?.teamId &&
-      config.areas.every((area) => !missingId(area.linearProjectId));
+      config.areas.every(
+        (area) =>
+          !missingId(area.linearProjectId) &&
+          !(
+            state?.areas[area.key]?.id === area.linearProjectId &&
+            state.areas[area.key]?.managedBrief?.applied === false
+          ),
+      );
     return {
       status: ready ? "ready" : state?.error ? "error" : "skipped",
       ...(team
@@ -545,6 +569,8 @@ export function createLinearProvisioning(options: {
             created: true,
           };
         }
+        // An explicit selection is reuse, never permission to edit that remote project.
+        delete nextState.areas[key]!.managedBrief;
       }
       projectValue.linear = {
         ...(object(projectValue.linear) ? projectValue.linear : {}),
@@ -803,15 +829,33 @@ export function createLinearProvisioning(options: {
           };
         });
         for (const area of config.areas) {
-          if (!missingId(area.linearProjectId)) continue;
           let intent = Object.hasOwn(state.areas, area.key)
             ? state.areas[area.key]
             : undefined;
+          if (
+            !missingId(area.linearProjectId) &&
+            !(
+              intent?.id === area.linearProjectId &&
+              intent.managedBrief &&
+              !intent.managedBrief.applied
+            )
+          )
+            continue;
           if (!intent) {
             intent = { id: randomUUID(), created: false };
             state.areas[area.key] = intent;
             atomic(statePath(project), state);
           }
+          const mandateFile = safe(join(config.dir, area.key, "mandate.md"));
+          const mandateStat = existsSync(mandateFile)
+            ? lstatSync(mandateFile)
+            : null;
+          const mandate =
+            area.mandate ??
+            (mandateStat?.isFile() && mandateStat.size <= 64 * 1024
+              ? readFileSync(mandateFile, "utf8")
+              : "");
+          const brief = buildLinearProjectContent(config, area, mandate);
           let remote = await client.getProject(intent.id);
           if (!remote) {
             if (intent.created)
@@ -819,23 +863,35 @@ export function createLinearProvisioning(options: {
                 "A provisioned PM project is unavailable. Restore access before retrying.",
                 409,
               );
-            const mandateFile = safe(join(config.dir, area.key, "mandate.md"));
-            const content =
-              area.mandate ??
-              (existsSync(mandateFile) &&
-              lstatSync(mandateFile).size <= 64 * 1024
-                ? readFileSync(mandateFile, "utf8").slice(0, 12000)
-                : `PM mandate for ${project}: ${area.name}. Review the local mandate before enabling this PM.`);
+            // Persist ownership before the remote mutation so a lost response can
+            // reconcile this exact ID. Historical/reused projects lack this proof.
+            intent.managedBrief = { version: 1, applied: false };
+            atomic(statePath(project), state);
             await client.createProject({
               id: intent.id,
               teamId: team.id,
               name: area.name,
-              description: `ShipGremlins ${project} / ${area.key}`,
-              content,
+              ...brief,
             });
             remote = await client.getProject(intent.id);
           }
           if (!remote || !remote.teamIds.includes(team.id)) throw new Error();
+          if (intent.managedBrief && !intent.managedBrief.applied) {
+            // Only fill absent metadata during recovery. A human may have edited
+            // the new project while the first response was lost; keep those edits.
+            const missing: Partial<typeof brief> = {};
+            for (const field of [
+              "description",
+              "content",
+              "icon",
+              "color",
+            ] as const) {
+              if (!remote[field]?.trim()) missing[field] = brief[field];
+            }
+            if (Object.keys(missing).length)
+              await client.updateProject(intent.id, missing);
+            intent.managedBrief.applied = true;
+          }
           intent.created = true;
           atomic(statePath(project), state);
           edit(project, "areas.json", (value) => {

@@ -69,8 +69,18 @@ function fixture() {
         name: input.name,
         teamIds: [input.teamId],
         url: "https://linear.app/test/project/" + input.id,
+        description: input.description,
+        content: input.content,
+        icon: input.icon,
+        color: input.color,
       };
       projects.set(input.id, project);
+      return project;
+    }),
+    updateProject: vi.fn(async (id, input) => {
+      const project = projects.get(id);
+      if (!project) throw new Error("unknown project");
+      Object.assign(project, input);
       return project;
     }),
   };
@@ -160,6 +170,9 @@ describe("Linear app and mandate provisioning", () => {
       team: { id: picked.team.id, reuse: true, custom: true },
       areas: { core: { id: picked.project.id, created: true, custom: true } },
     });
+    expect(
+      JSON.parse(readFileSync(stateFile, "utf8")).areas.core,
+    ).not.toHaveProperty("managedBrief");
     await f.create().provision("demo");
     expect(f.client.createTeam).toHaveBeenCalledTimes(beforeCreateTeams);
     expect(f.client.createProject).toHaveBeenCalledTimes(beforeCreateProjects);
@@ -541,6 +554,156 @@ describe("Linear app and mandate provisioning", () => {
     await f.create().provision("demo");
     expect(f.client.createTeam).toHaveBeenCalledTimes(1);
     expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(f.client.updateProject).not.toHaveBeenCalled();
+  });
+  it("creates a branded brief from the actual saved PM mandate and settings", async () => {
+    const f = fixture();
+    const file = join(f.root, "projects/demo/areas.json");
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    raw.areas.core = {
+      ...raw.areas.core,
+      name: "Account guardian",
+      mandate:
+        "Check **RBAC boundaries** with two isolated test accounts.\n\nReproduce cross-team access failures.",
+      paths: ["src/accounts/", "api/roles.ts"],
+      sharedTouchpoints: ["middleware.ts"],
+      metric: "account_saved",
+      schedule: "15 10 * * 1-5",
+      wipLimit: 2,
+    };
+    writeFileSync(file, JSON.stringify(raw));
+    writeFileSync(
+      join(f.root, ".env"),
+      "GITHUB_TOKEN=never-copy-source-token\nLINEAR_API_KEY=never-copy-linear-token\n",
+    );
+    await f.create().provision("demo");
+    const input = vi.mocked(f.client.createProject).mock.calls[0]![0];
+    expect(input).toMatchObject({
+      name: "Account guardian",
+      icon: "👾",
+      color: "#c3f66b",
+    });
+    expect(input.description.length).toBeLessThanOrEqual(255);
+    for (const expected of [
+      raw.areas.core.mandate,
+      "https://github.com/org/app",
+      "src/accounts/",
+      "middleware.ts",
+      "account_saved",
+      "15 10 * * 1-5",
+      "UTC",
+      "2 approved tickets",
+      "pm:core",
+      "pm-proposal",
+      "pm-approved",
+      "pm-needs-human",
+      "draft PR/MR",
+      "merged into production",
+      "Run once",
+      "repository code",
+    ])
+      expect(input.content).toContain(expected);
+    expect(input.content).not.toContain("never-copy");
+    expect(input.content).not.toContain("VERCEL_TOKEN");
+    expect(f.client.updateProject).not.toHaveBeenCalled();
+    expect(loadProject(f.root, "demo").areas[0]!.enabled).toBe(false);
+  });
+  it("uses versioned mandates and the actual GitLab repository for the initial brief", async () => {
+    const f = fixture();
+    const file = join(f.root, "projects/demo/project.json");
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    raw.provider = "gitlab";
+    raw.serverUrl = "https://gitlab.example.com";
+    raw.repo = "group/subgroup/app";
+    raw.verification = { mode: "browser", environment: "preview" };
+    raw.environments = {
+      preview: {
+        kind: "url",
+        role: "preview",
+        url: "https://preview.example.com",
+      },
+    };
+    writeFileSync(file, JSON.stringify(raw));
+    const mandate =
+      "# Catalog patrol\n\nValidate real screenshots of the item editor.";
+    writeFileSync(join(f.root, "projects/demo/core/mandate.md"), mandate);
+    await f.create().provision("demo");
+    const input = vi.mocked(f.client.createProject).mock.calls[0]![0];
+    expect(input.content).toContain(mandate);
+    expect(input.content).toContain(
+      "https://gitlab.example.com/group/subgroup/app",
+    );
+    expect(input.content).toContain("capture actual screenshots");
+    expect(input.content).toContain("deployed baseline is not proof");
+  });
+  it("resumes missing managed metadata after lost responses without replacing human edits", async () => {
+    const f = fixture();
+    const original = f.client.createProject;
+    f.client.createProject = vi.fn(async (input) => {
+      const created = await original(input);
+      const remote = f.projects.get(created.id)!;
+      remote.description = "Human notes added while setup was interrupted";
+      remote.content = null;
+      remote.icon = null;
+      throw new Error("lost response with private upstream data");
+    });
+    const areasFile = join(f.root, "projects/demo/areas.json");
+    const before = readFileSync(areasFile, "utf8");
+    await expect(f.create().provision("demo")).rejects.toThrow(
+      "Saved resource IDs",
+    );
+    expect(readFileSync(areasFile, "utf8")).toBe(before);
+    vi.mocked(f.client.updateProject).mockRejectedValueOnce(
+      new Error("private token upstream failure"),
+    );
+    await expect(f.create().provision("demo")).rejects.toThrow(
+      "Saved resource IDs",
+    );
+    expect(readFileSync(areasFile, "utf8")).toBe(before);
+    expect(f.create().status("demo").status).toBe("error");
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(f.root, ".run/linear/provisioning/demo.json"),
+          "utf8",
+        ),
+      ).areas.core.managedBrief.applied,
+    ).toBe(false);
+    await f.create().provision("demo");
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    const patch = vi.mocked(f.client.updateProject).mock.calls[1]![1];
+    expect(patch).toMatchObject({
+      icon: "👾",
+      content: expect.stringContaining("ShipGremlins"),
+    });
+    expect(patch).not.toHaveProperty("description");
+    expect(patch).not.toHaveProperty("color");
+    const remote = [...f.projects.values()][0]!;
+    expect(remote.description).toBe(
+      "Human notes added while setup was interrupted",
+    );
+    remote.content = "A human-maintained project document";
+    await f.create().provision("demo");
+    expect(remote.content).toBe("A human-maintained project document");
+    expect(f.client.updateProject).toHaveBeenCalledTimes(2);
+  });
+  it("does not retrofit a recovered legacy project without proof of managed metadata", async () => {
+    const f = fixture();
+    const create = f.client.createProject;
+    f.client.createProject = vi.fn(async (input) => {
+      await create(input);
+      throw new Error("lost");
+    });
+    await expect(f.create().provision("demo")).rejects.toThrow();
+    const stateFile = join(f.root, ".run/linear/provisioning/demo.json");
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    delete state.areas.core.managedBrief;
+    writeFileSync(stateFile, JSON.stringify(state));
+    const remote = [...f.projects.values()][0]!;
+    remote.content = "";
+    await f.create().provision("demo");
+    expect(f.client.updateProject).not.toHaveBeenCalled();
+    expect(remote.content).toBe("");
   });
   it("recovers remote team creation after lost response using the journaled UUID", async () => {
     const f = fixture();
@@ -590,6 +753,7 @@ describe("Linear app and mandate provisioning", () => {
     await f.create().provision("demo", { teamId: team.id });
     expect(f.client.createTeam).not.toHaveBeenCalled();
     expect(f.client.createProject).not.toHaveBeenCalled();
+    expect(f.client.updateProject).not.toHaveBeenCalled();
     expect(loadProject(f.root, "demo").areas[0]!.linearProjectId).toBe(
       project.id,
     );

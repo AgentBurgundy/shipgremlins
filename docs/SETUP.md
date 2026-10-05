@@ -46,6 +46,14 @@ Connect an optional [Slack channel](SLACK.md) once for PM patrol results, coding
 
 The local runtime prepares a PostgreSQL activity store before launching work. This adds a local Docker service and persistent volume; it is managed on the CLI/dashboard server. Visible tool activity, result summaries, checks, redacted logs, and bounded artifacts appear in the dashboard. Private model reasoning is not stored or displayed. Activity storage failures are separate from the recorded outcome of an already-running job; Docker output remains available.
 
+Open **Activity → View activity** to follow a run. Live output and saved history
+load independently, so a slow history service does not hide available worker
+events. Refreshes preserve the displayed timeline and your reading position.
+Artifacts become available after the job finishes and their contents are
+sanitized. **Close** or leaving Activity stops detail polling without stopping
+the job. A successful PM run means its investigation finished; check its summary
+for which tests actually ran.
+
 ## Run once and automation are separate
 
 A PM is a saved product mandate. A worker is the Docker capacity that executes

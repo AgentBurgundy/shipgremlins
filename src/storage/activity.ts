@@ -142,6 +142,47 @@ function safeLog(line: string): string | null {
   return line;
 }
 
+/** The live endpoint uses the same privacy boundary as persisted history. */
+export function publicActivityLogs(
+  logs: string | string[],
+  secrets: string[] = [],
+): string[] {
+  const lines = (typeof logs === "string" ? logs.split(/\r?\n/) : logs)
+    .slice(-10000)
+    .map(stripVTControlCharacters)
+    .map(safeLog)
+    .filter((line): line is string => line !== null)
+    .map((line) => redactHistory(line, secrets).slice(0, 16000));
+  let length = 0;
+  const limited: string[] = [];
+  for (const line of lines.reverse()) {
+    length += Buffer.byteLength(line) + 1;
+    if (length > MAX_LOG) break;
+    limited.unshift(line);
+  }
+  return limited;
+}
+
+/** Summaries and checks must reflect live events as well as saved ones. */
+export function summarizeActivity(events: ActivityEvent[]): RunActivity {
+  const summary = events
+    .filter((item) => item.type === "summary")
+    .at(-1)?.detail;
+  const checks = new Map<string, RunActivity["checks"][number]>();
+  for (const item of events)
+    if (item.type === "check")
+      checks.set(item.title, {
+        name: item.title,
+        status: item.status ?? "running",
+        ...(item.detail ? { detail: item.detail } : {}),
+      });
+  return {
+    events,
+    ...(summary ? { summary } : {}),
+    checks: [...checks.values()],
+  };
+}
+
 export function redactHistory(value: string, secrets: string[] = []): string {
   let text = stripVTControlCharacters(value);
   for (const secret of secrets
@@ -345,31 +386,25 @@ export function createActivityStore(options: {
     },
     async appendEvents(id, events) {
       checkId(id);
+      const secrets = knownSecrets();
+      const unique = new Map<string, ActivityEvent>();
       for (const value of events.slice(-2000)) {
         const parsed = event(value);
         if (!parsed) continue;
-        const safe = event(JSON.parse(clean(JSON.stringify(parsed))));
-        if (safe)
-          await query(
-            "INSERT INTO gremlins_events(run_id,id,at,event) SELECT $1,$2,$3,$4::jsonb WHERE EXISTS(SELECT 1 FROM gremlins_runs WHERE id=$1) ON CONFLICT(run_id,id) DO UPDATE SET event=EXCLUDED.event",
-            [id, safe.id, safe.timestamp, JSON.stringify(safe)],
-          );
+        const safe = event(
+          JSON.parse(redactHistory(JSON.stringify(parsed), secrets)),
+        );
+        if (safe) unique.set(safe.id, safe);
       }
+      if (unique.size)
+        await query(
+          "INSERT INTO gremlins_events(run_id,id,at,event) SELECT $1,item->>'id',(item->>'timestamp')::timestamptz,item FROM jsonb_array_elements($2::jsonb) AS item WHERE EXISTS(SELECT 1 FROM gremlins_runs WHERE id=$1) ON CONFLICT(run_id,id) DO UPDATE SET event=EXCLUDED.event",
+          [id, JSON.stringify([...unique.values()])],
+        );
     },
     async saveLogs(id, logs) {
       checkId(id);
-      const lines = logs
-        .slice(-10000)
-        .map(safeLog)
-        .filter((line): line is string => line !== null)
-        .map((line) => clean(line).slice(0, 16000));
-      let length = 0;
-      const limited: string[] = [];
-      for (const line of lines.reverse()) {
-        length += Buffer.byteLength(line) + 1;
-        if (length > MAX_LOG) break;
-        limited.unshift(line);
-      }
+      const limited = publicActivityLogs(logs, knownSecrets());
       await query(
         "UPDATE gremlins_runs SET logs=$2::jsonb,updated_at=now() WHERE id=$1",
         [id, JSON.stringify(limited)],
@@ -377,6 +412,7 @@ export function createActivityStore(options: {
     },
     async saveArtifacts(id, files) {
       checkId(id);
+      const secrets = knownSecrets();
       let total = 0;
       for (const file of files.slice(0, 100)) {
         if (
@@ -400,7 +436,7 @@ export function createActivityStore(options: {
               .split(/\r?\n/)
               .map(safeLog)
               .filter((line): line is string => line !== null)
-              .map(clean)
+              .map((line) => redactHistory(line, secrets))
               .join("\n");
             bytes = Buffer.from(safe);
           } else if (!file.name.endsWith(".png")) continue;
@@ -464,23 +500,7 @@ export function createActivityStore(options: {
       return result.rows.map((row) => row.event as ActivityEvent);
     },
     async activity(id) {
-      const events = await api.events(id);
-      const summary = events
-        .filter((item) => item.type === "summary")
-        .at(-1)?.detail;
-      const checks = new Map<string, RunActivity["checks"][number]>();
-      for (const item of events)
-        if (item.type === "check")
-          checks.set(item.title, {
-            name: item.title,
-            status: item.status ?? "running",
-            ...(item.detail ? { detail: item.detail } : {}),
-          });
-      return {
-        events,
-        ...(summary ? { summary } : {}),
-        checks: [...checks.values()],
-      };
+      return summarizeActivity(await api.events(id));
     },
     async logs(id) {
       checkId(id);

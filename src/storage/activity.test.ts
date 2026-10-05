@@ -9,6 +9,8 @@ import {
   createActivityStore,
   migrateHistory,
   parseActivityLogs,
+  publicActivityLogs,
+  summarizeActivity,
   redactHistory,
   type HistoryPool,
 } from "./activity.ts";
@@ -56,7 +58,8 @@ function memoryPool() {
       });
     }
     if (text.startsWith("INSERT INTO gremlins_events"))
-      events.set(id + ":" + values[1], JSON.parse(String(values[3])));
+      for (const event of JSON.parse(String(values[1])))
+        events.set(id + ":" + event.id, event);
     if (text.startsWith("UPDATE gremlins_runs")) {
       const run = runs.get(id);
       if (run) run.logs = JSON.parse(String(values[1]));
@@ -125,6 +128,71 @@ function setup() {
 }
 
 describe("durable safe run activity", () => {
+  it("writes a live event snapshot in one bounded query rather than one query per event", async () => {
+    const { store, fake } = setup();
+    await store.ensure();
+    await store.recordRun(job);
+    const events = Array.from({ length: 500 }, (_, index) => ({
+      id: `event-${index}`,
+      type: "progress" as const,
+      timestamp: job.createdAt,
+      title: "Agent update",
+      detail: "private-value",
+    }));
+    await store.appendEvents(job.id, [...events, events[0]!]);
+    expect(
+      fake.calls.filter((call) =>
+        call.text.startsWith("INSERT INTO gremlins_events"),
+      ),
+    ).toHaveLength(1);
+    expect(fake.events.size).toBe(500);
+    expect(JSON.stringify([...fake.events.values()])).not.toContain(
+      "private-value",
+    );
+    await store.close();
+  });
+
+  it("filters private model envelopes from live output and derives checks from newest live events", () => {
+    const logs = publicActivityLogs(
+      [
+        '\u001b[31m{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"private-reasoning"}]}}',
+        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hidden"}}}',
+        "public output private-value",
+      ],
+      ["private-value"],
+    );
+    expect(logs).toEqual(["public output [REDACTED]"]);
+    expect(
+      summarizeActivity([
+        {
+          id: "1",
+          type: "check",
+          title: "test",
+          timestamp: job.createdAt,
+          status: "running",
+        },
+        {
+          id: "2",
+          type: "check",
+          title: "test",
+          timestamp: job.createdAt,
+          status: "failed",
+          detail: "Failed check",
+        },
+        {
+          id: "3",
+          type: "summary",
+          title: "Summary",
+          timestamp: job.createdAt,
+          detail: "Tests did not pass",
+        },
+      ]),
+    ).toMatchObject({
+      summary: "Tests did not pass",
+      checks: [{ name: "test", status: "failed", detail: "Failed check" }],
+    });
+  });
+
   it("invalidates stale pools, rediscovers a changed managed port, and keeps status nonblocking", async () => {
     const directory = root();
     const id = createHash("sha256")

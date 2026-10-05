@@ -116,8 +116,15 @@ import {
 import {
   createActivityStore,
   parseActivityLogs,
+  publicActivityLogs,
+  summarizeActivity,
   type ActivityStore,
+  type ActivityEvent,
 } from "../storage/activity.ts";
+import {
+  createDashboardOutputReader,
+  dashboardOutputDeadline,
+} from "./dashboardOutput.ts";
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -388,6 +395,22 @@ export function createDashboardServer(
     options.pmPlanner ?? createPmPlanner({ root, packageRoot, sourceControl });
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
+  const outputRead = createDashboardOutputReader();
+  const cleanOutput = (lines: string[]) => {
+    let secrets: string[] = [];
+    try {
+      secrets = Object.values(readConnections(root));
+    } catch {
+      // Workers already redact their injected credentials before writing logs.
+    }
+    return publicActivityLogs(lines, secrets);
+  };
+  const liveLogs = (id: string) =>
+    outputRead(
+      `logs:${id}`,
+      async () => cleanOutput(await runners().logs(id)),
+      1500,
+    );
   let manager: LocalRunners | undefined = options.runners;
   const runners = () =>
     (manager ??= createLocalRunners({
@@ -928,19 +951,22 @@ export function createDashboardServer(
               (before !== null && !/^\d{1,16}$/.test(before))
             )
               throw new RequestError(400, "Invalid history pagination.");
-            let historyAvailable = true;
-            const history = await activityStore
-              .listRuns({
-                limit,
-                ...(before ? { beforeRunId: Number(before) } : {}),
-              })
-              .catch(() => {
-                historyAvailable = false;
-                return [];
-              });
+            const historyRead = outputRead(
+              `runs:${limit}:${before ?? ""}`,
+              () =>
+                activityStore.listRuns({
+                  limit,
+                  ...(before ? { beforeRunId: Number(before) } : {}),
+                }),
+              150,
+            );
             const live = (await runners().jobs()).filter(
               (job) => !before || job.runId < Number(before),
             );
+            const saved = await historyRead;
+            const history = saved.value ?? [];
+            const historyAvailable =
+              saved.available && !saved.failed && !saved.pending;
             const all = new Map(
               [...history, ...live].map((job) => [job.id, job]),
             );
@@ -1042,35 +1068,116 @@ export function createDashboardServer(
           if (req.method !== "GET")
             throw new RequestError(405, "Use GET for job output.");
           const id = jobOutput[1]!;
-          if (jobOutput[2] === "activity" && !jobOutput[3]) {
-            if (!(await runners().job(id)))
-              throw new RequestError(404, "Unknown gremlin run.");
-            const persisted = await activityStore
-              .activity(id)
-              .catch(() => ({ events: [], checks: [] }));
-            const live = parseActivityLogs(
-              await runners()
-                .logs(id)
-                .catch(() => []),
+          const found = await outputRead(
+            `job:${id}`,
+            () => runners().job(id),
+            1500,
+          );
+          if (!found.available)
+            throw new RequestError(
+              503,
+              "Run details are temporarily unavailable. Retry shortly; the job continues.",
             );
+          const job = found.value;
+          if (!job) throw new RequestError(404, "Unknown gremlin run.");
+          if (jobOutput[2] === "activity" && !jobOutput[3]) {
+            // Start independent sources together. A recovering PostgreSQL must
+            // not delay Docker output that is already available.
+            const historyRead = outputRead(
+              `activity:${id}`,
+              () => activityStore.activity(id),
+              150,
+            );
+            const current = await liveLogs(id);
+            const persisted = await historyRead;
+            const live = parseActivityLogs(current.value ?? []);
+            const lifecycle: ActivityEvent = {
+              id: `lifecycle:${job.status}`,
+              type: ["succeeded", "failed", "canceled"].includes(job.status)
+                ? "result"
+                : "progress",
+              timestamp: job.finishedAt ?? job.startedAt ?? job.createdAt,
+              title: `Run ${job.status}`,
+              detail: cleanOutput([
+                job.message ||
+                  (job.status === "queued"
+                    ? "Waiting for an available verified worker."
+                    : job.status === "running"
+                      ? "Preparing or running this job. Public tool calls and updates appear as they are received."
+                      : "This run has finished."),
+              ]).join("\n"),
+              ...(job.status === "canceled"
+                ? {}
+                : {
+                    status:
+                      job.status === "failed"
+                        ? "failed"
+                        : job.status === "succeeded"
+                          ? "succeeded"
+                          : "running",
+                  }),
+            };
             const events = [
               ...new Map(
-                [...persisted.events, ...live].map((event) => [
-                  event.id,
-                  event,
-                ]),
+                [...(persisted.value?.events ?? []), lifecycle, ...live].map(
+                  (event) => [event.id, event],
+                ),
               ).values(),
             ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-            json(res, 200, { ...persisted, events });
-          } else if (jobOutput[2] === "logs" && !jobOutput[3])
-            json(res, 200, { lines: await runners().logs(id) });
-          else if (!jobOutput[3]) {
-            const files = await runners().artifacts(id);
+            const partial =
+              current.pending ||
+              current.failed ||
+              persisted.pending ||
+              persisted.failed;
+            json(res, 200, {
+              ...summarizeActivity(events),
+              ...(partial
+                ? {
+                    partial: true,
+                    message:
+                      "Showing available activity. Some output is still loading; this does not stop the job.",
+                  }
+                : {}),
+            });
+          } else if (jobOutput[2] === "logs" && !jobOutput[3]) {
+            const current = await liveLogs(id);
+            if (!current.available)
+              throw new RequestError(
+                503,
+                "Job output is temporarily unavailable. Retry shortly; activity and the job continue independently.",
+              );
+            json(res, 200, {
+              lines: current.value,
+              ...(current.pending || current.failed
+                ? {
+                    partial: true,
+                    message:
+                      "Showing the last available output while the next read completes.",
+                  }
+                : {}),
+            });
+          } else if (!jobOutput[3]) {
+            if (job.status === "queued" || job.status === "running") {
+              json(res, 200, { files: [], pending: true });
+              return;
+            }
+            const current = await outputRead(
+              `artifacts:${id}`,
+              () => runners().artifacts(id),
+              1500,
+            );
+            if (!current.available)
+              throw new RequestError(
+                503,
+                "Artifacts are still loading. Retry shortly; logs and activity are available independently.",
+              );
+            const files = current.value ?? [];
             json(res, 200, {
               files: files.map((file) => ({
                 ...file,
                 url: `/api/jobs/${id}/artifacts/${encodeURIComponent(file.name)}`,
               })),
+              ...(current.pending || current.failed ? { partial: true } : {}),
             });
           } else if (jobOutput[2] === "artifacts") {
             let name: string;
@@ -1081,7 +1188,18 @@ export function createDashboardServer(
             }
             if (!/\.(png|webp|jpg|jpeg|json|txt|md|log|csv)$/i.test(name))
               throw new RequestError(400, "Unsupported artifact type.");
-            const content = await runners().readArtifact(id, name);
+            let content: Buffer;
+            try {
+              content = await dashboardOutputDeadline(
+                () => runners().readArtifact(id, name),
+                5000,
+              );
+            } catch {
+              throw new RequestError(
+                503,
+                "This artifact is temporarily unavailable. Retry the download shortly; logs and activity remain independent.",
+              );
+            }
             res.writeHead(200, {
               "Content-Type":
                 TYPES[extname(name)] ?? "text/plain; charset=utf-8",

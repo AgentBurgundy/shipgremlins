@@ -13,14 +13,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 import {
   notificationResult,
   sendJobNotification,
   type JobNotificationEvent,
   type NotificationResult,
 } from "../slack/messages.ts";
-import type { ActivityStore } from "../storage/activity.ts";
+import { publicActivityLogs, type ActivityStore } from "../storage/activity.ts";
 import { validConnectionId } from "../oauthConnection/profileId.ts";
 import {
   createDockerRunners,
@@ -1381,12 +1380,15 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         logs = stored.join("\n");
       }
       return [
-        ...stripVTControlCharacters(logs).split(/\r?\n/).slice(-1000),
+        ...publicActivityLogs(logs).slice(-1000),
         ...notificationLogs(job),
       ];
     },
     async artifacts(id) {
-      await requireJob(id);
+      const job = await requireJob(id);
+      // Output is still being written and has not passed final sanitization.
+      // Do not ask Docker or a recovering database for unfinished artifacts.
+      if (job.status === "queued" || job.status === "running") return [];
       try {
         return (await docker.artifacts(id)).files;
       } catch {

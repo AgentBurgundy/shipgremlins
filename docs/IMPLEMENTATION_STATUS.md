@@ -70,6 +70,12 @@ production model output remains dependent on the connected Claude account.
 | Slack            | Branded PM and developer lifecycle notifications, instance-wide incoming webhook/OAuth connection and per-project override. Attempts are durably claimed before sending; no repeat after restart, no guaranteed delivery. See [Slack setup and limits](SLACK.md). |
 | Website          | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                                                                           |
 
+Version 0.9.2 separates live activity, logs, and artifact loading, keeps unchanged
+timeline entries in place, and bounds slow dashboard reads. Newly created PM
+projects in Linear receive gremlin branding and a mandate-based operating brief;
+explicitly reused projects retain their existing content. Retry recovery fills
+missing metadata only for projects with a saved controller creation record.
+
 ## What still needs implementation
 
 The trusted verifier must be provisioned separately. The tools verify signed

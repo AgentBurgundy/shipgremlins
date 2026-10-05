@@ -330,6 +330,12 @@ describe("local Docker job runtime", () => {
     expect(await test.api.logs(id)).toBe("[REDACTED] [REDACTED] [REDACTED]");
   });
 
+  it("reports a missing container so the controller can use retained history", async () => {
+    const test = fake();
+    await expect(test.api.logs(id)).rejects.toThrow("retained run history");
+    expect(test.calls.some((call) => call.args[0] === "logs")).toBe(false);
+  });
+
   it("reads bounded artifacts through a read-only networkless helper after completion", async () => {
     const test = fake();
     await test.api.startJob({ id, workerId, payload: verify });

@@ -517,6 +517,9 @@ describe("durable local worker engine", () => {
       project: "my-app",
       area: "core",
     });
+    await f.engine.tick();
+    f.finish(job.id);
+    await f.engine.tick();
     const store = {
       logs: vi.fn(async () => ["Retained activity"]),
       artifacts: vi.fn(async () => [
@@ -533,6 +536,28 @@ describe("durable local worker engine", () => {
       { name: "screenshot.png", size: PNG.length },
     ]);
     expect(await engine.readArtifact(job.id, "screenshot.png")).toEqual(PNG);
+  });
+
+  it("keeps running-job logs public and skips artifact storage until output is finalized", async () => {
+    const f = fixture();
+    const job = await f.engine.enqueue({
+      type: "pm",
+      project: "my-app",
+      area: "core",
+    });
+    const artifacts = vi.fn(async () => {
+      throw new Error("Storage must not be read for a running job");
+    });
+    const engine = createLocalRunners({
+      ...f.options,
+      activityStore: { artifacts } as unknown as ActivityStore,
+    });
+    f.mock.logs.mockResolvedValue(
+      '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hidden reasoning"}]}}\nPublic action\n',
+    );
+    expect(await engine.logs(job.id)).toEqual(["Public action", ""]);
+    expect(await engine.artifacts(job.id)).toEqual([]);
+    expect(artifacts).not.toHaveBeenCalled();
   });
 
   it("creates one capacity slot and only marks it ready after a real matching PNG proof", async () => {
