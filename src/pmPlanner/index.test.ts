@@ -519,7 +519,9 @@ describe("isolated Docker planner", () => {
   });
   it("removes a canceled owned container but never removes a mismatched label", async () => {
     const canceled = dockerFixture(true);
-    await expect(canceled.execute(execution())).rejects.toThrow("canceled");
+    await expect(canceled.execute(execution())).rejects.toMatchObject({
+      code: "runtime_unavailable",
+    });
     expect(canceled.run.mock.calls.at(-1)![0][0]).toBe("rm");
     const other = dockerFixture(false, true);
     await other.execute(execution());

@@ -8,7 +8,10 @@ import {
   readConnections,
 } from "../setup/connections.ts";
 import { readEditableConfig } from "../setup/configEditor.ts";
-import { createDockerPlanner } from "../pmPlanner/docker.ts";
+import {
+  createDockerPlanner,
+  PlannerExecutionError,
+} from "../pmPlanner/docker.ts";
 import {
   inspectionBranch,
   parseProjectCapabilities,
@@ -135,6 +138,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
           ? "Connect Claude Code in Connections to ask the Setup Gremlin to analyze this repository, or choose an existing test URL below without AI."
           : state.message,
       updatedAt: state.updatedAt,
+      ...(state.failure ? { failure: state.failure } : {}),
       stale: state.configurationRevision !== configurationRevision,
       ...(state.report ? { report: state.report } : {}),
       ...(state.setupPull ? { setupPull: state.setupPull } : {}),
@@ -193,6 +197,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
           409,
         );
       next.status = publishing ? "publishing" : "analyzing";
+      delete next.failure;
       next.stage = publishing ? "publishing-draft" : "reading-repository";
       next.message = publishing
         ? "Checking the reviewed setup files and preparing a draft pull request."
@@ -392,7 +397,8 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
       })
       .catch(async (error) => {
         const message =
-          error instanceof ProjectOnboardingError
+          error instanceof ProjectOnboardingError ||
+          error instanceof PlannerExecutionError
             ? error.message
             : signal.aborted
               ? "Setup timed out or was canceled. Retry explicitly; existing output was preserved."
@@ -400,6 +406,8 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
                 ? "Setup publication could not finish. Retry to reconcile the existing draft branch; no branch will be overwritten."
                 : "Setup analysis could not finish. Check source access, Claude Code and Docker, then retry. No project configuration was changed.";
         await update(project, id, (next) => {
+          if (error instanceof PlannerExecutionError)
+            next.failure = { code: error.code, stage: next.stage };
           next.status = "failed";
           next.stage = "failed";
           next.message = message;

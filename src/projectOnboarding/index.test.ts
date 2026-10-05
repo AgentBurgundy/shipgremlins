@@ -25,6 +25,7 @@ import {
 } from "./repository.ts";
 import { publishSetupDraft } from "./publish.ts";
 import { createOnboardingStore } from "./store.ts";
+import { PlannerExecutionError } from "../pmPlanner/docker.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const SHA = "a".repeat(40),
@@ -161,6 +162,42 @@ function fixture(extra: Partial<ProjectOnboardingOptions> = {}) {
 }
 
 describe("project Setup Gremlin", () => {
+  it("retains a previous report and fixed model failure category across restart, then clears failure on successful retry", async () => {
+    const sourceControl = {
+      resolveCredential: vi.fn(),
+      acquireLease: vi.fn(async (_input: { jobId: string }) => ({
+        token: TOKEN,
+        method: "oauth" as const,
+      })),
+      releaseLease: vi.fn(async (_id: string) => {}),
+    };
+    const f = fixture({ sourceControl });
+    await f.service.discover("app");
+    await f.service.idle();
+    const previous = (await f.service.status("app")).report;
+    f.execute.mockRejectedValueOnce(new PlannerExecutionError("context_limit"));
+    await f.service.discover("app");
+    await f.service.idle();
+    const restarted = createProjectOnboarding(f.options);
+    const failed = await restarted.status("app");
+    expect(failed).toMatchObject({
+      status: "failed",
+      stage: "failed",
+      failure: { code: "context_limit", stage: "analyzing-files" },
+      report: previous,
+    });
+    expect(failed.message).toContain("context");
+    expect(failed.message).not.toContain("Check source access");
+    for (const secret of [TOKEN, CLAUDE])
+      expect(JSON.stringify(failed)).not.toContain(secret);
+    expect(sourceControl.releaseLease.mock.calls.map(([id]) => id)).toEqual(
+      sourceControl.acquireLease.mock.calls.map(([request]) => request.jobId),
+    );
+    await restarted.discover("app");
+    await restarted.idle();
+    expect(await restarted.status("app")).toMatchObject({ status: "analyzed" });
+    expect(await restarted.status("app")).not.toHaveProperty("failure");
+  });
   it("analyzes actual pinned source files without PMs, Linear, a verified worker, or application execution", async () => {
     writeFileSync(join(root, "projects/app/areas.json"), '{"areas":{}}\n');
     const f = fixture();

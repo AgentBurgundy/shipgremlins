@@ -142,6 +142,7 @@
   };
   window.createProjectOnboarding = ({
     api,
+    getStatus = () => null,
     onSaved = async () => {},
     isLocked = () => false,
     onCreatePm,
@@ -155,6 +156,89 @@
     const dirty = (s) =>
       Boolean(s.draft && JSON.stringify(s.draft) !== s.baseline);
     const disabled = (s) => isLocked() || s.busy || ongoing(s.data);
+    function paintConnections(s) {
+      if (!s.connectionLinks) return;
+      const status = getStatus(),
+        credentials = status?.connections || [],
+        provider = s.project.provider || "github",
+        providerName = provider === "gitlab" ? "GitLab" : "GitHub",
+        server =
+          s.project.serverUrl ||
+          (provider === "gitlab" ? "https://gitlab.com" : "https://github.com");
+      const origin = (value) => {
+        try {
+          return new URL(value).origin;
+        } catch {
+          return null;
+        }
+      };
+      const source = status?.sourceConnections?.find(
+        (connection) =>
+          connection.provider === provider &&
+          origin(connection.serverUrl) === origin(server),
+      );
+      const manual = credentials.find(
+        (connection) =>
+          connection.name ===
+          (provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"),
+      );
+      const claude = credentials.find(
+        (connection) => connection.name === "CLAUDE_CODE_OAUTH_TOKEN",
+      );
+      const sourceReady =
+        Boolean(source?.connected && !source.needsReconnect) ||
+        (!source?.needsReconnect &&
+          source?.method !== "oauth" &&
+          Boolean(manual?.configured));
+      const rows = [
+        {
+          ready: sourceReady,
+          missing: !sourceReady && Boolean(source),
+          label:
+            source?.method === "token" ||
+            (!source?.connected && manual?.configured)
+              ? `${providerName} token saved`
+              : `${providerName} connected`,
+          action: source?.needsReconnect
+            ? `Reconnect ${providerName}`
+            : source
+              ? `Connect ${providerName}`
+              : `Manage ${providerName}`,
+          href: "/connections#source-control",
+        },
+        {
+          ready: Boolean(claude?.configured),
+          missing: claude?.configured === false,
+          label: "Claude configured",
+          action:
+            claude?.configured === false ? "Connect Claude" : "Manage Claude",
+          href: "/connections#model-connections",
+        },
+      ];
+      const signature = JSON.stringify(rows);
+      if (s.connectionSignature === signature) return;
+      s.connectionSignature = signature;
+      s.connectionHelp.textContent = rows.every((row) => row.ready)
+        ? "Uses your saved connections and Docker on this server. Already have a test URL? Choose hosted staging below."
+        : rows.some((row) => row.missing)
+          ? "Connect the missing service below to analyze this repository. Docker is also required on this server."
+          : "Analysis uses source access, Claude Code and Docker on this server. Already have a test URL? Choose hosted staging below.";
+      s.connectionLinks.replaceChildren();
+      for (const row of rows) {
+        const item = node(
+          row.ready ? "span" : "a",
+          row.ready ? `✓ ${row.label}` : row.action,
+          row.ready ? "onboarding-connection-ready" : "",
+        );
+        if (!row.ready) item.href = row.href;
+        s.connectionLinks.append(item);
+      }
+      if (rows.some((row) => row.ready)) {
+        const manage = node("a", "Manage connections");
+        manage.href = "/connections";
+        s.connectionLinks.append(manage);
+      }
+    }
     function accessDraft(target, legacy = false, project = "APP", instanceId) {
       const prefix = `APP_${project.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}${instanceId ? `_${instanceId.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}` : ""}`;
       const access = target?.access;
@@ -780,9 +864,11 @@
       const analyze = button(
         s.data?.status === "analyzing"
           ? "Analyzing repository…"
-          : s.data?.report
-            ? "Analyze again"
-            : "Analyze repository",
+          : s.data?.status === "failed"
+            ? "Retry analysis"
+            : s.data?.report
+              ? "Analyze again"
+              : "Analyze repository",
         () => run(s, "discover", { revision: s.data.revision }),
       );
       analyze.disabled = disabled(s) || !s.data;
@@ -794,23 +880,11 @@
         cancel.disabled = isLocked() || s.busy;
         s.analysis.append(cancel);
       }
-      s.analysis.append(
-        node(
-          "p",
-          "Needs source access, a saved Claude connection, and Docker on this server. Already have a test URL? Choose hosted staging below.",
-          "onboarding-help",
-        ),
-      );
-      const links = node("p", undefined, "onboarding-connection-links");
-      for (const [label, href] of [
-        ["Connect source control", "/connections#source-control"],
-        ["Connect Claude", "/connections#model-connections"],
-      ]) {
-        const link = node("a", label);
-        link.href = href;
-        links.append(link);
-      }
-      s.analysis.append(links);
+      s.connectionHelp = node("p", undefined, "onboarding-help");
+      s.connectionLinks = node("p", undefined, "onboarding-connection-links");
+      s.connectionSignature = "";
+      s.analysis.append(s.connectionHelp, s.connectionLinks);
+      paintConnections(s);
       if (
         s.data?.message &&
         (ongoing(s.data) || ["failed", "interrupted"].includes(s.data.status))
@@ -836,7 +910,13 @@
           "onboarding-recommendation",
         );
         recommendation.append(
-          node("span", "SUGGESTED · NOT YET VERIFIED", "eyebrow muted"),
+          node(
+            "span",
+            s.data.status === "failed"
+              ? "PREVIOUS SUGGESTION · LATEST ANALYSIS FAILED"
+              : "SUGGESTED · NOT YET VERIFIED",
+            "eyebrow muted",
+          ),
           node(
             "h4",
             report.recommendation === "docker"
@@ -1146,6 +1226,9 @@
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("pagehide", deactivate);
     return {
+      syncConnections() {
+        if (active) paintConnections(active);
+      },
       mount(container, project) {
         const s = entry(project);
         if (active !== s) deactivate();

@@ -46,6 +46,7 @@ const text = (element: Element): string =>
   element.textContent + element.children.map(text).join("");
 type Draft = Record<string, unknown>;
 type Panel = {
+  syncConnections(): void;
   mount(root: Element, project: object): void;
   refresh(project: string): Promise<void>;
   forget(project: string): void;
@@ -54,6 +55,7 @@ type Panel = {
 };
 function fixture(
   api = vi.fn(async (_path: string, _body?: unknown) => state()),
+  getStatus: () => object | null = () => null,
 ) {
   const document = {
     activeElement: new Element(),
@@ -97,6 +99,7 @@ function fixture(
     created = vi.fn();
   const panel = window.createProjectOnboarding({
     api,
+    getStatus,
     onSaved: saved,
     onCreatePm: created,
   });
@@ -131,6 +134,102 @@ const docker = (): Draft => ({
 });
 
 describe("guided environment target review", () => {
+  it("shows configured services and updates missing connection links without resetting environment edits", async () => {
+    let status = {
+      sourceConnections: [
+        {
+          provider: "github",
+          serverUrl: "https://github.com",
+          connected: true,
+          method: "oauth",
+          needsReconnect: false,
+        },
+      ],
+      connections: [{ name: "CLAUDE_CODE_OAUTH_TOKEN", configured: true }],
+    };
+    const f = fixture(undefined, () => status),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(root)).toContain("✓ GitHub connected");
+    expect(text(root)).toContain("✓ Claude configured");
+    expect(text(root)).toContain("Manage connections");
+    expect(text(root)).not.toContain("Connect Claude");
+    expect(text(root)).not.toContain("Connect GitHub");
+    const form = walk(root).find(
+      (item) => item.className === "onboarding-choice",
+    );
+    const field = walk(form!).find((item) => item.tagName === "INPUT")!;
+    field.value = "https://my-unsaved-preview.example.test";
+    status = {
+      sourceConnections: [
+        {
+          provider: "github",
+          serverUrl: "https://github.com",
+          connected: false,
+          method: "oauth",
+          needsReconnect: true,
+        },
+      ],
+      connections: [{ name: "CLAUDE_CODE_OAUTH_TOKEN", configured: false }],
+    };
+    f.panel.syncConnections();
+    expect(text(root)).toContain("Reconnect GitHub");
+    expect(text(root)).toContain("Connect Claude");
+    expect(text(root)).not.toContain("✓ GitHub connected");
+    expect(field.value).toBe("https://my-unsaved-preview.example.test");
+    expect(walk(root)).toContain(field);
+    f.panel.destroy();
+  });
+  it("does not use a different source provider or GitLab host as proof of this project's connection", async () => {
+    const f = fixture(undefined, () => ({
+        sourceConnections: [
+          {
+            provider: "github",
+            serverUrl: "https://github.com",
+            connected: true,
+            method: "oauth",
+          },
+          {
+            provider: "gitlab",
+            serverUrl: "https://gitlab.com",
+            connected: true,
+            method: "oauth",
+          },
+          {
+            provider: "gitlab",
+            serverUrl: "https://gitlab.example.test",
+            connected: false,
+            method: "none",
+          },
+        ],
+        connections: [{ name: "CLAUDE_CODE_OAUTH_TOKEN", configured: true }],
+      })),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      provider: "gitlab",
+      serverUrl: "https://gitlab.example.test",
+    });
+    await settle();
+    expect(text(root)).toContain("Connect GitLab");
+    expect(text(root)).not.toContain("GitLab connected");
+    expect(text(root)).not.toContain("GitHub connected");
+    expect(text(root)).toContain("✓ Claude configured");
+    f.panel.destroy();
+  });
+  it("keeps unknown connection status neutral instead of claiming a missing connection", async () => {
+    const f = fixture(),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(root)).toContain("Manage GitHub");
+    expect(text(root)).toContain("Manage Claude");
+    expect(text(root)).not.toContain("Connect Claude");
+    expect(text(root)).not.toContain("connected");
+    f.panel.destroy();
+  });
   it("shows source selection reasons, excerpt ranges and unresolved coverage without claiming a whole-repository review", async () => {
     const api = vi.fn(async () => ({
       ...state(),

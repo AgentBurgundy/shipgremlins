@@ -20,6 +20,7 @@ import {
   ProjectOnboardingError,
   type OnboardingReport,
   type SetupPull,
+  type OnboardingState,
 } from "./types.ts";
 
 export interface StoredOnboarding {
@@ -30,6 +31,7 @@ export interface StoredOnboarding {
     "idle" | "analyzing" | "analyzed" | "publishing" | "failed" | "interrupted";
   stage: string;
   message: string;
+  failure?: OnboardingState["failure"];
   updatedAt: string;
   operation?: { id: string; pid: number };
   report?: OnboardingReport;

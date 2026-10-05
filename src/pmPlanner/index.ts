@@ -15,6 +15,7 @@ import {
 } from "../pmCharter.ts";
 import {
   createDockerPlanner,
+  PlannerExecutionError,
   type PlannerExecutor,
   type PlannerDockerRun,
 } from "./docker.ts";
@@ -617,6 +618,12 @@ export function createPmPlanner(options: PmPlannerOptions) {
       } catch (error) {
         if (signal.aborted) abortError(signal);
         if (error instanceof PmPlannerError) throw error;
+        if (error instanceof PlannerExecutionError)
+          throw new PmPlannerError(
+            error.message,
+            error.code,
+            error.code === "timeout" ? 408 : 503,
+          );
         throw new PmPlannerError(
           "AI planning could not finish. Check Docker, Claude Code, and source connections, then retry. Nothing was saved.",
           "planner_unavailable",

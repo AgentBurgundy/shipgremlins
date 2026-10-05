@@ -6,6 +6,8 @@ You can also skip analysis and configure an environment yourself. Existing proje
 
 Source selection follows manifests, executable entrypoints, relative imports, web assets and relevant test fixtures rather than taking the first files alphabetically. It can inspect up to 80 files and provide up to 512 KiB of selected source to Claude. Large files are explicitly marked as excerpts with line ranges. Expand **Reviewed files** to see why each file was selected, listing limits and unread references. This remains a bounded investigation, not a complete repository audit or an agent freely browsing every file. Earlier saved reports retain their earlier coverage; choose **Analyze again** to use the improved investigation.
 
+The analysis card shows saved connection status for this project's source provider and Claude. **Connect** appears for missing services, **Reconnect** for a source account that needs authorization again, and **Manage connections** for configured services. Analysis failures distinguish model limits, credential rejection, incomplete reports and runtime problems without displaying private model output. Use **Retry analysis** after addressing the reported cause; an older retained suggestion is labeled separately from the failed attempt.
+
 ## Two ways to test a web app
 
 |             | Deployed staging                                                      | Disposable Docker app                                                                 |

@@ -1,4 +1,7 @@
-import type { PlannerExecutor } from "../pmPlanner/docker.ts";
+import type {
+  PlannerExecutor,
+  PlannerFailureCode,
+} from "../pmPlanner/docker.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 import type { EnvironmentTarget } from "../projectCapabilities.ts";
 
@@ -92,6 +95,7 @@ export interface OnboardingState {
     "idle" | "analyzing" | "analyzed" | "publishing" | "failed" | "interrupted";
   stage: string;
   message: string;
+  failure?: { code: PlannerFailureCode; stage: string };
   updatedAt?: string;
   stale: boolean;
   report?: OnboardingReport;

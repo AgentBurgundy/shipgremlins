@@ -826,6 +826,7 @@
     renderJobProjects();
     renderPmProjects();
     projectWorkspace?.setStatus(status, formsLocked);
+    projectOnboarding?.syncConnections();
     projectOperations?.resume();
     remoteWorkers?.setProjects(projects);
     if (!projectLayoutInitialized) {
@@ -5191,6 +5192,7 @@
   });
   projectOnboarding = window.createProjectOnboarding({
     api,
+    getStatus: () => currentStatus,
     isLocked: () => formsLocked || !sessionToken || restarting,
     onSaved: async (project) => {
       projectChecks.delete(project);
