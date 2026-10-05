@@ -31,6 +31,40 @@
     getStatus = () => null,
     isLocked = () => false,
   }) => {
+    const dialogs = new Set(),
+      stageDialogs = new Set();
+    function sheet(title, className, label = title, transient = true) {
+      const section = node("section", undefined, className),
+        dialog = node(
+          "dialog",
+          undefined,
+          "foundation-brief-dialog vercel-detail-dialog",
+        ),
+        header = node("header", undefined, "foundation-dialog-header"),
+        heading = node("h2", title),
+        content = node("div"),
+        close = button("Close", () => dialog.close()),
+        open = button(label, () => {
+          dialog.showModal();
+          heading.focus({ preventScroll: true });
+          dialog.scrollTop = 0;
+        });
+      heading.setAttribute("tabindex", "-1");
+      heading.setAttribute("autofocus", "");
+      close.className = "small-button foundation-dialog-close";
+      dialog.setAttribute("aria-label", title);
+      open.setAttribute("aria-haspopup", "dialog");
+      header.append(heading, close);
+      dialog.append(
+        header,
+        content,
+        button("Done", () => dialog.close()),
+      );
+      section.append(open, dialog);
+      dialogs.add(dialog);
+      if (transient) stageDialogs.add(dialog);
+      return { section, content, dialog };
+    }
     const endpoint = (action = "") =>
       `/api/projects/${encodeURIComponent(project.name)}/onboarding/vercel${action ? `/${action}` : ""}`;
     const root = node("section", undefined, "vercel-setup"),
@@ -47,7 +81,12 @@
       ),
       stage = node("div", undefined, "vercel-setup-stage"),
       error = node("p", "", "vercel-setup-error"),
-      chat = node("details", undefined, "vercel-setup-chat"),
+      chat = sheet(
+        "Ask Setup Gremlin",
+        "vercel-setup-chat",
+        "Get setup help",
+        false,
+      ),
       transcript = node("div", undefined, "vercel-chat-transcript"),
       composer = node("form", undefined, "vercel-chat-composer"),
       question = node("textarea"),
@@ -80,8 +119,7 @@
     question.maxLength = 2000;
     ask.type = "submit";
     composer.append(question, ask);
-    chat.append(
-      node("summary", "Need a hand? Ask Setup Gremlin"),
+    chat.content.append(
       transcript,
       composer,
       node(
@@ -90,7 +128,7 @@
         "vercel-setup-note",
       ),
     );
-    root.append(heading, greeting, stage, error, chat);
+    root.append(heading, greeting, stage, error, chat.section);
     let state = null,
       busy = false,
       chatting = false,
@@ -248,6 +286,11 @@
       const nextSignature = JSON.stringify([state, selected, connections]);
       if (signature === nextSignature) return;
       signature = nextSignature;
+      for (const dialog of stageDialogs) {
+        if (dialog.open) dialog.close();
+        dialogs.delete(dialog);
+      }
+      stageDialogs.clear();
       stage.replaceChildren();
       controls.clear();
       guards.clear();
@@ -361,9 +404,12 @@
       manage.href = "/connections#vercel-connection";
       toolbar.append(manage);
       stage.append(toolbar);
-      const teamChoice = node("details", undefined, "vercel-team-choice");
-      teamChoice.append(
-        node("summary", "Use another team"),
+      const teamChoice = sheet(
+        "Choose a Vercel team",
+        "vercel-team-choice",
+        "Use another team",
+      );
+      teamChoice.content.append(
         node(
           "p",
           "Your saved connection’s team is used by default. For a token with access to several teams, enter the Team ID from Vercel’s team settings.",
@@ -374,7 +420,7 @@
           projectId = undefined;
         }),
       );
-      stage.append(teamChoice);
+      stage.append(teamChoice.section);
       if (!inventory) {
         stage.append(
           node(
@@ -428,13 +474,14 @@
         for (const candidate of previews.slice(0, 4))
           environments.append(deploymentCard(candidate));
         if (previews.length > 4) {
-          const more = node("details", undefined, "vercel-more-environments");
-          more.append(
-            node("summary", `Show ${previews.length - 4} more deployments`),
+          const more = sheet(
+            "More test deployments",
+            "vercel-more-environments",
+            `View ${previews.length - 4} more deployments`,
           );
           for (const candidate of previews.slice(4))
-            more.append(deploymentCard(candidate));
-          environments.append(more);
+            more.content.append(deploymentCard(candidate));
+          environments.append(more.section);
         }
         stage.append(environments);
       } else if (!state.target)
@@ -519,10 +566,12 @@
         review.append(acknowledgment, deploy);
         stage.append(review);
       } else if (!state.stale && state.status !== "deployed") {
-        const create = node("details", undefined, "vercel-create-preview");
-        create.open = !previews.some(safePreview);
-        create.append(
-          node("summary", "Create a dedicated test preview"),
+        const create = sheet(
+          "Create a dedicated test preview",
+          "vercel-create-preview",
+          "Prepare a new preview",
+        );
+        create.content.append(
           node(
             "p",
             "Review the branch and deployment before anything is created. Vercel build usage may apply.",
@@ -558,7 +607,7 @@
               },
             ),
           );
-        create.append(
+        create.content.append(
           grid,
           action("Review preview setup", () =>
             call(
@@ -573,7 +622,7 @@
             ),
           ),
         );
-        stage.append(create);
+        stage.append(create.section);
       }
       controlState();
     }
@@ -620,8 +669,10 @@
       setActive(value) {
         const wasActive = active;
         active = value;
-        if (!active) clearTimeout(timer);
-        else if (!wasActive && loaded) load(true);
+        if (!active) {
+          clearTimeout(timer);
+          for (const dialog of dialogs) if (dialog.open) dialog.close();
+        } else if (!wasActive && loaded) load(true);
         else schedule();
       },
       refresh: () => load(true),
@@ -630,6 +681,9 @@
         destroyed = true;
         request++;
         clearTimeout(timer);
+        for (const dialog of dialogs) if (dialog.open) dialog.close();
+        dialogs.clear();
+        stageDialogs.clear();
       },
     };
   };

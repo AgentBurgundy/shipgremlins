@@ -55,6 +55,16 @@ class Element {
     await this.listeners.get(key)?.({ preventDefault() {} });
   }
   focus() {}
+  click() {
+    return this.fire("click");
+  }
+  showModal() {
+    this.open = true;
+  }
+  close() {
+    this.open = false;
+    void this.fire("close");
+  }
   remove() {
     if (this.parent)
       this.parent.children = this.parent.children.filter(
@@ -155,6 +165,7 @@ function fixture(api: (path: string, body?: unknown) => Promise<unknown>) {
     [key: string]: unknown;
   };
   const document = {
+    body: new Element("body"),
     hidden: false,
     createElement: (tag: string) => {
       const el = new Element(tag);
@@ -197,10 +208,129 @@ function fixture(api: (path: string, body?: unknown) => Promise<unknown>) {
     getProject: (name: string) => ({ name, areas: [] }),
     isLocked: () => false,
   });
-  return { control, window, events };
+  return { control, window, events, document };
 }
 
 describe("project operations edit safety", () => {
+  it("keeps ordinary PR delivery focused and does not load promotion controls", async () => {
+    const api = vi.fn(async () => data());
+    const { control } = fixture(api),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "delivery");
+    await flush();
+    expect(root.querySelector(".delivery-navigation")!.hidden).toBe(true);
+    expect(field(root, "delivery-controls-alpha").hidden).toBe(true);
+    expect(field(root, "delivery-work-alpha").hidden).toBe(false);
+    expect(text(root)).toContain("From ticket to pull request");
+    expect(api.mock.calls).toHaveLength(1);
+  });
+  it("keeps promotion tabs and drafts stable while delivery data refreshes and mode changes", async () => {
+    let current = {
+      ...data(),
+      delivery: { ...data().delivery, mode: "promotion" },
+    };
+    const api = vi.fn(async (path: string) => {
+      if (path.endsWith("/operations")) return structuredClone(current);
+      if (path.endsWith("/states")) return { states: [] };
+      return { enabled: true, revision: "delivery-one", deliveries: [] };
+    });
+    const { control } = fixture(api),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "delivery");
+    await flush();
+    const nav = root.querySelector(".delivery-navigation")!;
+    const summary = field(root, "delivery-work-alpha");
+    const controls = field(root, "delivery-controls-alpha");
+    expect(nav.hidden).toBe(false);
+    expect(summary.hidden).toBe(false);
+    expect(controls.hidden).toBe(true);
+    await find(nav, "Promotion controls").fire("click");
+    const input = field(controls, "production-pr-alpha");
+    input.value = "42";
+    expect(summary.hidden).toBe(true);
+    expect(controls.hidden).toBe(false);
+    expect(find(nav, "Promotion controls").attributes.get("aria-current")).toBe(
+      "page",
+    );
+    current.budgets.revision = "project-new";
+    await control.refresh("alpha", true);
+    expect(field(controls, "production-pr-alpha")).toBe(input);
+    expect(input.value).toBe("42");
+    expect(controls.hidden).toBe(false);
+    await find(nav, "Work & evidence").fire("click");
+    await find(nav, "Promotion controls").fire("click");
+    expect(input.value).toBe("42");
+    current = {
+      ...current,
+      delivery: { ...current.delivery, mode: "pull-request" },
+    };
+    await control.refresh("alpha", true);
+    expect(nav.hidden).toBe(true);
+    expect(controls.hidden).toBe(true);
+    expect(summary.hidden).toBe(false);
+    current = {
+      ...current,
+      delivery: { ...current.delivery, mode: "promotion" },
+    };
+    await control.refresh("alpha", true);
+    expect(nav.hidden).toBe(false);
+    expect(summary.hidden).toBe(false);
+    await find(nav, "Promotion controls").fire("click");
+    expect(field(controls, "production-pr-alpha")).toBe(input);
+    expect(input.value).toBe("42");
+  });
+  it("turns knowledge Markdown into a readable text excerpt and links to the full discovery", async () => {
+    const current = {
+      ...data(),
+      knowledge: {
+        ...data().knowledge,
+        areas: [
+          {
+            key: "core",
+            name: "Core",
+            state: "ready",
+            summary:
+              "# User journey\n\n- **People** can `start` safely using [guided setup](https://example.test).\n> _Keep context_ and ~~retired language~~.",
+          },
+        ],
+      },
+    };
+    const { control } = fixture(async () => current),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "knowledge");
+    await flush();
+    const card = root.querySelector(".shared-knowledge-card")!;
+    expect(card.querySelector("p")!.textContent).toBe(
+      "User journey People can start safely using guided setup. Keep context and retired language.",
+    );
+    expect(card.querySelector("a")!.href).toBe(
+      "/projects/alpha?pm=core&tab=discovery",
+    );
+    expect(card.querySelectorAll("script, img, strong, code")).toHaveLength(0);
+  });
+  it("keeps long knowledge cards bounded at a word boundary and treats embedded markup as text", async () => {
+    const summary =
+      "<img src=x onerror=alert(1)>\n" +
+      "Thoughtful workflows reduce manual work. ".repeat(30);
+    const current = {
+      ...data(),
+      knowledge: {
+        ...data().knowledge,
+        areas: [{ key: "core", state: "ready", summary }],
+      },
+    };
+    const { control } = fixture(async () => current),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "knowledge");
+    await flush();
+    const card = root.querySelector(".shared-knowledge-card")!,
+      excerpt = card.querySelector("p")!.textContent;
+    expect(excerpt.length).toBeLessThanOrEqual(220);
+    expect(excerpt).toMatch(/(?:Thoughtful|workflows|reduce|manual|work\.)…$/);
+    expect(card.querySelectorAll("img, script")).toHaveLength(0);
+    expect(current.knowledge.areas[0]!.summary).toBe(summary);
+    expect(card.querySelector("a")!.textContent).toBe("Open discovery →");
+  });
   it("allows deleting a newly saved decision without reloading the page", async () => {
     const current = {
       ...data(),
@@ -353,6 +483,59 @@ describe("project operations edit safety", () => {
 });
 
 describe("explicit review controls", () => {
+  it("keeps the selected proposal and its evidence visible during confirmation, cancellation, and refresh", async () => {
+    const items = [
+      {
+        id: "first",
+        identifier: "APP-1",
+        title: "First proposal",
+        description: "First proposal evidence",
+        revision: "first-revision",
+        canApprove: true,
+      },
+      {
+        id: "second",
+        identifier: "APP-2",
+        title: "Second proposal",
+        description: "Second proposal evidence\nExact scope stays readable",
+        revision: "second-revision",
+        canApprove: true,
+      },
+    ];
+    const api = vi.fn(async (path: string) =>
+      path.endsWith("/review") ? { items } : data(),
+    );
+    const { control } = fixture(api),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "review");
+    await flush();
+    expect(root.querySelectorAll(".proposal-card")).toHaveLength(2);
+    const second = root.querySelectorAll(".proposal-card")[1]!;
+    await find(second, "Read & review").fire("click");
+    const expectSelection = () => {
+      expect(root.querySelectorAll(".proposal-card")).toHaveLength(1);
+      expect(text(root)).not.toContain("First proposal");
+      expect(text(root.querySelector(".proposal-reading")!)).toContain(
+        "Exact scope stays readable",
+      );
+      expect(root.querySelector(".proposal-reading")!.tagName).toBe("SECTION");
+    };
+    expectSelection();
+    await find(root, "Approve coding").fire("click");
+    expectSelection();
+    expect(find(root, "Approve APP-2")).toBeDefined();
+    await find(root, "Keep in review").fire("click");
+    expectSelection();
+    await find(root, "Refresh proposals").fire("click");
+    expectSelection();
+    await find(root, "← All proposals").fire("click");
+    expect(root.querySelectorAll(".proposal-card")).toHaveLength(2);
+    expect(find(root, "Approve coding")).toBeUndefined();
+    expect(api.mock.calls.every(([path]) => !path.endsWith("/approve"))).toBe(
+      true,
+    );
+  });
+
   it("approves only after confirmation with the exact reviewed proposal revision", async () => {
     const writes: unknown[] = [];
     let approved = false;
@@ -384,8 +567,12 @@ describe("explicit review controls", () => {
     control.mount(root, { name: "alpha" }, "review");
     await flush();
     expect(writes).toEqual([]);
+    expect(find(root, "Approve coding")).toBeUndefined();
+    await find(root, "Read & review").fire("click");
     await find(root, "Approve coding").fire("click");
     expect(writes).toEqual([]);
+    expect(text(root)).toContain("Evidence");
+    expect(root.querySelector(".proposal-reading")?.tagName).toBe("SECTION");
     await find(root, "Approve APP-1").fire("click");
     expect(writes).toEqual([
       {
@@ -437,7 +624,7 @@ describe("explicit review controls", () => {
         apply: "commands",
       },
     ]);
-    expect(text(root)).toContain("PM remains paused");
+    expect(text(root)).toContain("Existing automation settings were preserved");
   });
 });
 
@@ -557,9 +744,12 @@ describe("remote and delivery controls", () => {
     });
     helper.mount(root, { name: "alpha", areas: [] });
     await flush();
-    const input = root
-      .querySelector(".candidate-handoffs")!
-      .querySelector("textarea")!;
+    const dialog = root.querySelector(".delivery-detail-dialog")!;
+    expect(dialog.open).toBe(false);
+    const trigger = find(root, "View candidate coordinates");
+    await trigger.fire("click");
+    expect(dialog.open).toBe(true);
+    const input = dialog.querySelector("textarea")!;
     const coordinates = JSON.parse(input.value);
     expect(coordinates).toMatchObject({
       project: "alpha",
@@ -570,9 +760,43 @@ describe("remote and delivery controls", () => {
     expect(coordinates).not.toHaveProperty("filesystem");
     expect(text(root)).toContain("Unsigned preparation only");
     await helper.refresh("alpha");
-    expect(
-      root.querySelector(".candidate-handoffs")!.querySelector("textarea"),
-    ).toBe(input);
+    expect(dialog.querySelector("textarea")).toBe(input);
+    expect(find(root, "View candidate coordinates")).toBe(trigger);
+    await dialog.fire("cancel");
+    expect(dialog.open).toBe(false);
+  });
+  it("preserves opened candidate coordinates during refresh and closes the handoff when leaving Delivery", async () => {
+    let sha = "a".repeat(40);
+    const api = vi.fn(async () => ({
+      enabled: false,
+      candidates: [{ project: "alpha", area: "core", candidateSha: sha }],
+    }));
+    const { window, events } = fixture(api),
+      root = new Element("section"),
+      pages = { current: "project", project: "alpha", tab: "delivery" };
+    const helper = window.createDeliveryWorkflow({
+      api,
+      pages,
+      isLocked: () => false,
+    });
+    helper.mount(root, { name: "alpha", areas: [] });
+    await flush();
+    await find(root, "View candidate coordinates").fire("click");
+    const dialog = root.querySelector(".delivery-detail-dialog")!;
+    const content = dialog.querySelector("textarea")!;
+    sha = "b".repeat(40);
+    await helper.refresh("alpha");
+    expect(JSON.parse(content.value).candidateSha).toBe("a".repeat(40));
+    expect(text(dialog)).toContain("Candidate information changed");
+    const currentTrigger = find(root, "View candidate coordinates");
+    const restoreFocus = vi.spyOn(currentTrigger, "focus");
+    await dialog.fire("cancel");
+    expect(restoreFocus).toHaveBeenCalledOnce();
+    await currentTrigger.fire("click");
+    expect(JSON.parse(content.value).candidateSha).toBe(sha);
+    pages.current = "overview";
+    events.get("dashboard:pagechange")?.();
+    expect(dialog.open).toBe(false);
   });
   it("does not reveal a one-time enrollment that finishes after leaving Workers", async () => {
     let finish!: (value: unknown) => void;
@@ -586,7 +810,7 @@ describe("remote and delivery controls", () => {
       }
       return { workers: [] };
     });
-    const { window, events } = fixture(api),
+    const { window, events, document } = fixture(api),
       root = new Element("section"),
       pages = { current: "runners" };
     const remote = window.createRemoteWorkers(root, {
@@ -595,21 +819,27 @@ describe("remote and delivery controls", () => {
       isLocked: () => false,
     });
     remote.setProjects([{ name: "alpha" }, { name: "beta" }]);
-    field(root, "remote-worker-name").value = "QA worker";
-    field(root, "remote-controller-url").value = "http://192.168.1.20:4311";
-    field(root, "remote-private-lan").checked = true;
-    const project = root
+    await find(root, "Connect a runner").fire("click");
+    const dialog = document.body.querySelector(".remote-enrollment-dialog")!;
+    field(dialog, "remote-worker-name").value = "QA worker";
+    field(dialog, "remote-controller-url").value = "http://192.168.1.20:4311";
+    field(dialog, "remote-private-lan").checked = true;
+    await find(dialog, "Continue").fire("click");
+    const project = dialog
       .querySelector(".remote-project-options")!
       .querySelector("input")!;
     project.checked = true;
-    const submission = root.querySelector("form")!.fire("submit");
+    const submission = dialog.querySelector("form")!.fire("submit");
     expect(writes).toEqual([{ name: "QA worker", projects: ["alpha"] }]);
     pages.current = "overview";
     events.get("dashboard:pagechange")?.();
     finish({ code: "f".repeat(64), expiresAt: new Date().toISOString() });
     await submission;
-    expect(root.querySelector("textarea")).toBeUndefined();
-    expect(root.querySelector(".remote-enrollment-result")!.hidden).toBe(true);
+    expect(dialog.querySelector("textarea")).toBeUndefined();
+    expect(dialog.querySelector(".remote-enrollment-result")!.hidden).toBe(
+      true,
+    );
+    expect(dialog.open).toBe(false);
   });
   it("rejects public HTTP and clears a shown enrollment command on Done", async () => {
     const api = vi.fn(async (path: string) =>
@@ -617,7 +847,7 @@ describe("remote and delivery controls", () => {
         ? { code: "f".repeat(64) }
         : { workers: [] },
     );
-    const { window } = fixture(api),
+    const { window, document } = fixture(api),
       root = new Element("section");
     const remote = window.createRemoteWorkers(root, {
       api,
@@ -625,25 +855,29 @@ describe("remote and delivery controls", () => {
       isLocked: () => false,
     });
     remote.setProjects([{ name: "alpha" }]);
-    field(root, "remote-worker-name").value = "QA worker";
-    field(root, "remote-controller-url").value = "http://203.0.113.1:4311";
-    field(root, "remote-private-lan").checked = true;
-    root
+    await find(root, "Connect a runner").fire("click");
+    const dialog = document.body.querySelector(".remote-enrollment-dialog")!;
+    field(dialog, "remote-worker-name").value = "QA worker";
+    field(dialog, "remote-controller-url").value = "http://203.0.113.1:4311";
+    field(dialog, "remote-private-lan").checked = true;
+    dialog
       .querySelector(".remote-project-options")!
       .querySelector("input")!.checked = true;
-    await root.querySelector("form")!.fire("submit");
+    await find(dialog, "Continue").fire("click");
     expect(
       api.mock.calls.filter(([path]) => path.endsWith("enrollments")),
     ).toHaveLength(0);
-    expect(text(root)).toContain("Use HTTPS for a public host");
-    field(root, "remote-controller-url").value =
+    expect(text(dialog)).toContain("Use HTTPS for a public host");
+    field(dialog, "remote-controller-url").value =
       "https://gremlins.example.test";
-    await root.querySelector("form")!.fire("submit");
-    expect(root.querySelector("textarea")!.value).toContain(
+    await find(dialog, "Continue").fire("click");
+    await dialog.querySelector("form")!.fire("submit");
+    expect(dialog.querySelector("textarea")!.value).toContain(
       "--enrollment-code " + "f".repeat(64),
     );
-    await find(root, "Done — hide command").fire("click");
-    expect(root.querySelector("textarea")).toBeUndefined();
+    await find(dialog, "Done").fire("click");
+    expect(dialog.querySelector("textarea")).toBeUndefined();
+    expect(dialog.open).toBe(false);
   });
   it("pins production scope to its reviewed revision and resets after success", async () => {
     const initial = {
@@ -698,6 +932,13 @@ describe("remote and delivery controls", () => {
       areas: [{ key: "core", name: "Core" }],
     });
     await flush();
+    const editor = root.querySelector(".production-tracking-editor")!;
+    expect(editor.hidden).toBe(true);
+    await find(root, "Track a production release").fire("click");
+    expect(editor.hidden).toBe(false);
+    expect(root.querySelector(".delivery-controller-actions")!.hidden).toBe(
+      true,
+    );
     root
       .querySelector(".production-scope-options")!
       .querySelector("input")!.checked = true;
@@ -706,6 +947,10 @@ describe("remote and delivery controls", () => {
     root
       .querySelector(".production-scope-confirm")!
       .querySelector("input")!.checked = true;
+    await find(root, "← Promotion controls").fire("click");
+    expect(editor.hidden).toBe(true);
+    await find(root, "Track a production release").fire("click");
+    expect(field(root, "production-pr-alpha").value).toBe("18");
     latest = { ...initial, revision: "delivery-two" };
     await helper.refresh("alpha");
     await root.querySelector("form")!.fire("submit");

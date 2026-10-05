@@ -469,6 +469,47 @@ it("retries completion reconciliation without executing the agent or publication
   expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
 });
 
+it("admits explicit product exploration with a Linear binding and preserves its identity through completion", async () => {
+  const f = fixture();
+  await f.ready();
+  const input = {
+    type: "pm" as const,
+    project: "demo",
+    area: "core",
+    runOnce: true,
+    pmMode: "exploration" as const,
+    discoveryRevision: "a".repeat(64),
+    linearBinding: { connectionId: "default" },
+  };
+  const queued = await f.engine.enqueue(input);
+  const completeJob = vi.fn(async () => {});
+  const engine = createLocalRunners({
+    ...f.options,
+    completeJob,
+    prepareJob: async (job) => ({ kind: job.type, pmMode: job.pmMode }),
+  });
+  await engine.tick();
+  expect(f.mock.startJob).toHaveBeenCalledWith(
+    expect.objectContaining({
+      payload: expect.objectContaining({ pmMode: "exploration" }),
+    }),
+  );
+  f.finish(queued.id);
+  await engine.tick();
+  expect(await engine.job(queued.id)).toMatchObject({
+    ...input,
+    status: "succeeded",
+  });
+  expect(completeJob).toHaveBeenCalledOnce();
+  for (const invalid of [
+    { ...input, type: "developer" as const },
+    { ...input, runOnce: false },
+    { ...input, discoveryRevision: undefined },
+    { ...input, ticket: "APP-1" },
+  ])
+    await expect(engine.enqueue(invalid)).rejects.toThrow();
+});
+
 it("persists discovery admission and completes only after retry-safe knowledge adoption", async () => {
   const f = fixture();
   await f.ready();

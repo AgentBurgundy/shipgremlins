@@ -13,6 +13,16 @@ class Element {
   hidden = false;
   checked = false;
   id = "";
+  open = false;
+  scrollTop = 0;
+  focus = vi.fn();
+  showModal() {
+    this.open = true;
+    this.scrollTop = 500;
+  }
+  close() {
+    this.open = false;
+  }
   constructor(public tagName = "DIV") {}
   append(...children: Element[]) {
     this.children.push(...children);
@@ -195,6 +205,57 @@ afterEach(() => {
 });
 
 describe("Vercel setup conversation", () => {
+  it("opens team and help dialogs at their heading, preserves edits on close, and closes on navigation", async () => {
+    const f = fixture();
+    await settle();
+    expect(walk(f.root).some((item) => item.tagName === "DETAILS")).toBe(false);
+    for (const label of ["Use another team", "Get setup help"]) {
+      await f.find(label).fire("click");
+      const dialog = walk(f.root).find(
+          (item) => item.tagName === "DIALOG" && item.open,
+        )!,
+        header = dialog.children[0]!,
+        heading = header.children[0]!,
+        field = walk(dialog).find((item) =>
+          ["INPUT", "TEXTAREA"].includes(item.tagName),
+        )!;
+      expect(header.tagName).toBe("HEADER");
+      expect(header.children[1]!.textContent).toBe("Close");
+      expect(heading.attributes.get("tabindex")).toBe("-1");
+      expect(heading.focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(dialog.scrollTop).toBe(0);
+      field.value =
+        label === "Use another team"
+          ? "team_review"
+          : "My unsent setup question";
+      const expected = field.value;
+      await header.children[1]!.fire("click");
+      expect(dialog.open).toBe(false);
+      await f.find(label).fire("click");
+      expect(field.value).toBe(expected);
+      f.panel.setActive(false);
+      expect(dialog.open).toBe(false);
+      f.panel.setActive(true);
+      await settle();
+    }
+  });
+  it("reviews new preview options in a focused dialog before preparing them", async () => {
+    const f = fixture(discovered());
+    await settle();
+    await f.find("Prepare a new preview").fire("click");
+    const dialog = walk(f.root).find(
+      (item) => item.tagName === "DIALOG" && item.open,
+    )!;
+    expect(dialog.children[0]!.children[0]!.textContent).toBe(
+      "Create a dedicated test preview",
+    );
+    expect(dialog.scrollTop).toBe(0);
+    expect(
+      f.api.mock.calls.some(
+        ([path]) => path.endsWith("/prepare") || path.endsWith("/deploy"),
+      ),
+    ).toBe(false);
+  });
   it("uses saved token and OAuth connections without requiring a new login", async () => {
     const f = fixture();
     await settle();

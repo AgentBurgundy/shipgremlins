@@ -175,6 +175,7 @@
   let pendingPmCreate = location.hash === "#pm-create-drawer";
   const areaActions = new Map();
   let pmActions;
+  let codingActions;
   let projectLayoutInitialized = false;
   let projectWorkspace = null;
   const pmCharter = window.createPmCharter(
@@ -539,6 +540,11 @@
     text("setup-title", "Workspace status");
     const setup = $("setup-title")?.closest(".setup-status");
     if (setup) {
+      setup.hidden = Boolean(
+        projects.length &&
+        verified.length &&
+        currentStatus?.connections?.length,
+      );
       setup.setAttribute("aria-label", "Workspace status");
       const eyebrow = setup.querySelector(".eyebrow");
       if (eyebrow) eyebrow.textContent = "YOUR WORKSPACE";
@@ -695,119 +701,40 @@
       repo.textContent = `${project.provider === "gitlab" ? "GitLab" : "GitHub"} · ${project.repo}`;
       const badge = document.createElement("span");
       badge.className = "project-row-badge";
-      badge.textContent = project.readiness?.canRun
-        ? "Ready to run"
-        : project.readiness?.blockers?.[0]?.action === "worker"
-          ? "Needs a worker"
-          : "Finish setup";
+      badge.textContent = project.foundation?.needed
+        ? "Build foundation"
+        : project.readiness?.canRun
+          ? "Ready to run"
+          : project.readiness?.blockers?.[0]?.action === "worker"
+            ? "Needs a worker"
+            : "Finish setup";
       title.append(badge);
       name.append(title, repo);
       const actions = element("div", "project-actions");
-      const verify = element("button", "small-button", "Verify connections");
-      verify.type = "button";
-      verify.dataset.verifyProject = project.name;
-      verify.dataset.projectControl = "verify";
-      const check = projectChecks.get(project.name);
-      verify.disabled = check?.busy === true;
-      if (check?.busy) verify.textContent = "Verifying…";
-      const edit = element("button", "small-button", "Edit settings");
+      const open = element(
+        "a",
+        "button button-dark",
+        project.foundation?.needed ? "Build foundation" : "Open project",
+      );
+      open.href = `/projects/${encodeURIComponent(project.name)}${project.foundation?.needed ? "?tab=environment" : ""}`;
+      open.dataset.projectControl = "open";
+      const edit = element("button", "small-button", "Settings");
       edit.type = "button";
       edit.dataset.editProject = project.name;
       edit.dataset.projectControl = "edit";
-      const secondary = element("div", "project-secondary-actions");
-      secondary.append(edit, verify);
-      actions.append(secondary);
-      const launch = element("div", "button-row project-launch");
-      for (const [type, label] of [
-        ["pm", "Run PM"],
-        ["developer", "Run Coding"],
-      ]) {
-        const needsPm = type === "pm" && !(project.areas || []).length;
-        const button = element(
-          "button",
-          `small-button launch-${type}`,
-          needsPm ? "+ Create PM" : label,
-        );
-        button.type = "button";
-        if (needsPm) button.dataset.createPmProject = project.name;
-        else {
-          button.dataset.launchProject = project.name;
-          button.dataset.launchCrew = type;
-        }
-        button.dataset.projectControl = needsPm
-          ? "create-pm-primary"
-          : `run-${type}`;
-        launch.append(button);
-      }
-      actions.append(launch);
+      actions.append(open, edit);
       row.append(name, actions);
       const card = element("div", "project-card");
       card.dataset.projectName = project.name;
       card.append(row);
-      const verification =
-        project.verification ||
-        (project.vercel
-          ? { mode: "browser", environment: "legacy Vercel" }
-          : { mode: "repository" });
-      const workflow = project.workflow || { kind: "promotion" };
+      const pmCount = project.areas?.length || 0;
       card.append(
         element(
           "p",
           "project-capabilities",
-          `${verification.mode === "repository" ? "Repository checks · no hosting required" : `Browser target: ${verification.environment}`} · ${workflow.kind === "pull-request" ? `Draft changes → ${workflow.baseBranch}` : "Staged promotion workflow"}`,
+          `${pmCount} ${pmCount === 1 ? "PM" : "PMs"}`,
         ),
       );
-      const target =
-        verification.mode === "browser"
-          ? project.environments?.[verification.environment] || project.vercel
-          : null;
-      const scopes = [];
-      if (target) {
-        const kind = target.kind || "vercel";
-        if (kind === "vercel")
-          scopes.push(
-            `Vercel project ${target.projectId} · ${target.teamId ? `team ${target.teamId}` : "connected account scope"}`,
-          );
-        else if (kind === "railway")
-          scopes.push(
-            `Railway project ${target.projectId} · environment ${target.environmentId}`,
-          );
-        else if (kind === "cloud-run")
-          scopes.push(
-            `Cloud Run ${target.projectId} · ${target.region}/${target.service}`,
-          );
-        else if (kind === "url") scopes.push(`Test app: ${target.url}`);
-      }
-      if (project.linear?.teamId)
-        scopes.push(
-          `Linear team: ${project.linear.teamName || project.linear.teamId}`,
-        );
-      if (scopes.length)
-        card.append(element("p", "project-scope", scopes.join(" · ")));
-      const projectSummary = element("div", "project-pm-actions");
-      const workspaceLink = element(
-        "a",
-        "small-button",
-        `Open workspace · ${project.areas?.length || 0} PMs →`,
-      );
-      workspaceLink.href = `/projects/${encodeURIComponent(project.name)}`;
-      projectSummary.append(workspaceLink);
-      card.append(projectSummary);
-      if (check) {
-        const result = element("div", "project-checks");
-        result.setAttribute("role", check.error ? "alert" : "status");
-        result.classList.toggle("error", Boolean(check.error));
-        result.append(element("p", "", check.message));
-        for (const item of check.checks || [])
-          result.append(
-            element(
-              "p",
-              "",
-              `${item.ok ? "✓" : "!"} ${item.name}: ${item.detail}`,
-            ),
-          );
-        card.append(result);
-      }
       list.append(card);
     }
     if (focusedProject && focusedControl) {
@@ -828,6 +755,7 @@
     projectWorkspace?.setStatus(status, formsLocked);
     projectOnboarding?.syncConnections();
     projectOperations?.resume();
+    projectOperations?.renderOverview();
     remoteWorkers?.setProjects(projects);
     if (!projectLayoutInitialized) {
       $("new-project-drawer").open =
@@ -1201,9 +1129,7 @@
         await refreshStatus();
         await refreshConfigFiles();
         pages.navigate(
-          fromIdea
-            ? `/projects/${encodeURIComponent(data.project)}?pm=foundation`
-            : `/projects/${encodeURIComponent(data.project)}?tab=environment`,
+          `/projects/${encodeURIComponent(data.project)}?tab=environment`,
         );
       } catch {
         message(
@@ -1912,7 +1838,15 @@
           );
           return;
         }
-        await pmActions.run(launch.dataset.launchProject, area, launch);
+        await (
+          launch.dataset.pmMode === "exploration"
+            ? pmActions.explore
+            : pmActions.run
+        )(launch.dataset.launchProject, area, launch);
+        return;
+      }
+      if (launch.dataset.launchCrew === "developer") {
+        await codingActions.run(launch.dataset.launchProject);
         return;
       }
       $("job-project").value = launch.dataset.launchProject;
@@ -1986,6 +1920,70 @@
   function runnerOperationBusy() {
     return runnerRequestBusy || runnerStatus?.operation?.phase === "working";
   }
+  function openRunnerManagement(runner, trigger) {
+    const dialog = element("dialog", "runner-management-dialog");
+    const header = element("header", "surface-dialog-header");
+    const title = element("h2", "", runner.name);
+    title.id = "runner-management-title";
+    dialog.setAttribute("aria-labelledby", title.id);
+    const close = element("button", "small-button", "Close");
+    close.type = "button";
+    const finish = () => {
+      dialog.close();
+      dialog.remove();
+      trigger.focus();
+    };
+    close.addEventListener("click", finish);
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish();
+    });
+    header.append(title, close);
+    const body = element("div", "surface-dialog-body");
+    body.append(
+      element(
+        "p",
+        "runner-guidance",
+        runner.message || "Manage this runner’s browser and local environment.",
+      ),
+    );
+    for (const [label, action, description] of [
+      [
+        "Verify browser",
+        "verify",
+        "Run a browser check to confirm the worker is ready.",
+      ],
+      [
+        "Repair worker",
+        "repair",
+        "Rebuild and verify this worker’s local environment.",
+      ],
+      [
+        "Remove worker",
+        "remove",
+        "Disconnect this local worker. You’ll review this action first.",
+      ],
+    ]) {
+      const row = element("section", "runner-management-action");
+      const button = actionButton(
+        label,
+        action,
+        runner.id,
+        Boolean(runner.busy),
+      );
+      button.addEventListener("click", () => {
+        dialog.close();
+        setTimeout(() => dialog.remove(), 0);
+      });
+      row.append(element("p", "", description), button);
+      body.append(row);
+    }
+    dialog.append(header, body);
+    document.body.append(dialog);
+    dialog.showModal();
+    updateRunnerControls();
+    close.focus();
+  }
   function updateRunnerControls() {
     const locked = formsLocked || !sessionToken || restarting;
     $("refresh-runners").disabled = locked || runnerLoading;
@@ -2011,13 +2009,20 @@
       (item) => item.key === $("job-area").value,
     );
     const pm = $("job-type").value === "pm";
+    const pmCanPrepare =
+      area?.canRun === true ||
+      (area?.blockers?.length > 0 &&
+        area.blockers.every((blocker) =>
+          ["linear_mapping", "verification"].includes(blocker.id),
+        ));
     $("run-job").disabled =
       locked ||
       runnerRequestBusy ||
       !workersAvailable ||
       !project ||
+      Boolean(selected?.foundation?.needed) ||
       (pm
-        ? !$("job-area").value || !area?.canRun
+        ? !$("job-area").value || !pmCanPrepare
         : !selected?.readiness?.canRun);
     $("job-ticket").required = false;
     $("job-ticket").disabled = pm;
@@ -2030,7 +2035,7 @@
         ? "Run PM once ↗"
         : $("job-ticket").value.trim()
           ? "Run this ticket ↗"
-          : "Run next approved ticket ↗";
+          : "Start coding ↗";
     for (const button of document.querySelectorAll("[data-crew-type]"))
       button.setAttribute(
         "aria-pressed",
@@ -2039,20 +2044,30 @@
     const blockers = pm
       ? area?.blockers || selected?.readiness?.blockers
       : selected?.readiness?.blockers;
-    $("job-guidance").textContent = !project
-      ? "Add a project in Projects to get started."
-      : blockers?.length
-        ? "Finish the setup steps below to start this run."
-        : pm && !$("job-area").value
-          ? "Create a PM mandate in Projects first."
-          : pm
-            ? "Investigates this mandate once. Automation stays as it is."
-            : $("job-ticket").value.trim()
-              ? "Checks this ticket’s approval and ownership, then starts one coding run. Automation stays as it is."
-              : "Finds the next ready, approved ticket in this project’s Linear queue and starts one coding run. It does not approve tickets or change automation.";
+    $("job-guidance").textContent = selected?.foundation?.needed
+      ? "Build the first milestone from this project’s Environment tab. Your PMs can explore once there is an app."
+      : !project
+        ? "Add a project in Projects to get started."
+        : pm && !area?.canRun && pmCanPrepare
+          ? "Prepares this PM’s Linear mapping and verifies connections, then runs it once. Automation stays as it is."
+          : blockers?.length
+            ? "Finish the setup steps below to start this run."
+            : pm && !$("job-area").value
+              ? "Create a PM mandate in Projects first."
+              : pm
+                ? "Investigates this mandate once. Automation stays as it is."
+                : $("job-ticket").value.trim()
+                  ? "Checks this ticket’s approval and ownership, then starts one coding run. Automation stays as it is."
+                  : "Finds the next ready, approved ticket in this project’s Linear queue and starts one coding run. It does not approve tickets or change automation.";
     $("job-setup-guide").replaceChildren(
-      ...(selected
-        ? [window.renderCrewSetup(selected, { blockers, compact: true })]
+      ...(selected &&
+      (selected.foundation?.needed ||
+        (blockers?.length && !(pm && pmCanPrepare)))
+        ? [
+            selected.foundation?.needed
+              ? window.renderFoundationLauncher(selected)
+              : window.renderCrewSetup(selected, { blockers, compact: true }),
+          ]
         : []),
     );
     for (const button of document.querySelectorAll("[data-runner-action]")) {
@@ -2069,7 +2084,10 @@
     for (const button of document.querySelectorAll(
       '[data-launch-crew="developer"]',
     ))
-      button.disabled = locked || runnerRequestBusy;
+      button.disabled =
+        locked ||
+        runnerRequestBusy ||
+        Boolean(codingActions?.getState(button.dataset.launchProject)?.busy);
     const remove = runnerStatus?.runners?.find(
       (runner) => runner.id === removeRunnerId,
     );
@@ -2167,6 +2185,7 @@
     $("runner-credentials").textContent = missing.length
       ? `Some jobs need additional connections: ${missing.join(", ")}. Save the credentials for your project above before running it.`
       : "Project credentials are loaded from this server for each job. Saving credentials does not start work.";
+    $("runner-credentials").hidden = !missing.length;
     $("runner-limitations").replaceChildren(
       ...(status.limitations || []).map((text) => element("li", "", text)),
     );
@@ -2205,7 +2224,7 @@
           ),
         );
         card.append(heading);
-        if (runner.message)
+        if (runner.message && !["ready", "busy"].includes(state))
           card.append(element("p", "runner-guidance", runner.message));
         if (runner.verifiedAt)
           card.append(
@@ -2216,15 +2235,18 @@
             ),
           );
         const actions = element("div", "button-row worker-actions");
+        const manage = element("button", "small-button", "Manage");
+        manage.type = "button";
+        manage.addEventListener("click", () =>
+          openRunnerManagement(runner, manage),
+        );
         actions.append(
-          actionButton("Verify browser job", "verify", runner.id),
-          actionButton("Repair", "repair", runner.id),
           actionButton(
             runner.status === "paused" ? "Resume" : "Pause",
             runner.status === "paused" ? "resume" : "pause",
             runner.id,
           ),
-          actionButton("Remove", "remove", runner.id),
+          manage,
         );
         card.append(actions);
         if (runner.busy)
@@ -2332,7 +2354,7 @@
           "worker-empty",
           activityFilter === "running"
             ? "Nothing running right now. Your crew’s next job will appear here."
-            : "No matching activity yet. Run a gremlin above to start its trail of actions and evidence.",
+            : "No matching activity yet. Start a run from a project or Your gremlins to see its progress here.",
         ),
       );
     for (const job of [...visible].reverse()) {
@@ -2342,14 +2364,18 @@
         element(
           "h4",
           "",
-          `${job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
+          `${job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : job.pmMode === "exploration" ? "PM Gremlin · Product exploration" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
         ),
       );
       text.append(
         element(
           "p",
           "",
-          [job.area || job.ticket, timestamp(job.createdAt), job.message]
+          [
+            job.type === "developer" ? job.ticket || job.area : job.area,
+            timestamp(job.createdAt),
+            job.message,
+          ]
             .filter(Boolean)
             .join(" · "),
         ),
@@ -2516,7 +2542,8 @@
         : "Queuing your job…",
     );
     try {
-      const result = await (type === "developer" && !body.ticket
+      const result = await (type === "pm" ||
+      (type === "developer" && !body.ticket)
         ? api("/api/jobs", body, "POST", 90000)
         : api("/api/jobs", body));
       message(
@@ -2735,16 +2762,6 @@
         );
       rows.push(row);
     }
-    if (!rows.length)
-      rows.push(
-        existing.get("empty") ||
-          element(
-            "li",
-            "activity-empty",
-            "No structured activity yet. Actions appear here as the worker reports them.",
-          ),
-      );
-    if (!activity.events?.length) rows[0].dataset.eventKey = "empty";
     const retained = new Set(rows);
     for (const row of [...timeline.children])
       if (!retained.has(row)) row.remove();
@@ -2787,6 +2804,11 @@
         Boolean(error),
       );
     }
+    $("run-artifact-empty").hidden = Boolean(
+      $("job-artifacts").children.length ||
+      outputErrors.get("artifacts") ||
+      outputNotices.get("artifacts"),
+    );
     renderPatrolOutput();
   }
   function renderPatrolOutput() {
@@ -2836,9 +2858,7 @@
       const notice =
         (value.partial || value.pending) && typeof value.message === "string"
           ? value.message
-          : resource === "artifacts" && value.pending
-            ? "Artifacts appear after the run finishes."
-            : "";
+          : "";
       if (notice) outputNotices.set(resource, notice);
       else outputNotices.delete(resource);
       if (resource === "activity") {
@@ -2882,7 +2902,7 @@
           if (atEnd) log.scrollTop = log.scrollHeight;
         }
       } else if (resource === "activity") {
-        renderActivity(value);
+        renderActivity(patrolOutput.activity);
       } else if (!(
         value.partial &&
         !value.files?.length &&
@@ -2994,7 +3014,9 @@
           ? "Coding"
           : job?.pmMode === "discovery"
             ? "Discovery"
-            : "PM patrol";
+            : job?.pmMode === "exploration"
+              ? "Product exploration"
+              : "PM patrol";
     $("job-detail-title").textContent =
       `${role}${job?.runId ? ` · Run ${job.runId}` : ""}`;
     $("job-detail-context").textContent = [
@@ -3045,8 +3067,8 @@
       "running",
       "loading",
     ].includes(status)
-      ? "Artifacts appear after the worker finishes and sanitizes its output."
-      : "No artifacts have been returned for this run.";
+      ? "Evidence will appear here when the run finishes."
+      : "No screenshots or files were saved for this run.";
     const metadata = [
       ["Created", job?.createdAt],
       ["Started", job?.startedAt],
@@ -3387,7 +3409,7 @@
       linearConnected(project?.linear?.connectionId || "default") &&
       project?.linear?.teamId
         ? "Creates a Linear project in this app’s team, or uses the project you select."
-        : "The PM is saved locally first. Use Manage Linear mappings in this project's settings to finish its setup.";
+        : "The PM is saved locally first. Its first run sets up missing Linear mappings when a connection is available.";
   }
   async function refreshLinearResources() {
     if (!sessionToken) return;
@@ -3467,6 +3489,7 @@
     if (!pmCreateDialog.open) pmCreateDialog.showModal();
     renderLinearSetup();
     updatePmCreationReview();
+    window.revealDashboardSetting?.($("pm-mandate"));
     $("pm-mandate").focus();
     refreshLinearResources();
   }
@@ -3572,8 +3595,10 @@
       pmKeyEdited = true;
       message($("pm-create-message"), "");
       updatePmCreationReview();
+      window.revealDashboardSetting?.($("pm-name"));
+      $("pm-name").focus();
       return {
-        message: `Draft filled.${kept.length ? " Your edits were kept." : ""} Review below, then Create PM.`,
+        message: `Draft filled.${kept.length ? " Your edits were kept." : ""} Review the brief, then Create PM.`,
       };
     },
   });
@@ -4466,7 +4491,7 @@
 
   async function requestEditorAction(action, path = editor.path) {
     if (editor.busy || formsLocked || !sessionToken) return;
-    if ($("advanced-settings")) $("advanced-settings").open = true;
+    window.revealDashboardSetting?.($("advanced-settings"));
     if (isEditorDirty()) {
       pendingEditorAction = { action, path };
       $("config-file").value = editor.path;
@@ -4767,16 +4792,33 @@
     refreshJobOutput();
   }
 
-  function focusProjectSection(section) {
+  function prepareProjectSections(section = "project") {
+    const signals = $("edit-project-settings").querySelector(
+      ".project-signals-settings",
+    );
+    $("edit-signals-settings").replaceChildren(...(signals ? [signals] : []));
+    focusProjectSection(section, false);
+  }
+  function focusProjectSection(section, focus = true) {
+    projectEditor.section = section;
+    $("edit-project-settings").hidden = section !== "project";
+    $("edit-signals-settings").hidden = section !== "signals";
+    $("edit-linear-settings").hidden = section !== "linear";
+    $("save-project-settings").closest(".form-bottom").hidden =
+      section === "linear";
+    for (const button of document.querySelectorAll("[data-project-section]"))
+      button.setAttribute(
+        "aria-current",
+        button.dataset.projectSection === section ? "page" : "false",
+      );
     const target =
       section === "linear"
         ? $("edit-linear-settings")
         : section === "signals"
-          ? $("edit-project-settings").querySelector(
-              ".project-signals-settings",
-            )
+          ? $("edit-signals-settings")
           : $("edit-project-settings");
     if (!target) return;
+    if (!focus) return;
     target.setAttribute("tabindex", "-1");
     target.focus({ preventScroll: true });
     target.scrollIntoView({ block: "start" });
@@ -4785,6 +4827,24 @@
     button.addEventListener("click", () =>
       focusProjectSection(button.dataset.projectSection),
     );
+  $("edit-project-form").addEventListener(
+    "invalid",
+    (event) => {
+      const first = $("edit-project-form").querySelector(
+        ":invalid:not(fieldset):not(form)",
+      );
+      if (first && first !== event.target) return;
+      focusProjectSection(
+        event.target.closest("#edit-signals-settings")
+          ? "signals"
+          : event.target.closest("#edit-linear-settings")
+            ? "linear"
+            : "project",
+        false,
+      );
+    },
+    true,
+  );
 
   async function openProjectSettings(name, trigger) {
     if (projectEditor.busy || projectLinearSettings?.isBusy()) return;
@@ -4793,6 +4853,10 @@
     projectEditor.path = `projects/${name}/project.json`;
     projectEditor.trigger = trigger || projectEditor.trigger;
     projectEditor.busy = true;
+    projectEditor.form = null;
+    $("edit-project-settings").replaceChildren();
+    $("edit-signals-settings").replaceChildren();
+    focusProjectSection("project", false);
     updateProjectEditorControls();
     $("project-settings-title").textContent = `Edit ${name}`;
     if ($("project-settings-name"))
@@ -4813,8 +4877,17 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
-        { projectName: projectEditor.name, connections: serviceProfiles },
+        {
+          projectName: projectEditor.name,
+          connections: serviceProfiles,
+          onReveal: (input) =>
+            focusProjectSection(
+              input.closest("#edit-signals-settings") ? "signals" : "project",
+              false,
+            ),
+        },
       );
+      prepareProjectSections();
       $("project-settings-repo").textContent =
         projectEditor.config.repo || "Project configuration";
       if ($("project-settings-provider"))
@@ -4825,6 +4898,8 @@
     } catch (error) {
       projectEditor.form = null;
       $("edit-project-settings").replaceChildren();
+      $("edit-signals-settings").replaceChildren();
+      focusProjectSection("project", false);
       $("project-settings-repo").textContent = "Configuration needs repair";
       if ($("project-settings-provider"))
         $("project-settings-provider").textContent = "Local project";
@@ -4896,7 +4971,7 @@
   $("close-project-settings").addEventListener("click", () =>
     projectSettingsAction("close"),
   );
-  $("edit-project-settings").addEventListener("click", (event) => {
+  $("edit-project-form").addEventListener("click", (event) => {
     if (event.target.closest('a[href="#connections"]')) {
       event.preventDefault();
       projectSettingsAction("connections");
@@ -4963,8 +5038,17 @@
         $("edit-project-settings"),
         "edit-settings",
         projectEditor.config,
-        { projectName: projectEditor.name, connections: serviceProfiles },
+        {
+          projectName: projectEditor.name,
+          connections: serviceProfiles,
+          onReveal: (input) =>
+            focusProjectSection(
+              input.closest("#edit-signals-settings") ? "signals" : "project",
+              false,
+            ),
+        },
       );
+      prepareProjectSections(projectEditor.section);
       if (projectLinearSettings?.isDirty()) {
         // Rebase only against this save's exact content/revision. A later GET
         // could adopt another operator's edit without refreshing our form.
@@ -5115,7 +5199,7 @@
         "Restarting reloads this page and clears unsaved configuration and form entries. Save your changes or copy your draft before restarting.";
       $("discard-changes").textContent = "Restart and discard";
       $("discard-prompt").hidden = false;
-      if ($("advanced-settings")) $("advanced-settings").open = true;
+      window.revealDashboardSetting?.($("advanced-settings"));
       pages.navigate("/settings#discard-prompt");
       $("keep-editing").focus();
       return;
@@ -5302,6 +5386,8 @@
     onRestore: (target) => openDeletion(target),
   });
   projectOperations = window.createProjectOperations({
+    getCodingAction: (name) => codingActions?.getState(name),
+    getJobs: mergedJobs,
     api,
     pages,
     inbox: $("inbox-content"),
@@ -5376,6 +5462,7 @@
     onDelete: openDeletion,
     getCheck: (name) => projectChecks.get(name),
     getAreaAction: (project, area) => areaActions.get(`${project}/${area}`),
+    getCodingAction: (project) => codingActions?.getState(project),
     onSaved: refreshStatus,
     onCreatePm: (project) => {
       openPmCreation(project);
@@ -5415,6 +5502,19 @@
       selectJob(job.id);
       refreshRunners();
     },
+  });
+  codingActions = window.createCodingActions({
+    api,
+    getProject: (name) =>
+      currentStatus?.projects?.find((project) => project.name === name),
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onState: () => renderStatus(currentStatus),
+    onChanged: refreshRunners,
+    onJob: (job) => {
+      jobHistory = [...jobHistory.filter((item) => item.id !== job.id), job];
+      selectJob(job.id);
+    },
+    onFinished: scheduleRunnerPoll,
   });
   initialize();
 })();

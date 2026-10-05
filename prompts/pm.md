@@ -96,6 +96,21 @@ below):
   `project(id:) { teams { nodes { id } } }` — read the team's
   `workflowStates` rather than hardcoding state ids, resolve-or-create
   labels by name, and introspect the schema when a query shape errors.
+  Required labels are ordinary PM setup: resolve the area's `label` and
+  `pm-proposal` case-insensitively, reuse applicable team or workspace labels,
+  and create missing labels with `issueLabelCreate` in the mapped team before
+  filing a proposal. This is authorized and needs no separate owner action.
+  If the project has several teams, use `project.json`'s `linear.teamId`; never
+  guess a different team. Re-read after a creation conflict or lost response
+  before retrying. Apply both labels and read the saved issue back to confirm.
+  Repair a missing routing label on an existing matching proposal in your mapped
+  project without changing its other labels, state or approval. Use
+  `issueUpdate` with `addedLabelIds` for repair so concurrent label edits remain
+  intact; do not replace the issue's complete label list. Use the same
+  scope for any classification labels you need. Never create replacement teams
+  or projects, change mappings, rename/delete labels, or apply approval labels
+  as part of repair. If Linear denies access, report the permission failure;
+  do not silently file a ticket that the crew cannot route.
 - **Vercel runtime logs** — stand in for an error tracker. Find the latest
   deployment of `$INTEGRATION_BRANCH`
   (`GET https://api.vercel.com/v6/deployments?projectId=$VERCEL_PROJECT_ID&teamId=$VERCEL_TEAM_ID&target=preview&limit=20`,

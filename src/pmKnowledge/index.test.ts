@@ -215,6 +215,16 @@ describe("PM knowledge retention", () => {
     await f.store.capture({ ...f.job, pmMode: undefined }, f.docker);
     expect(f.store.read("app", "core").state).toBe("ready");
   });
+  it("retains product exploration only from matching worker provenance", async () => {
+    const f = fixture();
+    const exploration = { ...f.job, pmMode: "exploration" as const };
+    await expect(f.store.capture(exploration, f.docker)).rejects.toThrow(
+      "matching repository provenance",
+    );
+    f.result.pmMode = "exploration";
+    await f.store.capture(exploration, f.docker);
+    expect(f.store.read("app", "core").state).toBe("ready");
+  });
   it("recovers a dead process lock while leaving live locks intact", async () => {
     const f = fixture(),
       dir = join(root, ".run", "pm-knowledge", "app", "core");

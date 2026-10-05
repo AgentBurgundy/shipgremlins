@@ -37,8 +37,9 @@ open source** only when everyone should be able to read the code and product
 brief. Public visibility does not add an open-source license; choose a license
 before inviting contributions. Visibility is never inferred from AI output.
 
-The final review shows the destination, visibility, PMs, and milestone. Linear,
-workflow commands, and worker settings can be configured in the project afterward.
+The final review shows the destination, visibility, PMs, and milestone. The next
+step is the foundation build. Linear setup happens as part of that reviewed
+action; you do not need a running app or a test URL.
 
 Choose **Create private repository & crew** (or the explicit public option). ShipGremlins:
 
@@ -72,21 +73,45 @@ The current starting stack is a **Node.js web app with npm**. The foundation bri
 requires a runnable app, `package.json`, `npm start`, and meaningful `npm test`
 checks. Proposed ownership paths are suggestions until code exists.
 
-1. Complete source, Claude Code, Linear, and worker setup. Review the foundation
-   PM's brief, run discovery, and verify connections.
-2. Use **Run now** on the foundation PM to propose the first implementation
-   ticket. Check its scope and acceptance criteria in the review inbox.
-3. Approve the ticket and run Coding. Review the resulting draft PR or MR,
-   its code and checks, then merge when ready.
-4. Configure and test a browser environment once the app runs. The
-   [Setup Gremlin](PROJECT_ONBOARDING.md) can help with that step.
-5. Run the remaining PMs as their prerequisites become available. Dependency
+For an explicit request for a different stack, the planner must explain its
+proposed Node.js alternative and the unmet requirement in the summary and first
+milestone before you approve it. Review those assumptions in the build brief.
+Automatic foundation building does not scaffold Python-only, native mobile, or
+native engine applications. To work on an existing app using another stack,
+choose **I have an app** and configure its own install and test commands.
+
+1. Open the project's **Environment** page. A new idea shows **First, let's
+   build your app** with the first milestone and acceptance criteria. **Read the
+   full build brief** shows the exact ticket scope.
+2. Choose **Approve & build foundation**. This approves one foundation ticket,
+   prepares the selected Linear team, PM projects and required labels, verifies
+   connections, and queues a Coding Gremlin on your runners. Connect source
+   control, Claude Code and Linear, and verify a runner if prompted. Existing
+   mappings are preserved. A test URL, hosting account and PM analysis are not
+   prerequisites for this build.
+3. The coding run implements the first journey, startup command, meaningful
+   tests and a Dockerfile for later testing. Open the run to review its draft
+   PR or MR and check evidence. Merge when ready; this button never merges or
+   deploys the app.
+4. Choose **I've merged it · check repository**. ShipGremlins checks the base
+   branch for application source, `npm start`, `npm test` and test files before
+   showing environment setup. This is a source check, not a claim that the app
+   runs. **My app already has code** supports work built outside the dashboard.
+5. Configure and test a browser environment with the
+   [Setup Gremlin](PROJECT_ONBOARDING.md), then run PM discovery or a patrol.
+   Empty idea repositories are held at the foundation step rather than spending
+   a PM run looking for features that do not exist.
+6. Run the remaining PMs as their prerequisites become available. Dependency
    order is saved in their briefs; it is not an automatic execution scheduler.
 
-Creating the crew does not run PM jobs, approve tickets, generate application
-code, provision hosting, or deploy the app. It creates the team and shared plan
-that feed the existing supervised delivery workflow. You decide when to run the
-first investigation and what gets implemented.
+The build is resumable. A dropped response or a second click reuses the saved
+Linear issue and coding run. A failed or canceled run needs **Retry foundation
+build**; that starts a new attempt on the same ticket. Removed ticket approval,
+changed scope, or changed account mappings require review, rather than being
+silently overwritten. PM schedules remain paused throughout.
+
+Creating the crew alone does not start jobs or approve tickets. The separate
+**Approve & build foundation** action approves only the displayed first build.
 
 [Setup](SETUP.md) · [When to use ShipGremlins](WHEN_TO_USE.md) ·
 [Delivery workflow](DELIVERY_WORKFLOW.md)

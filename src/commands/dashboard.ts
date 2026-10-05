@@ -83,6 +83,7 @@ import {
 } from "../localRunners/jobs.ts";
 import {
   inspectPmReadiness,
+  hasPmMapping,
   setPmAutomation,
   PmControlError,
   type ReadinessContext,
@@ -97,6 +98,12 @@ import {
   IdeaCrewError,
   type IdeaCrew,
 } from "../ideaCrew/index.ts";
+import {
+  createFoundation,
+  foundationNeeded,
+  foundationSummary,
+  sameCodingTicket,
+} from "../ideaCrew/foundation.ts";
 import type { LocalJobInput, WorkerAction } from "../localRunners/types.ts";
 import {
   doctorChecks,
@@ -320,6 +327,7 @@ export interface DashboardOptions {
   linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
   pmPlanner?: PmPlanner;
   ideaCrew?: IdeaCrew;
+  foundation?: ReturnType<typeof createFoundation>;
   projectOnboarding?: ProjectOnboarding;
   environmentAccess?: ReturnType<typeof createEnvironmentAccess>;
   vercelSetup?: ReturnType<typeof createVercelSetup>;
@@ -478,6 +486,9 @@ export function createDashboardServer(
       verification = effectiveVerification(project.config);
     return {
       ...state,
+      ...(project.config.ideaPlanId
+        ? { foundation: await foundation.status(name) }
+        : {}),
       environment:
         verification.mode === "browser"
           ? {
@@ -544,6 +555,7 @@ export function createDashboardServer(
   async function provisionLinear(
     project: string,
     teamId?: string,
+    areaKey?: string,
   ): Promise<LinearMappingStatus> {
     const finish = trackProject(project);
     try {
@@ -558,7 +570,10 @@ export function createDashboardServer(
           message:
             "App and PM settings are saved. Connect Linear, then retry Linear setup.",
         };
-      return await linearProvisioning.provision(project, { teamId });
+      return await linearProvisioning.provision(project, {
+        teamId,
+        ...(areaKey ? { areaKey } : {}),
+      });
     } catch (error) {
       return {
         status: "error",
@@ -862,6 +877,105 @@ export function createDashboardServer(
       beforeLaunch: () => activityStore.ensure(),
       releaseJobResources: preparation.releaseJobResources,
     }));
+  const foundation =
+    options.foundation ??
+    createFoundation({
+      root,
+      ideaCrew,
+      sourceControl,
+      jobs: () => runners().jobs(),
+      job: (id) => runners().job(id),
+      preflight: async (name) => {
+        if (loadHub(root).runners.mode !== "local")
+          throw new IdeaCrewError(
+            "Choose local runners in Settings before building the foundation.",
+            409,
+          );
+        if (
+          !{
+            ...readConnections(root),
+            ...process.env,
+          }.CLAUDE_CODE_OAUTH_TOKEN?.trim()
+        )
+          throw new IdeaCrewError(
+            "Connect Claude Code in Connections before building the foundation.",
+            409,
+          );
+        const workers = (await runners().status()).runners;
+        if (
+          !workers.some(
+            (worker) =>
+              worker.verifiedAt &&
+              !worker.paused &&
+              ["ready", "busy"].includes(worker.status) &&
+              (docker.canRun?.(worker.remoteId, name) ?? !worker.remoteId),
+          )
+        )
+          throw new IdeaCrewError(
+            "Add and verify a runner in Runners, then return to build the foundation.",
+            409,
+          );
+      },
+      provision: async (name) => {
+        const result = await provisionLinear(name);
+        if (result.status !== "ready")
+          throw new IdeaCrewError(
+            result.message ?? "Connect Linear before building the foundation.",
+            409,
+          );
+      },
+      verify: async (name) => {
+        const project = loadProject(root, name),
+          snapshot = verificationSnapshot(project.dir);
+        const checks = await doctorChecks(project, {
+          root,
+          env: { ...readConnections(root), ...process.env },
+          fetch,
+          today: () => new Date().toISOString().slice(0, 10),
+          sourceControl,
+          linearConnection,
+          vercelConnection,
+          linearConnectionFor,
+          vercelConnectionFor,
+        });
+        const failed = checks.filter((check) => !check.ok);
+        if (failed.length)
+          throw new IdeaCrewError(
+            `Foundation setup needs attention: ${failed.map((check) => check.detail).join(" ")}`,
+            409,
+          );
+        stampVerified(
+          project.dir,
+          new Date().toISOString().slice(0, 10),
+          snapshot,
+        );
+      },
+      linear: async (project) =>
+        new LinearApi({
+          apiKey: (
+            await linearConnectionFor(
+              project.config.linear?.connectionId,
+            ).resolveCredential({
+              workspaceId: project.config.linear?.workspaceId,
+              minValidityMs: 5 * 60_000,
+            })
+          ).authorization,
+        }),
+      enqueue: async (input) => {
+        const validated = await preparation.validate(input);
+        input.linearBinding = validated.linearBinding;
+        input.projectInstanceId = validated.project.config.instanceId;
+        const existing = (await runners().jobs()).find(
+          (job) =>
+            sameCodingTicket(job, input) &&
+            ["queued", "running", "succeeded"].includes(job.status),
+        );
+        if (existing) return existing;
+        const job = await runners().enqueue(input);
+        runners().start();
+        return job;
+      },
+    });
   async function resourceBlockers(target: ResourceTarget): Promise<string[]> {
     const blockers: string[] = [];
     if (setupBusy(target.project))
@@ -2137,7 +2251,7 @@ export function createDashboardServer(
             (input.ticket !== undefined && typeof input.ticket !== "string") ||
             (input.pmMode !== undefined &&
               (input.type !== "pm" ||
-                input.pmMode !== "discovery" ||
+                !["discovery", "exploration"].includes(String(input.pmMode)) ||
                 input.ticket !== undefined))
           )
             throw new RequestError(
@@ -2147,6 +2261,81 @@ export function createDashboardServer(
           const jobInput = input as unknown as LocalJobInput;
           jobInput.runOnce = true;
           if (jobInput.type === "pm") {
+            const project = loadProject(root, jobInput.project!);
+            if (
+              jobInput.pmMode !== "exploration" &&
+              foundationNeeded(root, project)
+            )
+              throw new RequestError(
+                409,
+                "Build the foundation first. Open this project's Environment page to review and start its first coding run. PMs can explore after application code is merged.",
+              );
+            const selectedArea = project.areas.find(
+              (area) => area.key === jobInput.area,
+            );
+            if (jobInput.pmMode !== "discovery") {
+              const before = projectReadiness(
+                jobInput.project!,
+                await readinessContext(),
+              ).readiness.areas.find((area) => area.key === jobInput.area);
+              if (!before)
+                throw new RequestError(
+                  400,
+                  "Choose an existing PM before starting its run.",
+                );
+              const blockers = before.blockers.filter(
+                (item) => !["linear_mapping", "verification"].includes(item.id),
+              );
+              if (blockers.length)
+                throw new RequestError(
+                  409,
+                  blockers.map((item) => item.message).join(" "),
+                );
+            }
+            if (
+              jobInput.pmMode !== "discovery" &&
+              selectedArea &&
+              !hasPmMapping(selectedArea)
+            ) {
+              const mapping = await provisionLinear(
+                jobInput.project!,
+                undefined,
+                selectedArea.key,
+              );
+              if (mapping.status !== "ready")
+                throw new RequestError(
+                  409,
+                  mapping.message ?? "Connect Linear before running this PM.",
+                );
+            }
+            if (jobInput.pmMode !== "discovery") {
+              const current = loadProject(root, jobInput.project!);
+              if (!current.config.verified) {
+                const snapshot = verificationSnapshot(current.dir);
+                const checks = await doctorChecks(current, {
+                  root,
+                  env: { ...readConnections(root), ...process.env },
+                  fetch,
+                  today: () => new Date().toISOString().slice(0, 10),
+                  sourceControl,
+                  linearConnection,
+                  vercelConnection,
+                  linearConnectionFor,
+                  vercelConnectionFor,
+                });
+                const failed = checks.filter((check) => !check.ok);
+                if (failed.length)
+                  throw new RequestError(
+                    409,
+                    `PM setup needs attention: ${failed.map((check) => check.detail).join(" ")}`,
+                  );
+                stampVerified(
+                  current.dir,
+                  new Date().toISOString().slice(0, 10),
+                  snapshot,
+                );
+              }
+            }
             const ready = projectReadiness(
               jobInput.project!,
               await readinessContext(),
@@ -2447,6 +2636,9 @@ export function createDashboardServer(
             sourceConnections,
             serviceConnections,
           );
+          const foundationJobs = await runners()
+            .jobs()
+            .catch(() => []);
           const configWarnings: string[] = [];
           let hubRepo: string | null = null;
           if (existsSync(join(root, "hub.json"))) {
@@ -2472,6 +2664,8 @@ export function createDashboardServer(
                 name,
                 repo: project.config.repo,
                 instanceId: project.config.instanceId,
+                ideaPlanId: project.config.ideaPlanId,
+                foundation: foundationSummary(root, project, foundationJobs),
                 provider: project.config.provider ?? "github",
                 serverUrl: project.config.serverUrl,
                 workflow: effectiveWorkflow(project.config),
@@ -2764,6 +2958,78 @@ export function createDashboardServer(
               );
             } else
               json(res, 200, await environmentGuide.ask(name, input.message));
+          }
+          return;
+        }
+        const foundationRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/foundation(?:\/(build|inspect))?$/.exec(
+            url.pathname,
+          );
+        if (foundationRoute) {
+          const name = foundationRoute[1]!,
+            action = foundationRoute[2];
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Foundation requests do not accept query parameters.",
+            );
+          if (!listProjectNames(root).includes(name))
+            throw new RequestError(404, "Project not found.");
+          try {
+            if (!action) {
+              if (req.method !== "GET")
+                throw new RequestError(
+                  405,
+                  "Use GET to review the foundation build.",
+                );
+              json(res, 200, await foundation.status(name));
+            } else {
+              if (req.method !== "POST")
+                throw new RequestError(405, "Use POST for foundation actions.");
+              if (updateRunning || setupBusy(name))
+                throw new RequestError(
+                  409,
+                  "Wait for active setup work before starting the foundation.",
+                );
+              const input = await body(req);
+              if (action === "inspect") {
+                if (Object.keys(input).length)
+                  throw new RequestError(
+                    400,
+                    "Repository inspection takes an empty object.",
+                  );
+                json(res, 200, await foundation.inspect(name));
+              } else {
+                if (
+                  Object.keys(input).some(
+                    (key) => !["revision", "retryJobId"].includes(key),
+                  ) ||
+                  typeof input.revision !== "string" ||
+                  (input.retryJobId !== undefined &&
+                    typeof input.retryJobId !== "string")
+                )
+                  throw new RequestError(
+                    400,
+                    "Review the foundation brief and provide its current revision.",
+                  );
+                json(
+                  res,
+                  202,
+                  await foundation.start(
+                    name,
+                    input as { revision: string; retryJobId?: string },
+                  ),
+                );
+              }
+            }
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            throw new RequestError(
+              error instanceof IdeaCrewError ? error.status : 503,
+              error instanceof IdeaCrewError
+                ? error.message
+                : "Foundation setup stopped. Your reviewed plan and completed setup steps are saved. Refresh and retry to resume.",
+            );
           }
           return;
         }

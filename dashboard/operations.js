@@ -80,6 +80,8 @@
     onDiscover,
     onCreatePm,
     getProject,
+    getCodingAction,
+    getJobs,
     isLocked,
   }) => {
     const states = new Map();
@@ -232,7 +234,7 @@
         el(
           "p",
           "runner-guidance",
-          "Read the proposal, then choose Approve coding. ShipGremlins adds pm-approved and creates the label in the ticket’s Linear team if needed. Split broad epics into testable milestones first. Automation may pick up approved work; approval does not mark it Done.",
+          "Review the idea, evidence, and scope. Approve a small, testable change when you’re ready for a coding agent to build it.",
         ),
       );
       if (s.reviewError) root.append(message(s.reviewError, true));
@@ -247,10 +249,24 @@
         root.append(
           empty(
             "No proposals awaiting approval",
-            "PM patrols propose scoped improvements. Discovery builds context first and does not file implementation tickets.",
+            "Run a PM patrol or Explore product ideas to get considered proposals for your next improvement.",
           ),
         );
-      for (const item of s.review?.items || []) {
+      const selected = s.review?.items?.find(
+        (item) => item.id === s.selectedProposal,
+      );
+      if (selected)
+        root.append(
+          btn("← All proposals", () => {
+            s.selectedProposal = "";
+            s.confirmApproval = "";
+            paintReview(s);
+            const heading = root.querySelector("h2");
+            heading?.setAttribute("tabindex", "-1");
+            heading?.focus();
+          }),
+        );
+      for (const item of selected ? [selected] : s.review?.items || []) {
         const card = el("article", "proposal-card"),
           head = el("div", "shared-knowledge-heading");
         head.append(
@@ -268,9 +284,32 @@
           head.append(link);
         }
         card.append(head, el("h3", "", item.title));
-        const details = el("details", "proposal-evidence");
+        if (!selected) {
+          const preview =
+            (item.description || "No description supplied.")
+              .split(/\r?\n/)
+              .find((line) => line.trim() && !/^(#|<!--)/.test(line.trim())) ||
+            "Open the proposal to review its scope and evidence.";
+          card.append(
+            el(
+              "p",
+              "proposal-preview",
+              preview.length > 220 ? `${preview.slice(0, 217)}…` : preview,
+            ),
+            btn("Read & review", () => {
+              s.selectedProposal = item.id;
+              paintReview(s);
+              const heading = root.querySelector("h3");
+              heading?.setAttribute("tabindex", "-1");
+              heading?.focus({ preventScroll: true });
+              heading?.scrollIntoView?.({ block: "start" });
+            }),
+          );
+          root.append(card);
+          continue;
+        }
+        const details = el("section", "proposal-evidence proposal-reading");
         details.append(
-          el("summary", "", "Read proposal & evidence"),
           window.renderKnowledgeDocument(
             item.description || "No description supplied.",
           ),
@@ -451,6 +490,23 @@
       result.append(banner, signals);
       return result;
     }
+    function knowledgeExcerpt(value) {
+      const plain = String(value || "")
+        .replace(/```[^\n]*\n[\s\S]*?(?:```|$)/g, " ")
+        .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+        .replace(/^\s*>\s?/gm, "")
+        .replace(/^\s*(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/gm, "")
+        .replace(/!?\[([^\]\n]+)\]\([^\n)]*\)/g, "$1")
+        .replace(/(\*\*|~~|`+)(.*?)\1/g, "$2")
+        .replace(/(?<!\w)__([^_]+)__(?!\w)/g, "$1")
+        .replace(/(?<!\w)([_*])([^_*]+)\1(?!\w)/g, "$2")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (plain.length <= 220) return plain;
+      const excerpt = plain.slice(0, 219);
+      const boundary = excerpt.lastIndexOf(" ");
+      return `${(boundary > 0 ? excerpt.slice(0, boundary) : excerpt).trimEnd()}…`;
+    }
     function knowledgeBody(s) {
       const map = el("section", "knowledge-team-map");
       map.append(
@@ -475,8 +531,10 @@
           el(
             "p",
             "",
-            area.summary ||
-              "No saved discovery yet. A discovery run will map this PM’s area of the product.",
+            knowledgeExcerpt(area.summary) ||
+              (area.summary
+                ? "Open discovery for this PM’s saved findings."
+                : "No saved discovery yet. A discovery run will map this PM’s area of the product."),
           ),
         );
         const actions = el("div", "project-pm-actions");
@@ -690,13 +748,17 @@
     function deliveryView(s) {
       const root = el("div", "project-delivery"),
         delivery = s.data?.delivery;
+      const promotion = delivery?.mode === "promotion";
       root.append(
         heading(
-          "Evidence before promotion",
-          "Follow implementation, review, and release. A ticket is Done only after its production merge is confirmed.",
+          promotion
+            ? "Evidence before promotion"
+            : "From ticket to pull request",
+          promotion
+            ? "Follow implementation, review, and release. A ticket is Done only after its production merge is confirmed."
+            : "Follow the work, inspect the checks, and review the draft pull request before merging.",
         ),
       );
-      const promotion = delivery?.mode === "promotion";
       const steps = promotion
         ? [
             [
@@ -967,13 +1029,68 @@
         if (tab === "review") {
           value.reviewSummary = el("div");
           value.proposals = el("section", "project-proposals");
-          content.append(value.reviewSummary, value.proposals);
+          const nav = el("nav", "surface-tabs review-navigation");
+          nav.setAttribute("aria-label", "Review sections");
+          const choose = (section) => {
+            value.reviewSummary.hidden = section !== "attention";
+            value.proposals.hidden = section !== "proposals";
+            for (const button of nav.children)
+              button.setAttribute(
+                "aria-current",
+                button.dataset.section === section ? "page" : "false",
+              );
+          };
+          for (const [section, label] of [
+            ["proposals", "Product proposals"],
+            ["attention", "Needs attention"],
+          ]) {
+            const button = btn(label, () => choose(section));
+            button.dataset.section = section;
+            nav.append(button);
+          }
+          choose(
+            getProject(s.name)?.foundation?.needed ? "attention" : "proposals",
+          );
+          content.append(nav, value.proposals, value.reviewSummary);
         }
         if (tab === "delivery") {
-          value.deliverySummary = el("div");
-          value.deliveryHost = el("div");
-          content.append(value.deliverySummary, value.deliveryHost);
-          deliveryWorkflow?.mount(value.deliveryHost, getProject(s.name));
+          value.deliverySummary = el("section");
+          value.deliverySummary.id = `delivery-work-${s.name}`;
+          value.deliveryHost = el("section");
+          value.deliveryHost.id = `delivery-controls-${s.name}`;
+          value.deliverySection = "work";
+          value.deliveryNav = el("nav", "surface-tabs delivery-navigation");
+          value.deliveryNav.setAttribute("aria-label", "Delivery sections");
+          value.chooseDelivery = (section) => {
+            const promotion = s.data?.delivery?.mode === "promotion";
+            value.deliverySection = promotion ? section : "work";
+            value.deliveryNav.hidden = !promotion;
+            value.deliverySummary.hidden = value.deliverySection !== "work";
+            value.deliveryHost.hidden =
+              !promotion || value.deliverySection !== "controls";
+            for (const button of value.deliveryNav.children)
+              button.setAttribute(
+                "aria-current",
+                button.dataset.section === value.deliverySection
+                  ? "page"
+                  : "false",
+              );
+          };
+          for (const [section, label, panel] of [
+            ["work", "Work & evidence", value.deliverySummary],
+            ["controls", "Promotion controls", value.deliveryHost],
+          ]) {
+            const button = btn(label, () => value.chooseDelivery(section));
+            button.dataset.section = section;
+            button.setAttribute("aria-controls", panel.id);
+            value.deliveryNav.append(button);
+          }
+          value.chooseDelivery("work");
+          content.append(
+            value.deliveryNav,
+            value.deliverySummary,
+            value.deliveryHost,
+          );
         }
         if (tab === "knowledge") {
           value.notes = buildNotes(s);
@@ -1016,6 +1133,11 @@
         }
         if (tab === "delivery") {
           v.deliverySummary.replaceChildren(deliveryView(s));
+          if (s.data?.delivery?.mode === "promotion" && !v.deliveryMounted) {
+            deliveryWorkflow?.mount(v.deliveryHost, getProject(s.name));
+            v.deliveryMounted = true;
+          }
+          v.chooseDelivery(v.deliverySection);
           continue;
         }
         if (tab === "knowledge") {
@@ -1062,6 +1184,11 @@
         globalError,
         globalBusy,
         filter,
+        globalProjects.map((project) => [
+          getProject(project.project)?.foundation,
+          getCodingAction?.(project.project),
+        ]),
+        getJobs?.(),
       ]);
       if (signature === inboxSignature) return;
       inboxSignature = signature;
@@ -1098,17 +1225,37 @@
               project.inbox?.length ? "has-reviews" : "",
               `${project.inbox?.length || 0} to review`,
             ),
-            el("span", "", `${project.knowledge?.areas?.length || 0} PMs`),
+            el(
+              "span",
+              "",
+              `${project.knowledge?.areas?.length || 0} ${project.knowledge?.areas?.length === 1 ? "PM" : "PMs"}`,
+            ),
             anchor("Open project →", route(project.project)),
           );
           card.append(identity, detail);
+          const status = getProject(project.project);
+          if (status)
+            card.append(
+              status.foundation?.needed
+                ? window.renderFoundationLauncher(status)
+                : window.renderCodingLauncher(status, {
+                    locked: isLocked(),
+                    compact: true,
+                    jobs: getJobs?.() || [],
+                    operation: getCodingAction?.(project.project),
+                  }),
+            );
           overview.append(card);
         }
         if (!globalProjects.length)
           overview.append(
             empty(
-              "Start with one product",
-              "Connect a repository, give a PM its brief, and let discovery build the first product map.",
+              !globalLoadedAt
+                ? "Loading your projects…"
+                : "Start with one product",
+              !globalLoadedAt
+                ? "Checking the workspace and current work."
+                : "Bring an idea or connect an existing app. We’ll help you build the foundation and grow your crew.",
               anchor("Add a project", "/projects#project-form"),
             ),
           );
@@ -1214,6 +1361,7 @@
       },
       refresh,
       refreshInbox,
+      renderOverview: paintInbox,
       forget(name) {
         states.delete(name);
         deliveryWorkflow?.forget(name);

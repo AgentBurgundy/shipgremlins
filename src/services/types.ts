@@ -57,6 +57,10 @@ export interface LinearClient {
   addComment(ticketId: string, body: string): Promise<LinearComment>;
   listComments(ticketId: string): Promise<LinearComment[]>;
   createTicket(input: {
+    /** Controller-reserved UUID for recovering a lost creation response. */
+    id?: string;
+    /** Required when the mapped project belongs to multiple teams. */
+    teamId?: string;
     projectId: string;
     title: string;
     description: string;

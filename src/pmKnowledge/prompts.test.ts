@@ -65,6 +65,41 @@ function fixture(): PmPromptInput {
 }
 
 describe("PM prompt policy and knowledge contracts", () => {
+  it("gives explicit product exploration a creative workflow with honest hypotheses and review gates", () => {
+    const prompt = buildPmPatrolPrompt({ ...fixture(), focus: "exploration" });
+    expect(prompt).toContain("PRODUCT EXPLORATION");
+    expect(prompt).toContain(
+      "Current screens and code are context, not a ceiling",
+    );
+    expect(prompt).toContain("before filtering for easy implementation");
+    expect(prompt).toContain("before they open this product");
+    expect(prompt).toContain("a redesigned end-to-end workflow");
+    expect(prompt).toContain("demand and value as hypotheses");
+    expect(prompt).toContain(
+      "cheapest experiment that could disprove its value",
+    );
+    expect(prompt).toContain("there is no concept or ticket quota");
+    expect(prompt).toContain("Never send private code");
+    expect(prompt).toContain("not proof of adoption or effectiveness");
+    expect(prompt).toContain("Never self-approve tickets, add pm-approved");
+    expect(prompt).toContain("mapped-linear-only-patrol");
+    expect(prompt).toContain("EXPLORATION OUTPUT");
+    expect(prompt).not.toContain("INVESTIGATION STANDARD — a patrol");
+    expect(prompt).not.toContain("PATROL LOOP");
+  });
+  it("authorizes routine scoped label repair while preserving approval and mappings", () => {
+    const prompt = buildPmPatrolPrompt(fixture());
+    expect(prompt).toContain('"pm:catalog","pm-proposal"');
+    expect(prompt).toContain("create it in that team with issueLabelCreate");
+    expect(prompt).toContain("does not need a separate owner action");
+    expect(prompt).toContain(
+      "Repair a missing required label on an existing matching proposal",
+    );
+    expect(prompt).toContain("preserving its other labels, state and approval");
+    expect(prompt).toContain("or create/apply approval labels yourself");
+    expect(prompt).toContain("concrete permission failure");
+  });
+
   it.each([buildPmDiscoveryPrompt, buildPmPatrolPrompt])(
     "keeps runtime and current owner direction above learned data (%#)",
     (build) => {

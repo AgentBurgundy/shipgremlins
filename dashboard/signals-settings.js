@@ -168,6 +168,9 @@
     const model = window.createSignalsSettingsModel(initialTelemetry, options);
     const sections = {};
     const inputs = {};
+    const tabs = {};
+    const providerKeys = Object.keys(providers);
+    let revealingInvalid = false;
     const root = document.createElement("section");
     root.className = "signals-settings";
     const node = (tag, className, text) => {
@@ -184,12 +187,56 @@
         "Optional context for your PMs. Choose the app scope here, save, then add credentials in Connections. Secrets are stored separately.",
       ),
     );
+    const navigation = node("div", "signals-provider-tabs");
+    navigation.setAttribute("role", "tablist");
+    navigation.setAttribute("aria-label", "Product signal provider");
+    root.append(navigation);
+    const selectProvider = (provider, focus = false) => {
+      if (!sections[provider]) return false;
+      for (const key of providerKeys) {
+        const active = key === provider;
+        sections[key].section.hidden = !active;
+        tabs[key].setAttribute("aria-selected", String(active));
+        tabs[key].tabIndex = active ? 0 : -1;
+      }
+      if (focus) tabs[provider].focus();
+      return true;
+    };
     for (const [provider, definition] of Object.entries(providers)) {
       const initial = model.get(provider);
-      const section = node("details", "signal-provider-settings");
+      const section = node(
+        "section",
+        "signal-provider-settings signal-provider-panel",
+      );
       section.dataset.signalProvider = provider;
-      section.open = initial.enabled;
-      section.append(node("summary", "", definition.name));
+      section.id = `${prefix}-${provider}-panel`;
+      section.setAttribute("role", "tabpanel");
+      const tab = node("button", "", definition.name);
+      tab.type = "button";
+      tab.id = `${prefix}-${provider}-tab`;
+      tab.dataset.signalProviderTab = provider;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", section.id);
+      section.setAttribute("aria-labelledby", tab.id);
+      tab.addEventListener("click", () => selectProvider(provider));
+      tab.addEventListener("keydown", (event) => {
+        const index = providerKeys.indexOf(provider);
+        const next =
+          event.key === "ArrowRight"
+            ? (index + 1) % providerKeys.length
+            : event.key === "ArrowLeft"
+              ? (index - 1 + providerKeys.length) % providerKeys.length
+              : event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? providerKeys.length - 1
+                  : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        selectProvider(providerKeys[next], true);
+      });
+      tabs[provider] = tab;
+      navigation.append(tab);
       const toggleLabel = node("label", "signal-enable");
       const enabled = document.createElement("input");
       enabled.type = "checkbox";
@@ -209,6 +256,7 @@
       const legend = node("legend", "sr-only", `${definition.name} scope`);
       fields.append(legend);
       fields.disabled = !enabled.checked;
+      fields.hidden = !enabled.checked;
       const grid = node("div", "project-form-grid");
       inputs[provider] = {};
       const addField = (parent, key, title, pattern, optional = false) => {
@@ -236,26 +284,62 @@
         input.addEventListener("change", () =>
           model.set(provider, key, input.value),
         );
+        input.addEventListener("invalid", () => {
+          const first = input.form?.querySelector(
+            ":invalid:not(fieldset):not(form)",
+          );
+          if (revealingInvalid || (first && first !== input)) return;
+          revealingInvalid = true;
+          selectProvider(provider);
+          if (advanced.contains(input)) setAdvanced(true);
+          for (
+            let parent = input.parentElement;
+            parent;
+            parent = parent.parentElement
+          )
+            if (parent.tagName === "DETAILS") parent.open = true;
+          options.onReveal?.(input);
+          input.focus();
+          queueMicrotask(() => {
+            revealingInvalid = false;
+          });
+        });
         inputs[provider][key] = input;
         wrapper.append(label, input);
         parent.append(wrapper);
       };
       for (const field of definition.fields) addField(grid, ...field);
       fields.append(grid);
-      const advanced = node("details", "signal-secret-references");
+      const advanced = node("div", "signal-secret-references");
+      advanced.id = `${prefix}-${provider}-references`;
+      advanced.hidden = true;
+      const advancedToggle = node(
+        "button",
+        "signal-reference-toggle small-button",
+        "Credential variable names",
+      );
+      advancedToggle.type = "button";
+      advancedToggle.setAttribute("aria-controls", advanced.id);
+      const setAdvanced = (open) => {
+        advanced.hidden = !open;
+        advancedToggle.setAttribute("aria-expanded", String(open));
+      };
+      setAdvanced(false);
+      advancedToggle.addEventListener("click", () =>
+        setAdvanced(advanced.hidden),
+      );
       advanced.append(
-        node("summary", "", "Advanced: credential variable names"),
         node(
           "p",
           "runner-guidance",
-          "These are names, not secret values. Keep existing names to reuse saved credentials. Disabling a provider keeps its stored credentials.",
+          "Keep these names to reuse saved credentials. Add the secret values in Connections.",
         ),
       );
       const secretGrid = node("div", "project-form-grid");
       for (const [key, label, keyPrefix] of definition.secrets)
         addField(secretGrid, key, label, `${keyPrefix}_[A-Z][A-Z0-9_]*`);
       advanced.append(secretGrid);
-      fields.append(advanced);
+      fields.append(advancedToggle, advanced);
       if (provider === "mixpanel")
         fields.append(
           node(
@@ -275,10 +359,24 @@
       enabled.addEventListener("change", () => {
         model.enable(provider, enabled.checked);
         fields.disabled = !enabled.checked;
+        fields.hidden = !enabled.checked;
+        syncTab();
       });
+      const syncTab = () => {
+        tab.dataset.enabled = String(enabled.checked);
+        tab.setAttribute(
+          "aria-label",
+          `${definition.name}, ${enabled.checked ? "enabled" : "not enabled"} for this project`,
+        );
+      };
+      syncTab();
       sections[provider] = { section, enabled };
       root.append(section);
     }
+    selectProvider(
+      providerKeys.find((provider) => model.get(provider).enabled) ||
+        providerKeys[0],
+    );
     container.replaceChildren(root);
     return {
       read: () => model.read(),
@@ -292,10 +390,12 @@
       focusProvider(provider) {
         const target = sections[provider];
         if (!target) return;
-        target.section.open = true;
+        selectProvider(provider);
+        options.onReveal?.(target.enabled);
         target.section.scrollIntoView({ block: "nearest" });
         target.enabled.focus();
       },
+      selectProvider,
     };
   };
 

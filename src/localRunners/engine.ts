@@ -173,10 +173,10 @@ function validInput(value: unknown): value is LocalJobInput {
   if (
     value.pmMode !== undefined &&
     (value.type !== "pm" ||
-      value.pmMode !== "discovery" ||
+      !["discovery", "exploration"].includes(value.pmMode as string) ||
       value.runOnce !== true ||
       typeof value.discoveryRevision !== "string" ||
-      value.linearBinding !== undefined ||
+      (value.pmMode === "discovery" && value.linearBinding !== undefined) ||
       value.ticket !== undefined)
   )
     return false;

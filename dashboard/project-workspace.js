@@ -85,9 +85,43 @@
     }
     root.append(document.createTextNode(text.slice(cursor)));
   }
-  window.renderKnowledgeDocument = (content) => {
+  function withoutReviewedSetup(content, proposal) {
+    if (!proposal) return content;
+    const blocks = [
+      ...content.matchAll(
+        /^```shipgremlins-setup[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*(?=\r?$)/gm,
+      ),
+    ];
+    // Only hide the one machine block represented by the structured review.
+    // Invalid, ambiguous, or changed discovery remains visible for diagnosis.
+    if (blocks.length !== 1) return content;
+    const canonical = (value) =>
+      JSON.stringify(value, (_key, item) =>
+        item && typeof item === "object" && !Array.isArray(item)
+          ? Object.fromEntries(
+              Object.keys(item)
+                .sort()
+                .map((key) => [key, item[key]]),
+            )
+          : item,
+      );
+    try {
+      if (canonical(JSON.parse(blocks[0][1])) === canonical(proposal))
+        return (
+          content.slice(0, blocks[0].index) +
+          content.slice(blocks[0].index + blocks[0][0].length)
+        );
+    } catch {
+      // Keep malformed source readable; it has not been reviewed successfully.
+    }
+    return content;
+  }
+  window.renderKnowledgeDocument = (content, { setupProposal } = {}) => {
     const root = node("div", "knowledge-document");
-    const lines = String(content || "").split(/\r?\n/);
+    const lines = withoutReviewedSetup(
+      String(content || ""),
+      setupProposal,
+    ).split(/\r?\n/);
     const cells = (line) =>
       line
         .trim()
@@ -191,6 +225,10 @@
     const setupSuggestions = window.createSetupSuggestions?.({
       api,
       onSaved,
+      onChanged: () => {
+        signature = "";
+        render();
+      },
       isLocked: () => locked,
     });
     let status = null,
@@ -396,7 +434,7 @@
           const field = node("div", "field");
           const caption = node("label", "", label);
           caption.htmlFor = `edit-brief-${key}`;
-          const input = node(number ? "input" : "textarea");
+          const input = node(number || rows === 1 ? "input" : "textarea");
           input.id = caption.htmlFor;
           input.required = required;
           if (number) {
@@ -404,7 +442,8 @@
             input.min = "1";
             input.max = "20";
           } else {
-            input.rows = rows;
+            if (rows === 1) input.type = "text";
+            else input.rows = rows;
             input.maxLength = max;
           }
           input.value = list
@@ -414,25 +453,24 @@
           field.append(caption, input);
           return field;
         };
-        form.append(
+        const direction = node("section", "pm-editor-direction");
+        direction.append(
           addField("name", "PM name", { rows: 1, required: true, max: 100 }),
           addField("mandate", "Mandate", {
-            rows: 6,
+            rows: 4,
             required: true,
             max: 12000,
           }),
         );
         const charterRoot = node("div");
-        form.append(charterRoot);
+        direction.append(charterRoot);
         editor.charter = window.createPmCharter(
           charterRoot,
           "edit-charter",
           brief.charter || {},
         );
-        const advanced = node("details", "charter-group");
-        advanced.append(
-          node("summary", "", "Ownership, schedule & work limits"),
-        );
+        const advanced = node("section", "pm-editor-execution");
+        advanced.append(node("h3", "", "Ownership, schedule & work limits"));
         advanced.append(
           addField("paths", "Owned paths · one per line", { list: true }),
           addField("sharedTouchpoints", "Shared touchpoints · one per line", {
@@ -448,7 +486,34 @@
             required: true,
           }),
         );
-        form.append(advanced);
+        const navigation = node("nav", "surface-tabs settings-navigation");
+        navigation.setAttribute("aria-label", "Edit PM settings");
+        const panels = [
+          ["Mission & brief", direction],
+          ["Ownership & schedule", advanced],
+        ];
+        const select = (selected) =>
+          panels.forEach(([, panel], index) => {
+            panel.hidden = index !== selected;
+            navigation.children[index].setAttribute(
+              "aria-current",
+              index === selected ? "page" : "false",
+            );
+          });
+        panels.forEach(([label], index) =>
+          navigation.append(button(label, () => select(index))),
+        );
+        select(0);
+        form.append(navigation, direction, advanced);
+        form.addEventListener(
+          "invalid",
+          (event) => {
+            const first = form.querySelector(":invalid");
+            if (first && first !== event.target) return;
+            select(advanced.contains(event.target) ? 1 : 0);
+          },
+          true,
+        );
         body.replaceChildren(form, editorMessage);
         editor.original = JSON.stringify(readBrief());
       } catch (error) {
@@ -658,7 +723,7 @@
           node(
             "strong",
             "",
-            `${job.pmMode === "discovery" ? "Discovery" : job.type === "pm" ? "PM patrol" : "Coding run"} · ${job.area || job.ticket || ""}`,
+            `${job.pmMode === "discovery" ? "Discovery" : job.pmMode === "exploration" ? "Product exploration" : job.type === "pm" ? "PM patrol" : "Coding run"} · ${job.type === "developer" ? job.ticket || job.area || "" : job.area || ""}`,
           ),
           node(
             "span",
@@ -679,6 +744,7 @@
       sidebar.replaceChildren();
       for (const name of names) {
         const item = link("", path(name), "nav-item");
+        item.title = name;
         item.append(
           node("span", "project-nav-dot"),
           node("span", "project-nav-name", name),
@@ -696,8 +762,21 @@
         );
     }
     function home(project) {
-      root.append(window.renderPatrolPlan(project, { compact: true }));
-      if (project.verification?.mode !== "browser" && !project.areas?.length) {
+      if (project.foundation?.needed)
+        root.append(window.renderFoundationLauncher(project));
+      else
+        root.append(
+          window.renderCodingLauncher(project, {
+            locked,
+            jobs: getJobs?.() || [],
+            operation: options.getCodingAction?.(project.name),
+          }),
+        );
+      if (
+        !project.foundation?.needed &&
+        project.verification?.mode !== "browser" &&
+        !project.areas?.length
+      ) {
         const setup = node("section", "onboarding-setup-callout"),
           copy = node("div");
         copy.append(
@@ -779,40 +858,14 @@
       }
       crew.append(cards);
       root.append(crew);
-      const coding = node("section", "project-coding-section"),
-        codingImage = node("img"),
-        codingCopy = node("div", "project-coding-copy");
-      codingImage.src = "/assets/gremlin-coding.webp";
-      codingImage.alt = "";
-      codingImage.width = codingImage.height = 40;
-      codingCopy.append(
-        node("h2", "", "Coding Gremlins"),
-        node(
-          "p",
-          "",
-          "Picks the next ready, approved ticket from this project’s Linear queue and starts coding.",
-        ),
-      );
-      coding.append(
-        codingImage,
-        codingCopy,
-        action("Run coding", {
-          launchProject: project.name,
-          launchCrew: "developer",
-        }),
-      );
-      root.append(coding);
       const recent = node("section", "project-recent-activity");
       recent.append(
         node("h2", "", "Recent activity"),
         activityList(project, null, 4),
       );
       root.append(recent);
-      const context = disclosure(
-        "details",
-        "Project details",
-        "project-details workspace-disclosure",
-      );
+      const context = node("section", "project-details project-reference");
+      context.append(node("h2", "", "Project details"));
       const contextBody = node("div", "project-details-body");
       const facts = [
         ["Repository", project.repo],
@@ -890,13 +943,6 @@
           );
       }
       context.append(contextBody);
-      const guidance = disclosure(
-        "guidance",
-        "Setup & next steps",
-        "project-guidance workspace-disclosure",
-      );
-      options.operations?.mount(guidance, project, "overview");
-      context.append(guidance);
       root.append(context);
     }
     function pmWorkspace(project, area) {
@@ -931,7 +977,29 @@
         }),
       );
       const tab = tabs.some(([key]) => key === pages.tab) ? pages.tab : "brief";
-      if (tab === "brief") main.append(window.renderPatrolPlan(project));
+      if (tab === "brief" && !project.foundation?.needed) {
+        const explore = node("section", "product-exploration-card"),
+          copy = node("div");
+        copy.append(
+          node("h3", "", "What could this product become?"),
+          node(
+            "p",
+            "",
+            "Explore unmet needs, new workflows, and ideas beyond the current app. Get a reasoned proposal with evidence, assumptions, and a small experiment to try.",
+          ),
+        );
+        const launch = action("Explore product ideas", {
+          launchProject: project.name,
+          launchCrew: "pm",
+          launchArea: area.key,
+          pmMode: "exploration",
+        });
+        launch.disabled =
+          locked ||
+          Boolean(options.getAreaAction?.(project.name, area.key)?.busy);
+        explore.append(copy, launch);
+        main.append(explore);
+      }
       const nav = node("nav", "pm-workspace-tabs");
       nav.setAttribute("aria-label", "PM workspace sections");
       for (const [key, label] of tabs) {
@@ -985,11 +1053,8 @@
               "No mandate saved yet. Edit the brief to define this PM’s purpose.",
           ),
         );
-        const advanced = disclosure(
-          "brief-details",
-          "Product brief & schedule",
-          "pm-brief-details workspace-disclosure",
-        );
+        const advanced = node("section", "pm-brief-details");
+        advanced.append(node("h3", "", "Product brief & schedule"));
         const charter = node("div", "pm-charter-grid");
         for (const [key, label] of Object.entries(briefLabels)) {
           const value = area.charter?.[key];
@@ -1069,7 +1134,14 @@
           setupSuggestions?.mount(content, project.name, area.key);
         const file = data?.documents?.find((item) => item.name === `${tab}.md`);
         if (file?.content)
-          content.append(window.renderKnowledgeDocument(file.content));
+          content.append(
+            window.renderKnowledgeDocument(file.content, {
+              setupProposal:
+                tab === "discovery"
+                  ? setupSuggestions?.proposal(project.name, area.key)
+                  : undefined,
+            }),
+          );
         else {
           const empty = node("div", "workspace-empty"),
             art = node("img");
@@ -1154,6 +1226,7 @@
         locked,
         launching,
         options.getCheck?.(project?.name),
+        options.getCodingAction?.(project?.name),
         options.getAreaAction?.(project?.name, area?.key),
         project?.areas?.map((item) =>
           options.getAreaAction?.(project.name, item.key),
@@ -1169,7 +1242,8 @@
       if (
         renderedRoute === currentRoute &&
         (options.operations?.protectFocus(root) ||
-          options.onboarding?.protectFocus(root))
+          options.onboarding?.protectFocus(root) ||
+          setupSuggestions?.protectFocus())
       )
         return;
       renderedRoute = currentRoute;
@@ -1236,6 +1310,11 @@
       else home(project);
     }
     function routeChanged() {
+      setupSuggestions?.setActive(
+        pages.current === "project" && pages.tab === "discovery"
+          ? `${pages.project}/${pages.pm}`
+          : "",
+      );
       const key = activeKey();
       if (key !== contextKey) {
         stopKnowledge();

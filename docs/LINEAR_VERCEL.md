@@ -20,8 +20,9 @@ original mandate is never replaced, and generating or applying a draft creates
 no Linear resources.
 
 Creating the PM saves it with automation paused and creates its Linear project
-under the app's team. Review its mapping and run **Verify connections**, then
-**Run once** to inspect a supervised result. **Enable automation** opts into UTC
+under the app's team. **Run once** prepares any missing mapping for that PM and
+verifies the project's selected connections before queuing a supervised result.
+**Enable automation** opts into UTC
 patrols and automatic approved-ticket pickup; **Pause automation** stops new
 automatic work. Explicit PM and approved Coding runs remain available while
 paused. Neither control approves a ticket or marks it Done.
@@ -54,7 +55,29 @@ interruption. Reused projects and older mappings without that creation record
 are never automatically rewritten. Explicit mapping repair removes that pending
 metadata ownership, even when you select the same project again.
 
-No bulk migration runs when you connect Linear, open the dashboard, or start the controller. Team/project provisioning follows an explicit app, PM, or retry action. The configuration-only `gremlins setup init` command remains offline; finish its Linear mapping from the dashboard.
+No bulk migration runs when you connect Linear, open the dashboard, or start the controller. Team/project provisioning follows an explicit app, PM, foundation-build, run, or retry action. Starting a PM with a missing mapping completes its resumable Linear setup using the app's selected connection; other paused PMs stay unmapped. The run also performs required connection verification after setup. Source, AI, Linear, and eligible worker access must be available first. Known mappings are preserved; missing access or an ambiguous team requires a clear remedy instead of silently switching resources. The configuration-only `gremlins setup init` command remains offline.
+
+## Automatic label repair
+
+Setup and PM runs check the area's routing label, such as `pm:foundation`, and
+`pm-proposal`. ShipGremlins reuses an applicable team or workspace label by name,
+case-insensitively, and creates missing labels in the mapped team. If another
+PM creates the label at the same time or the response is lost, it looks up the
+label again before reporting failure. Deleted labels are checked again on the
+next run. Ordinary label creation does not require another owner approval.
+
+Before launching a PM, the controller also repairs an open `pm-proposal` issue
+that lacks an area label when its Linear project belongs to exactly one
+configured PM. It checks the issue's current project and team, skips conflicting
+area labels and closed issues, and adds only the missing label. Approval, state
+and other labels are preserved. Shared project mappings need the PM to establish
+which matching proposal it owns before repairing it. PM instructions apply the
+same rules to new proposals and additional classification labels.
+
+If the selected connection cannot read/create labels or update proposals, the
+run explains the access needed; it does not silently continue with unroutable
+tickets. Label repair never creates replacement teams/projects, changes mappings,
+approves work or marks tickets Done.
 
 Creating teams depends on your Linear workspace's permissions and limits. Choose reuse before creation if you need an existing team. Once a creation attempt has a reserved ID, retries keep that ID because the first request might already have succeeded. Use the explicit mapping repair below to select different existing resources. ShipGremlins does not request Linear's admin scope solely to bypass workspace restrictions. Linear's [GraphQL API](https://linear.app/developers/graphql) and [official schema](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql) define the supported mutations and caller-provided IDs.
 
@@ -72,12 +95,12 @@ journal together. Concurrent edits are rejected. Unrelated project settings,
 mandates, and credentials are preserved. This does not move, create, or delete
 anything in Linear. Leaving a PM unmapped pauses it; saving a valid mapping does
 not automatically enable a paused PM. An intentionally unmapped, paused PM does
-not block verification of other configured PMs. It cannot patrol, run Coding work,
-or enable automation until its mapping is repaired; code-only Discovery remains
-available when its source, AI, and worker requirements are ready. Verify
-connections after mapping changes, then use
-**Run once** or explicitly resume automation. Explicit provisioning remains available for creating
-missing resources.
+not block verification of other configured PMs. Clicking **Run once** or
+**Explore product ideas** on that PM deliberately prepares its missing mapping
+and verifies connections. Code-only Discovery remains available when its source,
+AI, and worker requirements are ready. To enable automation, verify connections
+and explicitly resume it. Explicit provisioning also remains available for
+creating missing resources.
 
 ## Vercel preview access
 

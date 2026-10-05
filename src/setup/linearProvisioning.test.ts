@@ -37,6 +37,7 @@ function fixture() {
   const teams = new Map<string, LinearTeam>();
   const projects = new Map<string, LinearProjectResource>();
   const client: LinearProvisioningClient = {
+    ensureLabels: vi.fn(async () => {}),
     organization: vi.fn(async () => workspace),
     getTeam: vi.fn(async (id) => teams.get(id) ?? null),
     getProject: vi.fn(async (id) => projects.get(id) ?? null),
@@ -95,6 +96,82 @@ function fixture() {
 }
 
 describe("Linear app and mandate provisioning", () => {
+  it("prepares only the requested PM and leaves another paused PM unmapped", async () => {
+    const f = fixture(),
+      service = f.create();
+    await service.addArea("demo", {
+      key: "later",
+      name: "Later",
+      mandate: "An intentionally paused product initiative.",
+    });
+    await expect(
+      service.provision("demo", { areaKey: "core" }),
+    ).resolves.toMatchObject({ status: "ready" });
+    const project = loadProject(f.root, "demo");
+    expect(
+      project.areas.find((area) => area.key === "core")?.linearProjectId,
+    ).not.toBe("PASTE_LINEAR_PROJECT_ID");
+    expect(project.areas.find((area) => area.key === "later")).toMatchObject({
+      enabled: false,
+      linearProjectId: "PASTE_LINEAR_PROJECT_ID",
+    });
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(f.client.ensureLabels).toHaveBeenCalledExactlyOnceWith(
+      project.config.linear!.teamId,
+      ["pm:core", "pm-proposal"],
+    );
+    expect(service.status("demo", "core").status).toBe("ready");
+    expect(service.status("demo").status).not.toBe("ready");
+    await service.provision("demo", { areaKey: "core" });
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    await expect(
+      service.provision("demo", { areaKey: "missing" }),
+    ).rejects.toThrow("Choose an existing PM");
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+  });
+  it("prepares required PM labels on setup and repairs them again without replacing resources", async () => {
+    const f = fixture(),
+      service = f.create();
+    await service.provision("demo");
+    const project = loadProject(f.root, "demo");
+    expect(f.client.ensureLabels).toHaveBeenCalledWith(
+      project.config.linear!.teamId,
+      ["pm:core", "pm-proposal"],
+    );
+    const before = JSON.stringify(project.config.linear);
+    vi.mocked(f.client.ensureLabels!).mockClear();
+    await service.provision("demo");
+    expect(f.client.ensureLabels).toHaveBeenCalledWith(
+      project.config.linear!.teamId,
+      ["pm:core", "pm-proposal"],
+    );
+    expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(loadProject(f.root, "demo").config.linear)).toBe(
+      before,
+    );
+  });
+
+  it("preserves mappings on a label permission failure and resumes when access returns", async () => {
+    const f = fixture(),
+      service = f.create();
+    await service.provision("demo");
+    const project = loadProject(f.root, "demo");
+    vi.mocked(f.client.ensureLabels!).mockRejectedValueOnce(
+      new Error("permission denied"),
+    );
+    await expect(service.provision("demo")).rejects.toThrow(
+      "read and create issue labels",
+    );
+    expect(loadProject(f.root, "demo").areas).toEqual(project.areas);
+    expect(service.status("demo").status).toBe("error");
+    await expect(service.provision("demo")).resolves.toMatchObject({
+      status: "ready",
+    });
+    expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+  });
+
   it("recreates a deleted PM key with a fresh Linear intent and preserves old projects and recovery", async () => {
     const f = fixture(),
       service = f.create();

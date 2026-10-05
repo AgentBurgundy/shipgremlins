@@ -52,6 +52,7 @@ import { createProjectKnowledge } from "../projectKnowledge/index.ts";
 import type { ExecutionLimits } from "../execution.ts";
 import { resolveTestAccess, type TestAccess } from "../testAccess.ts";
 import { resolveRepositoryHead } from "../projectOnboarding/repository.ts";
+import { foundationNeeded } from "../ideaCrew/foundation.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -77,7 +78,12 @@ export interface JobPreparationOptions {
   linear?: (
     key: string,
   ) => Pick<LinearClient, "getTicket" | "listTickets"> &
-    Partial<Pick<LinearApi, "getProject">>;
+    Partial<
+      Pick<
+        LinearApi,
+        "getProject" | "ensureLabels" | "repairProposalAreaLabels"
+      >
+    >;
   preview?: (project: Project, token: string) => Promise<string | null>;
   now?: () => Date;
   sourceControl?: Pick<SourceControl, "acquireLease"> &
@@ -101,10 +107,11 @@ export function approvedForArea(
   ticket: LinearTicket,
   area: AreaConfig,
 ): boolean {
+  const labels = new Set(ticket.labels.map((label) => label.toLowerCase()));
   return (
     ticket.projectId === area.linearProjectId &&
-    ticket.labels.includes(area.label) &&
-    ticket.labels.includes(LABELS.approved) &&
+    labels.has(area.label.toLowerCase()) &&
+    labels.has(LABELS.approved) &&
     ![
       LABELS.proposal,
       LABELS.needsHuman,
@@ -113,7 +120,7 @@ export function approvedForArea(
       LABELS.ci,
       "pm-deployed",
       "pm-done",
-    ].some((label) => ticket.labels.includes(label)) &&
+    ].some((label) => labels.has(label)) &&
     !["completed", "canceled"].includes(ticket.stateType)
   );
 }
@@ -299,12 +306,35 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new JobReadinessError(
         "This PM's Linear project is unavailable or belongs to another team. Repair its mapping in Edit project before running it.",
       );
+    return remote;
+  }
+
+  function uniquelyMappedPmProject(area: AreaConfig): boolean {
+    try {
+      return (
+        listProjectNames(root)
+          .flatMap((name) => loadProject(root, name).areas)
+          .filter((owner) => owner.linearProjectId === area.linearProjectId)
+          .length === 1
+      );
+    } catch {
+      // Unknown configuration must not be interpreted as exclusive ownership.
+      return false;
+    }
   }
 
   function projectFor(input: LocalJobInput): Project {
     if (!input.project) throw new JobReadinessError("Choose a project.");
     validateName(input.project, "project");
     const project = loadProject(root, input.project);
+    if (
+      input.type === "pm" &&
+      input.pmMode !== "exploration" &&
+      foundationNeeded(root, project)
+    )
+      throw new JobReadinessError(
+        "Build the foundation first. Review the first coding run on this project's Environment page; PMs can explore after application code is merged and inspected.",
+      );
     if (loadHub(root).runners.mode !== "local")
       throw new JobReadinessError(
         "This workspace uses CI runners. Set runners.mode to local in Configuration to use Docker workers.",
@@ -577,7 +607,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       project.areas.filter((owner) => approvedForArea(ticket, owner)).length ===
         1 &&
       ![LABELS.dispatched, LABELS.verified, LABELS.testFailed].some((label) =>
-        ticket.labels.includes(label),
+        ticket.labels.some((applied) => applied.toLowerCase() === label),
       ) &&
       !alreadyAttempted(ticket);
     const candidates = new Map<
@@ -801,8 +831,36 @@ export function createJobPreparation(options: JobPreparationOptions) {
             }
           : {}),
       });
-      if (job.type === "pm")
-        await checkPmMapping(project, area, linearCredential.authorization);
+      if (job.type === "pm") {
+        const mapping = await checkPmMapping(
+          project,
+          area,
+          linearCredential.authorization,
+        );
+        const client = linear(linearCredential.authorization);
+        if (client.ensureLabels) {
+          const teamId =
+            project.config.linear?.teamId ??
+            (mapping?.teamIds.length === 1 ? mapping.teamIds[0] : undefined);
+          if (!teamId)
+            throw new JobReadinessError(
+              "Choose this project's Linear team in Edit project before creating PM labels.",
+            );
+          try {
+            await client.ensureLabels(teamId, [area.label, LABELS.proposal]);
+            if (mapping && uniquelyMappedPmProject(area))
+              await client.repairProposalAreaLabels?.({
+                teamId,
+                projectId: area.linearProjectId,
+                label: area.label,
+              });
+          } catch {
+            throw new JobReadinessError(
+              "Required PM labels could not be prepared in the mapped Linear team. Check this account's permission to read and create issue labels and update proposals, then retry the PM run.",
+            );
+          }
+        }
+      }
       credentials.LINEAR_API_KEY = linearCredential.token;
       instructions.push(
         linearCredential.method === "oauth"
@@ -829,6 +887,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
     const payload: DockerJobPayload = {
       kind: job.type,
+      ...(job.pmMode === "exploration" ? { pmMode: "exploration" } : {}),
       browserVerification: verification.mode === "browser",
       nonce: job.id,
       provider,
@@ -844,6 +903,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
                 memory,
                 telemetry,
                 preview,
+                focus: job.pmMode === "exploration" ? "exploration" : "patrol",
               }),
               instructions.at(-1),
               ...(verification.mode === "browser"
@@ -932,7 +992,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
   async function prepareJob(job: LocalJob): Promise<DockerJobPayload> {
     try {
       const payload = await prepare(job);
-      return job.type === "pm" && job.pmMode !== "discovery" && options.beforePm
+      return job.type === "pm" && !job.pmMode && options.beforePm
         ? await options.beforePm(job, payload)
         : payload;
     } catch (error) {
@@ -968,7 +1028,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
         })
         .catch(() => null);
       for (const area of project.areas.filter((item) => item.enabled)) {
-        if (scheduledThisMinute(area.schedule, now))
+        if (
+          !foundationNeeded(root, project) &&
+          scheduledThisMinute(area.schedule, now)
+        )
           jobs.push({
             type: "pm",
             project: name,

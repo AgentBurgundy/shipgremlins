@@ -99,6 +99,55 @@ patrols and automatic pickup of approved Coding tickets. Turning it off does not
 cancel work already running. Each action shows its own missing setup requirements
 with direct remedies. A remote worker must be online and enrolled for this project.
 
+**Explore product ideas** starts a separate creative PM run. It considers the
+user's whole job, unmet needs, new capabilities and alternative workflows,
+including experiences the app does not have yet. The PM considers distinct
+directions before filtering for feasibility, researches relevant public sources
+when useful, and compares a promising concept with simpler alternatives. Private
+repository and user data stay out of external searches.
+
+Each opportunity separates observed evidence from hypotheses about demand or
+value, describes a concrete user outcome, and identifies the smallest useful
+milestone or experiment that could disprove the idea. Worthwhile implementable
+proposals go to the mapped Linear project for your review. There is no ticket
+quota or invented demand. Exploration uses the same scoped runner, budget and
+proposal safeguards as a patrol; it cannot approve tickets, start Coding, edit
+the product or verify releases. Its concepts and remaining questions become
+learned PM knowledge for the next run.
+
+## When to explore product ideas
+
+Use **Explore product ideas** when you want a new direction or a better way to
+serve your users. A patrol is useful for investigating current behavior; discovery
+builds a map of the codebase. Exploration asks what should exist next. For a new
+idea with no application yet, start with **Build foundation** in Environment.
+
+Give the PM a concrete ambition in its **Product brief**, then start exploration
+from that PM's page. You can keep automation paused. For example:
+
+| Product                | Direction to put in the brief                                                           | Useful exploration outcome                                                                                         |
+| ---------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Team planning app      | “Help a new teammate understand what matters without reading six tools.”                | A new onboarding experience, compared with a simpler guided checklist, and an experiment to test whether it helps. |
+| Developer tool         | “Make our complex setup approachable to someone who has never used Docker.”             | Alternative setup experiences with a first milestone and the assumptions each depends on.                          |
+| Scheduling app         | “Reduce the work before and after a booking, not just the clicks on the calendar.”      | A workflow spanning preparation and follow-up, including what could stay manual.                                   |
+| Internal reporting app | “Help a manager decide what to do next, while keeping sensitive employee data private.” | A decision-focused concept, privacy boundaries, and a small test of its usefulness.                                |
+
+Describe the users, the outcome, and the constraints you care about. Include any
+known complaints or measurements as evidence; leave missing customer research
+explicitly unknown. You do not need to preselect the feature or promise a market
+for it.
+
+Open the run's **Summary** for its recommendation, **Activity** for the work it
+performed, and **Evidence** for saved files. The PM's **Ranked queue** and
+**Memory** retain alternatives and unanswered questions. A useful result explains
+the experience, why it might matter, what supports it, what is still a hypothesis,
+and a cheap way to learn whether to proceed. No new Linear ticket can be the right
+result when an idea needs more evidence.
+
+Review a proposed milestone before approving its Linear ticket. **Start coding**
+then finds eligible approved work on your runners. Exploration itself does not
+approve the idea, start implementation, contact customers, or enable automation.
+
 On the creation form, **Fill with AI** fills blank operational settings and all
 eight product-brief fields from the mandate, repository paths, and existing PM
 ownership. It preserves the original mandate and user-entered values; review

@@ -22,7 +22,7 @@ export interface DockerJobPayload {
   prompt?: string;
   /** Browser tools remain available; repository mode does not require screenshots. */
   browserVerification?: boolean;
-  pmMode?: "discovery";
+  pmMode?: "discovery" | "exploration";
   maxRuntimeMinutes?: number;
   /** Internal remaining execution budget after trusted environment preparation. */
   remainingRuntimeMs?: number;
@@ -259,7 +259,7 @@ export function validatePayload(payload: DockerJobPayload): string {
         (k) => !["target", "env"].includes(k),
       ) ||
       payload.kind === "verify" ||
-      payload.pmMode ||
+      payload.pmMode === "discovery" ||
       payload.reviewPlan ||
       !payload.expectedCommitSha
     )
@@ -332,8 +332,14 @@ export function validatePayload(payload: DockerJobPayload): string {
   if (
     payload.pmMode !== undefined &&
     (payload.kind !== "pm" ||
-      payload.pmMode !== "discovery" ||
-      payload.browserVerification !== false ||
+      !["discovery", "exploration"].includes(payload.pmMode))
+  )
+    throw new Error("Invalid PM mode.");
+  if (payload.pmMode === "exploration" && payload.delivery)
+    throw new Error("Product exploration cannot publish code changes.");
+  if (
+    payload.pmMode === "discovery" &&
+    (payload.browserVerification !== false ||
       payload.delivery ||
       Object.values(payload.commands ?? {}).some(Boolean) ||
       Object.keys(payload.credentials ?? {}).some(

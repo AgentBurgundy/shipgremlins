@@ -23,7 +23,8 @@ export interface LocalJobInput {
   };
   /** Explicit controller-authorized one-off; it does not enable scheduled automation. */
   runOnce?: boolean;
-  pmMode?: "discovery";
+  /** Discovery reads the codebase; exploration proposes new product directions. */
+  pmMode?: "discovery" | "exploration";
   /** Owner configuration snapshot for adopting learned PM observations. */
   discoveryRevision?: string;
 }

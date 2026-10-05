@@ -467,6 +467,233 @@ describe("listTickets", () => {
 });
 
 describe("labels", () => {
+  it("repairs only open, unmapped proposals in the selected team and project using additive label updates", async () => {
+    const proposal = issueNode({
+      id: "repair-me",
+      project: { id: "proj-1" },
+      team: { id: "team-1" },
+      state: { type: "unstarted" },
+      labels: {
+        nodes: [
+          { id: "proposal", name: "pm-proposal" },
+          { id: "owner", name: "owner-priority" },
+        ],
+      },
+    });
+    const calls = stubLinear((op) => {
+      if (op === "ProjectTickets")
+        return {
+          issues: {
+            nodes: [
+              proposal,
+              {
+                ...proposal,
+                id: "wrong-project",
+                project: { id: "other-project" },
+              },
+              { ...proposal, id: "wrong-team", team: { id: "other-team" } },
+              { ...proposal, id: "closed", state: { type: "completed" } },
+              {
+                ...proposal,
+                id: "different-area",
+                labels: {
+                  nodes: [
+                    { id: "proposal", name: "pm-proposal" },
+                    { id: "other", name: "pm:other" },
+                  ],
+                },
+              },
+              {
+                ...proposal,
+                id: "already-mapped",
+                labels: {
+                  nodes: [
+                    { id: "proposal", name: "pm-proposal" },
+                    { id: "area", name: "pm:foundation" },
+                  ],
+                },
+              },
+              { ...proposal, id: "ordinary-issue", labels: { nodes: [] } },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+      if (op === "Ticket") return { issue: proposal };
+      if (op === "Labels")
+        return {
+          issueLabels: {
+            nodes: [
+              { id: "area", name: "pm:foundation", team: { id: "team-1" } },
+            ],
+          },
+        };
+      if (op === "RepairAreaLabel") return { issueUpdate: { success: true } };
+      throw new Error(`unexpected ${op}`);
+    });
+    await client().repairProposalAreaLabels({
+      teamId: "team-1",
+      projectId: "proj-1",
+      label: "pm:foundation",
+    });
+    const writes = calls.filter((call) => call.query.includes("mutation"));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.variables).toEqual({
+      id: "repair-me",
+      input: { addedLabelIds: ["area"] },
+    });
+  });
+
+  it("does not repair a proposal moved out of scope after it was listed", async () => {
+    const proposal = issueNode({
+      project: { id: "proj-1" },
+      labels: { nodes: [{ id: "proposal", name: "pm-proposal" }] },
+    });
+    const calls = stubLinear((op) =>
+      op === "ProjectTickets"
+        ? {
+            issues: {
+              nodes: [proposal],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          }
+        : { issue: { ...proposal, project: { id: "other-project" } } },
+    );
+    await client().repairProposalAreaLabels({
+      teamId: "team-1",
+      projectId: "proj-1",
+      label: "pm:foundation",
+    });
+    expect(calls.some((call) => call.query.includes("mutation"))).toBe(false);
+  });
+
+  it("finds applicable labels across pages without using another team's label", async () => {
+    const calls = stubLinear((op, vars) => {
+      expect(op).toBe("Labels");
+      return {
+        issueLabels: {
+          nodes: vars.after
+            ? [{ id: "workspace-label", name: "PM:Foundation", team: null }]
+            : [
+                {
+                  id: "other-label",
+                  name: "pm:foundation",
+                  team: { id: "other-team" },
+                },
+              ],
+          pageInfo: {
+            hasNextPage: !vars.after,
+            endCursor: vars.after ? null : "next",
+          },
+        },
+      };
+    });
+    await client().ensureLabels("team-1", ["pm:foundation", "PM:FOUNDATION"]);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.variables.after).toBe("next");
+  });
+
+  it("rechecks cached labels on each patrol and recreates a deleted label in the mapped team", async () => {
+    let exists = true;
+    const calls = stubLinear((op) => {
+      if (op === "Labels")
+        return {
+          issueLabels: {
+            nodes: exists
+              ? [{ id: "label", name: "pm:foundation", team: { id: "team-1" } }]
+              : [],
+          },
+        };
+      if (op === "CreateLabel")
+        return {
+          issueLabelCreate: {
+            success: true,
+            issueLabel: { id: "replacement-label" },
+          },
+        };
+      throw new Error(`unexpected ${op}`);
+    });
+    const api = client();
+    await api.ensureLabels("team-1", ["pm:foundation"]);
+    exists = false;
+    await api.ensureLabels("team-1", ["pm:foundation"]);
+    expect(
+      calls.filter((call) => call.query.includes("CreateLabel")),
+    ).toHaveLength(1);
+    expect(calls.at(-1)!.variables).toEqual({
+      input: { name: "pm:foundation", teamId: "team-1" },
+    });
+  });
+
+  it.each(["lost-response", "conflict", "unconfirmed"])(
+    "reconciles %s after label creation without a duplicate mutation",
+    async (failure) => {
+      let created = false;
+      const calls = stubLinear((op) => {
+        if (op === "Labels")
+          return {
+            issueLabels: {
+              nodes: created
+                ? [
+                    {
+                      id: "label",
+                      name: "pm:foundation",
+                      team: { id: "team-1" },
+                    },
+                  ]
+                : [],
+            },
+          };
+        if (op === "CreateLabel") {
+          created = true;
+          if (failure === "lost-response") throw new Error("connection closed");
+          if (failure === "conflict")
+            return { errors: [{ message: "label already exists" }] };
+          return { issueLabelCreate: { success: false, issueLabel: null } };
+        }
+        throw new Error(`unexpected ${op}`);
+      });
+      await expect(
+        client().ensureLabels("team-1", ["pm:foundation"]),
+      ).resolves.toBeUndefined();
+      expect(
+        calls.filter((call) => call.query.includes("CreateLabel")),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("does not create labels when their lookup is incomplete", async () => {
+    const calls = stubLinear(() => ({
+      issueLabels: {
+        nodes: [],
+        pageInfo: { hasNextPage: true, endCursor: "same-cursor" },
+      },
+    }));
+    await expect(
+      client().ensureLabels("team-1", ["pm:foundation"]),
+    ).rejects.toThrow("lookup could not finish");
+    expect(calls.every((call) => call.query.includes("query Labels"))).toBe(
+      true,
+    );
+  });
+
+  it("reports actual label permission errors without swallowing failure or retrying a mutation", async () => {
+    const calls = stubLinear((op) =>
+      op === "Labels"
+        ? { issueLabels: { nodes: [] } }
+        : {
+            errors: [
+              { message: "You do not have permission to create labels" },
+            ],
+          },
+    );
+    await expect(
+      client().ensureLabels("team-1", ["pm:foundation"]),
+    ).rejects.toThrow("permission to create labels");
+    expect(
+      calls.filter((call) => call.query.includes("CreateLabel")),
+    ).toHaveLength(1);
+  });
+
   it("addLabel reuses an existing team label and writes the full label id list", async () => {
     const calls = stubLinear((op) => {
       switch (op) {
@@ -643,6 +870,53 @@ describe("comments", () => {
 });
 
 describe("createTicket", () => {
+  it("uses a reserved ticket ID and explicit mapped team when a project has multiple teams", async () => {
+    const calls = stubLinear((op) => {
+      if (op === "ProjectTeam")
+        return {
+          project: { teams: { nodes: [{ id: "team-1" }, { id: "team-2" }] } },
+        };
+      return {
+        issueCreate: {
+          success: true,
+          issue: issueNode({ id: "reserved-id", team: { id: "team-2" } }),
+        },
+      };
+    });
+    const ticket = await client().createTicket({
+      id: "reserved-id",
+      teamId: "team-2",
+      projectId: "proj-1",
+      title: "Build foundation",
+      description: "Reviewed first milestone",
+      labels: [],
+    });
+    expect(ticket.id).toBe("reserved-id");
+    expect(calls.at(-1)!.variables.input).toMatchObject({
+      id: "reserved-id",
+      teamId: "team-2",
+    });
+  });
+
+  it.each([undefined, "another-team"])(
+    "does not create a ticket with an ambiguous or unrelated team (%s)",
+    async (teamId) => {
+      const calls = stubLinear(() => ({
+        project: { teams: { nodes: [{ id: "team-1" }, { id: "team-2" }] } },
+      }));
+      await expect(
+        client().createTicket({
+          teamId,
+          projectId: "proj-1",
+          title: "Foundation",
+          description: "",
+          labels: [],
+        }),
+      ).rejects.toThrow("choose a mapped team");
+      expect(calls).toHaveLength(1);
+    },
+  );
+
   it("resolves the project's team, resolves/creates labels, then issueCreate", async () => {
     const calls = stubLinear((op, vars) => {
       switch (op) {

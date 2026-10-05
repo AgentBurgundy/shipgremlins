@@ -118,6 +118,43 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("prepares an explicit product exploration with scoped proposals and no delivery review", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "repository" };
+    });
+    const beforePm = vi.fn(async (_job, payload) => payload);
+    const prepared = createJobPreparation({
+      root,
+      env,
+      beforePm,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [],
+      }),
+    });
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      area: "core",
+      runOnce: true,
+      pmMode: "exploration" as const,
+    };
+    const validated = await prepared.validate(input);
+    const payload = await prepared.prepareJob({
+      ...job,
+      ...input,
+      ticket: undefined,
+      linearBinding: validated.linearBinding,
+      discoveryRevision: validated.discoveryRevision,
+    });
+    expect(payload.pmMode).toBe("exploration");
+    expect(payload.prompt).toContain("PRODUCT EXPLORATION");
+    expect(payload.prompt).toContain("label");
+    expect(payload.credentials?.LINEAR_API_KEY).toBe("linear-token");
+    expect(payload.delivery).toBeUndefined();
+    expect(beforePm).not.toHaveBeenCalled();
+  });
   function queueFixture(
     tickets: LinearTicket[],
     fresh: (value: LinearTicket) => LinearTicket | null = (value) => value,
@@ -153,6 +190,16 @@ describe("local job preparation", () => {
     identifier: `APP-${id}`,
     priority: 3,
     ...over,
+  });
+  it("reuses case-insensitive Linear labels for coding while preserving proposal and dispatch holds", async () => {
+    const f = queueFixture([
+      queueTicket("1", { labels: ["PM:CORE", "PM-APPROVED", "PM-PROPOSAL"] }),
+      queueTicket("2", { labels: ["PM:CORE", "PM-APPROVED", "PM-DISPATCHED"] }),
+      queueTicket("3", { labels: ["PM:CORE", "PM-APPROVED"] }),
+    ]);
+    const selected = await f.selectDeveloperTicket(codingRequest, []);
+    expect(selected.ticket).toBe("APP-3");
+    expect((await f.validate(selected)).ticket?.id).toBe("3");
   });
   it("finds the highest-priority approved ticket without an identifier and binds its current issue", async () => {
     const f = queueFixture([
@@ -915,6 +962,149 @@ describe("local job preparation", () => {
     });
     await expect(prepared.validate(input)).rejects.toThrow("another team");
   });
+  it.each([false, true])(
+    "prepares PM labels in the configured or sole project team before launching (configured: %s)",
+    async (configured) => {
+      const teamId = "11111111-1111-4111-8111-111111111111";
+      const file = join(root, "projects/app/project.json");
+      const raw = JSON.parse(readFileSync(file, "utf8"));
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "repository" };
+      if (configured) raw.linear = { teamId };
+      writeFileSync(file, JSON.stringify(raw));
+      const ensureLabels = vi.fn(async () => {});
+      const repairProposalAreaLabels = vi.fn(async () => {});
+      const prepared = createJobPreparation({
+        root,
+        env,
+        linear: () => ({
+          getTicket: async () => ticket,
+          listTickets: async () => [],
+          getProject: async () => ({
+            id: "linear-project",
+            name: "Core",
+            url: "https://linear.app/core",
+            teamIds: configured ? ["another-team", teamId] : [teamId],
+          }),
+          ensureLabels,
+          repairProposalAreaLabels,
+        }),
+      });
+      await prepared.prepareJob({
+        ...job,
+        type: "pm",
+        area: "core",
+        ticket: undefined,
+      });
+      expect(ensureLabels).toHaveBeenCalledExactlyOnceWith(teamId, [
+        "pm:core",
+        "pm-proposal",
+      ]);
+      expect(repairProposalAreaLabels).toHaveBeenCalledExactlyOnceWith({
+        teamId,
+        projectId: "linear-project",
+        label: "pm:core",
+      });
+    },
+  );
+  it("does not automatically relabel proposals when another app shares the Linear project", async () => {
+    initializeSetup(root, packageRoot, {
+      project: "second-app",
+      repo: "owner/second",
+    });
+    const path = join(root, "projects/second-app/areas.json"),
+      second = JSON.parse(readFileSync(path, "utf8"));
+    second.areas.core.linearProjectId = "linear-project";
+    writeFileSync(path, JSON.stringify(second));
+    const ensureLabels = vi.fn(async () => {}),
+      repairProposalAreaLabels = vi.fn(async () => {});
+    const prepared = createJobPreparation({
+      root,
+      env,
+      preview: async () => "https://preview.example.com",
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [],
+        getProject: async () => ({
+          id: "linear-project",
+          name: "Core",
+          url: "https://linear.app/core",
+          teamIds: ["team-1"],
+        }),
+        ensureLabels,
+        repairProposalAreaLabels,
+      }),
+    });
+    await prepared.prepareJob({
+      ...job,
+      type: "pm",
+      area: "core",
+      ticket: undefined,
+    });
+    expect(ensureLabels).toHaveBeenCalledOnce();
+    expect(repairProposalAreaLabels).not.toHaveBeenCalled();
+  });
+  it.each(["permission", "ambiguous"])(
+    "prevents an unroutable PM launch after a %s label setup failure",
+    async (failure) => {
+      const ensureLabels = vi.fn(async () => {
+        throw new Error("provider secret must not leak");
+      });
+      const releaseLease = vi.fn(async () => {});
+      const sourceAcquire = vi.fn(async () => ({
+        token: "source",
+        method: "token" as const,
+      }));
+      const prepared = createJobPreparation({
+        root,
+        env,
+        preview: async () => "https://preview.example.com",
+        linearConnection: {
+          resolveCredential: async () => ({
+            token: "linear",
+            authorization: "linear",
+            method: "token" as const,
+          }),
+          acquireLease: async () => ({
+            token: "linear",
+            authorization: "linear",
+            method: "token" as const,
+          }),
+          releaseLease,
+        },
+        sourceControl: { acquireLease: sourceAcquire },
+        linear: () => ({
+          getTicket: async () => ticket,
+          listTickets: async () => [],
+          getProject: async () => ({
+            id: "linear-project",
+            name: "Core",
+            url: "https://linear.app/core",
+            teamIds:
+              failure === "ambiguous" ? ["team-1", "team-2"] : ["team-1"],
+          }),
+          ensureLabels,
+        }),
+      });
+      await expect(
+        prepared.prepareJob({
+          ...job,
+          type: "pm",
+          area: "core",
+          ticket: undefined,
+        }),
+      ).rejects.toThrow(
+        failure === "ambiguous"
+          ? "Choose this project's Linear team"
+          : "permission to read and create issue labels",
+      );
+      expect(releaseLease).toHaveBeenCalledWith(job.id);
+      expect(sourceAcquire).not.toHaveBeenCalled();
+      expect(ensureLabels).toHaveBeenCalledTimes(
+        failure === "ambiguous" ? 0 : 1,
+      );
+    },
+  );
   it("uses GitLab nested namespaces without requiring GitHub credentials", async () => {
     edit("project.json", (raw) => {
       raw.provider = "gitlab";

@@ -10,17 +10,28 @@
     const heading = el("div", undefined, "project-section-title"),
       copy = el("div");
     copy.append(
-      el("h3", "Bring another machine"),
+      el("h3", "Remote runners"),
       el(
         "p",
-        "Run Docker jobs on your server, homelab, or cloud VM. Choose exactly which projects it can work on.",
+        "Add capacity from a server, homelab, or cloud machine.",
         "runner-guidance",
       ),
     );
-    heading.append(copy);
-    const drawer = el("details", undefined, "remote-enrollment"),
-      summary = el("summary", "Connect a remote worker");
-    drawer.append(summary);
+    const connect = el("button", "Connect a runner", "small-button"),
+      drawer = el("dialog", undefined, "remote-enrollment-dialog"),
+      dialogHeading = el("header", undefined, "remote-enrollment-heading"),
+      dialogIdentity = el("div"),
+      stepLabel = el("p", "STEP 1 OF 3", "remote-enrollment-step"),
+      dialogTitle = el("h2", "Where will your runner live?"),
+      close = el("button", "Close ×", "small-button");
+    connect.type = close.type = "button";
+    dialogTitle.id = "remote-enrollment-title";
+    drawer.setAttribute("aria-labelledby", dialogTitle.id);
+    dialogIdentity.append(stepLabel, dialogTitle);
+    dialogHeading.append(dialogIdentity, close);
+    drawer.append(dialogHeading);
+    document.body.append(drawer);
+    heading.append(copy, connect);
     const form = el("form"),
       fields = el("div", undefined, "remote-fields"),
       name = el("input"),
@@ -31,6 +42,7 @@
       result = el("section", undefined, "remote-enrollment-result"),
       list = el("div", undefined, "remote-worker-list");
     status.hidden = true;
+    status.setAttribute("role", "status");
     result.hidden = true;
     name.id = "remote-worker-name";
     name.required = true;
@@ -76,24 +88,30 @@
     );
     const submit = el(
       "button",
-      "Generate connection command",
+      "Create connection command",
       "button button-dark",
     );
     submit.type = "submit";
-    form.append(
+    const machineStep = el("section", undefined, "remote-enrollment-machine"),
+      projectsStep = el("section", undefined, "remote-enrollment-projects"),
+      footer = el("div", undefined, "remote-enrollment-footer"),
+      back = el("button", "Back", "small-button"),
+      next = el("button", "Continue", "button button-dark");
+    back.type = next.type = "button";
+    machineStep.append(
       fields,
       allow,
-      projectLabel,
       el(
         "p",
-        "Docker runs Linux jobs on Linux, macOS, or Windows with Docker Desktop. Native macOS/iOS builds are not supported. Keep the worker process running; use your OS service manager for automatic startup.",
+        "Install Docker and the gremlins CLI on this machine first. Jobs run in isolated Linux containers.",
         "runner-guidance",
       ),
-      submit,
-      status,
     );
+    projectsStep.append(projectLabel);
+    footer.append(back, next, submit);
+    form.append(machineStep, projectsStep, footer, status);
     drawer.append(form, result);
-    root.append(heading, drawer, list);
+    root.append(heading, list);
     let projects = [],
       workers = [],
       busy = false,
@@ -102,7 +120,61 @@
       signature = "",
       workerError = "",
       secret = "",
-      generation = 0;
+      generation = 0,
+      step = 1;
+    function setStep(value, focus = false) {
+      step = value;
+      machineStep.hidden = step !== 1;
+      projectsStep.hidden = step !== 2;
+      back.hidden = step !== 2;
+      next.hidden = step !== 1;
+      submit.hidden = step !== 2;
+      stepLabel.textContent = `STEP ${step} OF 3`;
+      dialogTitle.textContent =
+        step === 1
+          ? "Where will your runner live?"
+          : step === 2
+            ? "Which projects can it work on?"
+            : "Connect your runner";
+      if (focus)
+        (step === 1 ? name : projectList.querySelector("input"))?.focus();
+    }
+    function closeDialog({ restoreFocus = true } = {}) {
+      clearCode();
+      if (drawer.open) drawer.close();
+      if (restoreFocus) connect.focus();
+    }
+    connect.addEventListener("click", () => {
+      if (isLocked() || busy) return;
+      setStep(1);
+      message("");
+      drawer.showModal();
+      name.focus();
+    });
+    close.addEventListener("click", () => closeDialog());
+    drawer.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeDialog();
+    });
+    back.addEventListener("click", () => {
+      if (!busy) {
+        message("");
+        setStep(1, true);
+      }
+    });
+    next.addEventListener("click", () => {
+      if (busy || !name.reportValidity() || !controller.reportValidity())
+        return;
+      try {
+        controllerOrigin();
+      } catch (error) {
+        message(error.message, true);
+        return;
+      }
+      message("");
+      setStep(2, true);
+    });
+    setStep(1);
     function message(text, error = false) {
       status.textContent = text;
       status.hidden = !text;
@@ -114,6 +186,7 @@
       result.replaceChildren();
       result.hidden = true;
       form.hidden = false;
+      setStep(1);
     }
     function selections() {
       return [...projectList.querySelectorAll("input")]
@@ -177,7 +250,7 @@
         list.append(
           el(
             "p",
-            "No remote machines connected yet. Your local workers keep running independently.",
+            "Remote runners will appear here once connected.",
             "runner-guidance",
           ),
         );
@@ -266,8 +339,44 @@
         fetching = false;
       }
     }
+    function controllerOrigin() {
+      const url = new URL(controller.value);
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.pathname !== "/" ||
+        url.search ||
+        url.hash
+      )
+        throw new Error("Use an HTTP(S) origin without a path or credentials.");
+      if (url.protocol === "http:" && !privateLan.checked)
+        throw new Error("Use HTTPS or explicitly allow your private LAN.");
+      if (url.protocol === "http:") {
+        const parts = url.hostname.split(".").map(Number);
+        const privateAddress =
+          parts.length === 4 &&
+          parts.every(
+            (part) => Number.isInteger(part) && part >= 0 && part <= 255,
+          ) &&
+          (parts[0] === 10 ||
+            parts[0] === 127 ||
+            (parts[0] === 192 && parts[1] === 168) ||
+            (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+            (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127));
+        if (!privateAddress)
+          throw new Error(
+            "For HTTP, enter a private LAN or Tailscale IP address. Use HTTPS for a public host.",
+          );
+      }
+      return url.origin;
+    }
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (step === 1) {
+        next.click();
+        return;
+      }
       if (busy || isLocked() || !form.reportValidity()) return;
       const allowed = selections();
       if (!allowed.length) {
@@ -276,38 +385,7 @@
       }
       let origin;
       try {
-        const url = new URL(controller.value);
-        if (
-          !["http:", "https:"].includes(url.protocol) ||
-          url.username ||
-          url.password ||
-          url.pathname !== "/" ||
-          url.search ||
-          url.hash
-        )
-          throw new Error(
-            "Use an HTTP(S) origin without a path or credentials.",
-          );
-        if (url.protocol === "http:" && !privateLan.checked)
-          throw new Error("Use HTTPS or explicitly allow your private LAN.");
-        if (url.protocol === "http:") {
-          const parts = url.hostname.split(".").map(Number);
-          const privateAddress =
-            parts.length === 4 &&
-            parts.every(
-              (part) => Number.isInteger(part) && part >= 0 && part <= 255,
-            ) &&
-            (parts[0] === 10 ||
-              parts[0] === 127 ||
-              (parts[0] === 192 && parts[1] === 168) ||
-              (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-              (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127));
-          if (!privateAddress)
-            throw new Error(
-              "For HTTP, enter a private LAN or Tailscale IP address. Use HTTPS for a public host.",
-            );
-        }
-        origin = url.origin;
+        origin = controllerOrigin();
       } catch (error) {
         message(
           error.message || "Enter the reachable controller address.",
@@ -317,6 +395,9 @@
       }
       busy = true;
       submit.disabled = true;
+      connect.disabled = true;
+      back.disabled = true;
+      submit.textContent = "Creating command…";
       const requestGeneration = generation;
       message("Creating a one-time enrollment code…");
       try {
@@ -348,18 +429,22 @@
           ),
           command,
           button("Copy command", () => copyCommand(command, notice)),
-          button("Done — hide command", clearCode),
+          button("Done", () => closeDialog()),
           notice,
         );
         form.hidden = true;
         result.hidden = false;
+        setStep(3);
         message("");
         await refresh();
       } catch (error) {
         message(error.message, true);
       } finally {
         busy = false;
-        submit.disabled = isLocked();
+        submit.disabled = isLocked() || !projects.length;
+        connect.disabled = isLocked();
+        back.disabled = false;
+        submit.textContent = "Create connection command";
       }
     });
     function schedule() {
@@ -369,7 +454,7 @@
       timer = setTimeout(schedule, 15000);
     }
     window.addEventListener("dashboard:pagechange", () => {
-      if (pages.current !== "runners") clearCode();
+      if (pages.current !== "runners") closeDialog({ restoreFocus: false });
       schedule();
     });
     window.addEventListener("pagehide", () => {
@@ -377,11 +462,12 @@
       clearTimeout(timer);
     });
     document.addEventListener("visibilitychange", schedule);
-    drawer.addEventListener("toggle", () => {
-      if (!drawer.open) clearCode();
+    drawer.addEventListener("close", () => {
+      clearCode();
     });
     return {
       setProjects(value) {
+        connect.disabled = busy || isLocked();
         const next = value || [];
         if (
           JSON.stringify(next.map((p) => p.name)) !==

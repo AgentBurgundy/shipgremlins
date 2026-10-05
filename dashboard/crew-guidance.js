@@ -101,6 +101,12 @@
   ) => {
     const root = el("div", "pm-simple-controls"),
       buttons = el("div", "pm-simple-actions");
+    if (project.foundation?.needed) {
+      const foundation = el("a", "small-button", "Build the foundation first");
+      foundation.href = `/projects/${encodeURIComponent(project.name)}?tab=environment`;
+      root.append(foundation);
+      return root;
+    }
     const run = el(
       "button",
       "button button-dark",
@@ -163,6 +169,43 @@
       message.setAttribute("role", operation.error ? "alert" : "status");
       root.append(message);
     }
+    return root;
+  };
+  window.renderFoundationLauncher = (project) => {
+    const stage = project.foundation?.stage;
+    const active = ["queued", "building"].includes(stage);
+    const root = el("section", "foundation-launch");
+    const copy = el("div", "foundation-launch-copy");
+    copy.append(
+      el("span", "eyebrow muted", "YOUR FIRST MILESTONE"),
+      el(
+        "h2",
+        "",
+        active
+          ? "Your foundation is taking shape"
+          : stage === "review-code"
+            ? "Your first build is ready to review"
+            : "Let’s build something your PMs can explore",
+      ),
+      el(
+        "p",
+        "",
+        active
+          ? "A coding agent is building the first working version on your runner. Follow its progress and review the pull request here."
+          : "Start with a working app and checks. Your crew sets up Linear and gives a coding agent a focused foundation ticket.",
+      ),
+    );
+    const action = el(
+      "a",
+      "button button-dark",
+      active
+        ? "View build"
+        : stage === "review-code"
+          ? "Review foundation"
+          : "Build foundation",
+    );
+    action.href = `/projects/${encodeURIComponent(project.name)}?tab=environment`;
+    root.append(copy, action);
     return root;
   };
   window.renderProjectCrew = (

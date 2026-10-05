@@ -14,9 +14,9 @@
   window.createDashboardShell = () => {
     if (window.dashboardShell) return window.dashboardShell;
     const cleanup = [];
-    const listen = (target, event, handler) => {
+    const listen = (target, event, handler, disposers = cleanup) => {
       target.addEventListener(event, handler);
-      cleanup.push(() => target.removeEventListener(event, handler));
+      disposers.push(() => target.removeEventListener(event, handler));
     };
     const toggle = document.getElementById("nav-toggle");
     const navigation = document.getElementById("workspace-navigation");
@@ -119,9 +119,31 @@
     const tabsReady = Boolean(
       categories && connections && groups.every(Boolean) && tabs.every(Boolean),
     );
+    let ownsConnections = tabsReady;
+    const categoryCleanup = [];
+
+    function releaseConnections() {
+      if (!ownsConnections) return;
+      ownsConnections = false;
+      for (const dispose of categoryCleanup.splice(0)) dispose();
+      categories.removeAttribute("role");
+      categories.removeAttribute("aria-orientation");
+      connections.classList.remove("connections-tabs-ready");
+      for (const group of groups)
+        for (const name of ["role", "aria-labelledby", "tabindex"])
+          group.removeAttribute(name);
+      for (const tab of tabs)
+        for (const name of [
+          "role",
+          "aria-controls",
+          "aria-selected",
+          "tabindex",
+        ])
+          tab.removeAttribute(name);
+    }
 
     function selectCategory(id) {
-      if (!tabsReady || !categoryIds.includes(id)) return;
+      if (!ownsConnections || !categoryIds.includes(id)) return;
       selectedCategory = id;
       groups.forEach((group, index) => {
         const selected = group.id === id;
@@ -178,30 +200,40 @@
         group.setAttribute("role", "tabpanel");
         group.setAttribute("aria-labelledby", tab.id);
         group.setAttribute("tabindex", "0");
-        listen(tab, "click", (event) => {
-          if (
-            event.button !== 0 ||
-            event.metaKey ||
-            event.ctrlKey ||
-            event.shiftKey ||
-            event.altKey
-          )
-            return;
-          event.preventDefault();
-          activateTab(index);
-        });
-        listen(tab, "keydown", (event) => {
-          let next;
-          if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
-          else if (event.key === "ArrowLeft")
-            next = (index - 1 + tabs.length) % tabs.length;
-          else if (event.key === "Home") next = 0;
-          else if (event.key === "End") next = tabs.length - 1;
-          else if (event.key === " " || event.key === "Enter") next = index;
-          else return;
-          event.preventDefault();
-          activateTab(next);
-        });
+        listen(
+          tab,
+          "click",
+          (event) => {
+            if (
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            )
+              return;
+            event.preventDefault();
+            activateTab(index);
+          },
+          categoryCleanup,
+        );
+        listen(
+          tab,
+          "keydown",
+          (event) => {
+            let next;
+            if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+            else if (event.key === "ArrowLeft")
+              next = (index - 1 + tabs.length) % tabs.length;
+            else if (event.key === "Home") next = 0;
+            else if (event.key === "End") next = tabs.length - 1;
+            else if (event.key === " " || event.key === "Enter") next = index;
+            else return;
+            event.preventDefault();
+            activateTab(next);
+          },
+          categoryCleanup,
+        );
       });
       connections.classList.add("connections-tabs-ready");
       selectCategory(categoryForHash() || selectedCategory);
@@ -209,18 +241,20 @@
     listen(window, "dashboard:pagechange", (event) => {
       closeNavigation();
       revealAnchor();
-      if (tabsReady && event.detail?.page === "connections")
+      if (ownsConnections && event.detail?.page === "connections")
         selectCategory(categoryForHash() || selectedCategory);
     });
     revealAnchor();
 
     const api = {
       closeNavigation,
+      releaseConnections,
       get category() {
         return selectedCategory;
       },
       destroy() {
         closeNavigation();
+        releaseConnections();
         for (const dispose of cleanup.splice(0)) dispose();
         if (navigation) {
           navigation.inert = false;

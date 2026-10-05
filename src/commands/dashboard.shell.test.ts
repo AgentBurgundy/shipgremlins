@@ -144,6 +144,7 @@ function fixture(path = "/connections", narrow = true) {
     dashboardShell: null as unknown as {
       category: string;
       closeNavigation(): void;
+      releaseConnections(): void;
       destroy(): void;
     },
     dashboardPages: {
@@ -252,5 +253,31 @@ describe("compact dashboard shell", () => {
     );
     view.window.emit("dashboard:pagechange", { detail: { page: "projects" } });
     expect(view.projectDrawer.open).toBe(true);
+  });
+  it("releases category visibility and ARIA ownership when provider dialogs adopt the panels", () => {
+    const view = fixture("/connections#source-control");
+    view.window.dashboardShell.releaseConnections();
+    expect(view.connections.classes.has("connections-tabs-ready")).toBe(false);
+    for (const group of view.groups) {
+      expect(group.getAttribute("role")).toBeUndefined();
+      expect(group.getAttribute("aria-labelledby")).toBeUndefined();
+      expect(group.getAttribute("tabindex")).toBeUndefined();
+      group.hidden = group.id !== "project-access";
+    }
+    view.window.location = new URL(
+      "http://localhost:4311/connections#source-control",
+    );
+    view.window.emit("dashboard:pagechange", {
+      detail: { page: "connections" },
+    });
+    view.tabs[0]!.emit("keydown", { key: "End" });
+    view.tabs[0]!.emit("click");
+    expect(view.paths).toEqual([]);
+    expect(
+      view.groups.filter((group) => !group.hidden).map((group) => group.id),
+    ).toEqual(["project-access"]);
+    expect(view.input.value).toBe("unsaved private draft");
+    view.window.dashboardShell.releaseConnections();
+    view.window.dashboardShell.destroy();
   });
 });

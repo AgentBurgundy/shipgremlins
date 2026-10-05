@@ -3,11 +3,19 @@
 This guide prepares an application for browser testing, including an early
 prototype. Starting without code? Use [idea onboarding](IDEA_TO_APP.md) to plan
 the first milestone and create its PM crew. Return here when the foundation
-is runnable. [When to bring in ShipGremlins →](WHEN_TO_USE.md)
+is runnable. For a newly created idea, this page starts with **Approve & build
+foundation**: a reviewed coding run that creates the first app and tests. It
+does not ask for hosting or run a PM patrol against an empty repository.
+[When to bring in ShipGremlins →](WHEN_TO_USE.md)
 
 Start with `gremlins setup`, or `gremlins setup --lan` on a homelab server. Connect source control and Claude Code, then add a repository. The dashboard opens that project's **Environment** page and starts a Setup Gremlin when its connections are ready. It reads bounded source files at an exact commit and recommends a test strategy. No Linear team, PM, or working deployment is required for this analysis.
 
-You can also skip analysis and configure an environment yourself. Existing projects use the same Environment page; choosing a setup path preserves their PMs, accounts, workflow, commands, and other named environments.
+Choose **I already know where to test** to skip analysis and enter an environment
+yourself. The page shows one setup stage at a time. Hosted setup starts with a
+test URL; **Find a preview with Vercel** opens the provider workflow when needed.
+Advanced runtime settings, source evidence and proposed setup files have separate
+review dialogs. Existing projects use the same Environment page; choosing a
+setup path preserves their PMs, accounts, workflow, commands and other named environments.
 
 Source selection follows manifests, executable entrypoints, relative imports, web assets and relevant test fixtures rather than taking the first files alphabetically. It can inspect up to 80 files and provide up to 512 KiB of selected source to Claude. Large files are explicitly marked as excerpts with line ranges. Expand **Reviewed files** to see why each file was selected, listing limits and unread references. This remains a bounded investigation, not a complete repository audit or an agent freely browsing every file. Earlier saved reports retain their earlier coverage; choose **Analyze again** to use the improved investigation.
 

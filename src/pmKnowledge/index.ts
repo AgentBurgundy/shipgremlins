@@ -241,7 +241,7 @@ export function createPmKnowledge(options: {
     if (
       result?.ok !== true ||
       result.kind !== "pm" ||
-      (job.pmMode === "discovery" && result.pmMode !== "discovery") ||
+      (job.pmMode !== undefined && result.pmMode !== job.pmMode) ||
       result.nonce !== job.id ||
       typeof result.commitSha !== "string" ||
       !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(result.commitSha) ||

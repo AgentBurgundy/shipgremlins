@@ -40,6 +40,73 @@
       if (text) item.textContent = text;
       return item;
     };
+    const tabs = new Map(),
+      sections = new Map();
+    const navigation = node("div", "project-settings-tabs");
+    navigation.setAttribute("role", "tablist");
+    navigation.setAttribute("aria-label", "Project workflow settings");
+    const sectionDefinitions = [
+      ["environment", "Environment"],
+      ["delivery", "Delivery"],
+      ["checks", "Checks"],
+    ];
+    for (const [index, [key, label]] of sectionDefinitions.entries()) {
+      const tab = node("button", "", label),
+        section = node("section", "settings-tab-panel");
+      tab.type = "button";
+      tab.id = `${prefix}-tab-${key}`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", `${prefix}-panel-${key}`);
+      section.id = `${prefix}-panel-${key}`;
+      section.dataset.settingsTab = key;
+      section.setAttribute("role", "tabpanel");
+      section.setAttribute("aria-labelledby", tab.id);
+      tab.addEventListener("click", () => selectSection(key));
+      tab.addEventListener("keydown", (event) => {
+        const next =
+          event.key === "ArrowRight"
+            ? (index + 1) % sectionDefinitions.length
+            : event.key === "ArrowLeft"
+              ? (index - 1 + sectionDefinitions.length) %
+                sectionDefinitions.length
+              : event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? sectionDefinitions.length - 1
+                  : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        selectSection(sectionDefinitions[next][0], true);
+      });
+      tabs.set(key, tab);
+      sections.set(key, section);
+      navigation.append(tab);
+    }
+    root.append(navigation, ...sections.values());
+    function selectSection(key, focus = false) {
+      if (!tabs.has(key)) return false;
+      for (const [name, tab] of tabs) {
+        tab.setAttribute("aria-selected", String(name === key));
+        tab.tabIndex = name === key ? 0 : -1;
+        sections.get(name).hidden = name !== key;
+      }
+      if (focus) tabs.get(key).focus({ preventScroll: true });
+      return true;
+    }
+    function revealField(input) {
+      if (!input) return false;
+      for (const [key, section] of sections)
+        if (section.contains(input)) selectSection(key);
+      let ancestor = input.parentElement;
+      while (ancestor) {
+        if (ancestor.tagName === "DETAILS") ancestor.open = true;
+        ancestor = ancestor.parentElement;
+      }
+      options.onReveal?.(input);
+      input.focus();
+      return true;
+    }
+    selectSection("environment");
     const field = (parent, key, label, help = "", options) => {
       const wrapper = node("div", "field");
       const caption = node("label", "", label);
@@ -67,17 +134,16 @@
     };
     const heading = node("div", "settings-heading");
     heading.append(
-      node("span", "eyebrow muted", "HOW THIS PROJECT WORKS"),
-      node("h3", "", "Your repository. Your workflow."),
+      node("h3", "", "Where should this project be checked?"),
       node(
         "p",
         "runner-guidance",
         "Start with code and checks. Add a browser target when your project has a web interface.",
       ),
     );
-    root.append(heading);
+    sections.get("environment").append(heading);
     field(
-      root,
+      sections.get("environment"),
       "target",
       "Verification target",
       "Repository-only work uses your source and configured commands. Browser work visits a preview or staging environment.",
@@ -226,7 +292,17 @@
       ),
     );
     browser.append(connectionHelp);
-    root.append(browser);
+    sections.get("environment").append(browser);
+    const deliveryHeading = node("div", "settings-heading");
+    deliveryHeading.append(
+      node("h3", "", "How should changes reach you?"),
+      node(
+        "p",
+        "runner-guidance",
+        "Your coding agents prepare changes for review. Choose their destination branch.",
+      ),
+    );
+    sections.get("delivery").append(deliveryHeading);
     const workflowGrid = node("div", "project-form-grid");
     field(
       workflowGrid,
@@ -244,7 +320,7 @@
       "Base branch",
       "The branch draft changes target. It does not mark tickets Done automatically.",
     );
-    root.append(workflowGrid);
+    sections.get("delivery").append(workflowGrid);
     const promotion = node("div", "promotion-settings");
     promotion.append(
       node(
@@ -257,15 +333,14 @@
     for (const name of ["production", "staging", "integration"])
       field(branches, name, `${name[0].toUpperCase() + name.slice(1)} branch`);
     promotion.append(branches);
-    root.append(promotion);
-    const commands = node("details", "command-settings");
-    commands.open = !Object.keys(config).length;
+    sections.get("delivery").append(promotion);
+    const commands = node("section", "command-settings");
     commands.append(
-      node("summary", "", "Install & verification commands"),
+      node("h3", "", "How does your project prove it works?"),
       node(
         "p",
         "runner-guidance",
-        "Edit these for your stack. Node defaults are only examples; Python, Go, Rust, or other projects need their own commands and the required tools in the worker image. Commands run in the app checkout.",
+        "Set the commands your runners use in the app checkout. The Node examples below can be replaced with commands for your stack.",
       ),
     );
     const commandGrid = node("div", "project-form-grid");
@@ -281,7 +356,7 @@
       fields[`command-${name}`].required = ["install", "test"].includes(name);
     }
     commands.append(commandGrid);
-    root.append(commands);
+    sections.get("checks").append(commands);
     const signalsContainer = node("div", "project-signals-settings");
     const signals = window.createSignalsSettings(
       signalsContainer,
@@ -295,7 +370,7 @@
       "runner-guidance settings-advanced-note",
       "Other saved environments are kept. Manage additional production targets, remove environments, or edit advanced sign-in settings in Configuration.",
     );
-    root.append(advanced);
+    sections.get("environment").append(advanced);
     container.replaceChildren(root);
     const providerKeys = {
       url: ["url"],
@@ -427,10 +502,20 @@
       render();
     });
     render();
+    let revealingInvalid = false;
+    for (const input of Object.values(fields))
+      input.addEventListener("invalid", () => {
+        if (revealingInvalid) return;
+        revealingInvalid = true;
+        revealField(input);
+        queueMicrotask(() => {
+          revealingInvalid = false;
+        });
+      });
     const signature = () =>
       JSON.stringify(
-        [...root.querySelectorAll("input,select")]
-          .map((item) => [item.dataset.setting, item.value])
+        Object.entries(fields)
+          .map(([key, item]) => [key, item.value])
           .concat([["environments", environments]]),
       );
     let baseline = signature();
@@ -442,6 +527,8 @@
         connectionChoices();
       },
       focusProvider: (provider) => signals.focusProvider(provider),
+      selectSection,
+      focus: (key) => revealField(fields[key]),
       setDefaultBranch(value) {
         if (!branchEdited && value) {
           fields.baseBranch.value = value;

@@ -14,6 +14,7 @@ import type { LocalJob } from "../localRunners/types.ts";
 import type { ProjectExecutionUsage } from "../localRunners/budgets.ts";
 import { createProjectKnowledge } from "./index.ts";
 import type { DeliveryRecord } from "../delivery/types.ts";
+import { foundationNeeded } from "../ideaCrew/foundation.ts";
 
 export function projectOperations(
   root: string,
@@ -38,7 +39,20 @@ export function projectOperations(
   };
   const inbox: Item[] = [];
   const seen = new Set<string>();
-  for (const area of ready.areas)
+  const needsFoundation = foundationNeeded(root, project);
+  if (needsFoundation)
+    inbox.push({
+      id: "setup:foundation",
+      kind: "setup",
+      title: "Build your app's foundation",
+      detail:
+        "Review the first milestone and start a Coding Gremlin. Environment setup and PM discovery come after the first app is built.",
+      action: {
+        label: "Build foundation",
+        href: `/projects/${name}?tab=environment`,
+      },
+    });
+  for (const area of needsFoundation ? [] : ready.areas)
     for (const blocker of area.blockers) {
       const id = `${blocker.id}:${["mandate", "mapping"].includes(blocker.action) ? area.key : "project"}`;
       if (seen.has(id)) continue;
@@ -56,7 +70,7 @@ export function projectOperations(
         action: { label: "Complete setup", href: page },
       });
     }
-  for (const area of knowledge.areas)
+  for (const area of needsFoundation ? [] : knowledge.areas)
     if (["empty", "stale"].includes(area.state))
       inbox.push({
         id: `knowledge:${area.key}`,
