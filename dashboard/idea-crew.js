@@ -13,6 +13,7 @@
     onChange = () => {},
     suggestName = () => {},
     onRestore = () => {},
+    previewContainer,
   }) => {
     let draft = null,
       controller = null,
@@ -42,7 +43,8 @@
     status.setAttribute("role", "status");
     status.hidden = true;
     const preview = node("div", undefined, "idea-crew-preview");
-    container.append(field, actions, status, preview);
+    container.append(field, actions, status);
+    (previewContainer || container).append(preview);
     function show(text, error = false) {
       status.hidden = !text;
       status.textContent = text;
@@ -73,11 +75,7 @@
       preview.replaceChildren();
       if (!draft) return;
       const plan = draft.plan;
-      preview.append(
-        node("p", "YOUR PROPOSED CREW", "eyebrow"),
-        node("h3", plan.name),
-        node("p", plan.summary),
-      );
+      preview.append(node("p", plan.summary));
       const milestone = node("div", undefined, "idea-milestone");
       milestone.append(
         node("strong", "First milestone"),
@@ -87,20 +85,20 @@
       const cards = node("ol", undefined, "idea-crew-cards");
       for (const member of plan.crew) {
         const card = node("li");
-        card.append(
-          node("h4", member.name),
-          node("p", member.mission),
+        card.append(node("h4", member.name), node("p", member.mission));
+        const detail = node("details");
+        detail.append(
+          node("summary", "First assignment & success criteria"),
           node("p", member.why, "idea-why"),
-        );
-        card.append(
           node("strong", "First assignment"),
           node("p", member.firstTask),
         );
         const criteria = node("ul");
         for (const criterion of member.acceptanceCriteria)
           criteria.append(node("li", criterion));
+        detail.append(criteria);
         card.append(
-          criteria,
+          detail,
           node(
             "p",
             member.dependsOn.length
@@ -130,7 +128,7 @@
         assumptions,
         node(
           "p",
-          "Choose a repository below, then create the crew together. An empty repository gets a README with this brief. Existing code is preserved. PMs start paused; review their first tickets before Coding Gremlins implement them.",
+          "Your crew shares one app. Foundation starts first; other PMs wait for their dependencies. You approve implementation tickets before coding begins.",
           "idea-next",
         ),
       );
@@ -216,6 +214,13 @@
         );
         if (input.value === saved.idea && !busy) {
           draft = result;
+          suggestName(
+            result.plan.name
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "")
+              .slice(0, 63),
+          );
           onRestore(result.destination);
           render();
           show(
@@ -242,10 +247,18 @@
           draft && draft.idea === input.value.trim() && !busy && !creating,
         );
       },
+      get plan() {
+        return draft?.plan;
+      },
+      get destination() {
+        return draft?.destination;
+      },
       async create(destination) {
         if (!this.ready())
           throw new Error("Plan and review your crew before creating it.");
         creating = true;
+        draft.destination = destination;
+        save();
         controls();
         try {
           return await api(
@@ -255,6 +268,14 @@
             120000,
           );
         } finally {
+          // The controller may have saved a destination before a provider timeout.
+          try {
+            const saved = await api(`/api/idea-plans/${draft.id}`);
+            draft = saved;
+            onRestore(saved.destination);
+          } catch {
+            /* Keep the reviewed destination until it can be recovered. */
+          }
           creating = false;
           controls();
         }

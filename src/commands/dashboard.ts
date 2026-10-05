@@ -1292,7 +1292,7 @@ export function createDashboardServer(
         ) {
           try {
             const match =
-              /^\/api\/source-control(?:\/(github|gitlab)(?:\/(connect|poll|repositories))?)?$/.exec(
+              /^\/api\/source-control(?:\/(github|gitlab)(?:\/(connect|poll|repositories|owners))?)?$/.exec(
                 url.pathname,
               );
             if (!match)
@@ -1301,6 +1301,30 @@ export function createDashboardServer(
             const action = match[2];
             if (!provider && req.method === "GET" && !url.search) {
               json(res, 200, { connections: await sourceControl.status() });
+            } else if (
+              provider &&
+              action === "owners" &&
+              req.method === "GET"
+            ) {
+              if (
+                [...url.searchParams.keys()].some((key) => key !== "serverUrl")
+              )
+                throw new RequestError(400, "Use a source server only.");
+              if (!sourceControl.repositoryOwners)
+                throw new RequestError(
+                  503,
+                  "Repository creation is unavailable on this controller.",
+                );
+              json(
+                res,
+                200,
+                await sourceControl.repositoryOwners({
+                  provider,
+                  ...(url.searchParams.has("serverUrl")
+                    ? { serverUrl: url.searchParams.get("serverUrl")! }
+                    : {}),
+                }),
+              );
             } else if (
               provider &&
               action === "repositories" &&

@@ -1,6 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { SOURCE_APPS } from "./apps.ts";
 import {
+  repositoryOwners,
+  createRepository,
+  type AccountRequest,
+} from "./repositoryCreation.ts";
+import {
   createSourceStore,
   type SavedConnection,
   type SourceState,
@@ -581,7 +586,80 @@ export function createSourceControl(options: {
       };
     });
   }
+  async function withAccount<T>(
+    input: SourceTarget,
+    action: (request: AccountRequest) => Promise<T>,
+  ): Promise<T> {
+    const destination = target(input);
+    return store.locked(async (state, save) => {
+      const connection = state.connections[key(destination)];
+      let accessToken: string;
+      if (connection) {
+        if (connection.repositoryId)
+          throw new SourceControlError(
+            "This connection is restricted to an existing repository. Connect an account that can create repositories.",
+            "repository_restricted",
+            403,
+          );
+        await refreshed(state, connection, save, 5 * 60000);
+        accessToken = connection.accessToken;
+      } else {
+        if (destination.provider === "gitlab" && !input.serverUrl)
+          throw new SourceControlError(
+            "Choose the GitLab server before using a saved token.",
+            "issuer_required",
+          );
+        const pat = manual(destination.provider);
+        if (!pat || !token(pat))
+          throw new SourceControlError(
+            "Connect your source account in Connections, then continue here.",
+            "not_connected",
+            401,
+          );
+        accessToken = pat;
+      }
+      try {
+        return await action((path, body) =>
+          request(
+            (destination.provider === "github"
+              ? "https://api.github.com"
+              : destination.serverUrl + "/api/v4") + path,
+            {
+              method: body === undefined ? "GET" : "POST",
+              headers: {
+                accept: "application/json",
+                authorization: `Bearer ${accessToken}`,
+                "content-type": "application/json",
+                ...(destination.provider === "github"
+                  ? { "x-github-api-version": "2022-11-28" }
+                  : {}),
+              },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            },
+          ),
+        );
+      } catch (error) {
+        if (
+          connection &&
+          error instanceof SourceControlError &&
+          error.code === "reconnect_required"
+        ) {
+          connection.needsReconnect = true;
+          await save(state);
+        }
+        throw error;
+      }
+    });
+  }
   const api: SourceControl = {
+    repositoryOwners: (input) =>
+      withAccount(input, (request) =>
+        repositoryOwners(input.provider, request),
+      ),
+    createRepository: (input) =>
+      withAccount(input, async (request) =>
+        repo(target(input), await createRepository(input, request)),
+      ),
     async status() {
       const state = await store.read();
       const destinations = new Map(

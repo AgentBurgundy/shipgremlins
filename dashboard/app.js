@@ -831,7 +831,9 @@
     remoteWorkers?.setProjects(projects);
     if (!projectLayoutInitialized) {
       $("new-project-drawer").open =
-        projects.length === 0 || ideaCrew.hasDraft();
+        projects.length === 0 ||
+        ideaCrew.hasDraft() ||
+        location.hash === "#new-project-drawer";
       projectLayoutInitialized = true;
     }
   }
@@ -1022,12 +1024,15 @@
     },
     true,
   );
+  let projectWizard;
   const ideaCrew = window.createIdeaCrew({
     container: $("idea-crew-panel"),
+    previewContainer: $("idea-crew-review"),
     api,
     onChange: () => {
       if ($("project-start").value === "idea")
         $("add-project").disabled = ideaCrew.busy;
+      projectWizard?.update();
     },
     suggestName: (name) => {
       if (!projectNameEdited && /^[a-z][a-z0-9-]*$/.test(name))
@@ -1048,6 +1053,7 @@
         renderProjectProvider();
       }
       renderStartingPoint();
+      projectWizard?.restore(destination);
     },
   });
   function renderStartingPoint() {
@@ -1059,7 +1065,13 @@
     $("project-create-explanation").textContent = idea
       ? "Creates the reviewed PM crew and shared brief. Empty repositories get a README. PM schedules start paused; app code is built through approved tickets."
       : "Adds your repository and starts a Setup Gremlin when source and Claude access are ready. No PM is created and no app changes are published.";
+    projectWizard?.update();
   }
+  projectWizard = window.createProjectWizard({
+    api,
+    crew: () => ideaCrew,
+    onProviderChange: () => refreshRepositories(),
+  });
   $("project-start").addEventListener("change", renderStartingPoint);
   if (sessionToken) void ideaCrew.restore();
   $("project-form").addEventListener("submit", async (event) => {
@@ -1073,7 +1085,11 @@
       );
       return;
     }
-    if (!$("manual-repository").checked && !$("repository-select").value) {
+    if (
+      !fromIdea &&
+      !$("manual-repository").checked &&
+      !$("repository-select").value
+    ) {
       message(
         $("project-message"),
         "Choose a repository from your connection, or use manual entry with a saved token.",
@@ -1092,6 +1108,7 @@
         connectionId: $("project-linear-connection").value || "default",
       },
     };
+    if (fromIdea) Object.assign(data, projectWizard.destination());
     try {
       if (!fromIdea) Object.assign(data, newProjectSettings.read());
     } catch (error) {
@@ -1148,6 +1165,9 @@
             repo: data.repo,
             provider: data.provider,
             ...(data.serverUrl ? { serverUrl: data.serverUrl } : {}),
+            ...(data.newRepository
+              ? { newRepository: data.newRepository }
+              : {}),
             connectionId: data.linear.connectionId,
             linearMode: data.linearMode,
             ...(data.linearTeamId ? { linearTeamId: data.linearTeamId } : {}),
@@ -1155,6 +1175,7 @@
         : await api("/api/projects", data, "POST", 90000);
       if (fromIdea) ideaCrew.clear();
       $("project-form").reset();
+      projectWizard.reset();
       newProjectSettings = window.createProjectSettings(
         $("new-project-settings"),
         "new-settings",
@@ -1811,8 +1832,8 @@
   function renderProjectProvider() {
     const gitlab = $("project-provider").value === "gitlab";
     const manual = $("manual-repository").checked;
-    $("gitlab-options").hidden = !gitlab || !manual;
-    $("gitlab-server").disabled = !gitlab || !manual;
+    $("gitlab-options").hidden = !gitlab;
+    $("gitlab-server").disabled = !gitlab;
     $("repository-picker").hidden = manual;
     $("repository-search").disabled = manual || formsLocked;
     $("repository-refresh").disabled =

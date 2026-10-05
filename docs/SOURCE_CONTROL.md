@@ -15,6 +15,28 @@ The GitLab app requests API and repository access so jobs can clone, push, and c
 
 Empty repository lists can mean the GitHub App has not been installed for that repository, an organization requires approval, or the selected account lacks access. Reload after changing the installation. Lists are bounded and show when more repositories are available; an omitted entry is not a provider authorization guarantee.
 
+## Creating a repository for an idea
+
+The guided **I have an idea** flow creates a repository in the account or namespace
+you select. **Private** is the default; public access requires an explicit choice
+and final review. Existing app onboarding continues to select an existing repository.
+
+GitHub apps and fine-grained tokens need **Repository creation (write)** or
+**Administration (write)** to create repositories. Prefer Repository creation when
+available. A classic token needs `repo` to create private repositories. App owners
+must configure the permission, and users must accept the change. ShipGremlins does
+not change provider permissions automatically. After creation, select the new
+repository in the app installation if needed; Contents and Pull requests write
+access are required to initialize it and run coding jobs.
+[GitHub repository creation permissions](https://docs.github.com/en/rest/repos/repos#create-a-repository-for-the-authenticated-user)
+
+GitLab creation uses `api` access and an owned namespace where the user is allowed
+to create projects. Group policies can still restrict creation or public visibility.
+Account and namespace IDs, visibility, and a unique setup marker prevent a retry
+from adopting an unrelated repository or switching to a different account. If a
+request times out, resume the same setup. Existing repositories are never deleted
+or changed to make a name available.
+
 ## Existing tokens and self-hosted GitLab
 
 Manual `GITHUB_TOKEN` and `GITLAB_TOKEN` connections remain available under the advanced source-token form. Existing installations keep working. Exported variables take precedence over saved `.env` values for this manual-token path.

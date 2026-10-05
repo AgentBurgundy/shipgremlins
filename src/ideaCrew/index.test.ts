@@ -17,6 +17,7 @@ import { loadProject } from "../config.ts";
 import { createProjectKnowledge } from "../projectKnowledge/index.ts";
 import { createLinearProvisioning } from "../setup/linearProvisioning.ts";
 import type { PlannerExecutor } from "../pmPlanner/docker.ts";
+import { SourceControlError } from "../sourceControl/types.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const roots: string[] = [];
@@ -97,6 +98,62 @@ function fixture(
   };
 }
 describe("idea crew planning", () => {
+  it("creates a private repository by default and resumes after installation access is granted", async () => {
+    const f = fixture({ empty: true });
+    const createRepository = vi.fn(async () => ({
+      id: "55",
+      provider: "github" as const,
+      serverUrl: "https://github.com",
+      fullName: "owner/studio",
+      defaultBranch: "main",
+      private: true,
+      canPush: true,
+      webUrl: "https://github.com/owner/studio",
+    }));
+    const service = createIdeaCrew({
+      ...f.options,
+      sourceControl: { ...f.source, createRepository },
+    });
+    const draft = await service.plan(idea);
+    expect(createRepository).not.toHaveBeenCalled();
+    f.source.resolveCredential.mockRejectedValueOnce(
+      new SourceControlError(
+        "Select this repository in the ShipGremlins GitHub App installation before using it.",
+        "repository_not_installed",
+        403,
+      ),
+    );
+    const destination = {
+      ...target,
+      revision: draft.revision,
+      newRepository: { ownerId: "1", accountId: "1" },
+    };
+    await expect(service.create(draft.id, destination)).rejects.toThrow(
+      "installation",
+    );
+    expect(createRepository).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visibility: "private",
+        creationId: draft.id,
+        repository: "owner/studio",
+      }),
+    );
+    expect(service.get(draft.id).destination?.newRepository?.visibility).toBe(
+      "private",
+    );
+    expect(existsSync(join(f.root, "projects"))).toBe(false);
+    await expect(
+      service.create(draft.id, {
+        ...destination,
+        newRepository: { ...destination.newRepository, visibility: "public" },
+      }),
+    ).rejects.toThrow("another destination");
+    await service.create(draft.id, destination);
+    expect(loadProject(f.root, "studio").areas).toHaveLength(2);
+    const before = createRepository.mock.calls.length;
+    await service.create(draft.id, destination);
+    expect(createRepository.mock.calls).toHaveLength(before);
+  });
   it("plans without a repository or provider access and recovers the same reviewed plan", async () => {
     const f = fixture();
     const draft = await f.service.plan(idea);

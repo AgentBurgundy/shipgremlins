@@ -28,7 +28,11 @@ import {
   initializeSetup,
   validateName,
 } from "../setup/files.ts";
-import { type SourceControl } from "../sourceControl/types.ts";
+import {
+  SourceControlError,
+  type NewRepository,
+  type SourceControl,
+} from "../sourceControl/types.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
 import { createLinearProvisioning } from "../setup/linearProvisioning.ts";
 import { createProjectKnowledge } from "../projectKnowledge/index.ts";
@@ -63,6 +67,7 @@ export interface CrewTarget {
   provider: "github" | "gitlab";
   serverUrl?: string;
   connectionId: string;
+  newRepository?: NewRepository;
 }
 interface Saved extends CrewDraft {
   launch?: {
@@ -70,6 +75,7 @@ interface Saved extends CrewDraft {
     stage: "source" | "project" | "crew" | "complete";
     branch?: string;
     initialized?: boolean;
+    repositoryId?: string;
   };
 }
 export interface IdeaCrewOptions {
@@ -77,7 +83,7 @@ export interface IdeaCrewOptions {
   packageRoot: string;
   env?: NodeJS.ProcessEnv;
   execute?: PlannerExecutor;
-  sourceControl?: Pick<SourceControl, "resolveCredential">;
+  sourceControl?: Pick<SourceControl, "resolveCredential" | "createRepository">;
   fetch?: typeof fetch;
   addArea?: (project: string, input: Record<string, unknown>) => Promise<void>;
 }
@@ -190,6 +196,34 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
         "Use an HTTPS GitLab origin without credentials or a path.",
       );
     const connectionId = input.connectionId ?? "default";
+    let newRepository: NewRepository | undefined;
+    if (input.newRepository !== undefined) {
+      const settings = input.newRepository;
+      if (
+        !object(settings) ||
+        Object.keys(settings).some(
+          (k) => !["ownerId", "accountId", "visibility"].includes(k),
+        ) ||
+        typeof settings.ownerId !== "string" ||
+        !/^\d+$/.test(settings.ownerId) ||
+        typeof settings.accountId !== "string" ||
+        !/^\d+$/.test(settings.accountId) ||
+        (settings.visibility !== undefined &&
+          !["private", "public"].includes(String(settings.visibility)))
+      )
+        throw new IdeaCrewError(
+          "Choose a repository owner and either private or public visibility.",
+        );
+      newRepository = {
+        ownerId: settings.ownerId,
+        accountId: settings.accountId,
+        visibility: settings.visibility === "public" ? "public" : "private",
+      };
+      if (input.repo.split("/").at(-1) !== input.project)
+        throw new IdeaCrewError(
+          "Use the project name for your new repository.",
+        );
+    }
     if (
       typeof connectionId !== "string" ||
       !/^[a-z][a-z0-9-]{0,62}$/.test(connectionId)
@@ -203,11 +237,33 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
         ? { serverUrl: String(input.serverUrl).replace(/\/$/, "") }
         : {}),
       connectionId,
+      ...(newRepository ? { newRepository } : {}),
     };
   }
   async function prepareSource(saved: Saved) {
     const launch = saved.launch!,
       input = launch.target;
+    if (input.newRepository) {
+      if (!source.createRepository)
+        throw new IdeaCrewError(
+          "Repository creation is unavailable. Update the controller before resuming.",
+          503,
+        );
+      const repository = await source.createRepository({
+        provider: input.provider,
+        serverUrl: input.serverUrl,
+        repository: input.repo,
+        ...input.newRepository,
+        creationId: saved.id,
+      });
+      if (launch.repositoryId && launch.repositoryId !== repository.id)
+        throw new IdeaCrewError(
+          "The created repository was replaced. Check its identity before resuming.",
+          409,
+        );
+      launch.repositoryId = repository.id;
+      write(saved);
+    }
     const credential = await source.resolveCredential({
       provider: input.provider,
       repository: input.repo,
@@ -400,6 +456,7 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
               "provider",
               "serverUrl",
               "connectionId",
+              "newRepository",
             ].includes(key),
         )
       )
@@ -528,6 +585,8 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
         };
       } catch (error) {
         if (error instanceof IdeaCrewError) throw error;
+        if (error instanceof SourceControlError)
+          throw new IdeaCrewError(error.message, error.status);
         throw new IdeaCrewError(
           "Crew setup stopped. Check source access and project setup, then retry this same plan to resume without duplicating saved PMs.",
           503,
