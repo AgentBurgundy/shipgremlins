@@ -35,6 +35,8 @@ export interface HubConfig {
 export interface ProjectConfig extends ProjectCapabilities {
   /** Controller-issued incarnation when a deleted project name is reused. */
   instanceId?: string;
+  /** Reviewed idea plan that created this project, used for resumable onboarding. */
+  ideaPlanId?: string;
   execution?: ExecutionLimits;
   /** The Linear team for this app; existing area project IDs remain authoritative. */
   linear?: {
@@ -332,6 +334,21 @@ export function loadProject(root: string, name: string): Project {
     throw new ConfigError(pf, (error as Error).message);
   }
   const config: ProjectConfig = {
+    ...(raw.ideaPlanId === undefined
+      ? {}
+      : {
+          ideaPlanId: need(
+            pf,
+            raw,
+            "ideaPlanId",
+            (value): value is string =>
+              typeof value === "string" &&
+              /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+                value,
+              ),
+            "a reviewed idea plan UUID",
+          ),
+        }),
     ...(raw.instanceId === undefined
       ? {}
       : {

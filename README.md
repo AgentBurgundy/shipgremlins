@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://shipgremlins.ai"><strong>Meet ShipGremlins</strong></a> ·
+  <a href="docs/WHEN_TO_USE.md">When to use it</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="docs/SETUP.md">Docs</a> ·
   <a href="docs/ROADMAP.md">Roadmap</a> ·
@@ -17,9 +18,11 @@
   <a href="CONTRIBUTING.md">Join the crew</a>
 </p>
 
-# Your app's new night shift.
+# Give your idea a crew.
 
-You build the product. Give a few gremlins a mandate to explore it.
+Describe an app you want to build, or bring the one you already have.
+ShipGremlins helps organize the work into focused PM responsibilities and
+turn approved tickets into reviewable code.
 
 **ShipGremlins gives AI product managers a job to do, a memory, and a browser when the project needs one.** They investigate repositories or explore a configured test environment and turn findings into Linear tickets. Docker workers run PMs and developers on your computer, homelab, or an enrolled remote machine. Developers work on approved tickets; the owning PM checks fixes on its next patrol.
 
@@ -37,6 +40,29 @@ scopes and each PM's Mixpanel report in the dashboard, then save credentials the
 
 > [!NOTE]
 > **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. Start with a GitHub/GitLab repository and configured checks. Browser testing is optional: use a direct URL or Vercel, Railway, or Cloud Run discovery. Full live provider certification remains pending. The opt-in promotion flow can merge eligible approved work into integration; you control staging and production merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
+
+## When to bring in the gremlins
+
+**Start with an idea. Stay as it grows.** Use idea onboarding to plan a first
+milestone and assemble one to four PMs, or give an existing app a focused PM
+to investigate its next improvement. You set direction and review the work.
+
+| Where you are                          | Where ShipGremlins fits                                                                                          |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| An idea or an empty repository         | Describe the users and first useful version. Review the proposed crew, then create it in a connected repository. |
+| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.                       |
+| An app with a growing backlog          | Investigate one area, approve a bounded ticket, and review the Coding Gremlin's draft PR or MR.                  |
+| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity.          |
+
+For a new app, start with **one milestone and a foundation PM**. Idea onboarding
+creates the PM crew and initializes an empty repository with a README; app code
+is implemented through approved tickets. For an existing app, start with
+**one PM, one area, one useful change**. You bring the direction and review the work. Browser patrols need a runnable test environment; repository
+discovery can start before hosting and Linear setup. The Setup Gremlin helps
+prepare an existing app for testing.
+
+[Start from an idea →](docs/IDEA_TO_APP.md) ·
+[Find your starting point and first assignment →](docs/WHEN_TO_USE.md)
 
 ## A particular set of nitpicks
 

@@ -830,7 +830,8 @@
     projectOperations?.resume();
     remoteWorkers?.setProjects(projects);
     if (!projectLayoutInitialized) {
-      $("new-project-drawer").open = projects.length === 0;
+      $("new-project-drawer").open =
+        projects.length === 0 || ideaCrew.hasDraft();
       projectLayoutInitialized = true;
     }
   }
@@ -992,6 +993,7 @@
   });
   function suggestProjectName() {
     if (projectNameEdited) return;
+    if ($("project-start").value === "idea" && $("project-name").value) return;
     $("project-name").value = $("project-repo")
       .value.trim()
       .split("/")
@@ -1020,8 +1022,57 @@
     },
     true,
   );
+  const ideaCrew = window.createIdeaCrew({
+    container: $("idea-crew-panel"),
+    api,
+    onChange: () => {
+      if ($("project-start").value === "idea")
+        $("add-project").disabled = ideaCrew.busy;
+    },
+    suggestName: (name) => {
+      if (!projectNameEdited && /^[a-z][a-z0-9-]*$/.test(name))
+        $("project-name").value = name;
+    },
+    onRestore: (destination) => {
+      $("project-start").value = "idea";
+      $("new-project-drawer").open = true;
+      if (destination) {
+        $("project-provider").value = destination.provider;
+        $("project-name").value = destination.project;
+        $("project-repo").value = destination.repo;
+        $("manual-repository").checked = true;
+        if (destination.serverUrl)
+          $("gitlab-server").value = destination.serverUrl;
+        $("project-linear-connection").value = destination.connectionId;
+        projectNameEdited = true;
+        renderProjectProvider();
+      }
+      renderStartingPoint();
+    },
+  });
+  function renderStartingPoint() {
+    const idea = $("project-start").value === "idea";
+    $("idea-crew-panel").hidden = !idea;
+    $("new-project-advanced").hidden = idea;
+    $("add-project").textContent = idea ? "Create my crew" : "Add project";
+    $("add-project").disabled = idea && ideaCrew.busy;
+    $("project-create-explanation").textContent = idea
+      ? "Creates the reviewed PM crew and shared brief. Empty repositories get a README. PM schedules start paused; app code is built through approved tickets."
+      : "Adds your repository and starts a Setup Gremlin when source and Claude access are ready. No PM is created and no app changes are published.";
+  }
+  $("project-start").addEventListener("change", renderStartingPoint);
+  if (sessionToken) void ideaCrew.restore();
   $("project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const fromIdea = $("project-start").value === "idea";
+    if (fromIdea && !ideaCrew.ready()) {
+      message(
+        $("project-message"),
+        "Describe your idea and review its crew plan before creating the project.",
+        true,
+      );
+      return;
+    }
     if (!$("manual-repository").checked && !$("repository-select").value) {
       message(
         $("project-message"),
@@ -1042,7 +1093,7 @@
       },
     };
     try {
-      Object.assign(data, newProjectSettings.read());
+      if (!fromIdea) Object.assign(data, newProjectSettings.read());
     } catch (error) {
       message($("project-message"), error.message, true);
       return;
@@ -1091,7 +1142,18 @@
         : "Saving your app and its selected Linear team…",
     );
     try {
-      const result = await api("/api/projects", data, "POST", 90000);
+      const result = fromIdea
+        ? await ideaCrew.create({
+            project: data.project,
+            repo: data.repo,
+            provider: data.provider,
+            ...(data.serverUrl ? { serverUrl: data.serverUrl } : {}),
+            connectionId: data.linear.connectionId,
+            linearMode: data.linearMode,
+            ...(data.linearTeamId ? { linearTeamId: data.linearTeamId } : {}),
+          })
+        : await api("/api/projects", data, "POST", 90000);
+      if (fromIdea) ideaCrew.clear();
       $("project-form").reset();
       newProjectSettings = window.createProjectSettings(
         $("new-project-settings"),
@@ -1109,14 +1171,18 @@
         : null;
       message(
         $("project-message"),
-        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, choose and test the environment for your crew.`,
+        fromIdea
+          ? `${result.message} ${linearResultMessage(result.linear)}`
+          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, choose and test the environment for your crew.`,
         result.linear?.status === "error",
       );
       try {
         await refreshStatus();
         await refreshConfigFiles();
         pages.navigate(
-          `/projects/${encodeURIComponent(data.project)}?tab=environment`,
+          fromIdea
+            ? `/projects/${encodeURIComponent(data.project)}?pm=foundation`
+            : `/projects/${encodeURIComponent(data.project)}?tab=environment`,
         );
       } catch {
         message(
@@ -1130,6 +1196,7 @@
     } finally {
       lockForms(!sessionToken);
       restoreButton("add-project", "Add project", "+");
+      renderStartingPoint();
     }
   });
 
@@ -4969,6 +5036,8 @@
 
   function hasUnsavedInputs() {
     return (
+      ideaCrew.busy ||
+      ideaCrew.hasDraft() ||
       pmPlanning ||
       pmCreating ||
       pmActions?.isBusy() ||

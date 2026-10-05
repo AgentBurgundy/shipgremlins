@@ -228,6 +228,23 @@ try {
   });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).runtime.agents, "local-docker");
+  const origin = `http://127.0.0.1:${info.port}`;
+  const projectsPage = await fetch(`${origin}/projects`);
+  assert.equal(projectsPage.status, 200);
+  assert.match(await projectsPage.text(), /I have an idea/);
+  const ideaScript = await fetch(`${origin}/idea-crew.js`);
+  assert.equal(ideaScript.status, 200);
+  assert.match(await ideaScript.text(), /createIdeaCrew/);
+  const invalidIdea = await fetch(`${origin}/api/idea-plans`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${info.session}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ idea: "too short" }),
+  });
+  assert.equal(invalidIdea.status, 400);
+  assert.match((await invalidIdea.json()).error, /Describe your app/);
   assert.match(cli(["--home", config, "status"]), /running in the background/);
 } finally {
   assert.match(

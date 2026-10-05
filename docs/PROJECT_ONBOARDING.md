@@ -1,5 +1,10 @@
 # Find a test home for your gremlins
 
+This guide prepares an application for browser testing, including an early
+prototype. Starting without code? Use [idea onboarding](IDEA_TO_APP.md) to plan
+the first milestone and create its PM crew. Return here when the foundation
+is runnable. [When to bring in ShipGremlins →](WHEN_TO_USE.md)
+
 Start with `gremlins setup`, or `gremlins setup --lan` on a homelab server. Connect source control and Claude Code, then add a repository. The dashboard opens that project's **Environment** page and starts a Setup Gremlin when its connections are ready. It reads bounded source files at an exact commit and recommends a test strategy. No Linear team, PM, or working deployment is required for this analysis.
 
 You can also skip analysis and configure an environment yourself. Existing projects use the same Environment page; choosing a setup path preserves their PMs, accounts, workflow, commands, and other named environments.

@@ -211,6 +211,7 @@ function initializeLocked(
           "commands",
           "telemetry",
           "linear",
+          "ideaPlanId",
         ].includes(key),
     )
   )

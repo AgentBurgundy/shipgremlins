@@ -1,5 +1,11 @@
 # Set up ShipGremlins
 
+**Bring an idea or an app.** Describe a new product to plan its first milestone
+and assemble a PM crew, or connect an existing codebase and investigate one
+area. A public launch is not required. Start with a small supervised assignment.
+[Start an app from an idea →](IDEA_TO_APP.md)
+[When to use ShipGremlins and what to try first →](WHEN_TO_USE.md)
+
 Install the global CLI with Node.js **22.12+**, npm, and Git. Workers also need Docker Desktop or Docker Engine running **Linux containers**.
 
 ```sh
@@ -43,7 +49,7 @@ dashboard checks periodically for new releases; updates are never installed
 automatically.
 
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Claude Code in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
-2. Add the **app repository** and a short local ID such as `my-app`. The dashboard opens **Environment** and starts source analysis when source/Claude access is available. This step creates no PM and needs no Linear mapping. Connect or reuse a Linear team later when creating your PM crew. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
+2. In **Projects → Add project**, choose **I have an idea — assemble my crew** to describe a product, review its proposed PMs, and create the crew in a connected repository. Empty repositories get a README; PMs start paused and coding requires approved tickets. See [idea onboarding](IDEA_TO_APP.md). For an existing app, choose **I have an app**, add the **app repository** and a short local ID such as `my-app`. The dashboard opens **Environment** and starts source analysis when source/Claude access is available. This step creates no PM and needs no Linear mapping. Connect or reuse a Linear team later when creating your PM crew. No fork, automation repository, GitHub Actions runner, or GitLab CI runner is required.
 3. Choose **hosted staging** or a **disposable Docker app**, review missing inputs and any proposed setup PR files, then **Test environment** in Chromium. Saved targets can use Railway, Vercel, Cloud Run, or a direct URL. Docker supports an existing image or repository Dockerfile with optional PostgreSQL/Redis. Keep actual test-account and app-input values in Connections. Repository-only projects can skip browser setup. See [project onboarding](PROJECT_ONBOARDING.md) and review install/test commands in **Edit settings**.
 4. Choose **Create local worker**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
 5. Give the PM a mandate and optional structured **Product brief**. Choose **Discovery** to build its codebase context using source access, Claude Code, and a ready worker. Then follow the project's remaining setup steps and choose **Verify connections**, or run `gremlins doctor my-app`. Check the PM's Linear mapping and ownership. New PMs start with automation paused; you do not need to edit JSON to try one.

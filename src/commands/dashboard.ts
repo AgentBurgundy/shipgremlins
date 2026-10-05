@@ -92,6 +92,11 @@ import {
   PmPlannerError,
   type PmPlanner,
 } from "../pmPlanner/index.ts";
+import {
+  createIdeaCrew,
+  IdeaCrewError,
+  type IdeaCrew,
+} from "../ideaCrew/index.ts";
 import type { LocalJobInput, WorkerAction } from "../localRunners/types.ts";
 import {
   doctorChecks,
@@ -314,6 +319,7 @@ export interface DashboardOptions {
   vercelConnectionFor?: (connectionId?: string) => VercelConnection;
   linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
   pmPlanner?: PmPlanner;
+  ideaCrew?: IdeaCrew;
   projectOnboarding?: ProjectOnboarding;
   environmentAccess?: ReturnType<typeof createEnvironmentAccess>;
   vercelSetup?: ReturnType<typeof createVercelSetup>;
@@ -588,6 +594,14 @@ export function createDashboardServer(
     });
   const pmPlanner =
     options.pmPlanner ?? createPmPlanner({ root, packageRoot, sourceControl });
+  const ideaCrew =
+    options.ideaCrew ??
+    createIdeaCrew({
+      root,
+      packageRoot,
+      sourceControl,
+      addArea: linearProvisioning.addArea,
+    });
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
   const outputRead = createDashboardOutputReader();
@@ -1165,6 +1179,8 @@ export function createDashboardServer(
         const destructiveConfiguration =
           resourceDelete ||
           (url.pathname === "/api/projects" && req.method === "POST") ||
+          (/^\/api\/idea-plans\/[a-f0-9-]+\/create$/.test(url.pathname) &&
+            req.method === "POST") ||
           /^\/api\/deleted\/[a-f0-9-]+\/restore$/.test(url.pathname) ||
           url.pathname === "/api/connections/clear" ||
           (url.pathname === "/api/service-connections" &&
@@ -2920,6 +2936,107 @@ export function createDashboardServer(
               }
               json(res, 202, await onboardingState(name));
             }
+          }
+          return;
+        }
+        if (url.pathname === "/api/idea-plans") {
+          if (req.method !== "POST")
+            throw new RequestError(
+              405,
+              "Use POST to plan a crew from an idea.",
+            );
+          const input = await body(req, 64 * 1024);
+          if (Object.keys(input).length !== 1 || typeof input.idea !== "string")
+            throw new RequestError(400, "Provide the app idea only.");
+          const controller = new AbortController();
+          const abort = () => {
+            if (!res.writableEnded) controller.abort();
+          };
+          req.once("aborted", abort);
+          res.once("close", abort);
+          try {
+            json(res, 200, await ideaCrew.plan(input.idea, controller.signal));
+          } catch (error) {
+            throw new RequestError(
+              error instanceof IdeaCrewError ? error.status : 500,
+              error instanceof IdeaCrewError
+                ? error.message
+                : "Crew planning could not finish.",
+            );
+          } finally {
+            req.removeListener("aborted", abort);
+            res.removeListener("close", abort);
+          }
+          return;
+        }
+        const ideaRoute = /^\/api\/idea-plans\/([a-f0-9-]+)(\/create)?$/.exec(
+          url.pathname,
+        );
+        if (ideaRoute) {
+          try {
+            if (!ideaRoute[2]) {
+              if (req.method !== "GET")
+                throw new RequestError(
+                  405,
+                  "Use GET to recover a saved crew plan.",
+                );
+              json(res, 200, ideaCrew.get(ideaRoute[1]!));
+            } else {
+              if (req.method !== "POST")
+                throw new RequestError(
+                  405,
+                  "Use POST to create the reviewed crew.",
+                );
+              const input = await body(req);
+              const {
+                linearMode = "later",
+                linearTeamId,
+                ...destination
+              } = input;
+              if (
+                !["create", "reuse", "later"].includes(String(linearMode)) ||
+                (linearTeamId !== undefined &&
+                  (typeof linearTeamId !== "string" ||
+                    !/^[a-f0-9-]{36}$/i.test(linearTeamId))) ||
+                (linearMode === "reuse" && !linearTeamId)
+              )
+                throw new RequestError(
+                  400,
+                  "Choose how to set up the app's Linear team.",
+                );
+              if (
+                typeof destination.project !== "string" ||
+                !/^[a-z][a-z0-9-]{0,62}$/.test(destination.project)
+              )
+                throw new RequestError(400, "Choose a lowercase project ID.");
+              const created = await withConfigurationMutation(
+                { project: destination.project },
+                () => ideaCrew.create(ideaRoute[1]!, destination),
+              );
+              activeMutationRequests++;
+              countedMutation = true;
+              const linear =
+                linearMode === "later"
+                  ? {
+                      status: "skipped",
+                      message: "Connect Linear when ready for ticketed work.",
+                    }
+                  : await provisionLinear(
+                      created.project,
+                      typeof linearTeamId === "string"
+                        ? linearTeamId
+                        : undefined,
+                    );
+              json(res, 200, { ...created, linear });
+            }
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            throw new RequestError(
+              error instanceof IdeaCrewError ? error.status : 500,
+              error instanceof IdeaCrewError
+                ? error.message
+                : "Crew creation could not finish. Retry the saved plan to resume.",
+            );
           }
           return;
         }

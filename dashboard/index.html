@@ -40,6 +40,8 @@
     <script src="/project-workspace.js" defer></script>
     <script src="/deletion.js" defer></script>
     <script src="/deleted-resources.js" defer></script>
+    <link rel="stylesheet" href="/idea-crew.css" />
+    <script src="/idea-crew.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
   </head>
@@ -1546,6 +1548,16 @@
               <form id="project-form">
                 <fieldset id="project-fields" disabled>
                   <legend class="sr-only">New project</legend>
+                  <div class="field">
+                    <label for="project-start">Where are you starting?</label>
+                    <select id="project-start">
+                      <option value="existing">I have an app</option>
+                      <option value="idea">
+                        I have an idea — assemble my crew
+                      </option>
+                    </select>
+                  </div>
+                  <div id="idea-crew-panel" hidden></div>
                   <div class="field provider-field">
                     <label for="project-provider">Source provider</label
                     ><select id="project-provider" name="provider">
@@ -1711,7 +1723,7 @@
                     ></div>
                   </details>
                   <div class="form-bottom">
-                    <p>
+                    <p id="project-create-explanation">
                       Adds your repository and starts a Setup Gremlin when
                       source and Claude access are ready. No PM is created and
                       no app changes are published.

@@ -1,5 +1,9 @@
 # ShipGremlins — advanced legacy CI runtime guide
 
+New here? Start with [when to use ShipGremlins](WHEN_TO_USE.md):
+[describe an idea and assemble a crew](IDEA_TO_APP.md), or bring an existing
+codebase and try one supervised improvement.
+
 **For the default local Docker workers, start with [Setup](SETUP.md) and
 [Local workers](runners.md).** Local execution needs no fork, automation
 repository, GitHub Actions, or GitLab CI. This document preserves the original

@@ -3,6 +3,14 @@
 Updated October 5, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
+Idea onboarding proposes a first milestone and one to four PMs from a product
+description, then creates their local briefs and shared direction together.
+It can initialize an empty GitHub/GitLab repository with a README and resume
+partial setup. The current starting stack is Node.js/npm; PM schedules start
+paused, dependency order is advisory, and application code still requires
+approved tickets. API/provider tests use simulated responses; live model and
+provider execution remain unverified. See [idea onboarding](IDEA_TO_APP.md).
+
 Project onboarding includes bounded source analysis, hosted-staging or managed-Docker selection, reviewed draft setup PR/MR publication, and real Chromium access/login checks. Vercel setup can discover existing Preview/custom staging deployments and create a reviewed test Preview from the selected repository, with optional branch creation and safe retry reconciliation. A contextual Setup Gremlin conversation explains next steps. Managed Docker supports a pinned repository Dockerfile or existing image, optional disposable PostgreSQL/Redis, migration/seed commands, per-job networks and cleanup. New projects need no initial PM or Linear mapping. This does not provision external databases, arbitrary Compose stacks, new Vercel projects/custom environments, Railway or Cloud Run infrastructure, or trusted promotion verifiers. See [Vercel scope and limits](VERCEL_ENVIRONMENTS.md) and [project onboarding](PROJECT_ONBOARDING.md).
 
 Project telemetry now includes optional read adapters for Sentry logs/error
