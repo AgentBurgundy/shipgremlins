@@ -90,6 +90,7 @@ export interface CandidateHandoff {
   repo: string;
   author: string;
   area: string;
+  areaInstanceId?: string;
   branch: string;
   releaseBranch: string;
   candidateSha: string;
@@ -168,7 +169,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         "delivery",
         project.config.name,
         "candidate-handoffs",
-        `${area.key}.json`,
+        `${area.key}${area.instanceId ? `-${area.instanceId}` : ""}.json`,
       );
       assertNoSymlinks(file);
       if (!existsSync(file)) continue;
@@ -178,6 +179,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           "Candidate handoff requires repair; existing evidence was preserved.",
         );
       const value = JSON.parse(readFileSync(file, "utf8")) as CandidateHandoff;
+      if (value.areaInstanceId !== area.instanceId) continue;
       if (
         value.project !== project.config.name ||
         value.repo !== project.config.repo ||
@@ -206,6 +208,9 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         repo: value.repo,
         author: value.author,
         area: value.area,
+        ...(value.areaInstanceId
+          ? { areaInstanceId: value.areaInstanceId }
+          : {}),
         branch: value.branch,
         releaseBranch: value.releaseBranch,
         candidateSha: value.candidateSha,
@@ -218,6 +223,9 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
   }
   function saveCandidate(project: Project, value: CandidateHandoff) {
     validateName(value.area, "area");
+    const areaInstanceId = project.areas.find(
+      (area) => area.key === value.area,
+    )?.instanceId;
     const directory = join(
         options.root,
         ".run",
@@ -225,17 +233,27 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         project.config.name,
         "candidate-handoffs",
       ),
-      file = join(directory, `${value.area}.json`);
+      file = join(
+        directory,
+        `${value.area}${areaInstanceId ? `-${areaInstanceId}` : ""}.json`,
+      );
     assertNoSymlinks(file);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = join(
       directory,
       `.${randomBytes(12).toString("hex")}.tmp`,
     );
-    writeFileSync(temporary, JSON.stringify(value), {
-      flag: "wx",
-      mode: 0o600,
-    });
+    writeFileSync(
+      temporary,
+      JSON.stringify({
+        ...value,
+        ...(areaInstanceId ? { areaInstanceId } : {}),
+      }),
+      {
+        flag: "wx",
+        mode: 0o600,
+      },
+    );
     assertNoSymlinks(file);
     renameSync(temporary, file);
   }

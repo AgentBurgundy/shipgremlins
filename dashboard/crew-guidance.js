@@ -94,9 +94,78 @@
     }
     return root;
   };
+  window.renderPmControls = (
+    project,
+    area,
+    { locked = false, operation, jobs = [] } = {},
+  ) => {
+    const root = el("div", "pm-simple-controls"),
+      buttons = el("div", "pm-simple-actions");
+    const run = el(
+      "button",
+      "button button-dark",
+      operation?.busy && operation.mode === "run"
+        ? "Starting…"
+        : jobs.some(
+              (job) =>
+                job.type === "pm" &&
+                job.project === project.name &&
+                job.area === area.key &&
+                ["queued", "running"].includes(job.status),
+            )
+          ? "View run"
+          : "Run now",
+    );
+    run.type = "button";
+    Object.assign(run.dataset, {
+      launchProject: project.name,
+      launchCrew: "pm",
+      launchArea: area.key,
+    });
+    run.disabled = locked || Boolean(operation?.busy);
+    const toggle = el(
+      "button",
+      "pm-automation-switch" + (area.enabled ? " enabled" : ""),
+    );
+    toggle.type = "button";
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-checked", String(Boolean(area.enabled)));
+    toggle.setAttribute(
+      "aria-label",
+      `Automation for ${area.name || area.key}`,
+    );
+    Object.assign(toggle.dataset, {
+      toggleArea: area.key,
+      areaProject: project.name,
+      enableArea: String(!area.enabled),
+    });
+    toggle.append(
+      el("span", "pm-switch-track"),
+      el(
+        "span",
+        "",
+        operation?.busy && operation.mode === "automation"
+          ? "Saving…"
+          : `Automation ${area.enabled ? "on" : "off"}`,
+      ),
+    );
+    toggle.disabled = locked || Boolean(operation?.busy);
+    buttons.append(run, toggle);
+    root.append(buttons);
+    if (operation?.message) {
+      const message = el(
+        "p",
+        "form-message" + (operation.error ? " error" : ""),
+        operation.message,
+      );
+      message.setAttribute("role", operation.error ? "alert" : "status");
+      root.append(message);
+    }
+    return root;
+  };
   window.renderProjectCrew = (
     project,
-    { locked = false, areaActions = new Map() } = {},
+    { locked = false, areaActions = new Map(), jobs = [] } = {},
   ) => {
     const root = el("section", "project-crew");
     root.append(window.renderCrewSetup(project));
@@ -118,9 +187,6 @@
         ),
       );
     for (const area of areas) {
-      const status = project.readiness?.areas?.find(
-        (item) => item.key === area.key,
-      );
       const operation = areaActions.get(`${project.name}/${area.key}`);
       const card = el("article", "pm-control-card");
       const identity = el("div", "pm-control-identity");
@@ -150,60 +216,9 @@
           `Schedule: ${area.schedule || "not configured"} UTC · Up to ${area.wipLimit || 1} open work items`,
         ),
       );
-      const buttons = el("div", "pm-control-actions");
-      const run = el("button", "small-button launch-pm", "Run once");
-      run.type = "button";
-      run.dataset.launchProject = project.name;
-      run.dataset.launchCrew = "pm";
-      run.dataset.launchArea = area.key;
-      run.dataset.projectControl = `run-${area.key}`;
-      run.disabled = locked || operation?.busy === true;
-      const toggle = el(
-        "button",
-        "small-button",
-        operation?.busy
-          ? "Saving…"
-          : area.enabled
-            ? "Pause automation"
-            : "Enable automation",
+      card.append(
+        window.renderPmControls(project, area, { locked, operation, jobs }),
       );
-      toggle.type = "button";
-      toggle.dataset.toggleArea = area.key;
-      toggle.dataset.areaProject = project.name;
-      toggle.dataset.enableArea = String(!area.enabled);
-      toggle.dataset.projectControl = `toggle-${area.key}`;
-      toggle.disabled =
-        locked ||
-        operation?.busy === true ||
-        (!area.enabled && status?.canEnable !== true);
-      buttons.append(run, toggle);
-      card.append(buttons);
-      if (!area.enabled && status?.canEnable !== true) {
-        const blocker = (status?.enableBlockers || status?.blockers)?.find(
-          (item) => item.action !== "worker",
-        );
-        const note = el("div", "pm-control-blocker");
-        note.append(
-          el(
-            "span",
-            "",
-            blocker?.message ||
-              "Complete the setup checks to enable automation.",
-          ),
-        );
-        if (blocker)
-          note.append(action(project, blocker.action, undefined, blocker.id));
-        card.append(note);
-      }
-      if (operation?.message) {
-        const message = el(
-          "p",
-          "form-message" + (operation.error ? " error" : ""),
-          operation.message,
-        );
-        message.setAttribute("role", operation.error ? "alert" : "status");
-        card.append(message);
-      }
       root.append(card);
     }
     const footer = el("div", "project-crew-footer");

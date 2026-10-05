@@ -140,6 +140,18 @@ describe("PM prompt policy and knowledge contracts", () => {
       "High confidence in a code observation does not mean runtime behavior was reproduced",
     );
     expect(prompt).toContain("mapped-linear-only-patrol");
+    expect(prompt).toContain("INVESTIGATION STANDARD");
+    expect(prompt).toContain("follow it end to end");
+    expect(prompt).toContain("passing broad suite is baseline evidence only");
+    expect(prompt).toContain(
+      "Attempt a bounded check that can disprove your hypothesis",
+    );
+    expect(prompt).toContain('label the summary "Incomplete investigation"');
+    expect(prompt).toContain(
+      "do not repeatedly read the same reassuring snippets",
+    );
+    expect(prompt).toContain("never expose private reasoning or credentials");
+    expect(prompt).toContain("Do not edit repository files/tests");
     expect(prompt).toContain("pm-proposal and pm:catalog, never pm-approved");
     for (const section of [
       "## Acceptance criteria",

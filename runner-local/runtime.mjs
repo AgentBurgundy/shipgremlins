@@ -26,6 +26,10 @@ export function jobEnvironments(
   execution.GIT_CONFIG_SYSTEM = "/dev/null";
   execution.GIT_CONFIG_NOSYSTEM = "1";
   execution.GIT_ASKPASS = "/bin/false";
+  // Bash imports this at startup, including the agent's Bash tool. A formatter
+  // such as tail/tee must not turn a failed pipeline into successful evidence.
+  // Do not inherit unrelated shell options such as xtrace from the controller.
+  execution.SHELLOPTS = "pipefail";
   const publicationBase = { ...execution };
   for (const key of Object.keys(credentials)) delete publicationBase[key];
   const publication = {

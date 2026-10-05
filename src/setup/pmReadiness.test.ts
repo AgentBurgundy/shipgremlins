@@ -14,6 +14,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { initializeSetup } from "./files.ts";
 import { loadProject } from "../config.ts";
 import { readEditableConfig } from "./configEditor.ts";
+import { createRemoteWorkers } from "../remoteWorkers/index.ts";
+import { createDockerRunners } from "../localRunners/docker.ts";
 import {
   inspectPmReadiness,
   hasPmMandate,
@@ -192,6 +194,75 @@ describe("PM readiness and automation controls", () => {
       areas: [{ enabled: false, canRun: true, canEnable: true, blockers: [] }],
     });
   });
+  it("uses the engine adapter's actual remote scope, heartbeat and revocation policy", () => {
+    const f = fixture();
+    let now = Date.now();
+    const remote = createRemoteWorkers({ root: f.root, clock: () => now });
+    const enrollment = remote.createEnrollment({
+      name: "Scoped remote",
+      projects: ["other-project"],
+    });
+    const registered = remote.enroll({
+      code: enrollment.code,
+      platform: "linux",
+      architecture: "x64",
+    });
+    const run = vi.fn(async () => {
+      throw new Error("Readiness must not launch Docker or provider work.");
+    });
+    const adapter = remote.adapter(
+      createDockerRunners({ packageRoot: process.cwd(), run }),
+    );
+    f.context.workers[0]!.remoteId = registered.id;
+    f.context.canRunWorker = adapter.canRun;
+    expect(f.inspect()).toMatchObject({
+      workerReady: false,
+      canRun: false,
+      canEnable: true,
+    });
+    const project = loadProject(f.root, "demo");
+    const allowed = () =>
+      inspectPmReadiness(
+        {
+          ...project,
+          config: { ...project.config, name: "other-project" },
+        },
+        f.context,
+      );
+    expect(allowed().canRun).toBe(true);
+    f.context.workers[0]!.status = "busy";
+    f.context.workers[0]!.busy = true;
+    expect(allowed().canRun).toBe(true);
+    now += 60000;
+    expect(allowed()).toMatchObject({
+      workerReady: false,
+      canRun: false,
+      canEnable: true,
+    });
+    remote.poll(registered.token);
+    expect(allowed().canRun).toBe(true);
+    remote.revoke(registered.id);
+    expect(allowed().canRun).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+  });
+  it("does not mistake unknown remote eligibility for a local worker, but preserves local fallback", () => {
+    const f = fixture();
+    const local = { ...f.context.workers[0]! };
+    f.context.workers[0]!.remoteId = `remote-${randomUUID()}`;
+    expect(f.inspect().workerReady).toBe(false);
+    f.context.workers.push({
+      ...local,
+      id: "local-fallback",
+      status: "busy",
+      busy: true,
+    });
+    expect(f.inspect().workerReady).toBe(true);
+    f.context.canRunWorker = () => {
+      throw new Error("Registry unavailable");
+    };
+    expect(f.inspect().workerReady).toBe(false);
+    expect(f.inspect().canEnable).toBe(true);
+  });
   it("reports actionable mapping, mandate, verification, and worker blockers", () => {
     const f = fixture();
     f.context.workers = [];
@@ -207,6 +278,12 @@ describe("PM readiness and automation controls", () => {
       expect.arrayContaining(["mapping", "mandate", "verify", "worker"]),
     );
     expect(f.inspect().canEnable).toBe(false);
+    expect(f.inspect().areas[0]?.blockers).toContainEqual({
+      id: "mandate",
+      action: "mandate",
+      message:
+        "Open this PM's Product brief, write and save its mandate, then review it before running.",
+    });
   });
   it("does not substitute a global Linear token for a missing named account", () => {
     const f = fixture();

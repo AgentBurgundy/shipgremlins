@@ -79,6 +79,58 @@ function fixture(runId = 1) {
   return { job, project, area, documents, result, artifacts, docker, store };
 }
 describe("PM knowledge retention", () => {
+  it("gives a recreated PM fresh knowledge without erasing the deleted PM's memory", async () => {
+    const old = fixture();
+    await old.store.capture(old.job, old.docker);
+    const oldFile = join(
+      root,
+      ".run",
+      "pm-knowledge",
+      "app",
+      "core",
+      "latest.json",
+    );
+    const saved = readFileSync(oldFile, "utf8");
+    const areaFile = join(old.project.dir, "areas.json");
+    const raw = JSON.parse(readFileSync(areaFile, "utf8"));
+    const instanceId = "d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea";
+    raw.areas.core.instanceId = instanceId;
+    writeFileSync(areaFile, JSON.stringify(raw));
+    const fresh = fixture(2);
+    expect(fresh.store.memory(fresh.project, fresh.area)).toEqual({});
+    expect(
+      fresh.store.read("app", "core", [{ ...old.job, status: "failed" }]),
+    ).toMatchObject({ state: "empty", documents: [] });
+    expect(
+      fresh.store.read("app", "core", [old.job]).latestRun,
+    ).toBeUndefined();
+    await expect(fresh.store.capture(old.job, old.docker)).rejects.toThrow(
+      "settings changed",
+    );
+    fresh.documents["memory.md"] = "# Fresh PM memory";
+    await fresh.store.capture(fresh.job, fresh.docker);
+    expect(fresh.store.read("app", "core").provenance?.runId).toBe(2);
+    expect(
+      fresh.store.memory(fresh.project, fresh.area)["discovered-memory.md"],
+    ).toContain("Fresh PM memory");
+    expect(readFileSync(oldFile, "utf8")).toBe(saved);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(
+            root,
+            ".run",
+            "pm-knowledge",
+            "app",
+            "core",
+            instanceId,
+            "latest.json",
+          ),
+          "utf8",
+        ),
+      ).provenance.runId,
+    ).toBe(2);
+  });
   it("adopts a complete snapshot, redacts credentials, survives restart, and preserves owner files", async () => {
     const f = fixture(),
       owner = readFileSync(join(f.project.dir, "core", "mandate.md"), "utf8");

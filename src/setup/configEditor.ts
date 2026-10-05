@@ -390,10 +390,31 @@ export function saveEditableConfig(
       try {
         assertResourceAvailable(root, project);
         if (path.endsWith("/areas.json")) {
-          const next = parseJson(content);
+          const next = parseJson(content),
+            previous = parseJson(original.content);
           if (object(next) && object(next.areas))
-            for (const area of Object.keys(next.areas))
-              assertResourceAvailable(root, project, area);
+            for (const [area, row] of Object.entries(next.areas)) {
+              const old =
+                object(previous) && object(previous.areas)
+                  ? previous.areas[area]
+                  : undefined;
+              if (
+                object(row) &&
+                object(old) &&
+                row.instanceId !== old.instanceId
+              )
+                throw new Error(
+                  "An existing PM's identity cannot be changed. Delete and create the PM again to start fresh.",
+                );
+              assertResourceAvailable(
+                root,
+                project,
+                area,
+                object(row) && typeof row.instanceId === "string"
+                  ? row.instanceId
+                  : undefined,
+              );
+            }
         }
       } catch (error) {
         throw new ConfigEditorError(

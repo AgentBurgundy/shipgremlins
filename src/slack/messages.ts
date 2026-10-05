@@ -150,7 +150,7 @@ export function buildJobNotification(event: JobNotificationEvent): {
             : result?.noChanges
               ? "No code changes needed"
               : "Run complete · review results"
-          : "Patrol complete";
+          : "Patrol finished";
   const title = `{g} ${coding ? "🛠️" : "🔎"} ${role} · ${state}`;
   const context = [
     clean(job.project, 80),

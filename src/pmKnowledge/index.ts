@@ -84,22 +84,32 @@ export function createPmKnowledge(options: {
     if (!area) throw new Error("Choose an existing PM.");
     return { project, area };
   };
-  const fileFor = (project: string, area: string) => {
+  const fileFor = (project: string, area: string, instanceId?: string) => {
     validateName(project, "project");
     validateName(area, "area");
+    if (
+      instanceId !== undefined &&
+      !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(instanceId)
+    )
+      throw new Error("Choose a valid PM instance.");
     const file = join(
       options.root,
       ".run",
       "pm-knowledge",
       project,
       area,
+      ...(instanceId ? [instanceId] : []),
       "latest.json",
     );
     assertNoSymlinks(file);
     return file;
   };
-  function readSnapshot(project: string, area: string): Snapshot | null {
-    const file = fileFor(project, area);
+  function readSnapshot(
+    project: string,
+    area: string,
+    instanceId?: string,
+  ): Snapshot | null {
+    const file = fileFor(project, area, instanceId);
     if (!existsSync(file)) return null;
     const stat = lstatSync(file);
     if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1024 * 1024)
@@ -132,14 +142,17 @@ export function createPmKnowledge(options: {
   }
   function read(project: string, area: string, jobs: LocalJob[] = []) {
     const current = selected(project, area),
-      saved = readSnapshot(project, area);
+      saved = readSnapshot(project, area, current.area.instanceId);
     const latest = jobs
       .filter(
         (job) =>
           job.type === "pm" &&
           job.pmMode === "discovery" &&
           job.project === project &&
-          job.area === area,
+          job.area === area &&
+          (!current.area.instanceId ||
+            job.discoveryRevision ===
+              knowledgeRevision(current.project, current.area)),
       )
       .sort((a, b) => b.runId - a.runId)[0];
     return {
@@ -179,7 +192,11 @@ export function createPmKnowledge(options: {
     };
   }
   function memory(project: Project, area: AreaConfig): Record<string, string> {
-    const saved = readSnapshot(basename(project.dir), area.key);
+    const saved = readSnapshot(
+      basename(project.dir),
+      area.key,
+      area.instanceId,
+    );
     if (!saved || saved.revision !== knowledgeRevision(project, area))
       return {};
     return Object.fromEntries(
@@ -277,7 +294,7 @@ export function createPmKnowledge(options: {
         );
       documents.push({ name, content });
     }
-    const file = fileFor(job.project, job.area),
+    const file = fileFor(job.project, job.area, current.area.instanceId),
       directory = dirname(file);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     assertNoSymlinks(file);
@@ -325,7 +342,11 @@ export function createPmKnowledge(options: {
         throw new Error(
           "PM settings changed during discovery. Previous knowledge was preserved.",
         );
-      const previous = readSnapshot(job.project, job.area);
+      const previous = readSnapshot(
+        job.project,
+        job.area,
+        fresh.area.instanceId,
+      );
       if (previous && previous.provenance.runId >= job.runId) return;
       const snapshot: Snapshot = {
         schema: 1,

@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { initializeSetup } from "./files.ts";
 import { loadProject } from "../config.ts";
 import { readEditableConfig } from "./configEditor.ts";
+import { createResourceDeletion } from "./resourceDeletion.ts";
 import {
   createLinearProvisioning,
   type LinearProvisioningClient,
@@ -94,6 +95,94 @@ function fixture() {
 }
 
 describe("Linear app and mandate provisioning", () => {
+  it("recreates a deleted PM key with a fresh Linear intent and preserves old projects and recovery", async () => {
+    const f = fixture(),
+      service = f.create();
+    await service.provision("demo");
+    const previous = loadProject(f.root, "demo").areas[0]!;
+    const deletion = createResourceDeletion({
+      root: f.root,
+      withConfigurationMutation: async (_target, run) => run(),
+    });
+    const removed = await deletion.remove(
+      await deletion.preview({ project: "demo", area: "core" }),
+    );
+    await service.addArea("demo", {
+      key: "core",
+      name: "Fresh Core",
+      mandate: "Explore new product opportunities.",
+    });
+    const fresh = loadProject(f.root, "demo");
+    expect(fresh.areas[0]).toMatchObject({
+      key: "core",
+      enabled: false,
+      linearProjectId: "PASTE_LINEAR_PROJECT_ID",
+    });
+    expect(fresh.areas[0]!.instanceId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(fresh.areas[0]!.memoryBranch).toBe(
+      `pm/demo/core/${fresh.areas[0]!.instanceId}`,
+    );
+    expect(fresh.config.verified).toBeNull();
+    const createProject = vi
+      .mocked(f.client.createProject)
+      .getMockImplementation()!;
+    vi.mocked(f.client.createProject).mockImplementationOnce(async (input) => {
+      await createProject(input);
+      throw new Error("lost replacement response");
+    });
+    await expect(service.provision("demo")).rejects.toThrow(
+      /Saved resource IDs prevent duplicate creation/,
+    );
+    await f.create().provision("demo");
+    const mapped = loadProject(f.root, "demo").areas[0]!;
+    expect(mapped.linearProjectId).not.toBe(previous.linearProjectId);
+    expect(f.projects.has(previous.linearProjectId)).toBe(true);
+    expect(f.projects.has(mapped.linearProjectId)).toBe(true);
+    expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+    expect(f.client.createProject).toHaveBeenCalledTimes(2);
+    await f.create().provision("demo");
+    expect(f.client.createProject).toHaveBeenCalledTimes(2);
+    const journal = JSON.parse(
+      readFileSync(join(f.root, ".run/linear/provisioning/demo.json"), "utf8"),
+    );
+    expect(journal.areas.core.instanceId).toBe(mapped.instanceId);
+    const archive = join(
+      f.root,
+      ".run/linear/provisioning/history/demo",
+      `core-legacy-${previous.linearProjectId}.json`,
+    );
+    expect(JSON.parse(readFileSync(archive, "utf8")).intent.id).toBe(
+      previous.linearProjectId,
+    );
+    expect(deletion.listRecoveries()).toContainEqual(
+      expect.objectContaining({ id: removed.recoveryId, status: "deleted" }),
+    );
+  });
+  it("keeps explicit remote project reuse intentional when recreating a PM", async () => {
+    const f = fixture(),
+      service = f.create();
+    await service.provision("demo");
+    const old = loadProject(f.root, "demo").areas[0]!;
+    const deletion = createResourceDeletion({
+      root: f.root,
+      withConfigurationMutation: async (_target, run) => run(),
+    });
+    await deletion.remove(
+      await deletion.preview({ project: "demo", area: "core" }),
+    );
+    await service.addArea("demo", {
+      key: "core",
+      name: "Core again",
+      mandate: "A fresh local mandate using the explicitly selected project.",
+      linearProjectId: old.linearProjectId,
+    });
+    await service.provision("demo");
+    expect(loadProject(f.root, "demo").areas[0]!.linearProjectId).toBe(
+      old.linearProjectId,
+    );
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(f.client.updateProject).not.toHaveBeenCalled();
+  });
   function selection(f: ReturnType<typeof fixture>) {
     const team = { id: randomUUID(), name: "Correct team", key: "FIX" };
     const project = {

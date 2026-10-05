@@ -62,7 +62,12 @@ function edit(
       bypassSecret?: string;
     };
     areas: {
-      core: { enabled: boolean; linearProjectId: string; schedule: string };
+      core: {
+        enabled: boolean;
+        linearProjectId: string;
+        schedule: string;
+        instanceId?: string;
+      };
     };
   }) => void,
 ) {
@@ -709,6 +714,13 @@ describe("local job preparation", () => {
       "pm:app:core:2026-10-04T09:00",
       "developer:app:ticket-id",
     ]);
+    edit("areas.json", (raw) => {
+      raw.areas.core.instanceId = "d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea";
+    });
+    const replaced = await scheduler.scheduledJobs();
+    expect(replaced.find((input) => input.type === "pm")?.idempotencyKey).toBe(
+      "pm:app:core:d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea:2026-10-04T09:00",
+    );
     edit("areas.json", (raw) => {
       raw.areas.core.enabled = false;
     });

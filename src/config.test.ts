@@ -88,6 +88,21 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "pm-hub-config-"));
   writeFileSync(join(root, "hub.json"), JSON.stringify(HUB));
 });
+it("binds recreated PM memory branches to a validated instance while retaining legacy branch names", () => {
+  writeProject("demo");
+  expect(loadProject(root, "demo").areas[0]!.memoryBranch).toBe("pm/demo/core");
+  const areas = structuredClone(AREAS) as {
+    areas: { core: Record<string, unknown> };
+  };
+  areas.areas.core.instanceId = "f47e5f74-a8ee-4561-a033-3be028c462dd";
+  writeProject("demo", { areas });
+  expect(loadProject(root, "demo").areas[0]!.memoryBranch).toBe(
+    "pm/demo/core/f47e5f74-a8ee-4561-a033-3be028c462dd",
+  );
+  areas.areas.core.instanceId = "../../other";
+  writeProject("demo", { areas });
+  expect(() => loadProject(root, "demo")).toThrow(/instanceId/);
+});
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const errorOf = (fn: () => unknown): ConfigError => {

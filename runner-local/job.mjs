@@ -93,7 +93,7 @@ async function run(command, args, options = {}) {
     activity.emit(
       "progress",
       `Running ${command}`,
-      command === "/bin/bash" ? args[1] : args.join(" "),
+      command === "/bin/bash" ? args.at(-1) : args.join(" "),
       "running",
     );
   else
@@ -364,7 +364,7 @@ try {
       )
         throw new Error("Invalid project command.");
     if (commands.install)
-      await run("/bin/bash", ["-lc", commands.install], {
+      await run("/bin/bash", ["-o", "pipefail", "-lc", commands.install], {
         cwd: "/work/repo",
         env,
       });

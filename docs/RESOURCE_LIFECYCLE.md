@@ -17,7 +17,17 @@ Dashboard removal actions change this ShipGremlins workspace. They do not delete
 
 Delete previews describe what will move and which operations must finish first. Queued/running jobs and ongoing setup or delivery work block conflicting deletion. Cancel or finish that work, then refresh the preview. Revision checks prevent a stale confirmation from deleting newly edited settings.
 
-Recovery files live under `.run/deleted/`. Deleted identifiers remain reserved so schedules, worker scopes, and historical jobs cannot silently attach to a different resource with the same name. Use **Settings → Recently deleted** to restore an archived project or PM. Restoration preserves the original recovery copy, leaves restored PMs paused, and requires project verification again. It never overwrites a different resource occupying the same location.
+Recovery files live under `.run/deleted/`. Deleted project identifiers remain reserved so worker scopes and historical jobs cannot silently attach to a different project. Use **Settings → Recently deleted** to restore an archived project or PM. Restoration preserves the original recovery copy, leaves restored PMs paused, and requires project verification again. It never overwrites a different resource occupying the same location.
+
+After a PM deletion completes, **Create PM** can reuse its visible mandate ID for
+a fresh PM. The new PM receives a separate internal identity and memory branch;
+old learned observations and delivery ownership do not transfer merely because
+the ID matches. It starts paused and the project needs verification again. Its
+old provisioning record is archived, and a new Linear project is created by
+default when Linear provisioning is selected. Choosing an existing Linear
+project remains an explicit reuse decision. The deleted PM's backup, historical
+runs, and external Linear project are retained. To restore the original PM,
+first resolve any live PM occupying that visible ID; recovery never overwrites it.
 
 Deleting a project does not revoke shared OAuth connections or erase shared credentials. Another project may need them. Review Connections separately after deletion. Restoring a project whose saved account was subsequently removed requires selecting a new account before verification.
 

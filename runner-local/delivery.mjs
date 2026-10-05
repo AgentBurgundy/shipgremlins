@@ -63,7 +63,7 @@ export async function runCheckedDelivery({
     if (commands[key]) {
       onCheck(key, "running");
       try {
-        await run("/bin/bash", ["-lc", commands[key]]);
+        await run("/bin/bash", ["-o", "pipefail", "-lc", commands[key]]);
         onCheck(key, "succeeded");
       } catch (error) {
         onCheck(key, "failed");

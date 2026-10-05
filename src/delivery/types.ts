@@ -13,6 +13,8 @@ export interface DeliveryRecord {
   jobId: string;
   project: string;
   area: string;
+  /** Distinguishes a recreated PM from earlier crews with the same visible ID. */
+  areaInstanceId?: string;
   repository: string;
   configuration: string;
   ticket: Pick<

@@ -84,6 +84,8 @@ export interface ProjectConfig extends ProjectCapabilities {
 }
 
 export interface AreaConfig {
+  /** Controller-issued identity for a fresh PM that reuses a deleted key. */
+  instanceId?: string;
   /** A dashboard-authored mandate, in addition to the versioned mandate.md. */
   mandate?: string;
   /** Structured owner product brief, kept separate from learned observations. */
@@ -522,7 +524,22 @@ export function loadProject(root: string, name: string): Project {
         throw new ConfigError(af, "PM charter fields are invalid or too large");
       }
     }
+    const instanceId =
+      a.instanceId === undefined
+        ? undefined
+        : need(
+            af,
+            a,
+            "instanceId",
+            (v): v is string =>
+              typeof v === "string" &&
+              /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+                v,
+              ),
+            "a controller-issued PM instance UUID",
+          );
     areas.push({
+      ...(instanceId ? { instanceId } : {}),
       ...(charter ? { charter } : {}),
       ...(a.mixpanelReportId === undefined
         ? {}
@@ -581,7 +598,7 @@ export function loadProject(root: string, name: string): Project {
         "a 5-field cron",
       ),
       enabled: need(af, a, "enabled", isBool, "true or false"),
-      memoryBranch: `pm/${name}/${key}`,
+      memoryBranch: `pm/${name}/${key}${instanceId ? `/${instanceId}` : ""}`,
     });
   }
 

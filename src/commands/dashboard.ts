@@ -844,6 +844,8 @@ export function createDashboardServer(
       sourceConnections,
       serviceConnections,
       workers,
+      canRunWorker: (remoteId, project) =>
+        docker.canRun?.(remoteId, project) ?? !remoteId,
       localMode,
     };
   }
@@ -2713,7 +2715,7 @@ export function createDashboardServer(
             } else if (req.method === "GET") {
               json(res, 200, readPmBrief(root, project!, area!));
             } else if (req.method === "POST") {
-              const input = await body(req);
+              const input = await body(req, 128 * 1024);
               if (
                 Object.keys(input).some(
                   (key) => !["revision", "brief"].includes(key),
@@ -2834,7 +2836,7 @@ export function createDashboardServer(
               405,
               "Use POST to draft a PM from its mandate.",
             );
-          const input = await body(req);
+          const input = await body(req, 64 * 1024);
           if (
             Object.keys(input).length !== 1 ||
             typeof input.mandate !== "string"
@@ -2910,7 +2912,10 @@ export function createDashboardServer(
               "Use POST to configure the app's team or add a PM.",
             );
           const project = projectMapping[1]!;
-          const input = await body(req);
+          const input = await body(
+            req,
+            projectMapping[2] === "areas" ? 128 * 1024 : MAX_BODY,
+          );
           if (projectMapping[2] === "linear") {
             if (
               Object.keys(input).some((key) => key !== "teamId") ||
@@ -2932,9 +2937,24 @@ export function createDashboardServer(
             });
           } else {
             try {
-              await linearProvisioning.addArea(project, input);
+              if (
+                typeof input.key !== "string" ||
+                !/^[a-z][a-z0-9-]{0,62}$/.test(input.key)
+              )
+                throw new RequestError(
+                  400,
+                  "Choose a lowercase PM ID using letters, numbers, and hyphens.",
+                );
+              await runners().withConfigurationMutation(
+                { project, area: input.key },
+                () => linearProvisioning.addArea(project, input),
+              );
             } catch (error) {
-              if (error instanceof LinearProvisioningError)
+              if (error instanceof RequestError) throw error;
+              if (
+                error instanceof LinearProvisioningError ||
+                error instanceof LocalRunnerError
+              )
                 throw new RequestError(error.status, error.message);
               throw new RequestError(
                 400,

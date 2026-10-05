@@ -335,21 +335,154 @@ function reservation(root: string, input: ResourceTarget) {
         `${input.project}.json`,
       );
 }
+interface PmReservation {
+  id: string;
+  project: string;
+  area: string;
+  replacementInstanceId?: string;
+}
+function pmReservation(root: string, project: string, area: string) {
+  const file = reservation(root, { project, area });
+  safe(file);
+  if (!stat(file)) return null;
+  const value = objectFile(file);
+  if (
+    Object.keys(value).some(
+      (key) =>
+        !["id", "project", "area", "replacementInstanceId"].includes(key),
+    ) ||
+    typeof value.id !== "string" ||
+    !ID.test(value.id) ||
+    value.project !== project ||
+    value.area !== area ||
+    (value.replacementInstanceId !== undefined &&
+      (typeof value.replacementInstanceId !== "string" ||
+        !ID.test(value.replacementInstanceId)))
+  )
+    fail(
+      "invalid_recovery",
+      "The deleted PM's identity record needs inspection; its backup was preserved.",
+      409,
+    );
+  return { file, value: value as unknown as PmReservation };
+}
+function livePmInstance(root: string, project: string, area: string) {
+  const value = objectFile(join(root, "projects", project, "areas.json"));
+  if (
+    !value.areas ||
+    typeof value.areas !== "object" ||
+    Array.isArray(value.areas)
+  )
+    fail(
+      "invalid_config",
+      "PM configuration must be repaired before reusing an identifier.",
+    );
+  const row = (value.areas as Record<string, unknown>)[area];
+  return row && typeof row === "object" && !Array.isArray(row)
+    ? (row as Record<string, unknown>).instanceId
+    : undefined;
+}
+/** Called under the provisioning/admission locks, before committing a replacement PM. */
+export function preparePmRecreation(
+  root: string,
+  project: string,
+  area: string,
+): string | undefined {
+  assertResourceAvailable(root, project);
+  const marker = pmReservation(root, project, area);
+  if (!marker) return undefined;
+  const journal = objectFile(
+    join(root, ".run", "deleted", marker.value.id, "recovery.json"),
+    MAX_JOURNAL_BYTES,
+  );
+  if (
+    journal.schema !== 1 ||
+    journal.id !== marker.value.id ||
+    journal.kind !== "pm" ||
+    journal.project !== project ||
+    journal.area !== area ||
+    journal.status !== "deleted" ||
+    !validEntries(journal.files)
+  )
+    fail(
+      "recovery_required",
+      "Finish restoring or recovering the interrupted deletion in Settings → Recently deleted before creating this PM again.",
+      409,
+    );
+  const areas = objectFile(join(root, "projects", project, "areas.json"));
+  if (
+    !areas.areas ||
+    typeof areas.areas !== "object" ||
+    Array.isArray(areas.areas) ||
+    Object.hasOwn(areas.areas, area)
+  )
+    fail(
+      "conflict",
+      "A PM already occupies this identifier. Refresh before creating it again.",
+      409,
+    );
+  const docs = join(root, "projects", project, area);
+  safe(docs);
+  if (stat(docs))
+    fail(
+      "conflict",
+      "The former PM document directory still exists. Preserve it and finish recovery before creating a fresh PM.",
+      409,
+    );
+  const instanceId = marker.value.replacementInstanceId ?? randomUUID();
+  if (!marker.value.replacementInstanceId)
+    atomic(
+      marker.file,
+      json({ ...marker.value, replacementInstanceId: instanceId }),
+    );
+  return instanceId;
+}
+/** Safe to retry after the areas.json commit. The original recovery copy remains intact. */
+export function completePmRecreation(
+  root: string,
+  project: string,
+  area: string,
+  instanceId: string,
+): void {
+  const marker = pmReservation(root, project, area);
+  if (!marker) return;
+  if (
+    marker.value.replacementInstanceId !== instanceId ||
+    livePmInstance(root, project, area) !== instanceId
+  )
+    fail(
+      "conflict",
+      "PM recreation changed before it could finish. Saved configuration and recovery files were preserved.",
+      409,
+    );
+  unlinkSync(marker.file);
+}
 /** Reservation checks are local-only and must run inside the queue's admission lock. */
 export function assertResourceAvailable(
   root: string,
   project: string,
   area?: string,
+  candidateInstanceId?: string,
 ): void {
   for (const input of [{ project }, ...(area ? [{ project, area }] : [])]) {
     const file = reservation(root, input);
     safe(file);
-    if (stat(file))
+    if (stat(file)) {
+      if (input.area) {
+        const marker = pmReservation(root, project, input.area);
+        if (
+          marker?.value.replacementInstanceId &&
+          marker.value.replacementInstanceId ===
+            (candidateInstanceId ?? livePmInstance(root, project, input.area))
+        )
+          continue;
+      }
       fail(
         "reserved",
         "This identifier belongs to a deleted resource. Restore it from Settings → Recently deleted or choose a new identifier; its history has been preserved.",
         409,
       );
+    }
   }
 }
 export function createResourceDeletion(options: {
@@ -567,7 +700,7 @@ export function createResourceDeletion(options: {
   const retained = [
     "External Git repositories, Linear teams/projects/tickets and hosting resources.",
     "Shared connections and credentials, worker registrations and historical runs.",
-    "A private local recovery copy; deleted identifiers stay reserved until restored.",
+    "A private local recovery copy. A deleted PM ID can be reused for a fresh PM; deleted project IDs stay reserved until restored.",
   ];
   async function preview(input: ResourceTarget): Promise<DeletionPreview> {
     const current = snapshot(input);
@@ -724,7 +857,8 @@ export function createResourceDeletion(options: {
   }
   function restoreSnapshot(journal: Journal) {
     const directory = folder(journal.id),
-      archived = join(directory, journal.area ? "pm" : "project");
+      archived = join(directory, journal.area ? "pm" : "project"),
+      marker = reservation(root, journal);
     const live = stat(projectDir(journal)) ? tree(projectDir(journal)) : [];
     return digest(
       json({
@@ -733,6 +867,7 @@ export function createResourceDeletion(options: {
         areasBefore: journal.area
           ? digest(bytes(join(directory, "areas.before.json")))
           : null,
+        reservation: stat(marker) ? digest(bytes(marker)) : null,
         live,
       }),
     );
@@ -816,6 +951,61 @@ export function createResourceDeletion(options: {
       digest(json(expected))
     );
   }
+  function restoreReservation(journal: Journal) {
+    const file = reservation(root, journal);
+    safe(file);
+    if (!journal.area) {
+      const value = objectFile(file);
+      if (value.id !== journal.id)
+        fail("conflict", "Another recovery record owns this identifier.", 409);
+      return { file, transfer: false };
+    }
+    const marker = pmReservation(root, journal.project, journal.area);
+    if (!marker)
+      fail(
+        "conflict",
+        "This PM has no active deletion reservation. Resolve its current configuration before restoring it.",
+        409,
+      );
+    if (marker.value.id === journal.id) return { file, transfer: false };
+    // Choosing an older PM generation is explicit in the recovery preview. Only
+    // a completed deletion can release the same vacant identity to that choice.
+    const owner = readJournal(marker.value.id);
+    if (
+      journal.status !== "deleted" ||
+      owner.status !== "deleted" ||
+      owner.kind !== "pm" ||
+      owner.project !== journal.project ||
+      owner.area !== journal.area ||
+      marker.value.replacementInstanceId !== undefined
+    )
+      fail(
+        "conflict",
+        "Another PM deletion, recreation or recovery is unfinished. Resolve it before restoring this archived PM.",
+        409,
+      );
+    const live = projectDir(journal);
+    if (!stat(live))
+      fail(
+        "conflict",
+        "Restore the parent project before restoring this PM.",
+        409,
+      );
+    const rows = objectFile(join(live, "areas.json")).areas;
+    if (
+      !rows ||
+      typeof rows !== "object" ||
+      Array.isArray(rows) ||
+      Object.hasOwn(rows, journal.area) ||
+      stat(join(live, journal.area))
+    )
+      fail(
+        "conflict",
+        "A PM or its document directory already occupies this identifier. Recovery will not overwrite it.",
+        409,
+      );
+    return { file, transfer: true };
+  }
   async function previewRestore(
     id: string,
   ): Promise<DeletionPreview & { id: string }> {
@@ -823,6 +1013,12 @@ export function createResourceDeletion(options: {
     const blocked = await blockers(journal),
       finished = restorationComplete(journal),
       resumable = restorationResumable(journal);
+    try {
+      restoreReservation(journal);
+    } catch (error) {
+      if (error instanceof ResourceDeletionError) blocked.push(error.message);
+      else throw error;
+    }
     if (
       !["deleted", "preparing", "restoring"].includes(journal.status) &&
       !(
@@ -912,14 +1108,19 @@ export function createResourceDeletion(options: {
           staged = join(directory, `restore-${randomUUID()}`),
           live = projectDir(journal),
           marker = reservation(root, journal);
-        safe(marker);
-        const reservationValue = objectFile(marker);
-        if (reservationValue.id !== input.id)
-          fail(
-            "conflict",
-            "Another recovery record owns this identifier.",
-            409,
+        const claim = restoreReservation(journal);
+        if (claim.transfer)
+          write(
+            claim.file,
+            json({
+              id: journal.id,
+              project: journal.project,
+              area: journal.area,
+            }),
           );
+        // If interrupted after transfer, the selected archive owns a valid
+        // reservation and the same restore can resume without losing either copy.
+        const claimedRevision = restoreSnapshot(journal);
         if (restorationComplete(journal)) {
           journal.status = "restored";
           writeJournal(directory, journal);
@@ -997,7 +1198,7 @@ export function createResourceDeletion(options: {
           });
           copyTree(staged, join(validation, "projects", journal.project));
           loadProject(validation, journal.project);
-          if (!inPlace && restoreSnapshot(journal) !== plan.revision)
+          if (!inPlace && restoreSnapshot(journal) !== claimedRevision)
             fail(
               "conflict",
               "Configuration changed before restoration. Refresh and retry.",
@@ -1047,7 +1248,7 @@ export function createResourceDeletion(options: {
           const archived = join(directory, "pm");
           if (stat(archived) && !stat(join(live, journal.area)))
             copyTree(archived, staged);
-          if (restoreSnapshot(journal) !== plan.revision)
+          if (restoreSnapshot(journal) !== claimedRevision)
             fail(
               "conflict",
               "Configuration changed before restoration. Refresh and retry.",

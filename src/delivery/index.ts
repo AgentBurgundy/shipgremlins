@@ -194,6 +194,11 @@ export function createDeliveryService(options: {
     file = join(directory, "state.json"),
     lock = join(directory, "write.lock");
   const config = (area: string) => deliveryConfiguration(project, area);
+  const currentOwner = (record: DeliveryRecord) =>
+    project.areas.some(
+      (area) =>
+        area.key === record.area && area.instanceId === record.areaInstanceId,
+    );
   interface State {
     schema: 1;
     repository: string;
@@ -221,6 +226,10 @@ export function createDeliveryService(options: {
           !validText(r.id, 100) ||
           r.project !== name ||
           r.repository !== repo ||
+          (r.areaInstanceId !== undefined &&
+            !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(
+              r.areaInstanceId,
+            )) ||
           !SHA.test(r.implementation?.headSha ?? ""),
       ) ||
       new Set(state.records.map((r) => r.id)).size !== state.records.length
@@ -291,7 +300,7 @@ export function createDeliveryService(options: {
     return b;
   }
   const checkConfig = (record: DeliveryRecord) => {
-    if (record.configuration !== config(record.area))
+    if (!currentOwner(record) || record.configuration !== config(record.area))
       throw new Error(
         "This delivery's project or owning PM changed. Review its original scope before continuing.",
       );
@@ -375,6 +384,7 @@ export function createDeliveryService(options: {
     return locked((state) => {
       const existing = state.records.find((r) => r.jobId === input.jobId);
       if (existing) {
+        checkConfig(existing);
         if (
           existing.scopeHash !== ticketScopeHash(ticket) ||
           existing.implementation.number !== pull.number ||
@@ -391,6 +401,7 @@ export function createDeliveryService(options: {
         jobId: input.jobId,
         project: name,
         area: area.key,
+        ...(area.instanceId ? { areaInstanceId: area.instanceId } : {}),
         repository: repo,
         configuration: config(area.key),
         ticket: {
@@ -462,7 +473,7 @@ export function createDeliveryService(options: {
       }
       const deliveries: PmReviewPlan["deliveries"] = [];
       for (const record of state.records.filter(
-        (r) => r.area === input.area && !r.promotion,
+        (r) => currentOwner(r) && r.area === input.area && !r.promotion,
       )) {
         checkConfig(record);
         if (!(await approved(record))) {
@@ -662,7 +673,7 @@ export function createDeliveryService(options: {
     local: true,
     candidateVerdict: async (pull: PullRequest) => {
       const record = read().records.find(
-        (r) => r.implementation.number === pull.number,
+        (r) => currentOwner(r) && r.implementation.number === pull.number,
       );
       if (!record) return null;
       checkConfig(record);
@@ -811,7 +822,7 @@ export function createDeliveryService(options: {
     const branches = promotionWorkflow();
     return locked(async (state) => {
       for (const record of state.records.filter(
-        (r) => r.status === "awaiting-merge",
+        (r) => currentOwner(r) && r.status === "awaiting-merge",
       )) {
         checkConfig(record);
         if (!(await approved(record))) {
@@ -911,7 +922,7 @@ export function createDeliveryService(options: {
   }
   return {
     register,
-    list: () => structuredClone(read().records),
+    list: () => structuredClone(read().records.filter(currentOwner)),
     planForJob: (jobId: string) =>
       structuredClone(read().plans.find((p) => p.jobId === jobId) ?? null),
     prepareReview,
@@ -923,7 +934,11 @@ export function createDeliveryService(options: {
     reviewUnavailable: (area: string) =>
       locked((state) => {
         for (const record of state.records.filter(
-          (r) => r.area === area && !r.promotion && r.status !== "verified",
+          (r) =>
+            currentOwner(r) &&
+            r.area === area &&
+            !r.promotion &&
+            r.status !== "verified",
         )) {
           record.message =
             "Delivery review is waiting for successful integration checks and its exact ready deployment. The PM can continue ordinary observation.";

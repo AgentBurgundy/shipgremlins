@@ -32,6 +32,8 @@ class Element {
   }
 }
 const input = () => ({
+  charter: {} as Record<string, string | string[]>,
+  editedFields: [] as string[],
   project: "storefront",
   mandate: "Explore imports using synthetic contacts only.",
   name: "",
@@ -40,7 +42,7 @@ const input = () => ({
   sharedTouchpoints: "",
   metric: "",
   schedule: "0 13 * * 1-5",
-  wipLimit: "1",
+  wipLimit: "3",
 });
 const plan = () => ({
   draft: {
@@ -51,6 +53,16 @@ const plan = () => ({
     metric: "import-completed",
     schedule: "0 13 * * 1-5",
     wipLimit: 1,
+    charter: {
+      ambition: "Make imports predictable.",
+      goal: "Reduce failed imports.",
+      metricDefinition: "Successful synthetic imports with recoverable errors.",
+      users: ["Workspace admins"],
+      expectedToBuild: ["Clear import validation"],
+      nonGoals: ["Production data migration"],
+      guardrails: ["Synthetic contacts only"],
+      standingPriorities: ["Actionable error messages"],
+    },
   },
   rationale: "Focus on import validation and recovery.",
   repository: {
@@ -65,6 +77,14 @@ const plan = () => ({
 function fixture(api: (...args: unknown[]) => unknown = async () => plan()) {
   let current = input();
   const window = {} as {
+    mergePmDraft: (
+      input: unknown,
+      draft: unknown,
+    ) => {
+      values: ReturnType<typeof plan>["draft"];
+      kept: string[];
+      filled: string[];
+    };
     createPmDraft: (
       root: Element,
       options: object,
@@ -107,6 +127,7 @@ function fixture(api: (...args: unknown[]) => unknown = async () => plan()) {
     all().find((element) => element.className.includes("pm-ai-draft-status"))!;
   return {
     helper,
+    merge: window.mergePmDraft,
     requests,
     apply,
     busy,
@@ -132,7 +153,7 @@ function deferred() {
 }
 
 describe("PM draft suggestions", () => {
-  it("requests only the mandate, previews every suggestion, and never creates or applies automatically", async () => {
+  it("fills the complete setup from one action and never creates the PM", async () => {
     const f = fixture();
     expect(f.requests).not.toHaveBeenCalled();
     await f.button("Fill with AI").emit("click");
@@ -142,8 +163,8 @@ describe("PM draft suggestions", () => {
       "POST",
       200000,
     );
-    expect(f.apply).not.toHaveBeenCalled();
-    expect(f.helper.hasDraft()).toBe(true);
+    expect(f.apply).toHaveBeenCalledWith(plan().draft, input());
+    expect(f.helper.hasDraft()).toBe(false);
     expect(f.get()).toEqual(input());
     for (const value of [
       "Import quality",
@@ -154,6 +175,9 @@ describe("PM draft suggestions", () => {
       "0 13 * * 1-5",
       "1",
       "Focus on import validation and recovery.",
+      "Make imports predictable.",
+      "Workspace admins",
+      "pm:imports",
     ])
       expect(f.all().some((element) => element.textContent === value)).toBe(
         true,
@@ -166,7 +190,7 @@ describe("PM draft suggestions", () => {
         ),
     ).toBe(true);
   });
-  it("only applies allowed draft fields after explicit action, preserving original mandate and mapping controls", async () => {
+  it("only fills allowed draft fields, preserving original mandate and mapping controls", async () => {
     const response = {
       ...plan(),
       draft: {
@@ -178,7 +202,6 @@ describe("PM draft suggestions", () => {
     };
     const f = fixture(async () => response);
     await f.button("Fill with AI").emit("click");
-    await f.button("Apply suggestions").emit("click");
     expect(f.apply).toHaveBeenCalledWith(plan().draft, input());
     expect(f.get().mandate).toBe(input().mandate);
     expect(f.helper.hasDraft()).toBe(false);
@@ -194,19 +217,18 @@ describe("PM draft suggestions", () => {
     f.set({ name: "My own PM name" });
     pending.resolve(plan());
     await request;
-    expect(f.button("Apply suggestions").disabled).toBe(true);
-    await f.button("Apply suggestions").emit("click");
     expect(f.apply).not.toHaveBeenCalled();
     expect(f.get().name).toBe("My own PM name");
     expect(f.status().textContent).toContain("form changed");
   });
-  it("checks the full snapshot again immediately before Apply, including project changes", async () => {
-    const f = fixture();
-    await f.button("Fill with AI").emit("click");
+  it("checks the full snapshot including project changes before filling", async () => {
+    const pending = deferred(),
+      f = fixture(() => pending.promise);
+    const request = f.button("Fill with AI").emit("click");
     f.set({ project: "other-app" });
-    await f.button("Apply suggestions").emit("click");
+    pending.resolve(plan());
+    await request;
     expect(f.apply).not.toHaveBeenCalled();
-    expect(f.button("Apply suggestions").disabled).toBe(true);
   });
   it("ignores an old response after reset and a new project request", async () => {
     const pending = deferred();
@@ -230,14 +252,14 @@ describe("PM draft suggestions", () => {
     ).toBe(false);
     expect(f.helper.isBusy()).toBe(false);
   });
-  it("discards the suggestion without changing the form or calling another endpoint", async () => {
+  it("hides the AI summary without clearing filled fields or calling another endpoint", async () => {
     const f = fixture();
     await f.button("Fill with AI").emit("click");
-    await f.button("Discard").emit("click");
+    await f.button("Hide AI summary").emit("click");
     expect(f.helper.hasDraft()).toBe(false);
     expect(f.get()).toEqual(input());
     expect(f.requests).toHaveBeenCalledTimes(1);
-    expect(f.apply).not.toHaveBeenCalled();
+    expect(f.apply).toHaveBeenCalledTimes(1);
   });
   it("contains planner failures and invalid responses without altering form values", async () => {
     const f = fixture(async () => {
@@ -282,5 +304,55 @@ describe("PM draft suggestions", () => {
     expect(
       f.all().some((element) => element.textContent.includes("partial tree")),
     ).toBe(true);
+  });
+  it("fills blanks/defaults while keeping typed values and product brief entries", () => {
+    const f = fixture();
+    const original = {
+      ...input(),
+      name: "My import PM",
+      paths: "src/owned/",
+      metric: "/",
+      editedFields: ["metric"],
+      charter: { goal: "Keep my goal", users: ["My audience"] },
+    };
+    const result = f.merge(original, plan().draft);
+    expect(result.values).toMatchObject({
+      name: "My import PM",
+      paths: ["src/owned/"],
+      metric: "/",
+      wipLimit: 1,
+      charter: {
+        goal: "Keep my goal",
+        users: ["My audience"],
+        ambition: "Make imports predictable.",
+      },
+    });
+    expect(original.charter).toEqual({
+      goal: "Keep my goal",
+      users: ["My audience"],
+    });
+    expect(result.kept).toContain("metric");
+    expect(result.filled).toContain("wipLimit");
+  });
+  it("rejects missing charter fields and strips injected charter properties", async () => {
+    const invalid = fixture(async () => ({
+      ...plan(),
+      draft: { ...plan().draft, charter: { goal: "Partial" } },
+    }));
+    await invalid.button("Fill with AI").emit("click");
+    expect(invalid.apply).not.toHaveBeenCalled();
+    const safe = fixture(async () => ({
+      ...plan(),
+      draft: {
+        ...plan().draft,
+        charter: {
+          ...plan().draft.charter,
+          enabled: true,
+          mandate: "Injected",
+        },
+      },
+    }));
+    await safe.button("Fill with AI").emit("click");
+    expect(safe.apply).toHaveBeenCalledWith(plan().draft, input());
   });
 });

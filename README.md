@@ -107,6 +107,8 @@ Retire a project or PM from its own workspace with **Delete**. Review the impact
 and type its identifier to confirm. Settings keeps a recovery list; restored PMs
 start paused. Connections also lets you remove unused saved accounts and clear
 saved tokens. Git repositories, Linear resources, and run history stay intact.
+A deleted PM's visible ID can be reused for a fresh, paused PM with separate
+learned context and delivery ownership; its old recovery copy remains available.
 [Delete, disconnect, and restore →](docs/RESOURCE_LIFECYCLE.md)
 
 On a homelab server, run `gremlins setup --lan` and open the printed private-network link from your laptop or phone. Edit configuration in the dashboard and find both installation and settings folders under File locations. LAN mode uses HTTP on your trusted network; see the [server guide](docs/SETUP.md#server-use) for firewall and encrypted SSH-tunnel access.
@@ -127,16 +129,21 @@ review its repository, commands, and PM mapping; then **Verify connections** and
 create a local worker. The worker runs on the CLI/dashboard server, even when you
 visit from a phone. Ready requires actual Chromium screenshot evidence.
 
-New PMs start with automation paused. Use **Run once** to try a mapped, verified
-PM without turning on its schedule. Review Activity, then choose **Enable
-automation** for recurring patrols and background approved-ticket pickup. **Pause
-automation** stops new automatic work; manual runs remain separate. A manual
+New PMs start with automation paused. Choose **Run now** on a PM card or its
+workspace to try a mapped, verified PM without turning on its schedule. Missing
+setup opens a checklist for that PM with direct actions. Review Activity, then
+turn **Automation** on for recurring patrols and background approved-ticket
+pickup. Turning it off stops new automatic work; manual runs remain separate. A manual
 Coding run still requires an open, approved ticket in the PM's Linear project.
 
-On the PM creation form, write your brief and choose **Fill with AI** for suggested
-ownership paths, a name, metric, UTC schedule, and WIP limit. Review the draft and
-choose **Apply suggestions** to fill the form. Your original mandate is preserved;
-AI fill does not create the PM, change Linear, enable automation, or run a job.
+On the PM creation form, write your mandate and choose **Fill with AI**. It fills
+blank fields and default controls with a suggested name, ID, grounded ownership,
+shared touchpoints, metric, UTC schedule, WIP limit, and complete product brief:
+ambition, goal, measurement, users, expected capabilities, non-goals, guardrails,
+and priorities. Your original mandate and existing edits are preserved. Review
+the filled form, then choose **Create PM** separately. AI fill uses repository
+paths and existing PM ownership; it does not read file contents, invent provider
+IDs, change Linear, enable automation, or run a patrol.
 
 **Let the PM learn the codebase first.** A **Discovery** run reads the actual
 repository and produces a feature map, ranked opportunities, and durable notes

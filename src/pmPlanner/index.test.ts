@@ -1,14 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeSetup } from "../setup/files.ts";
 import {
   createPmPlanner,
+  PM_DRAFT_SCHEMA,
   validatePmDraft,
   type PmPlannerOptions,
 } from "./index.ts";
+import { loadProject } from "../config.ts";
+import {
+  CHARTER_LIST_FIELDS,
+  CHARTER_TEXT_FIELDS,
+  parsePmCharter,
+} from "../pmCharter.ts";
 import {
   createDockerPlanner,
   PLANNER_PROGRAM,
@@ -32,6 +45,25 @@ const suggestion = {
   metric: "/checkout",
   schedule: "0 13 * * 1-5",
   wipLimit: 2,
+  charter: {
+    ambition: "A checkout customers can complete with confidence.",
+    goal: "Reduce preventable checkout failures and make recovery clear.",
+    metricDefinition:
+      "Track the proposed /checkout completion outcome and reproduce payment failures. Confirm instrumentation and establish a baseline before setting a target.",
+    users: ["Customers completing checkout, including guest customers."],
+    expectedToBuild: [
+      "Propose clearer recovery paths for failed payments with reproducible evidence.",
+    ],
+    nonGoals: ["Redesigning unrelated catalog or fulfillment workflows."],
+    guardrails: [
+      "Use test payments and avoid collecting payment credentials.",
+      "Implementation requires owner approval; Done requires production delivery.",
+    ],
+    standingPriorities: [
+      "Investigate failures that prevent completion before cosmetic improvements.",
+      "Check guest and signed-in error recovery.",
+    ],
+  },
   rationale: "Checkout owns payment flows; shared utilities may affect them.",
 };
 const tree = [
@@ -97,11 +129,12 @@ describe("draft-only mandate planner", () => {
     );
     const before = files.map((file) => readFileSync(file, "utf8"));
     const result = await f.planner.plan(input);
-    expect(result.draft).toEqual(
-      Object.fromEntries(
+    expect(result.draft).toEqual({
+      ...Object.fromEntries(
         Object.entries(suggestion).filter(([key]) => key !== "rationale"),
       ),
-    );
+      label: "pm:checkout",
+    });
     expect(result.repository).toMatchObject({
       provider: "github",
       repo: "owner/app",
@@ -134,7 +167,80 @@ describe("draft-only mandate planner", () => {
       expect(JSON.stringify(execution)).not.toContain(secret);
     expect(result.draft).not.toHaveProperty("mandate");
     expect(result.draft).not.toHaveProperty("enabled");
+    expect(result.draft).not.toHaveProperty("linearProjectId");
+    expect(result.draft).not.toHaveProperty("mixpanelReportId");
+    expect(result.draft).not.toHaveProperty("tier");
     expect(files.map((file) => readFileSync(file, "utf8"))).toEqual(before);
+  });
+  it("fills every charter field and produces a draft compatible with real PM configuration", async () => {
+    const result = await fixture().planner.plan(input);
+    const charterFields = [...CHARTER_TEXT_FIELDS, ...CHARTER_LIST_FIELDS];
+    expect(Object.keys(result.draft.charter).sort()).toEqual(
+      [...charterFields].sort(),
+    );
+    expect(parsePmCharter(result.draft.charter)).toEqual(result.draft.charter);
+    for (const field of charterFields)
+      expect(result.draft.charter[field].length).toBeGreaterThan(0);
+    const areasFile = join(root, "projects/app/areas.json");
+    const areas = JSON.parse(readFileSync(areasFile, "utf8"));
+    const { key, ...fields } = result.draft;
+    areas.areas[key] = {
+      ...fields,
+      mandate: input.mandate,
+      enabled: false,
+      linearProjectId: "PASTE_LINEAR_PROJECT_ID",
+    };
+    writeFileSync(areasFile, JSON.stringify(areas));
+    const persisted = loadProject(root, "app").areas.find(
+      (area) => area.key === key,
+    );
+    expect(persisted).toMatchObject({
+      ...result.draft,
+      mandate: input.mandate,
+      enabled: false,
+    });
+    const properties = PM_DRAFT_SCHEMA.properties as Record<
+      string,
+      { required?: string[] }
+    >;
+    expect(PM_DRAFT_SCHEMA.required).toContain("charter");
+    expect(properties.charter!.required).toEqual(charterFields);
+    expect(properties).not.toHaveProperty("mandate");
+    expect(properties).not.toHaveProperty("label");
+  });
+  it("includes bounded grounded existing ownership without sending PM identities or integration metadata", async () => {
+    const areasFile = join(root, "projects/app/areas.json");
+    const areas = JSON.parse(readFileSync(areasFile, "utf8"));
+    areas.areas.core.paths = ["src/checkout/", "unlisted/private/"];
+    areas.areas.core.sharedTouchpoints = ["src/shared.ts"];
+    areas.areas.core.name = "Internal team identity";
+    areas.areas.core.linearProjectId = "private-linear-resource-id";
+    areas.areas.core.mandate =
+      "Existing private mandate not needed for this draft";
+    writeFileSync(areasFile, JSON.stringify(areas));
+    const f = fixture();
+    await f.planner.plan(input);
+    const execution = f.execute.mock.calls[0]![0];
+    const context = JSON.parse(execution.prompt);
+    expect(context.existingPmOwnership).toEqual({
+      entries: [
+        {
+          key: "core",
+          paths: ["src/checkout/"],
+          sharedTouchpoints: ["src/shared.ts"],
+        },
+      ],
+      truncated: true,
+    });
+    for (const excluded of [
+      "unlisted/private/",
+      "Internal team identity",
+      "private-linear-resource-id",
+      "Existing private mandate",
+    ])
+      expect(execution.prompt).not.toContain(excluded);
+    expect(execution.system).toContain("existing PM ownership");
+    expect(execution.system).toContain("Do not invent existing baselines");
   });
   it("uses GitLab's selected server and bounded same-origin tree pagination", async () => {
     initializeSetup(root, packageRoot, {
@@ -240,6 +346,27 @@ describe("draft-only mandate planner", () => {
     { key: "core" },
     { key: "../bad" },
     { key: "con" },
+    { key: "checkout-" },
+    { key: "checkout--quality" },
+    { label: "pm:someone-else" },
+    { linearProjectId: "invented-provider-id" },
+    { tier: "auto-approve" },
+    { charter: undefined },
+    { charter: {} },
+    { charter: { ...suggestion.charter, goal: " " } },
+    { charter: { ...suggestion.charter, users: [] } },
+    { charter: { ...suggestion.charter, nonGoals: [" "] } },
+    { charter: { ...suggestion.charter, ambition: "x".repeat(1001) } },
+    { charter: { ...suggestion.charter, users: ["x".repeat(401)] } },
+    {
+      charter: {
+        ...suggestion.charter,
+        users: Array.from({ length: 7 }, (_, i) => `Audience ${i}`),
+      },
+    },
+    { charter: { ...suggestion.charter, scope: "unsupported" } },
+    { charter: { ...suggestion.charter, guardrails: [sourceToken] } },
+    { charter: { ...suggestion.charter, goal: modelToken } },
     { wipLimit: 20 },
     { schedule: "every minute" },
     { name: "bad\nname" },
@@ -397,6 +524,18 @@ describe("isolated Docker planner", () => {
     const other = dockerFixture(false, true);
     await other.execute(execution());
     expect(other.run.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
+  });
+  it("bounds the complete expanded draft transport before creating a container", async () => {
+    const f = dockerFixture();
+    await f.execute({ ...execution(), prompt: "x".repeat(210000) });
+    const start = f.run.mock.calls.find(([args]) => args[0] === "start")!;
+    expect(JSON.parse(start[1]!.stdin!).prompt).toHaveLength(210000);
+    expect(start[1]!.maxBytes).toBe(65536);
+    f.run.mockClear();
+    await expect(
+      f.execute({ ...execution(), prompt: "x".repeat(512 * 1024) }),
+    ).rejects.toThrow("bounded input limit");
+    expect(f.run).not.toHaveBeenCalled();
   });
   it.skipIf(process.env.SHIPGREMLINS_DOCKER_SMOKE !== "1")(
     "runs the actual container isolation/stdin/cleanup path without provider credentials",

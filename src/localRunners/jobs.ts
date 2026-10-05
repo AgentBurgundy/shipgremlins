@@ -800,7 +800,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
             project: name,
             area: area.key,
             discoveryRevision: knowledgeRevision(project, area),
-            idempotencyKey: `pm:${name}:${area.key}:${minute}`,
+            idempotencyKey: `pm:${name}:${area.key}:${area.instanceId ? `${area.instanceId}:` : ""}${minute}`,
           });
         if (!linearCredential) continue;
         const tickets = await linear(

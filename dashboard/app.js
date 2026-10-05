@@ -163,6 +163,7 @@
   let pmPlanning = false;
   let pmDraft = null;
   const areaActions = new Map();
+  let pmActions;
   let projectLayoutInitialized = false;
   let projectWorkspace = null;
   const pmCharter = window.createPmCharter(
@@ -1776,7 +1777,23 @@
       return;
     }
     const launch = event.target.closest("[data-launch-project]");
-    if (launch && !formsLocked) {
+    if (launch && !launch.disabled && !formsLocked) {
+      if (launch.dataset.launchCrew === "pm") {
+        const project = currentStatus?.projects?.find(
+          (item) => item.name === launch.dataset.launchProject,
+        );
+        const area =
+          launch.dataset.launchArea ||
+          (project?.areas?.length === 1 ? project.areas[0].key : "");
+        if (!area) {
+          pages.navigate(
+            `/projects/${encodeURIComponent(launch.dataset.launchProject)}`,
+          );
+          return;
+        }
+        await pmActions.run(launch.dataset.launchProject, area, launch);
+        return;
+      }
       $("job-project").value = launch.dataset.launchProject;
       $("job-type").value = launch.dataset.launchCrew;
       renderJobAreas();
@@ -2477,6 +2494,12 @@
     }
   }
   function renderActivity(activity) {
+    const events = Array.isArray(activity.events) ? activity.events : [];
+    const latest = events[events.length - 1];
+    $("activity-live-status").textContent = latest
+      ? `${events.length} visible ${events.length === 1 ? "event" : "events"} · Latest: ${latest.title}${latest.timestamp ? ` · ${timestamp(latest.timestamp)}` : ""}`
+      : "Waiting for the first visible action. Worker output is available below.";
+    if (!events.length) $("worker-output").open = true;
     const summary =
       typeof activity.summary === "string" ? activity.summary : "";
     if ($("activity-summary").textContent !== summary)
@@ -2608,6 +2631,9 @@
       if (notice) outputNotices.set(resource, notice);
       else outputNotices.delete(resource);
       if (resource === "logs") {
+        $("worker-output-count").textContent = value.lines?.length
+          ? ` · ${value.lines.length} ${value.lines.length === 1 ? "line" : "lines"}`
+          : "";
         const log = $("job-log");
         if (
           value.partial &&
@@ -2693,6 +2719,9 @@
       $("activity-checks").hidden = true;
       delete $("activity-checks").dataset.signature;
       setOutputMessage("activity-message", "Loading visible activity…");
+      $("activity-live-status").textContent =
+        "Loading this run’s visible actions…";
+      $("worker-output-count").textContent = "";
       setOutputMessage("job-output-message", "");
       $("job-log").textContent = "Loading job output…";
     }
@@ -2840,6 +2869,11 @@
     pages.navigate("/activity#job-detail");
   });
   $("refresh-job-output").addEventListener("click", refreshJobOutput);
+  $("show-worker-output").addEventListener("click", () => {
+    $("worker-output").open = true;
+    $("worker-output").scrollIntoView({ block: "start", behavior: "smooth" });
+    $("job-log").focus({ preventScroll: true });
+  });
   function closeJobDetail() {
     selectedJobId = "";
     clearTimeout(jobOutputTimer);
@@ -2925,6 +2959,7 @@
   }
   function projectLinearDetails(project) {
     return window.renderProjectCrew(project, {
+      jobs: mergedJobs(),
       locked: formsLocked,
       areaActions,
     });
@@ -3078,7 +3113,43 @@
     "click",
     refreshLinearResources,
   );
+  const pmEditedFields = new Set();
+  const pmInputKeys = {
+    "pm-name": "name",
+    "pm-key": "key",
+    "pm-paths": "paths",
+    "pm-shared-paths": "sharedTouchpoints",
+    "pm-metric": "metric",
+    "pm-schedule": "schedule",
+    "pm-wip": "wipLimit",
+  };
+  $("pm-create-form").addEventListener(
+    "input",
+    (event) => {
+      const key = pmInputKeys[event.target.id];
+      if (key) pmEditedFields.add(key);
+      updatePmCreationReview();
+    },
+    true,
+  );
+  function updatePmCreationReview() {
+    const missing = [];
+    for (const [id, label] of [
+      ["pm-project", "app"],
+      ["pm-mandate", "mandate"],
+      ["pm-name", "name"],
+      ["pm-key", "mandate ID"],
+    ])
+      if (!$(id).value.trim()) missing.push(label);
+    $("pm-area-label").textContent = $("pm-key").value
+      ? `Area label: pm:${$("pm-key").value}`
+      : "The area label is generated from this ID.";
+    $("pm-creation-readiness").textContent = missing.length
+      ? `Still needed: ${missing.join(", ")}. Choose an app and write the mandate; Fill with AI can complete the PM details.`
+      : "Required details are filled. Review your setup, then create the PM. It stays paused; no run starts unless you select discovery below.";
+  }
   const readPmDraft = () => ({
+    editedFields: [...pmEditedFields].sort(),
     charter: pmCharter.read(),
     project: $("pm-project").value,
     mandate: $("pm-mandate").value,
@@ -3106,6 +3177,7 @@
     onApply: (draft, snapshot) => {
       if (JSON.stringify(snapshot) !== JSON.stringify(readPmDraft()))
         return false;
+      const { values, kept } = window.mergePmDraft(snapshot, draft);
       for (const [key, id] of Object.entries({
         name: "pm-name",
         key: "pm-key",
@@ -3115,17 +3187,22 @@
         schedule: "pm-schedule",
         wipLimit: "pm-wip",
       }))
-        $(id).value = Array.isArray(draft[key])
-          ? draft[key].join("\n")
-          : String(draft[key]);
+        $(id).value = Array.isArray(values[key])
+          ? values[key].join("\n")
+          : String(values[key]);
+      pmCharter.fill(values.charter);
       pmKeyEdited = true;
-      $("pm-advanced").open = true;
-      return true;
+      message($("pm-create-message"), "");
+      updatePmCreationReview();
+      return {
+        message: `PM setup filled in, including the product brief.${kept.length ? " Your own entries were kept." : ""} Review below, then Create PM. Nothing has been created or enabled.`,
+      };
     },
   });
   $("pm-project").addEventListener("change", () => {
     pmDraft.reset();
     refreshLinearResources();
+    updatePmCreationReview();
   });
   $("pm-key").addEventListener("input", () => {
     pmKeyEdited = Boolean($("pm-key").value);
@@ -3136,6 +3213,7 @@
         .value.toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
+    updatePmCreationReview();
   });
   document.addEventListener("change", (event) => {
     if (event.target.dataset.mappingProject)
@@ -3217,35 +3295,7 @@
       (item) => item.name === button.dataset.areaProject,
     );
     if (!project) return;
-    const area = button.dataset.toggleArea;
-    const key = `${project.name}/${area}`;
-    const enabled = button.dataset.enableArea === "true";
-    if (areaActions.get(key)?.busy) return;
-    areaActions.set(key, { busy: true });
-    renderStatus(currentStatus);
-    try {
-      await api(
-        `/api/projects/${encodeURIComponent(project.name)}/areas/${encodeURIComponent(area)}/status`,
-        {
-          enabled,
-          revision: project.areasRevision,
-          projectRevision: project.projectRevision,
-        },
-      );
-      areaActions.set(key, {
-        message: enabled
-          ? "Automation enabled. Scheduled patrols and approved-ticket pickup run while your controller and worker are available."
-          : "Automation paused. Current jobs keep running; you can still Run once.",
-      });
-      await refreshStatus();
-    } catch (error) {
-      areaActions.set(key, { error: true, message: error.message });
-      await refreshStatus().catch(() => {});
-    } finally {
-      const state = areaActions.get(key);
-      if (state) state.busy = false;
-      renderStatus(currentStatus);
-    }
+    await pmActions.toggle(project.name, button.dataset.toggleArea, button);
   });
   document.addEventListener("click", async (event) => {
     const create = event.target.closest("[data-create-pm-project]");
@@ -3256,7 +3306,7 @@
       pmDraft.reset();
       $("pm-create-drawer").open = true;
       renderLinearSetup();
-      $("pm-name").focus();
+      $("pm-mandate").focus();
       await refreshLinearResources();
       return;
     }
@@ -3352,6 +3402,8 @@
       pmCharter.reset();
       pmDraft?.reset();
       pmKeyEdited = false;
+      pmEditedFields.clear();
+      updatePmCreationReview();
       $("pm-project").value = project;
       message(
         $("pm-create-message"),
@@ -3378,6 +3430,26 @@
       $("create-pm").textContent = "Create PM Gremlin +";
     }
   });
+  $("pm-create-form").addEventListener(
+    "invalid",
+    (event) => {
+      for (
+        let section = event.target.closest("details");
+        section;
+        section = section.parentElement?.closest("details")
+      )
+        section.open = true;
+      const label =
+        document.querySelector(`label[for="${event.target.id}"]`)
+          ?.textContent || "the highlighted field";
+      message(
+        $("pm-create-message"),
+        `Review ${label.trim()}: ${event.target.validationMessage}`,
+        true,
+      );
+    },
+    true,
+  );
 
   function renderServiceControls() {
     renderConnectionSummary();
@@ -4608,6 +4680,7 @@
     return (
       pmPlanning ||
       pmCreating ||
+      pmActions?.isBusy() ||
       projectWorkspace?.isDirty() ||
       projectWorkspace?.isBusy() ||
       workspaceDeletion?.isBusy() ||
@@ -4718,6 +4791,7 @@
         projectWorkspace?.isDirty() ||
         projectOperations?.isDirty() ||
         workspaceDeletion?.isBusy() ||
+        pmActions?.isBusy() ||
         connectionsView?.isBusy() ||
         [...profileControls.values()].some((control) => control.isBusy?.()) ||
         Boolean(mixpanelReports?.isDirty()) ||
@@ -4873,7 +4947,7 @@
     pmDraft.reset();
     $("pm-create-drawer").open = true;
     renderLinearSetup();
-    $("pm-name").focus();
+    $("pm-mandate").focus();
     refreshLinearResources();
   });
   projectWorkspace = window.createProjectWorkspace($("project-workspace"), {
@@ -4892,7 +4966,7 @@
       pmDraft.reset();
       $("pm-create-drawer").open = true;
       renderLinearSetup();
-      $("pm-name").focus();
+      $("pm-mandate").focus();
       refreshLinearResources();
     },
     onJob: (job) => {
@@ -4903,6 +4977,34 @@
     onActivity: (id) => {
       selectJob(id);
       pages.navigate("/activity#job-detail");
+    },
+  });
+  pmActions = window.createPmActions({
+    api,
+    states: areaActions,
+    getProject: (name) =>
+      currentStatus?.projects?.find((project) => project.name === name),
+    getJobs: mergedJobs,
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onState: () => renderStatus(currentStatus),
+    onFinished: (project, area, mode) => {
+      if (
+        mode !== "automation" ||
+        pages.current !== "project" ||
+        pages.project !== project ||
+        (pages.pm && pages.pm !== area)
+      )
+        return;
+      [...$("project-workspace").querySelectorAll("[data-toggle-area]")]
+        .find((button) => button.dataset.toggleArea === area)
+        ?.focus({ preventScroll: true });
+    },
+    onChanged: refreshStatus,
+    onJob: (job) => {
+      jobHistory = [...jobHistory.filter((item) => item.id !== job.id), job];
+      selectJob(job.id);
+      pages.navigate("/activity#job-detail");
+      refreshRunners();
     },
   });
   initialize();

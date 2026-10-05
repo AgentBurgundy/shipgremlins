@@ -22,6 +22,7 @@
     <script src="/connection-profiles.js" defer></script>
     <script src="/linear-settings.js" defer></script>
     <script src="/pm-draft.js" defer></script>
+    <script src="/pm-actions.js" defer></script>
     <script src="/crew-guidance.js" defer></script>
     <script src="/job-output.js" defer></script>
     <script src="/pm-charter.js" defer></script>
@@ -1724,19 +1725,45 @@
                 >
               </summary>
               <p class="runner-guidance">
-                Give your PM a focused responsibility. It proposes work with
-                browser evidence; coding still needs your approval.
+                Start with your mandate. Fill with AI completes the PM setup and
+                product brief; review it, then create. Coding still needs your
+                approval.
               </p>
               <form id="pm-create-form">
                 <fieldset id="pm-create-fields" disabled>
                   <legend class="sr-only">New PM mandate</legend>
+                  <div class="field">
+                    <label for="pm-project">App</label
+                    ><select id="pm-project" required>
+                      <option value="">Add an app first</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="pm-mandate"
+                      >What should this PM investigate?</label
+                    ><textarea
+                      id="pm-mandate"
+                      rows="6"
+                      required
+                      maxlength="12000"
+                      placeholder="Own the checkout journey from cart to confirmation. Test signed-in and guest flows, discounts, failures, and mobile layouts. Use test payments only. Propose improvements with screenshots and exact reproduction steps."
+                    ></textarea>
+                    <p>
+                      Define the goal, scope, test accounts, important flows,
+                      and boundaries.
+                    </p>
+                  </div>
+                  <div id="pm-ai-draft"></div>
+                  <p
+                    class="pm-creation-readiness"
+                    id="pm-creation-readiness"
+                    role="status"
+                  >
+                    Choose an app and write the mandate. Fill with AI completes
+                    the setup for your review.
+                  </p>
+                  <h3 class="pm-review-heading">Review PM details</h3>
                   <div class="project-form-grid">
-                    <div class="field">
-                      <label for="pm-project">App</label
-                      ><select id="pm-project" required>
-                        <option value="">Add an app first</option>
-                      </select>
-                    </div>
                     <div class="field">
                       <label for="pm-name">PM name</label
                       ><input
@@ -1756,14 +1783,17 @@
                         id="pm-key"
                         type="text"
                         required
-                        pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+                        pattern="[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
+                        maxlength="63"
                         placeholder="checkout"
                         autocomplete="off"
                         spellcheck="false"
                       />
                       <p>
-                        Used for the area and its pm:checkout label. Lowercase
-                        letters, numbers, and hyphens.
+                        <span id="pm-area-label"
+                          >The area label is generated from this ID.</span
+                        >
+                        Lowercase letters, numbers, and hyphens.
                       </p>
                     </div>
                     <div class="field">
@@ -1777,22 +1807,7 @@
                       </p>
                     </div>
                   </div>
-                  <div class="field">
-                    <label for="pm-mandate"
-                      >What should this PM investigate?</label
-                    ><textarea
-                      id="pm-mandate"
-                      rows="6"
-                      required
-                      maxlength="12000"
-                      placeholder="Own the checkout journey from cart to confirmation. Test signed-in and guest flows, discounts, failures, and mobile layouts. Use test payments only. Propose improvements with screenshots and exact reproduction steps."
-                    ></textarea>
-                    <p>
-                      Define the goal, scope, test accounts, important flows,
-                      and boundaries.
-                    </p>
-                  </div>
-                  <div id="pm-ai-draft"></div>
+
                   <section
                     class="pm-charter-create"
                     aria-labelledby="new-pm-charter-title"
@@ -2232,6 +2247,13 @@
                   <button
                     type="button"
                     class="small-button"
+                    id="show-worker-output"
+                  >
+                    Worker output
+                  </button>
+                  <button
+                    type="button"
+                    class="small-button"
                     id="refresh-job-output"
                   >
                     Refresh activity
@@ -2262,6 +2284,11 @@
                 role="status"
                 hidden
               ></p>
+              <p
+                id="activity-live-status"
+                class="activity-live-status"
+                role="status"
+              ></p>
               <div class="activity-summary" id="activity-summary" hidden></div>
               <div class="activity-checks" id="activity-checks" hidden></div>
               <ol class="activity-timeline" id="activity-timeline"></ol>
@@ -2271,8 +2298,10 @@
                 role="status"
                 hidden
               ></div>
-              <details class="raw-output">
-                <summary>Raw worker output</summary>
+              <details class="raw-output" id="worker-output">
+                <summary>
+                  Worker output<span id="worker-output-count"></span>
+                </summary>
                 <pre
                   class="job-log"
                   id="job-log"

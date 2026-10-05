@@ -72,7 +72,7 @@ describe("branded Slack job messages", () => {
       type: "succeeded",
       result: { summary: "Found a missing role check.", findingsCount: 2 },
     });
-    expect(message.text).toContain("Patrol complete");
+    expect(message.text).toContain("Patrol finished");
     expect(message.text).toContain("Found a missing role check.");
     expect(JSON.stringify(message.blocks)).toContain("Reported findings\\n2");
     expect(

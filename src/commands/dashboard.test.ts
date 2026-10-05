@@ -533,6 +533,18 @@ describe("local dashboard HTTP boundary", () => {
       draft: {
         name: "Account guardian",
         key: "accounts",
+        label: "pm:accounts",
+        charter: {
+          ambition: "Make account tasks dependable.",
+          goal: "Find and fix blockers in account journeys.",
+          metricDefinition:
+            "Account task completion; instrumentation is not yet verified.",
+          users: ["Signed-in account owners"],
+          expectedToBuild: ["Reliable account journeys"],
+          nonGoals: ["Billing changes"],
+          guardrails: ["Protect account isolation"],
+          standingPriorities: ["Verify account permissions"],
+        },
         paths: ["src/accounts"],
         sharedTouchpoints: [],
         metric: "/accounts",
@@ -744,6 +756,29 @@ describe("local dashboard HTTP boundary", () => {
       name: "Security",
       mandate: "Test permission boundaries.",
     });
+    const fullBrief = {
+      key: "full-brief",
+      name: "Full brief",
+      mandate: "界".repeat(12000),
+      charter: {
+        goal: "Check permission boundaries without guessing user requirements.",
+      },
+    };
+    expect(
+      (await post(`${url}/api/projects/demo/areas`, fullBrief)).status,
+    ).toBe(200);
+    expect(linearProvisioning.addArea).toHaveBeenLastCalledWith(
+      "demo",
+      fullBrief,
+    );
+    expect(
+      (
+        await post(`${url}/api/projects/demo/areas`, {
+          ...fullBrief,
+          mandate: "x".repeat(128 * 1024),
+        })
+      ).status,
+    ).toBe(413);
     expect(
       (await fetch(`${url}/api/linear/resources`, { headers: auth })).status,
     ).toBe(200);

@@ -591,13 +591,15 @@
       const result = button(
         state === "refreshing" ? "Discovery running…" : "Run discovery",
         () => discover(project.name, area.key).catch(() => {}),
-        "button button-dark",
+        "small-button",
       );
       result.disabled =
         locked ||
         launching ||
         state === "refreshing" ||
         readiness?.canRun === false;
+      result.title =
+        "Read-only discovery maps the repository and records product knowledge. It does not create coding tickets.";
       return result;
     }
     function projectActions(project) {
@@ -682,7 +684,6 @@
         );
     }
     function home(project) {
-      options.operations?.mount(root, project, "overview");
       const stats = node("div", "project-workspace-stats");
       for (const [value, label] of [
         [project.areas?.length || 0, "PM Gremlins"],
@@ -747,7 +748,14 @@
           ),
           discoveryButton(project, area),
         );
-        text.append(actions);
+        text.append(
+          window.renderPmControls(project, area, {
+            locked,
+            jobs: getJobs?.() || [],
+            operation: options.getAreaAction?.(project.name, area.key),
+          }),
+          actions,
+        );
         if (notices.get(`${project.name}/${area.key}`))
           text.append(
             node(
@@ -848,6 +856,7 @@
       side.append(context, recent);
       grid.append(main, side);
       root.append(grid);
+      options.operations?.mount(root, project, "overview");
     }
     function pmWorkspace(project, area) {
       const layout = node("div", "pm-workspace-layout"),
@@ -883,6 +892,13 @@
       );
       heading.append(image, title, actions);
       main.append(heading);
+      main.append(
+        window.renderPmControls(project, area, {
+          locked,
+          jobs: getJobs?.() || [],
+          operation: options.getAreaAction?.(project.name, area.key),
+        }),
+      );
       const tab = tabs.some(([key]) => key === pages.tab) ? pages.tab : "brief";
       const nav = node("nav", "pm-workspace-tabs");
       nav.setAttribute("aria-label", "PM workspace sections");
@@ -962,64 +978,6 @@
             `${area.schedule || "No schedule"} UTC · Up to ${area.wipLimit || 1} open work items`,
           ),
         );
-        const controls = node("div", "project-pm-actions");
-        controls.append(
-          action("Run patrol once", {
-            launchProject: project.name,
-            launchCrew: "pm",
-            launchArea: area.key,
-          }),
-        );
-        const operation = options.getAreaAction?.(project.name, area.key);
-        const toggle = action(
-          operation?.busy
-            ? "Saving…"
-            : area.enabled
-              ? "Pause automation"
-              : "Enable automation",
-          {
-            toggleArea: area.key,
-            areaProject: project.name,
-            enableArea: String(!area.enabled),
-          },
-        );
-        const readiness = project.readiness?.areas?.find(
-          (item) => item.key === area.key,
-        );
-        toggle.disabled =
-          locked ||
-          operation?.busy === true ||
-          (!area.enabled && readiness?.canEnable !== true);
-        controls.append(toggle);
-        content.append(controls);
-        if (operation?.message)
-          content.append(
-            node(
-              "p",
-              `project-workspace-notice${operation.error ? " error" : ""}`,
-              operation.message,
-            ),
-          );
-        if (!area.enabled && readiness?.canEnable !== true) {
-          const blocker =
-            readiness?.enableBlockers?.[0] || readiness?.blockers?.[0];
-          content.append(
-            node(
-              "p",
-              "project-workspace-notice",
-              blocker?.message || "Complete setup before enabling automation.",
-            ),
-          );
-          if (blocker?.action)
-            content.append(
-              action("Finish setup", {
-                setupAction: blocker.action,
-                setupProject: project.name,
-                setupStep: blocker.id,
-                setupArea: area.key,
-              }),
-            );
-        }
         content.append(
           node(
             "p",
@@ -1131,6 +1089,9 @@
         launching,
         options.getCheck?.(project?.name),
         options.getAreaAction?.(project?.name, area?.key),
+        project?.areas?.map((item) =>
+          options.getAreaAction?.(project.name, item.key),
+        ),
         (getJobs?.() || []).filter((job) => job.project === project?.name),
       ]);
       if (signature === next) return;

@@ -418,6 +418,11 @@ describe("local delivery controller integration", () => {
       loadProject: () => w.project,
     });
     expect(restarted.deliveryStatus("game").candidates).toEqual([handoff]);
+    w.project.areas[0]!.instanceId = "d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea";
+    expect(restarted.deliveryStatus("game").candidates).toEqual([]);
+    expect(restarted.deliveryStatus("game").deliveries).toEqual([]);
+    delete w.project.areas[0]!.instanceId;
+    expect(restarted.deliveryStatus("game").candidates).toEqual([handoff]);
     expect(await w.forge.listOpenPulls(TEST_REPO, { base: "staging" })).toEqual(
       [],
     );

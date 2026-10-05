@@ -151,6 +151,49 @@ async function admitted() {
   return { ...w, plan, manifest, ingestion };
 }
 describe("durable owning-PM delivery", () => {
+  it("does not assign a deleted PM's deliveries to a new PM with the same ID", async () => {
+    const w = world();
+    await w.service.register(w.input);
+    const stateFile = join(w.root, ".run", "delivery", "game", "state.json");
+    const oldRecord = JSON.parse(readFileSync(stateFile, "utf8")).records[0];
+    w.project.areas[0]!.instanceId = "d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea";
+    expect(w.create().list()).toEqual([]);
+    await expect(
+      w.create().advanceIntegration(async () => true),
+    ).resolves.toBeNull();
+    await expect(
+      w.create().prepareReview({
+        area: "core",
+        jobId: "job-fresh-review",
+        deployment: w.deployment,
+      }),
+    ).resolves.toBeNull();
+    expect(w.forge.merged).toEqual([]);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).records[0]).toEqual(
+      oldRecord,
+    );
+    await expect(w.create().register(w.input)).rejects.toThrow("changed");
+    const pull = (await w.forge.getPull(TEST_REPO, 1))!;
+    expect(
+      await w.create().promotionOptions().candidateVerdict!(pull),
+    ).toBeNull();
+    w.forge.seedPull(
+      TEST_REPO,
+      { ...pull, number: 2, headRef: "gremlins/job-two" },
+      ["app/name.ts"],
+    );
+    const fresh = await w
+      .create()
+      .register({ ...w.input, jobId: "job-two", pullNumber: 2 });
+    expect(fresh.areaInstanceId).toBe(w.project.areas[0]!.instanceId);
+    expect(
+      w
+        .create()
+        .list()
+        .map((r) => r.id),
+    ).toEqual(["job-two"]);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).records).toHaveLength(2);
+  });
   it("registers exact approved draft once and survives controller restart", async () => {
     const w = world();
     await w.service.register(w.input);

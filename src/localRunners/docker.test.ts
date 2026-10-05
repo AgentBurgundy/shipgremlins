@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import {
@@ -498,7 +499,7 @@ describe("trusted local job publication", () => {
       provider,
       run: async (command: string, args: string[]) => {
         calls.push([command, ...args]);
-        if (command === "/bin/bash" && args[1] === failure)
+        if (command === "/bin/bash" && args.at(-1) === failure)
           throw new Error("Check failed");
         if (args[0] === "branch") return developer.delivery.branch + "\n";
         if (args[0] === "status") return changed ? " M src/app.ts\n" : "";
@@ -555,9 +556,16 @@ describe("trusted local job publication", () => {
         prUrl: h.prUrl,
         headSha: "b".repeat(40),
       });
-      expect(h.calls.slice(0, 5).map((call) => call[2])).toEqual(
+      expect(h.calls.slice(0, 5).map((call) => call.at(-1))).toEqual(
         Object.values(h.input.commands),
       );
+      for (const call of h.calls.slice(0, 5))
+        expect(call.slice(0, 4)).toEqual([
+          "/bin/bash",
+          "-o",
+          "pipefail",
+          "-lc",
+        ]);
       expect(h.calls[5]).toEqual(["restore-trusted-config"]);
       expect(h.published[0]).toEqual([
         "git",
@@ -620,6 +628,7 @@ describe("trusted local job publication", () => {
       OAUTH_TOKEN: "inherited-oauth",
       CI_JOB_TOKEN: "inherited-ci",
       GREMLINS_GIT_TOKEN: "inherited-git",
+      SHELLOPTS: "xtrace",
     };
     const { execution, publication } = jobEnvironments(
       credentials,
@@ -643,6 +652,7 @@ describe("trusted local job publication", () => {
       GIT_ASKPASS: "/bin/false",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_CONFIG_SYSTEM: "/dev/null",
+      SHELLOPTS: "pipefail",
     });
     expect(publication.GREMLINS_GIT_TOKEN).toBe("gitlab-secret");
     expect(publication.GITLAB_TOKEN).toBe("gitlab-secret");
@@ -656,7 +666,49 @@ describe("trusted local job publication", () => {
     expect(publication.GH_TOKEN).toBe("");
     expect(publication.GIT_ASKPASS).toBe("/opt/gremlins/git-askpass.sh");
     expect(inherited.GH_TOKEN).toBe("inherited-gh");
+    expect(inherited.SHELLOPTS).toBe("xtrace");
   });
+  it.skipIf(process.platform === "win32")(
+    "fails a real piped check before publication and preserves successful pipelines",
+    async () => {
+      const failed = harness(),
+        execute = async (command: string, args: string[]) => {
+          const result = spawnSync(command, args, {
+            encoding: "utf8",
+            timeout: 10000,
+          });
+          if (result.status !== 0) throw new Error("Pipeline failed");
+          return result.stdout;
+        };
+      failed.input.commands = {
+        install: "",
+        test: "false | cat",
+        lint: "",
+        typecheck: "",
+        build: "",
+      };
+      failed.input.run = execute;
+      await expect(runCheckedDelivery(failed.input)).rejects.toThrow(
+        "Pipeline failed",
+      );
+      expect(failed.published).toEqual([]);
+      const { execution } = jobEnvironments({}, "github", {
+        PATH: process.env.PATH,
+        SHELLOPTS: "xtrace",
+      });
+      expect(
+        spawnSync("/bin/bash", ["-lc", "false | cat"], { env: execution })
+          .status,
+      ).not.toBe(0);
+      expect(
+        spawnSync("/bin/bash", ["-lc", "true | cat"], { env: execution })
+          .status,
+      ).toBe(0);
+      expect(
+        spawnSync("/bin/bash", ["-o", "pipefail", "-lc", "true | cat"]).status,
+      ).toBe(0);
+    },
+  );
 
   it("publishes from fresh CLI configuration pinned to the selected issuer", () => {
     const root = mkdtempSync(

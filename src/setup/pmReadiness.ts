@@ -32,6 +32,8 @@ export interface ReadinessContext {
   sourceConnections: SourceStatus[];
   serviceConnections: Array<OAuthStatus & { id?: string }>;
   workers: LocalWorker[];
+  /** The execution adapter's current project scope and connection policy. */
+  canRunWorker?: (remoteId: string | undefined, project: string) => boolean;
   localMode: boolean;
 }
 export class PmControlError extends Error {
@@ -202,12 +204,23 @@ export function inspectPmReadiness(
       "Selected browser environment credentials are configured.",
     );
   }
-  const workerReady = context.workers.some(
-    (worker) =>
-      Boolean(worker.verifiedAt) &&
-      !worker.paused &&
-      ["ready", "busy"].includes(worker.status),
-  );
+  const workerReady = context.workers.some((worker) => {
+    if (
+      !worker.verifiedAt ||
+      worker.paused ||
+      !["ready", "busy"].includes(worker.status)
+    )
+      return false;
+    try {
+      // A busy eligible worker can queue more work. A remote verification stamp
+      // alone says nothing about its current heartbeat or this project's scope.
+      return (
+        context.canRunWorker?.(worker.remoteId, config.name) ?? !worker.remoteId
+      );
+    } catch {
+      return false;
+    }
+  });
   add(
     "verification",
     "Verify connections",
@@ -221,8 +234,8 @@ export function inspectPmReadiness(
     "Verified worker",
     workerReady,
     "worker",
-    "Create or resume a Docker worker and wait for its browser check to pass. Busy verified workers can queue another job.",
-    "A verified worker can accept jobs; a busy worker queues them.",
+    "Create or resume a Docker worker and wait for its browser check to pass. Remote workers must be online and enrolled for this project. Busy eligible workers can queue another job.",
+    "A verified worker is available for this project; a busy worker queues jobs.",
   );
   const common = steps
     .filter((step) => !step.ready)
@@ -241,7 +254,7 @@ export function inspectPmReadiness(
         id: "mandate",
         action: "mandate",
         message:
-          "Write this existing PM's mandate in its areas.json mandate field or its mandate.md file, then review it before running.",
+          "Open this PM's Product brief, write and save its mandate, then review it before running.",
       });
     blockers.sort(
       (a, b) =>

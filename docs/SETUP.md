@@ -45,7 +45,7 @@ automatically.
 3. Review the PR base branch, install/test commands, and PM mandate. New projects default to repository-only verification. For browser work, add a named preview/staging target using a direct URL, Vercel, Railway, or Cloud Run. Keep credentials in Connections. Existing projects have **Edit settings**. See [project and hosting settings](PROJECTS.md).
 4. Choose **Create local worker**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
 5. Give the PM a mandate and optional structured **Product brief**. Choose **Discovery** to build its codebase context using source access, Claude Code, and a ready worker. Then follow the project's remaining setup steps and choose **Verify connections**, or run `gremlins doctor my-app`. Check the PM's Linear mapping and ownership. New PMs start with automation paused; you do not need to edit JSON to try one.
-6. Choose **Run once** for a supervised PM investigation. Inspect Activity and its evidence. When ready, choose **Enable automation** for recurring patrols and automatic pickup of approved tickets. A manual Coding run requires an open, approved ticket in the matching Linear project; approval is checked again before launch, even when automation is paused.
+6. Choose **Run now** on the PM card or workspace for one PM investigation. Missing setup opens that PM's checklist with direct remedies. Inspect Activity and its evidence. When ready, turn **Automation** on for recurring patrols and automatic pickup of approved tickets. A manual Coding run requires an open, approved ticket in the matching Linear project; approval is checked again before launch, even when automation is off.
 
 Approval uses `pm-approved`; proposals use `pm-proposal`. Area labels remain `pm:core`, `pm:security`, and similar. Project Review lets you inspect a proposal and explicitly approve its bounded scope. The controller removes the proposal hold and re-checks the current scope before approving. After configured checks, the worker publishes its unique branch as a **draft** PR/MR. Repository-only projects leave merges to you. Explicit promotion projects target their integration branch and can advance eligible fixes for owning-PM verification; see [selective delivery](DELIVERY_WORKFLOW.md).
 
@@ -65,19 +65,19 @@ sanitized. **Close** or leaving Activity stops detail polling without stopping
 the job. A successful PM run means its investigation finished; check its summary
 for which tests actually ran.
 
-## Run once and automation are separate
+## Run now and automation are separate
 
 A PM is a saved product mandate. A worker is the Docker capacity that executes
 it. Creating one does not implicitly create or enable the other.
 
-| Action                | Result                                                                                                                                                               |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Discovery**         | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change. |
-| **Run once**          | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                  |
-| **Run Coding**        | Queues work on one open ticket with `pm-approved`, the matching area label, and the PM's Linear project. Manual coding does not require automation to be enabled.    |
-| **Enable automation** | Allows that PM's UTC patrol schedule and background pickup of its approved tickets while the controller runs.                                                        |
-| **Pause automation**  | Stops new scheduled patrols and automatic approved-ticket pickup. It does not cancel an already-running job.                                                         |
-| **Pause worker**      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                      |
+| Action             | Result                                                                                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Discovery**      | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change. |
+| **Run now**        | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                  |
+| **Run Coding**     | Queues work on one open ticket with `pm-approved`, the matching area label, and the PM's Linear project. Manual coding does not require automation to be enabled.    |
+| **Automation on**  | Allows that PM's UTC patrol schedule and background pickup of its approved tickets while the controller runs.                                                        |
+| **Automation off** | Stops new scheduled patrols and automatic approved-ticket pickup. It does not cancel an already-running job.                                                         |
+| **Pause worker**   | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                      |
 
 Use the guided setup actions beside the selected project when something is
 missing. Connect source control and Claude Code in Connections; repair the
@@ -86,25 +86,42 @@ the project and create or resume a verified worker. Hosting setup is required
 only for a selected browser environment. Slack and product signals are optional.
 A saved credential, an enabled schedule, and a ready worker are different states.
 
+**Run now** opens existing Activity when that PM already has a queued or running
+job. Otherwise it queues one job after checking that PM's prerequisites. Discovery
+uses its smaller source-only checklist; missing Linear or hosting setup in this
+or another project does not block discovery. A remote worker must be online and
+enrolled for the selected project. An eligible busy worker can queue the job.
+Automation can be enabled before a worker is available, but execution still waits
+for eligible capacity. Turning automation off remains possible when connections
+need repair. Configured product-signal connections are checked during project
+verification; remove an unwanted configuration rather than leaving it broken.
+
 ### Fill a PM draft with AI
 
 Choose **Create PM**, select its project, and describe the investigation in your
 own words. **Fill with AI** combines that brief with a bounded view of the
-repository's paths to suggest a name, mandate ID, ownership paths, shared
-touchpoints, metric, UTC schedule, and WIP limit. Review the rationale and any
-warnings, especially when the repository view was truncated.
+repository's paths and existing PM ownership to suggest a name, mandate ID,
+ownership paths, shared touchpoints, metric, UTC schedule, and WIP limit. It also
+fills all eight **Product brief** fields: ambition, goal, measurement, users,
+expected capabilities, non-goals, guardrails, and standing priorities. The area
+label is derived from the final mandate ID. Review the rationale and warnings,
+especially when the repository view was truncated or a business assumption needs
+confirmation. Success metrics are proposals, not invented baselines or verified
+telemetry. Shared project permission tiers are unchanged.
 
 AI fill uses the saved Claude Code connection and source access, with a disposable
 Docker container on your controller. The first request may need to build the
 worker image. It reads repository paths, not source-file contents. The first PM
 patrol follows the configuration you saved; it does not fill or rewrite ownership.
 
-**Apply suggestions** copies the reviewed fields into the form and preserves your
-original mandate. It does not save configuration, create Linear resources, enable
-automation, or start work. Choose **Create PM** separately after reviewing the
-form. Changes to the selected project or form while a suggestion is pending make
-it stale; generate another draft instead of overwriting those edits. You can
-always fill in the form manually.
+**Fill with AI** copies suggestions into blank fields and default controls in one
+step, preserving the original mandate and values you already entered. Changes to
+the selected project or form while generation is pending make the response stale;
+your newer edits win. It does not save configuration, create Linear resources,
+enable automation, or start work. Review the filled form and choose **Create PM**
+separately. Provider selections, credentials, and optional Mixpanel report IDs
+remain yours to configure; AI never invents them. You can always fill in the form
+manually.
 
 ### Discover the codebase and keep a useful PM memory
 

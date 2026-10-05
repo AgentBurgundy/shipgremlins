@@ -90,6 +90,12 @@
       root.append(group);
     }
     return {
+      fill(charter) {
+        for (const [key, { input, list }] of fields)
+          input.value = list
+            ? (charter[key] || []).join("\n")
+            : charter[key] || "";
+      },
       read() {
         const charter = {};
         for (const [key, { input, list }] of fields) {

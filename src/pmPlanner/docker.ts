@@ -20,7 +20,7 @@ export const PLANNER_PROGRAM = String.raw`
 const { spawn } = require('node:child_process');
 const { mkdirSync } = require('node:fs');
 let text = '';
-process.stdin.on('data', data => { text += data; if (Buffer.byteLength(text) > 200000) process.exit(2); });
+process.stdin.on('data', data => { text += data; if (Buffer.byteLength(text) > 524288) process.exit(2); });
 process.stdin.on('end', () => {
   let input;
   try { input = JSON.parse(text); } catch { process.exit(2); }
@@ -48,7 +48,7 @@ process.stdin.on('end', () => {
       if (result.is_error || result.subtype !== 'success') throw new Error();
       const draft = result.structured_output ?? JSON.parse(result.result);
       const encoded = JSON.stringify(draft);
-      if (encoded.includes(input.credential) || encoded.length > 20000) throw new Error();
+      if (encoded.includes(input.credential) || Buffer.byteLength(encoded) > 65536) throw new Error();
       process.stdout.write(encoded);
     } catch { process.exitCode = 2; }
   });
@@ -117,6 +117,14 @@ export function createDockerPlanner(options: {
 }): PlannerExecutor {
   const run = options.run ?? runPlannerDocker;
   return async (input) => {
+    const payload = JSON.stringify({
+      credential: input.credential,
+      prompt: input.prompt,
+      system: input.system,
+      schema: input.schema,
+    });
+    if (Buffer.byteLength(payload) > 512 * 1024)
+      throw new Error("Planner context exceeds its bounded input limit.");
     const id = randomUUID();
     const name = `gremlins-plan-${id}`;
     const image = await (options.ensureImage?.() ??
@@ -174,15 +182,10 @@ export function createDockerPlanner(options: {
       if (created.code !== 0)
         throw new Error("Planner container could not start.");
       const result = await run(["start", "--attach", "--interactive", name], {
-        stdin: JSON.stringify({
-          credential: input.credential,
-          prompt: input.prompt,
-          system: input.system,
-          schema: input.schema,
-        }),
+        stdin: payload,
         timeoutMs: 125000,
         signal: input.signal,
-        maxBytes: 32768,
+        maxBytes: 65536,
       });
       if (result.code !== 0)
         throw new Error("Claude could not produce a draft.");

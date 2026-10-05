@@ -23,14 +23,31 @@ revision guard. The **Product brief**, **Discovery**, **Features**, **Ranked que
 **Memory** and **Activity** tabs keep each PM's context together. A direct discovery
 link is `/projects/<project>?pm=<area>&tab=discovery`.
 
-**Run discovery** queues a codebase investigation. **Run patrol once** queues a normal
-patrol without enabling automation. **Enable automation** enables scheduled
-patrols and automatic pickup of approved Coding tickets; **Pause automation**
-pauses both. Each action shows its own missing setup requirements. The AI form
-assistant suggests brief fields from a mandate; it does not replace discovery
-of the checked-out repository or create learned knowledge.
+**Run discovery** queues a codebase investigation. **Run now** queues one normal
+patrol without enabling automation. The **Automation** switch controls scheduled
+patrols and automatic pickup of approved Coding tickets. Turning it off does not
+cancel work already running. Each action shows its own missing setup requirements
+with direct remedies. A remote worker must be online and enrolled for this project.
+
+On the creation form, **Fill with AI** fills blank operational settings and all
+eight product-brief fields from the mandate, repository paths, and existing PM
+ownership. It preserves the original mandate and user-entered values; review
+the suggestions before choosing **Create PM**. Suggested users, priorities, and
+measurement still need owner confirmation. This form assistant does not replace
+discovery of the checked-out repository or create learned knowledge.
 
 ## Discover before patrolling
+
+A patrol must advance an investigation. It starts from the previous coverage
+and unresolved questions, traces a relevant path through its callers and controls,
+and attempts a safe focused test that could disprove its hypothesis. A passing
+broad test suite or a few reassuring source snippets do not establish security.
+The PM reports visible actions and results, saves sanitized evidence, and updates
+its coverage ledger. With no supported new ticket, it explains the hypotheses
+tested and why no proposal is justified. Missing access or an exhausted budget
+must be reported as an incomplete investigation, not a clean bill of health.
+These instructions improve the agent's investigation standard; they do not
+guarantee that every run finds a defect or replace independent delivery evidence.
 
 Codebase discovery reads the selected repository checkout and traces the PM's
 scope through relevant source, tests and documentation. It identifies the

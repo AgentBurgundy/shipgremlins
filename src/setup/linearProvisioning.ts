@@ -26,7 +26,11 @@ import {
   MAX_CONFIG_BYTES,
 } from "./configEditor.ts";
 import { validateName } from "./files.ts";
-import { assertResourceAvailable } from "./resourceDeletion.ts";
+import {
+  assertResourceAvailable,
+  preparePmRecreation,
+  completePmRecreation,
+} from "./resourceDeletion.ts";
 import { buildLinearProjectContent } from "./linearProjectContent.ts";
 import { parsePmCharter, type PmCharter } from "../pmCharter.ts";
 import type {
@@ -78,6 +82,7 @@ interface Intent {
     {
       id: string;
       created: boolean;
+      instanceId?: string;
       /** Present only when this controller reserved the ID for creation. */
       managedBrief?: { version: 1; applied: boolean };
     }
@@ -285,6 +290,11 @@ export function createLinearProvisioning(options: {
         )
           throw new Error();
         if (
+          value.instanceId !== undefined &&
+          (typeof value.instanceId !== "string" || !UUID.test(value.instanceId))
+        )
+          throw new Error();
+        if (
           value.managedBrief !== undefined &&
           (!object(value.managedBrief) ||
             value.managedBrief.version !== 1 ||
@@ -376,6 +386,7 @@ export function createLinearProvisioning(options: {
           (area) =>
             !missingId(area.linearProjectId) &&
             Object.hasOwn(state.areas, area.key) &&
+            state.areas[area.key]!.instanceId === area.instanceId &&
             state.areas[area.key]!.id !== area.linearProjectId,
         ))
     )
@@ -395,6 +406,7 @@ export function createLinearProvisioning(options: {
           !missingId(area.linearProjectId) &&
           !(
             state?.areas[area.key]?.id === area.linearProjectId &&
+            state.areas[area.key]?.instanceId === area.instanceId &&
             state.areas[area.key]?.managedBrief?.applied === false
           ),
       );
@@ -573,6 +585,9 @@ export function createLinearProvisioning(options: {
         }
         // An explicit selection is reuse, never permission to edit that remote project.
         delete nextState.areas[key]!.managedBrief;
+        if (typeof value.instanceId === "string")
+          nextState.areas[key]!.instanceId = value.instanceId;
+        else delete nextState.areas[key]!.instanceId;
       }
       projectValue.linear = {
         ...(object(projectValue.linear) ? projectValue.linear : {}),
@@ -834,6 +849,23 @@ export function createLinearProvisioning(options: {
           let intent = Object.hasOwn(state.areas, area.key)
             ? state.areas[area.key]
             : undefined;
+          if (intent && intent.instanceId !== area.instanceId) {
+            // Keep old remote IDs and metadata for recovery, but never let an old
+            // PM generation supply a replacement's provisioning intent.
+            const archive = safe(
+              join(
+                directory,
+                "history",
+                project,
+                `${area.key}-${intent.instanceId ?? "legacy"}-${intent.id}.json`,
+              ),
+            );
+            if (!existsSync(archive))
+              atomic(archive, { schema: 1, project, area: area.key, intent });
+            delete state.areas[area.key];
+            atomic(statePath(project), state);
+            intent = undefined;
+          }
           if (
             !missingId(area.linearProjectId) &&
             !(
@@ -844,7 +876,11 @@ export function createLinearProvisioning(options: {
           )
             continue;
           if (!intent) {
-            intent = { id: randomUUID(), created: false };
+            intent = {
+              id: randomUUID(),
+              created: false,
+              ...(area.instanceId ? { instanceId: area.instanceId } : {}),
+            };
             state.areas[area.key] = intent;
             atomic(statePath(project), state);
           }
@@ -903,6 +939,11 @@ export function createLinearProvisioning(options: {
                 409,
               );
             const saved = value.areas[area.key] as Record<string, unknown>;
+            if (saved.instanceId !== area.instanceId)
+              throw new LinearProvisioningError(
+                "This PM was recreated during setup. Retry using its current identity; saved mappings were preserved.",
+                409,
+              );
             if (
               saved.linearProjectId !== intent!.id &&
               saved.linearProjectId !== "PASTE_LINEAR_PROJECT_ID"
@@ -961,7 +1002,7 @@ export function createLinearProvisioning(options: {
         "Provide a PM key, name (1–100 characters), and mandate (1–12000 characters).",
       );
     validateName(input.key, "area");
-    assertResourceAvailable(options.root, project, input.key);
+    assertResourceAvailable(options.root, project);
     let charter: PmCharter | undefined;
     if (input.charter !== undefined) {
       try {
@@ -1050,6 +1091,11 @@ export function createLinearProvisioning(options: {
             "The selected Linear project is unavailable or belongs to another team.",
           );
       }
+      const instanceId = preparePmRecreation(root, project, String(input.key));
+      if (instanceId)
+        edit(project, "project.json", (value) => {
+          value.verified = null;
+        });
       edit(project, "areas.json", (value) => {
         if (
           !object(value.areas) ||
@@ -1060,6 +1106,7 @@ export function createLinearProvisioning(options: {
             409,
           );
         value.areas[String(input.key)] = {
+          ...(instanceId ? { instanceId } : {}),
           name: input.name,
           mandate: input.mandate,
           ...(charter ? { charter } : {}),
@@ -1076,6 +1123,8 @@ export function createLinearProvisioning(options: {
             : { mixpanelReportId: input.mixpanelReportId }),
         };
       });
+      if (instanceId)
+        completePmRecreation(root, project, String(input.key), instanceId);
     });
   }
   return {

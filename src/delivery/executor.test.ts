@@ -59,6 +59,11 @@ describe("isolated promotion executor", () => {
     ).toBe(true);
     expect(calls[1]!.options.env).toBeUndefined();
     expect(calls[1]!.options.input).toContain("npm test");
+    const script = calls[1]!.args.find((arg) =>
+      arg.startsWith("import {cpSync"),
+    )!;
+    expect(script).toContain("['-o','pipefail','-lc',command]");
+    expect(script).toContain("SHELLOPTS:'pipefail'");
     expect(JSON.stringify(calls[1])).not.toContain("source-secret");
     await expect(executor.git.run(["status"], root)).rejects.toThrow("escaped");
   });

@@ -17,6 +17,8 @@ import { initializeSetup } from "./files.ts";
 import { loadProject } from "../config.ts";
 import {
   assertResourceAvailable,
+  preparePmRecreation,
+  completePmRecreation,
   createResourceDeletion,
 } from "./resourceDeletion.ts";
 import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
@@ -54,7 +56,238 @@ function fixture() {
     });
   return { root, create, service: create(), projectFile, areasFile };
 }
+async function replacedPmFixture() {
+  const f = fixture();
+  const old = await f.service.remove(
+    await f.service.preview({ project: "app", area: "core" }),
+  );
+  const instanceId = preparePmRecreation(f.root, "app", "core")!;
+  const original = JSON.parse(
+    readFileSync(join(old.recoveryPath, "areas.before.json"), "utf8"),
+  ).areas.core;
+  const document = readEditableConfig(f.root, "projects/app/areas.json");
+  saveEditableConfig(f.root, {
+    ...document,
+    content: JSON.stringify({
+      areas: {
+        core: {
+          ...original,
+          name: "Replacement PM",
+          enabled: false,
+          instanceId,
+        },
+      },
+    }),
+  });
+  completePmRecreation(f.root, "app", "core", instanceId);
+  return {
+    ...f,
+    old,
+    instanceId,
+    marker: join(f.root, ".run/deleted/reservations/areas/app/core.json"),
+    deleteReplacement: () =>
+      f.service
+        .preview({ project: "app", area: "core" })
+        .then(f.service.remove),
+  };
+}
 describe("reversible project and PM deletion", () => {
+  it("restores an explicitly selected older PM generation only after the replacement is deleted", async () => {
+    const f = await replacedPmFixture();
+    const originalBackup = readFileSync(
+      join(f.old.recoveryPath, "areas.before.json"),
+    );
+    const before = readFileSync(f.areasFile);
+    const occupied = await f.service.previewRestore(f.old.recoveryId);
+    expect(occupied.blockers.join(" ")).toContain("already occupies");
+    await expect(f.service.restore(occupied)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(readFileSync(f.areasFile)).toEqual(before);
+    const latest = await f.deleteReplacement();
+    const replacementBackup = readFileSync(
+      join(latest.recoveryPath, "areas.before.json"),
+    );
+    const plan = await f.service.previewRestore(f.old.recoveryId);
+    expect(plan.blockers).toEqual([]);
+    await f.service.restore(plan);
+    expect(loadProject(f.root, "app").areas[0]).toMatchObject({
+      key: "core",
+      enabled: false,
+    });
+    expect(loadProject(f.root, "app").areas[0]?.instanceId).toBeUndefined();
+    expect(loadProject(f.root, "app").config.verified).toBeNull();
+    expect(readFileSync(join(f.old.recoveryPath, "areas.before.json"))).toEqual(
+      originalBackup,
+    );
+    expect(
+      readFileSync(join(latest.recoveryPath, "areas.before.json")),
+    ).toEqual(replacementBackup);
+    expect(f.service.listRecoveries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: f.old.recoveryId, status: "restored" }),
+        expect.objectContaining({ id: latest.recoveryId, status: "deleted" }),
+      ]),
+    );
+    expect(existsSync(f.marker)).toBe(false);
+  });
+  it("resumes a selected older generation after interruption immediately following reservation transfer", async () => {
+    const f = await replacedPmFixture();
+    const latest = await f.deleteReplacement();
+    const before = readFileSync(f.areasFile);
+    const latestJournal = readFileSync(
+      join(latest.recoveryPath, "recovery.json"),
+    );
+    const interrupted = f.create({
+      write: (file, content) => {
+        if (file !== f.marker)
+          throw new Error("Unexpected write before reservation transfer");
+        writeFileSync(file, content);
+        throw new Error("synthetic crash after reservation transfer");
+      },
+    });
+    await expect(
+      interrupted.restore(await interrupted.previewRestore(f.old.recoveryId)),
+    ).rejects.toThrow("synthetic crash after reservation transfer");
+    expect(JSON.parse(readFileSync(f.marker, "utf8")).id).toBe(
+      f.old.recoveryId,
+    );
+    expect(readFileSync(f.areasFile)).toEqual(before);
+    expect(readFileSync(join(latest.recoveryPath, "recovery.json"))).toEqual(
+      latestJournal,
+    );
+    const retry = await f.create().previewRestore(f.old.recoveryId);
+    expect(retry.blockers).toEqual([]);
+    await f.create().restore(retry);
+    expect(loadProject(f.root, "app").areas[0]?.instanceId).toBeUndefined();
+    expect(existsSync(f.marker)).toBe(false);
+  });
+  it.each([
+    "pending-deletion",
+    "pending-recreation",
+    "wrong-owner",
+    "malformed-marker",
+  ])(
+    "blocks older-generation restoration for %s without changing either history",
+    async (condition) => {
+      const f = await replacedPmFixture();
+      const latest = await f.deleteReplacement();
+      const journalFile = join(latest.recoveryPath, "recovery.json");
+      if (condition === "pending-recreation")
+        preparePmRecreation(f.root, "app", "core");
+      else if (condition === "malformed-marker") writeFileSync(f.marker, "{}");
+      else {
+        const journal = JSON.parse(readFileSync(journalFile, "utf8"));
+        if (condition === "pending-deletion") journal.status = "preparing";
+        else journal.area = "another";
+        writeFileSync(journalFile, JSON.stringify(journal));
+      }
+      const files = [
+        f.areasFile,
+        f.marker,
+        journalFile,
+        join(f.old.recoveryPath, "recovery.json"),
+      ];
+      const before = files.map((file) => readFileSync(file));
+      const plan = await f.service.previewRestore(f.old.recoveryId);
+      expect(plan.blockers.length).toBeGreaterThan(0);
+      await expect(f.service.restore(plan)).rejects.toMatchObject({
+        status: 409,
+      });
+      expect(files.map((file) => readFileSync(file))).toEqual(before);
+    },
+  );
+  it("invalidates an old restore preview when the reservation changes", async () => {
+    const f = await replacedPmFixture();
+    await f.deleteReplacement();
+    const plan = await f.service.previewRestore(f.old.recoveryId);
+    writeFileSync(
+      f.marker,
+      JSON.stringify({ id: f.old.recoveryId, project: "app", area: "core" }),
+    );
+    await expect(f.service.restore(plan)).rejects.toMatchObject({
+      code: "conflict",
+      status: 409,
+    });
+    expect(loadProject(f.root, "app").areas).toEqual([]);
+  });
+  it("reserves one fresh identity across an interrupted recreation and preserves the old recovery", async () => {
+    const f = fixture(),
+      original = JSON.parse(readFileSync(f.areasFile, "utf8")).areas.core;
+    const deleted = await f.service.remove(
+      await f.service.preview({ project: "app", area: "core" }),
+    );
+    const oldBackup = readFileSync(
+      join(deleted.recoveryPath, "areas.before.json"),
+    );
+    const instanceId = preparePmRecreation(f.root, "app", "core")!;
+    expect(instanceId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(preparePmRecreation(f.root, "app", "core")).toBe(instanceId);
+    expect(() => assertResourceAvailable(f.root, "app", "core")).toThrow(
+      /deleted resource/,
+    );
+    const document = readEditableConfig(f.root, "projects/app/areas.json"),
+      next = JSON.parse(document.content);
+    next.areas.core = { ...original, instanceId, enabled: false };
+    saveEditableConfig(f.root, { ...document, content: JSON.stringify(next) });
+    // A crash here must not leave the committed replacement unusable.
+    expect(() => assertResourceAvailable(f.root, "app", "core")).not.toThrow();
+    expect(
+      (await f.service.previewRestore(deleted.recoveryId)).blockers,
+    ).toContain(
+      "A PM already occupies this identifier. Recovery will not overwrite it.",
+    );
+    completePmRecreation(f.root, "app", "core", instanceId);
+    completePmRecreation(f.root, "app", "core", instanceId);
+    expect(
+      readFileSync(join(deleted.recoveryPath, "areas.before.json")),
+    ).toEqual(oldBackup);
+    expect(f.service.listRecoveries()).toContainEqual(
+      expect.objectContaining({ id: deleted.recoveryId, status: "deleted" }),
+    );
+    const current = readEditableConfig(f.root, document.path),
+      altered = JSON.parse(current.content);
+    delete altered.areas.core.instanceId;
+    expect(() =>
+      saveEditableConfig(f.root, {
+        ...current,
+        content: JSON.stringify(altered),
+      }),
+    ).toThrow(/identity cannot be changed/);
+    const second = await f.service.remove(
+      await f.service.preview({ project: "app", area: "core" }),
+    );
+    const nextId = preparePmRecreation(f.root, "app", "core");
+    expect(nextId).not.toBe(instanceId);
+    expect(f.service.listRecoveries()).toHaveLength(2);
+    expect(second.recoveryId).not.toBe(deleted.recoveryId);
+  });
+  it("keeps incomplete deletion and unexpected old documents blocked during recreation", async () => {
+    const f = fixture(),
+      deleted = await f.service.remove(
+        await f.service.preview({ project: "app", area: "core" }),
+      );
+    const journalFile = join(deleted.recoveryPath, "recovery.json"),
+      journal = JSON.parse(readFileSync(journalFile, "utf8"));
+    journal.status = "preparing";
+    writeFileSync(journalFile, JSON.stringify(journal));
+    expect(() => preparePmRecreation(f.root, "app", "core")).toThrow(
+      /interrupted deletion/,
+    );
+    journal.status = "deleted";
+    writeFileSync(journalFile, JSON.stringify(journal));
+    mkdirSync(join(f.root, "projects", "app", "core"));
+    writeFileSync(
+      join(f.root, "projects", "app", "core", "memory.md"),
+      "old notes",
+    );
+    expect(() => preparePmRecreation(f.root, "app", "core")).toThrow(
+      /document directory/,
+    );
+    expect(() => assertResourceAvailable(f.root, "app", "core")).toThrow(
+      /deleted resource/,
+    );
+  });
   it("retains readable bounded journals after restoring a large valid configuration tree", async () => {
     const f = fixture();
     for (let i = 0; i < 1800; i++)
