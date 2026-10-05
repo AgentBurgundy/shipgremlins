@@ -3900,7 +3900,14 @@ export function createDashboardServer(
                     "This project changed. Refresh its Grumblins before trying again.",
                   );
                 jobInput.discoveryRevision = validated.discoveryRevision;
-                jobInput.idempotencyKey = `grumblin:${projectRuntimeKey(validated.project.config)}:${profile.id}:${profile.revision}:${randomBytes(12).toString("hex")}`;
+                jobInput.idempotencyKey = [
+                  "grumblin",
+                  jobInput.project,
+                  jobInput.projectInstanceId ?? "legacy",
+                  profile.id,
+                  profile.revision,
+                  randomBytes(12).toString("hex"),
+                ].join(":");
                 const job = await runners().enqueue(jobInput);
                 runners().start();
                 json(res, 202, { job, reused: false });
