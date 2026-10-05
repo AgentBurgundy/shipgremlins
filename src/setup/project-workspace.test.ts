@@ -234,6 +234,14 @@ describe("focused project crew workspace", () => {
     )!;
     expect(details.open).toBe(false);
     expect(text(details)).toContain("AgentBurgundy/shipgremlins");
+    const coding = all(root).find(
+      (item) => item.className === "project-coding-section",
+    )!;
+    expect(text(coding)).toContain("next ready, approved ticket");
+    expect(
+      all(coding).find((item) => item.dataset.launchCrew === "developer")
+        ?.dataset.launchProject,
+    ).toBe("shipgremlins");
   });
   it("retains disclosure state across polling and labels an active PM action View run", () => {
     const { root, state, view, jobs } = workspace();

@@ -1,0 +1,255 @@
+.vercel-setup {
+  margin: 0 0 24px;
+  padding: 20px;
+  border: 1px solid #d9e3d4;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f8faf4, #fff 65%);
+  min-width: 0;
+}
+.vercel-setup-heading,
+.vercel-gremlin-greeting,
+.vercel-setup-toolbar,
+.vercel-environment {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.vercel-setup-heading {
+  margin-bottom: 18px;
+}
+.vercel-setup-heading img {
+  flex: 0 0 20px;
+}
+.vercel-setup-heading h4 {
+  margin: 0 0 4px;
+}
+.vercel-setup-kicker {
+  color: #7c8879;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.8px;
+}
+.vercel-gremlin-greeting {
+  align-items: flex-start;
+  margin: 0 0 18px;
+}
+.vercel-gremlin-greeting img {
+  object-fit: contain;
+  flex: 0 0 42px;
+  border-radius: 10px;
+  background: #e9f0de;
+}
+.vercel-gremlin-greeting strong {
+  font-size: 11px;
+  color: #506443;
+}
+.project-onboarding .vercel-setup-message {
+  margin: 4px 0 0;
+  line-height: 1.6;
+}
+.vercel-setup-pickers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.project-onboarding .vercel-setup-pickers .field {
+  margin-bottom: 8px;
+}
+.vercel-setup-toolbar {
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+}
+.vercel-setup-toolbar > a {
+  color: #5e6e58;
+  font-size: 11px;
+  text-underline-offset: 3px;
+}
+.project-onboarding .vercel-setup-note {
+  color: #70806c;
+  font-size: 11px;
+  line-height: 1.65;
+  margin: 9px 0;
+}
+.project-onboarding .vercel-setup-context {
+  margin: 18px 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.vercel-environments {
+  display: grid;
+  gap: 8px;
+}
+.vercel-environment {
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 13px 14px;
+  border: 1px solid #e0e6dc;
+  border-radius: 8px;
+  background: #fff;
+}
+.vercel-environment.selected {
+  border-color: #92ae73;
+  background: #f1f6eb;
+}
+.vercel-environment > div {
+  min-width: 0;
+}
+.vercel-environment strong {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.vercel-environment-meta,
+.vercel-environment-url {
+  display: block;
+  color: #7b8778;
+  font-size: 10px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.vercel-environment .small-button {
+  flex: 0 0 auto;
+}
+.vercel-create-preview,
+.vercel-setup-chat {
+  border-top: 1px solid #e1e8da;
+  padding-top: 14px;
+  margin-top: 17px;
+}
+.vercel-setup summary {
+  font-size: 12px;
+  color: #3b5230;
+  font-weight: 650;
+  cursor: pointer;
+}
+.vercel-create-preview[open] > summary,
+.vercel-setup-chat[open] > summary {
+  margin-bottom: 12px;
+}
+.vercel-more-environments > .vercel-environment {
+  margin-top: 8px;
+}
+.vercel-preview-review {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #d9e4d0;
+  border-radius: 10px;
+  background: #f0f5e9;
+}
+.vercel-preview-review h4 {
+  margin: 8px 0 12px;
+  overflow-wrap: anywhere;
+}
+.vercel-plan-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 20px;
+  row-gap: 8px;
+  font-size: 12px;
+}
+.vercel-plan-facts dt {
+  color: #73816b;
+}
+.vercel-plan-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.vercel-data-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 18px 0;
+}
+.vercel-data-confirm input {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 3px 0 0;
+  padding: 0;
+  flex: 0 0 16px;
+  accent-color: #315b3c;
+}
+.vercel-build-status {
+  border-left: 3px solid #739b4d;
+  background: #edf4e8;
+  padding: 12px;
+  font-size: 13px;
+}
+.vercel-setup-error {
+  color: #a1442d;
+  background: #fff1e9;
+  border-radius: 6px;
+  padding: 10px;
+}
+.vercel-chat-transcript {
+  max-height: 280px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.project-onboarding .vercel-chat-user,
+.project-onboarding .vercel-chat-gremlin {
+  white-space: pre-wrap;
+  padding: 10px 12px;
+  margin: 0 0 10px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+.vercel-chat-user {
+  background: #e8ede3;
+  margin-left: 32px !important;
+}
+.vercel-chat-gremlin {
+  background: #f3f7ec;
+  margin-right: 16px !important;
+}
+.vercel-chat-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.vercel-chat-composer textarea {
+  min-width: 0;
+  flex: 1;
+  resize: vertical;
+  border: 1px solid #d7e0d0;
+  border-radius: 8px;
+  padding: 10px;
+  font: inherit;
+  font-size: 12px;
+  background: #fff;
+}
+.vercel-selected-target {
+  border-left: 3px solid #83a75e;
+  padding: 11px 14px;
+  background: #f2f7eb;
+  margin-bottom: 18px;
+}
+.vercel-selected-target strong {
+  display: block;
+  font-size: 13px;
+}
+.vercel-selected-target .small-button {
+  margin-top: 10px;
+}
+@media (max-width: 600px) {
+  .vercel-setup {
+    padding: 14px;
+  }
+  .vercel-setup-pickers {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .vercel-environment {
+    flex-direction: column;
+    gap: 9px;
+  }
+  .vercel-chat-composer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .vercel-preview-review {
+    padding: 13px;
+  }
+}

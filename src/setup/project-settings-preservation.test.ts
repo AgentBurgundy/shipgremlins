@@ -126,6 +126,7 @@ describe("project editor environment preservation", () => {
       connectionId: "team-two",
       projectId: "prj_test",
       branch: "pm-staging",
+      customEnvironmentId: "env_staging",
       access,
     },
   ])(

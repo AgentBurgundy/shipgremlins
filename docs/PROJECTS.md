@@ -120,7 +120,7 @@ Use the project's **Environment** page for an existing hosted target or a manage
 }
 ```
 
-The browser target and PR base are separate choices. Provider-discovered Vercel or Railway targets can set `branch` to the deployed test branch; otherwise the configured work branch is used. Vercel requires a ready **preview** deployment, so `main` being a production deployment does not make it a valid preview. Configure an appropriate deployed branch such as `staging` when necessary.
+The browser target and PR base are separate choices. Provider-discovered Vercel or Railway targets can set `branch` to the deployed test branch; otherwise the configured work branch is used. Vercel requires a ready **Preview** or explicitly selected custom-environment deployment; a production deployment is not a preview. Use the [Vercel setup conversation](VERCEL_ENVIRONMENTS.md) to discover one or review creation of a test preview.
 
 Production environments may be recorded for context, but cannot be selected for browser verification. Use isolated accounts, synthetic data, and a mandate that explains allowed test actions. The URL must be HTTP(S), without embedded credentials, query parameters, or a fragment.
 
@@ -146,7 +146,7 @@ The URL must be reachable **from the worker container**. `localhost` points to t
 }
 ```
 
-Connect Vercel in **Connections**, or use its advanced manual token field. The target identifies a project and optional team; a connected integration's team can supply the team context. `bypassSecret` is optional and contains a variable name, never the secret value. Its input appears in Connections after saving the project. The controller discovers the deployment; account credentials stay out of agent payloads. See [Linear and Vercel setup](LINEAR_VERCEL.md).
+Connect Vercel in **Connections**, or use its advanced manual token field. The target identifies a project and optional team; a connected integration's team can supply the team context. The Environment page discovers those IDs and lets you select the account, project and deployment. Optional `customEnvironmentId` binds a target to one existing custom environment; omitting it selects ordinary Preview deployments only. `bypassSecret` is optional and contains a variable name, never the secret value. Its input appears in Connections after saving the project. The controller discovers the deployment; account credentials stay out of agent payloads. See [Linear and Vercel setup](LINEAR_VERCEL.md).
 
 ### Railway
 

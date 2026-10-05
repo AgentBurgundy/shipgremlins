@@ -488,7 +488,12 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new Error(
         "The queued ticket no longer matches its validated Linear issue. Review it and queue a new job.",
       );
-    if (!ticket || !area)
+    if (
+      !ticket ||
+      !area ||
+      (project.config.linear?.teamId &&
+        ticket.teamId !== project.config.linear.teamId)
+    )
       throw new JobReadinessError(
         "The ticket must be open, approved, and mapped to this project's PM area. Enable automation for scheduled work; manual runs can use paused areas. Proposal and needs-human tickets cannot run.",
       );
@@ -509,6 +514,120 @@ export function createJobPreparation(options: JobPreparationOptions) {
         ticketId: ticket.id,
       },
     };
+  }
+
+  /** Resolve a one-off queue request to a concrete approved issue before enqueueing. */
+  async function selectDeveloperTicket(
+    input: LocalJobInput,
+    previousJobs: LocalJob[],
+  ): Promise<LocalJobInput> {
+    if (input.type !== "developer" || !input.runOnce || input.ticket?.trim())
+      throw new JobReadinessError(
+        "Automatic ticket selection is for a manual Coding run without a ticket override.",
+      );
+    const project = projectFor(input);
+    if (input.area && !project.areas.some((area) => area.key === input.area))
+      throw new JobReadinessError(
+        "Choose an existing PM or let Coding search all PMs.",
+      );
+    const areas = project.areas.filter(
+      (area) =>
+        (!input.area || area.key === input.area) &&
+        hasPmMapping(area) &&
+        hasPmMandate(project, area),
+    );
+    if (!areas.length)
+      throw new JobReadinessError(
+        "Set up a PM mandate and its Linear mapping before looking for coding work.",
+      );
+    const connectionId = project.config.linear?.connectionId ?? "default";
+    let credential;
+    try {
+      credential = await linearFor(connectionId).resolveCredential({
+        minValidityMs: 5 * 60_000,
+        workspaceId: project.config.linear?.workspaceId,
+      });
+    } catch {
+      throw new JobReadinessError(
+        "Connect this project's selected Linear account before looking for coding work.",
+      );
+    }
+    const client = linear(credential.authorization),
+      workspaceId =
+        credential.workspaceId ?? project.config.linear?.workspaceId;
+    const history = previousJobs.filter(
+      (job) =>
+        job.type === "developer" &&
+        job.project === project.config.name &&
+        job.projectInstanceId === project.config.instanceId,
+    );
+    const alreadyAttempted = (ticket: LinearTicket) =>
+      history.some((job) => {
+        const binding = job.linearBinding;
+        if (!binding?.ticketId) return job.ticket === ticket.identifier;
+        if (binding.ticketId !== ticket.id) return false;
+        return binding.workspaceId && workspaceId
+          ? binding.workspaceId === workspaceId
+          : binding.connectionId === connectionId;
+      });
+    const eligible = (ticket: LinearTicket, area: AreaConfig) =>
+      approvedForArea(ticket, area) &&
+      (!project.config.linear?.teamId ||
+        ticket.teamId === project.config.linear.teamId) &&
+      project.areas.filter((owner) => approvedForArea(ticket, owner)).length ===
+        1 &&
+      ![LABELS.dispatched, LABELS.verified, LABELS.testFailed].some((label) =>
+        ticket.labels.includes(label),
+      ) &&
+      !alreadyAttempted(ticket);
+    const candidates = new Map<
+      string,
+      { ticket: LinearTicket; area: AreaConfig }
+    >();
+    for (const area of areas) {
+      const active = history.filter(
+        (job) =>
+          job.area === area.key && ["queued", "running"].includes(job.status),
+      );
+      if (active.length >= area.wipLimit) continue;
+      await checkPmMapping(project, area, credential.authorization);
+      for (const ticket of await client.listTickets(area.linearProjectId, [
+        area.label,
+        LABELS.approved,
+      ]))
+        if (eligible(ticket, area)) candidates.set(ticket.id, { ticket, area });
+    }
+    const sorted = [...candidates.values()].sort(
+      (a, b) =>
+        (a.ticket.priority || 5) - (b.ticket.priority || 5) ||
+        a.ticket.createdAt.localeCompare(b.ticket.createdAt) ||
+        a.ticket.id.localeCompare(b.ticket.id),
+    );
+    for (const candidate of sorted) {
+      // Selection is an observation, not approval. Re-read before binding; worker admission
+      // also revalidates the exact issue and approval immediately before execution.
+      const ticket = await client.getTicket(candidate.ticket.id);
+      if (
+        !ticket ||
+        ticket.id !== candidate.ticket.id ||
+        !eligible(ticket, candidate.area)
+      )
+        continue;
+      return {
+        ...input,
+        area: candidate.area.key,
+        ticket: ticket.identifier,
+        projectInstanceId: project.config.instanceId,
+        linearBinding: {
+          connectionId,
+          ...(workspaceId ? { workspaceId } : {}),
+          ticketId: ticket.id,
+        },
+      };
+    }
+    throw new JobReadinessError(
+      "No approved tickets are ready for a new Coding run. Review and approve a proposal, wait for current coding work, or run a PM patrol to discover more work. To retry a previous attempt, review its output and choose that ticket explicitly.",
+    );
   }
 
   async function prepare(job: LocalJob): Promise<DockerJobPayload> {
@@ -895,6 +1014,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
   }
   return {
     validate,
+    selectDeveloperTicket,
     prepareJob,
     scheduledJobs,
     releaseJobResources,

@@ -787,7 +787,11 @@
       codingImage.width = codingImage.height = 40;
       codingCopy.append(
         node("h2", "", "Coding Gremlins"),
-        node("p", "", "Turn an approved ticket into a tested draft PR."),
+        node(
+          "p",
+          "",
+          "Picks the next ready, approved ticket from this project’s Linear queue and starts coding.",
+        ),
       );
       coding.append(
         codingImage,

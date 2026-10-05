@@ -275,6 +275,29 @@
   border-radius: 8px;
   margin: 14px 0;
 }
+.onboarding-vercel-protection {
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid #e1e8da;
+  border-radius: 8px;
+  background: #f8faf5;
+}
+.onboarding-vercel-protection .onboarding-confirm {
+  margin: 0;
+}
+.onboarding-vercel-protection input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  flex: 0 0 16px;
+  padding: 0;
+  margin: 3px 0 0;
+  accent-color: #315b3c;
+}
+.onboarding-vercel-protection > a {
+  color: #48633c;
+  font-size: 12px;
+}
 .onboarding-account .field:last-of-type {
   margin-bottom: 8px;
 }

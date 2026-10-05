@@ -1829,15 +1829,21 @@
       }
       $("job-project").value = launch.dataset.launchProject;
       $("job-type").value = launch.dataset.launchCrew;
+      if (launch.dataset.launchCrew === "developer") {
+        $("job-ticket").value = "";
+        $("job-ticket-field").open = false;
+      }
       renderJobAreas();
       if (launch.dataset.launchArea)
         $("job-area").value = launch.dataset.launchArea;
       updateRunnerControls();
       pages.navigate("/runners#job-form");
-      (launch.dataset.launchCrew === "pm"
-        ? $("job-area")
-        : $("job-ticket")
-      ).focus({ preventScroll: true });
+      if (launch.dataset.launchCrew === "developer")
+        await queueManualJob({
+          type: "developer",
+          project: launch.dataset.launchProject,
+        });
+      else $("job-area").focus({ preventScroll: true });
       return;
     }
     const button = event.target.closest("[data-verify-project]");
@@ -1924,8 +1930,8 @@
       !project ||
       (pm
         ? !$("job-area").value || !area?.canRun
-        : !selected?.readiness?.canRun || !$("job-ticket").value.trim());
-    $("job-ticket").required = !pm;
+        : !selected?.readiness?.canRun);
+    $("job-ticket").required = false;
     $("job-ticket").disabled = pm;
     $("job-area").disabled = !pm;
     $("job-area-field").hidden = !pm;
@@ -1934,7 +1940,9 @@
       ? "Queuing…"
       : pm
         ? "Run PM once ↗"
-        : "Run Coding once ↗";
+        : $("job-ticket").value.trim()
+          ? "Run this ticket ↗"
+          : "Run next approved ticket ↗";
     for (const button of document.querySelectorAll("[data-crew-type]"))
       button.setAttribute(
         "aria-pressed",
@@ -1951,7 +1959,9 @@
           ? "Create a PM mandate in Projects first."
           : pm
             ? "Investigates this mandate once. Automation stays as it is."
-            : "Implements one approved ticket. Approval and ownership are checked before queuing; automation stays as it is.";
+            : $("job-ticket").value.trim()
+              ? "Checks this ticket’s approval and ownership, then starts one coding run. Automation stays as it is."
+              : "Finds the next ready, approved ticket in this project’s Linear queue and starts one coding run. It does not approve tickets or change automation.";
     $("job-setup-guide").replaceChildren(
       ...(selected
         ? [window.renderCrewSetup(selected, { blockers, compact: true })]
@@ -1968,6 +1978,10 @@
         runner.busy ||
         runner.status === "provisioning";
     }
+    for (const button of document.querySelectorAll(
+      '[data-launch-crew="developer"]',
+    ))
+      button.disabled = locked || runnerRequestBusy;
     const remove = runnerStatus?.runners?.find(
       (runner) => runner.id === removeRunnerId,
     );
@@ -2376,7 +2390,11 @@
     $("remove-runner-prompt").hidden = true;
     await runWorkerAction("remove", id);
   });
-  $("job-project").addEventListener("change", renderJobAreas);
+  $("job-project").addEventListener("change", () => {
+    $("job-ticket").value = "";
+    $("job-ticket-field").open = false;
+    renderJobAreas();
+  });
   $("job-area").addEventListener("change", updateRunnerControls);
   $("job-ticket").addEventListener("input", updateRunnerControls);
   $("job-type").addEventListener("change", updateRunnerControls);
@@ -2395,23 +2413,32 @@
   $("activity-project").addEventListener("change", () =>
     renderJobs(runnerStatus?.jobs || []),
   );
-  $("job-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function queueManualJob(input) {
     if (formsLocked || runnerRequestBusy || !sessionToken) return;
-    const type = $("job-type").value;
-    const body = { type, project: $("job-project").value };
-    if (type === "pm") body.area = $("job-area").value;
-    else body.ticket = $("job-ticket").value.trim();
+    const { type, project } = input;
+    const body = { type, project };
+    if (type === "pm") body.area = input.area;
+    else if (input.ticket?.trim()) body.ticket = input.ticket.trim();
     runnerRequestBusy = true;
     updateRunnerControls();
-    message($("job-message"), "Queuing your job…");
+    message(
+      $("job-message"),
+      type === "developer" && !body.ticket
+        ? "Looking for the next ready, approved ticket in this project’s Linear queue…"
+        : "Queuing your job…",
+    );
     try {
-      const result = await api("/api/jobs", body);
+      const result = await (type === "developer" && !body.ticket
+        ? api("/api/jobs", body, "POST", 90000)
+        : api("/api/jobs", body));
       message(
         $("job-message"),
-        "Job queued. Opening Activity so you can follow its progress. Automation is unchanged.",
+        `${type === "developer" && result.job?.ticket ? `${result.job.ticket} queued for coding.` : "Job queued."} Opening Activity so you can follow its progress. Automation is unchanged.`,
       );
-      if (type === "developer") $("job-ticket").value = "";
+      if (type === "developer") {
+        $("job-ticket").value = "";
+        $("job-ticket-field").open = false;
+      }
       if (result.job?.id) {
         jobHistory = [
           ...jobHistory.filter((job) => job.id !== result.job.id),
@@ -2422,11 +2449,32 @@
       await refreshRunners();
     } catch (error) {
       message($("job-message"), error.message, true);
+      if (
+        type === "developer" &&
+        /No approved tickets are ready/i.test(error.message)
+      ) {
+        const actions = element("div", "button-row coding-queue-actions");
+        const review = element("a", "small-button", "Review PM proposals");
+        review.href = `/projects/${encodeURIComponent(project)}?tab=review`;
+        const patrol = element("a", "small-button", "Open PM crew");
+        patrol.href = `/projects/${encodeURIComponent(project)}`;
+        actions.append(review, patrol);
+        $("job-message").append(actions);
+      }
     } finally {
       runnerRequestBusy = false;
       updateRunnerControls();
       scheduleRunnerPoll();
     }
+  }
+  $("job-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await queueManualJob({
+      type: $("job-type").value,
+      project: $("job-project").value,
+      area: $("job-area").value,
+      ticket: $("job-ticket").value,
+    });
   });
 
   function clearArtifactBlobs() {

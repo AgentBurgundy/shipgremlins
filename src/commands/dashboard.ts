@@ -49,6 +49,16 @@ import {
   EnvironmentAccessError,
 } from "../setup/environmentAccess.ts";
 import {
+  createEnvironmentGuide,
+  compactVercelGuideContext,
+} from "../setup/environmentGuide.ts";
+import { createVercelSetup, VercelSetupError } from "../vercelSetup/index.ts";
+import type {
+  VercelDiscoverInput,
+  VercelPrepareInput,
+  VercelDeployInput,
+} from "../vercelSetup/types.ts";
+import {
   ConfigEditorError,
   listEditableConfigs,
   readEditableConfig,
@@ -306,6 +316,8 @@ export interface DashboardOptions {
   pmPlanner?: PmPlanner;
   projectOnboarding?: ProjectOnboarding;
   environmentAccess?: ReturnType<typeof createEnvironmentAccess>;
+  vercelSetup?: ReturnType<typeof createVercelSetup>;
+  environmentGuide?: ReturnType<typeof createEnvironmentGuide>;
   delivery?: ReturnType<typeof createDeliveryController>;
   remote?: ReturnType<typeof createRemoteWorkers>;
 }
@@ -421,6 +433,39 @@ export function createDashboardServer(
       vercelConnectionFor,
       docker: localDocker,
     });
+  const vercelSetup =
+    options.vercelSetup ??
+    createVercelSetup({
+      root,
+      packageRoot,
+      sourceControl,
+      vercelConnectionFor,
+    });
+  const environmentGuide =
+    options.environmentGuide ??
+    createEnvironmentGuide({
+      root,
+      packageRoot,
+      context: async (name) => {
+        const setup = await projectOnboarding.status(name);
+        return {
+          vercel: compactVercelGuideContext(await vercelSetup.status(name)),
+          environment: effectiveVerification(loadProject(root, name).config),
+          browserCheck: environmentAccess.status(name),
+          ...(setup.report
+            ? {
+                analysis: {
+                  stale: setup.stale,
+                  summary: setup.report.summary,
+                  stack: setup.report.stack,
+                  missingInputs: setup.report.missingInputs,
+                  warnings: setup.report.warnings,
+                },
+              }
+            : {}),
+        };
+      },
+    });
   async function onboardingState(name: string) {
     const state = await projectOnboarding.status(name);
     const project = loadProject(root, name),
@@ -441,7 +486,10 @@ export function createDashboardServer(
     };
   }
   const setupBusy = (name?: string) =>
-    projectOnboarding.busy(name) || environmentAccess.busy(name);
+    projectOnboarding.busy(name) ||
+    environmentAccess.busy(name) ||
+    vercelSetup.busy(name) ||
+    environmentGuide.busy(name);
   async function requireProfile(provider: OAuthProvider, id: string) {
     if (
       !validConnectionId(id) ||
@@ -2054,7 +2102,7 @@ export function createDashboardServer(
           )
             throw new RequestError(
               400,
-              "Choose a project and PM area or approved Linear ticket.",
+              "Choose a project and a PM area or coding run. A specific approved Linear ticket is optional.",
             );
           const jobInput = input as unknown as LocalJobInput;
           jobInput.runOnce = true;
@@ -2080,6 +2128,15 @@ export function createDashboardServer(
           }
           let validated: Awaited<ReturnType<typeof preparation.validate>>;
           try {
+            if (jobInput.type === "developer" && !jobInput.ticket?.trim()) {
+              Object.assign(
+                jobInput,
+                await preparation.selectDeveloperTicket(
+                  jobInput,
+                  await runners().jobs(),
+                ),
+              );
+            }
             validated = await preparation.validate(jobInput);
           } catch (error) {
             throw new RequestError(
@@ -2577,6 +2634,99 @@ export function createDashboardServer(
           json(res, 200, { ok: true });
           return;
         }
+        const vercelSetupRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding\/vercel(?:\/(discover|prepare|deploy|chat))?$/.exec(
+            url.pathname,
+          );
+        if (vercelSetupRoute) {
+          const name = vercelSetupRoute[1]!,
+            action = vercelSetupRoute[2];
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Vercel setup requests do not accept query parameters.",
+            );
+          if (!listProjectNames(root).includes(name))
+            throw new RequestError(404, "Project not found.");
+          if (!action) {
+            if (req.method !== "GET")
+              throw new RequestError(405, "Use GET for Vercel setup.");
+            json(res, 200, await vercelSetup.status(name));
+          } else {
+            if (req.method !== "POST")
+              throw new RequestError(405, "Use POST for Vercel setup actions.");
+            if (updateRunning || setupBusy(name))
+              throw new RequestError(
+                409,
+                "Wait for the current update or setup operation to finish.",
+              );
+            const input = await body(req);
+            const allowed =
+              action === "discover"
+                ? ["connectionId", "teamId", "projectId", "revision"]
+                : action === "prepare"
+                  ? ["revision", "branch", "baseBranch", "customEnvironmentId"]
+                  : action === "deploy"
+                    ? ["revision", "confirmTestData"]
+                    : ["message"];
+            if (
+              Object.keys(input).some((key) => !allowed.includes(key)) ||
+              Object.entries(input).some(([key, value]) =>
+                key === "confirmTestData"
+                  ? value !== true
+                  : key === "teamId" && value === null
+                    ? false
+                    : typeof value !== "string",
+              )
+            )
+              throw new RequestError(
+                400,
+                "Provide only the supported Vercel setup fields.",
+              );
+            if (
+              (action === "prepare" || action === "deploy") &&
+              typeof input.revision !== "string"
+            )
+              throw new RequestError(
+                400,
+                "Review the latest Vercel setup before continuing.",
+              );
+            if (action === "discover") {
+              if (typeof input.connectionId === "string")
+                await requireProfile("vercel", input.connectionId);
+              json(
+                res,
+                200,
+                await vercelSetup.discover(name, input as VercelDiscoverInput),
+              );
+            } else if (action === "prepare") {
+              json(
+                res,
+                200,
+                await vercelSetup.prepare(
+                  name,
+                  input as unknown as VercelPrepareInput,
+                ),
+              );
+            } else if (action === "deploy") {
+              if (input.confirmTestData !== true)
+                throw new RequestError(
+                  400,
+                  "Confirm this preview uses test services and data before creating it.",
+                );
+              json(
+                res,
+                200,
+                await vercelSetup.deploy(
+                  name,
+                  input as unknown as VercelDeployInput,
+                ),
+              );
+            } else
+              json(res, 200, await environmentGuide.ask(name, input.message));
+          }
+          return;
+        }
         const onboardingRoute =
           /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|configure|verify|setup-pr|cancel|screenshot))?$/.exec(
             url.pathname,
@@ -2719,7 +2869,11 @@ export function createDashboardServer(
                   "Provide only an optional setup revision.",
                 );
               if (action === "discover") {
-                if (environmentAccess.busy(name))
+                if (
+                  environmentAccess.busy(name) ||
+                  vercelSetup.busy(name) ||
+                  environmentGuide.busy(name)
+                )
                   throw new RequestError(
                     409,
                     "Wait for the environment test before analyzing this project.",
@@ -2733,7 +2887,11 @@ export function createDashboardServer(
                     400,
                     "Review the latest setup files before publishing their draft.",
                   );
-                if (environmentAccess.busy(name))
+                if (
+                  environmentAccess.busy(name) ||
+                  vercelSetup.busy(name) ||
+                  environmentGuide.busy(name)
+                )
                   throw new RequestError(
                     409,
                     "Wait for the environment test before publishing setup files.",
@@ -2749,7 +2907,11 @@ export function createDashboardServer(
                       : (await projectOnboarding.status(name)).revision,
                 });
               } else {
-                if (projectOnboarding.busy(name))
+                if (
+                  projectOnboarding.busy(name) ||
+                  vercelSetup.busy(name) ||
+                  environmentGuide.busy(name)
+                )
                   throw new RequestError(
                     409,
                     "Wait for repository setup before testing this environment.",
@@ -3350,6 +3512,8 @@ export function createDashboardServer(
         error instanceof ProjectKnowledgeError ||
         error instanceof ResourceDeletionError ||
         error instanceof ProjectOnboardingError ||
+        error instanceof VercelSetupError ||
+        error instanceof OAuthConnectionError ||
         error instanceof EnvironmentAccessError ||
         error instanceof ConfigEditorError ||
         error instanceof RemoteWorkerError
@@ -3363,6 +3527,8 @@ export function createDashboardServer(
         error instanceof ProjectKnowledgeError ||
         error instanceof ResourceDeletionError ||
         error instanceof ProjectOnboardingError ||
+        error instanceof VercelSetupError ||
+        error instanceof OAuthConnectionError ||
         error instanceof EnvironmentAccessError ||
         error instanceof ConfigEditorError ||
         error instanceof ConnectionSaveError ||
@@ -3394,6 +3560,8 @@ export function createDashboardServer(
     void Promise.allSettled([
       projectOnboarding.close(),
       environmentAccess.close(),
+      vercelSetup.close(),
+      environmentGuide.close(),
       Promise.resolve(manager?.stop()),
     ]).finally(() => activityStore.close());
   });

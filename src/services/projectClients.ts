@@ -94,16 +94,29 @@ export async function withProjectClients<T>(
         teamId: target.teamId,
         minValidityMs: 5 * 60_000,
       });
-      const api = new VercelApi({ token: credential.token });
+      const api = new VercelApi({
+        token: credential.token,
+        customEnvironmentId: target.customEnvironmentId,
+      });
+      const selectedTeamId = target.teamId ?? credential.teamId ?? null;
+      const scope = (
+        projectId: string,
+        teamId: string | null,
+      ): string | null => {
+        if (
+          projectId !== target.projectId ||
+          (teamId !== null && teamId !== selectedTeamId)
+        )
+          throw new Error(
+            "Vercel request does not match the selected project and team.",
+          );
+        return selectedTeamId;
+      };
       vercel = {
         latestDeployment: (projectId, teamId, branch) =>
-          api.latestDeployment(
-            projectId,
-            teamId ?? credential.teamId ?? null,
-            branch,
-          ),
+          api.latestDeployment(projectId, scope(projectId, teamId), branch),
         branchUrl: (projectId, teamId, branch) =>
-          api.branchUrl(projectId, teamId ?? credential.teamId ?? null, branch),
+          api.branchUrl(projectId, scope(projectId, teamId), branch),
       };
     }
     return action({

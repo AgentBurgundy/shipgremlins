@@ -3,7 +3,7 @@
 Updated October 5, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
-Project onboarding now includes bounded source analysis, hosted-staging or managed-Docker selection, reviewed draft setup PR/MR publication, and real Chromium access/login checks. Managed Docker supports a pinned repository Dockerfile or existing image, optional disposable PostgreSQL/Redis, migration/seed commands, per-job networks and cleanup. New projects need no initial PM or Linear mapping. This does not provision hosted cloud environments, support arbitrary Compose stacks, certify coding gates, or extend automatic promotion beyond its existing evidence-supported providers. See [onboarding scope and limits](PROJECT_ONBOARDING.md).
+Project onboarding includes bounded source analysis, hosted-staging or managed-Docker selection, reviewed draft setup PR/MR publication, and real Chromium access/login checks. Vercel setup can discover existing Preview/custom staging deployments and create a reviewed test Preview from the selected repository, with optional branch creation and safe retry reconciliation. A contextual Setup Gremlin conversation explains next steps. Managed Docker supports a pinned repository Dockerfile or existing image, optional disposable PostgreSQL/Redis, migration/seed commands, per-job networks and cleanup. New projects need no initial PM or Linear mapping. This does not provision external databases, arbitrary Compose stacks, new Vercel projects/custom environments, Railway or Cloud Run infrastructure, or trusted promotion verifiers. See [Vercel scope and limits](VERCEL_ENVIRONMENTS.md) and [project onboarding](PROJECT_ONBOARDING.md).
 
 Project telemetry now includes optional read adapters for Sentry logs/error
 events, Datadog logs, and Mixpanel saved Insights reports. Project configuration,
@@ -110,7 +110,7 @@ Existing PM/developer environments must never receive the private signing key.
 
 Local jobs support GitHub and GitLab source connections, optional URL/Vercel/Railway/
 Cloud Run browser targets, Linear, and Claude Code. Hosting adapters discover
-existing ready environments; they do not provision infrastructure or deploy changes.
+existing ready environments. The Vercel setup flow can additionally create an explicitly reviewed test Preview; general infrastructure provisioning and automatic deployment of every promotion candidate remain separate work.
 Railway and Cloud Run contracts are covered by mocked provider tests, not live
 account certification. Automatic exact-candidate deployment across hosting providers,
 other AI runtimes, semantic image generation, automatic fixture cleanup, automatic

@@ -232,7 +232,7 @@
         el(
           "p",
           "runner-guidance",
-          "Approval authorizes coding this ticket. Split broad epics into testable milestones first. Enabled automation may pick up approved work; approval does not mark it Done.",
+          "Read the proposal, then choose Approve coding. ShipGremlins adds pm-approved and creates the label in the ticket’s Linear team if needed. Split broad epics into testable milestones first. Automation may pick up approved work; approval does not mark it Done.",
         ),
       );
       if (s.reviewError) root.append(message(s.reviewError, true));

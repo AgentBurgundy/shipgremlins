@@ -32,6 +32,7 @@ export type EnvironmentTarget = {
       connectionId?: string;
       bypassSecret?: string;
       branch?: string;
+      customEnvironmentId?: string;
     }
   | {
       kind: "railway";
@@ -170,6 +171,7 @@ function parseTarget(value: unknown): EnvironmentTarget {
         "connectionId",
         "bypassSecret",
         "branch",
+        "customEnvironmentId",
       ]);
       if (
         !resource(value.projectId) ||
@@ -179,6 +181,16 @@ function parseTarget(value: unknown): EnvironmentTarget {
           "Vercel environment requires a projectId and an optional teamId.",
         );
       optionalSecret(value.bypassSecret);
+      if (
+        value.customEnvironmentId !== undefined &&
+        (!resource(value.customEnvironmentId) ||
+          ["production", "preview", "development"].includes(
+            value.customEnvironmentId.toLowerCase(),
+          ))
+      )
+        throw new Error(
+          "Vercel customEnvironmentId must identify a nonproduction custom environment.",
+        );
       if (
         value.connectionId !== undefined &&
         !validConnectionId(value.connectionId)

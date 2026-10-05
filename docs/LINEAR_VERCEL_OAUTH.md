@@ -16,6 +16,8 @@ These behaviors follow [Linear's OAuth documentation](https://linear.app/develop
 
 ShipGremlins uses a Vercel **integration**, with read access to projects, deployments, the installation configuration, and team/user identity. Choose the Vercel projects the integration may read. The selected project is checked before credentials are used for preview discovery.
 
+The Vercel setup flow can also create an explicitly reviewed test Preview. That action requires **deployment write** permission; the original read-only integration grant is sufficient only for discovery. Use a connection granted deployment write access, or save a suitably scoped personal token in the default Vercel connection. Existing grants do not silently gain permissions. If the hosted connection broker is unavailable, the dashboard's advanced manual-token path remains usable. No environment-variable write, domain write, or production promotion is used by this setup flow. See [Vercel environments](VERCEL_ENVIRONMENTS.md).
+
 The integration secret stays on the hosted callback service. That service exchanges the one-use code, encrypts the installation token for the local server, and does not persist it. The local server stores the token and includes its installation team ID when making requests. Vercel integration tokens are long-lived; a removed or disabled installation must be reconnected. This flow follows [Vercel's integration API documentation](https://vercel.com/docs/integrations/create-integration/vercel-api-integrations).
 
 ## Storage and recovery

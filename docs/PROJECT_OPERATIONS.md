@@ -26,6 +26,18 @@ Changes to owner settings make older knowledge stale until discovery refreshes i
 The workspace inbox collects setup blockers, stale discovery and failed runs.
 Project **Review** also fetches current Linear proposals on demand. Open a ticket
 to read its scope and acceptance criteria, then approve coding explicitly.
+Choose **Read proposal & evidence**, then **Approve coding**, and confirm the
+ticket identifier. You do not need to create `pm-approved` yourself: the first
+approval creates it in the ticket's Linear team when no matching team or shared
+workspace label exists. Linear issue labels belong to teams or the workspace,
+not individual projects, so it is normal not to see that label before the first
+approval. The saved Linear connection needs permission to create and apply labels.
+
+To approve directly in Linear, create or select the issue label `pm-approved`
+under the ticket's team, apply it to the reviewed ticket, and remove
+`pm-proposal`. Keep the owning PM's `pm:<id>` label and project mapping intact.
+The dashboard handles both approval labels for you and checks the reviewed scope.
+
 Approval re-fetches the ticket and checks its revision, selected workspace,
 owning PM and project mapping. Changes require another review. Linear does not
 offer atomic compare-and-set for labels, so a simultaneous remote edit remains a
@@ -37,7 +49,18 @@ still matches. An interrupted approval stays unapproved. Split broad epics into
 testable milestones in Linear first. Owner-blocked tickets remain blocked.
 Approval does not run a production
 merge or set Done. Enabled automation picks up eligible approved work, or use
-**Run Coding** for an explicit run.
+**Run Coding** for one run. The button finds the next ready approved ticket
+across this project's mapped PMs, ordered by priority and then oldest first.
+You do not need to paste an identifier. **Choose a specific ticket** remains
+available in the coding form when you want an override or a reviewed retry.
+Manual selection can use paused PMs and does not enable their schedules.
+
+Automatic selection skips tickets that already have a coding attempt, including
+failed or canceled work that needs review, and respects each PM's active-work
+limit. If no ticket is ready, the dashboard links to Review and your PM crew.
+Coding Gremlins implement approved work; PM patrols investigate the app and
+propose new tickets. Selection checks approval again before queuing and the worker
+rechecks it before execution.
 
 Promotion tickets need a finite bullet list under `## Acceptance criteria`.
 New PM prompts request this structure; the review page explains when an older

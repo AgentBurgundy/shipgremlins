@@ -364,7 +364,7 @@ describe("hosting environment resolution", () => {
             readyState: "READY",
             projectId: "prj_example",
             url: "preview.vercel.app",
-            meta: { githubCommitSha: hash },
+            meta: { githubCommitSha: hash, githubCommitRef: "develop" },
           }),
     );
     expect(
@@ -389,6 +389,65 @@ describe("hosting environment resolution", () => {
         ([url]) => new URL(url).searchParams.get("teamId") === "team_connected",
       ),
     ).toBe(true);
+  });
+  it("resolves only the exact custom Vercel environment and rejects a changed detail", async () => {
+    const target = {
+      ...vercel,
+      customEnvironmentId: "env_staging",
+      branch: "develop",
+    };
+    let detail = {
+      id: "dpl_custom",
+      projectId: "prj_example",
+      readyState: "READY",
+      url: "custom.vercel.app",
+      customEnvironment: { id: "env_staging" },
+      meta: { githubCommitRef: "develop", githubCommitSha: hash },
+    };
+    const fetcher = vi.fn(async (url: string) =>
+      url.includes("/v6/")
+        ? response({
+            deployments: [
+              {
+                uid: "dpl_preview",
+                state: "READY",
+                createdAt: 5,
+                meta: { githubCommitRef: "develop" },
+              },
+              {
+                uid: "dpl_custom",
+                state: "READY",
+                createdAt: 2,
+                customEnvironment: { id: "env_staging" },
+                meta: { githubCommitRef: "develop" },
+              },
+            ],
+          })
+        : response(detail),
+    );
+    const opts = {
+      env: { VERCEL_TOKEN: "private" },
+      branch: "develop",
+      fetch: fetcher,
+    };
+    expect((await resolveEnvironment(target, opts)).deploymentId).toBe(
+      "dpl_custom",
+    );
+    expect(new URL(fetcher.mock.calls[0]![0]).searchParams.has("target")).toBe(
+      false,
+    );
+    detail = { ...detail, customEnvironment: { id: "env_another" } };
+    await expect(resolveEnvironment(target, opts)).rejects.toMatchObject({
+      code: "not_ready",
+    });
+    detail = {
+      ...detail,
+      customEnvironment: { id: "env_staging" },
+      meta: { githubCommitRef: "main", githubCommitSha: hash },
+    };
+    await expect(resolveEnvironment(target, opts)).rejects.toMatchObject({
+      code: "not_ready",
+    });
   });
   it("never falls back to a PAT when the selected Vercel OAuth connection is revoked", async () => {
     const opts = options({}, { VERCEL_TOKEN: "legacy-pat" });

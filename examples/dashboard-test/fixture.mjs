@@ -5,6 +5,7 @@ import { initializeSetup } from "../../src/setup/files.ts";
 import { loadProject } from "../../src/config.ts";
 import { createLinearProvisioning } from "../../src/setup/linearProvisioning.ts";
 import { summarizeActivity } from "../../src/storage/activity.ts";
+import { JobReadinessError } from "../../src/localRunners/jobs.ts";
 
 const notice =
   "DISPOSABLE FIXTURE: providers, AI work and run evidence are simulated. No external service was verified.";
@@ -141,6 +142,26 @@ export function createFixture(root, packageRoot) {
       teamIds: [teamId],
       url: "https://linear.example.invalid/fixture",
     })),
+    providerTickets: [
+      ...Object.entries(areaProjects).map(([area, projectId], index) => ({
+        id: `66666666-6666-4666-8666-${String(index + 1).padStart(12, "0")}`,
+        identifier: `FIX-${101 + index}`,
+        title: `SYNTHETIC approved ${area} improvement`,
+        projectId,
+        teamId,
+        labels: [`pm:${area}`, "pm-approved"],
+        stateType: "unstarted",
+      })),
+      {
+        id: "66666666-6666-4666-8666-000000000099",
+        identifier: "FIX-199",
+        title: "SYNTHETIC unapproved checkout proposal",
+        projectId: areaProjects.checkout,
+        teamId,
+        labels: ["pm:checkout"],
+        stateType: "unstarted",
+      },
+    ],
   };
   const save = () => {
     json(stateFile + ".tmp", state);
@@ -511,11 +532,64 @@ export function createFixture(root, packageRoot) {
     client: async () => linearClient,
   });
   const jobs = {
+    selectDeveloperTicket: async (input, previousJobs) => {
+      const project = loadProject(root, input.project);
+      const ticket = state.providerTickets.find(
+        (ticket) =>
+          ticket.labels.includes("pm-approved") &&
+          ticket.stateType === "unstarted" &&
+          project.areas.some(
+            (area) =>
+              (!input.area || area.key === input.area) &&
+              area.linearProjectId === ticket.projectId &&
+              ticket.labels.includes(area.label),
+          ) &&
+          !previousJobs.some(
+            (job) =>
+              job.type === "developer" &&
+              job.project === input.project &&
+              job.projectInstanceId === project.config.instanceId &&
+              job.ticket === ticket.identifier,
+          ),
+      );
+      if (!ticket)
+        throw new JobReadinessError(
+          "No approved tickets are ready in this synthetic fixture queue. Existing attempts are preserved; no real Linear request or agent execution occurred.",
+        );
+      return { ...input, ticket: ticket.identifier };
+    },
     validate: async (input) => {
-      const project = loadProject(root, input.project),
-        area =
-          project.areas.find((area) => area.key === input.area) ??
-          project.areas[0];
+      const project = loadProject(root, input.project);
+      if (input.type === "developer") {
+        const ticket = state.providerTickets.find(
+          (ticket) =>
+            ticket.identifier === input.ticket &&
+            ticket.labels.includes("pm-approved"),
+        );
+        const area = project.areas.find(
+          (area) =>
+            ticket?.projectId === area.linearProjectId &&
+            ticket.labels.includes(area.label) &&
+            (!input.area || input.area === area.key),
+        );
+        if (!ticket || !area)
+          throw new JobReadinessError(
+            "Choose an approved synthetic ticket belonging to this fixture project’s PMs.",
+          );
+        return {
+          project,
+          area,
+          ticket: clone(ticket),
+          linearBinding: {
+            connectionId: "default",
+            workspaceId,
+            ticketId: ticket.id,
+          },
+        };
+      }
+      const area =
+        project.areas.find((area) => area.key === input.area) ??
+        project.areas[0];
       if (!area) throw new Error("Choose a fixture PM.");
       return {
         project,

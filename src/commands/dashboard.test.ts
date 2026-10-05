@@ -26,7 +26,10 @@ import {
 import type { Updater, UpdateStatus } from "../update/index.ts";
 import type { LocalRunners } from "../localRunners/engine.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
-import type { createJobPreparation } from "../localRunners/jobs.ts";
+import {
+  JobReadinessError,
+  type createJobPreparation,
+} from "../localRunners/jobs.ts";
 import type {
   OAuthConnection,
   OAuthProvider,
@@ -1617,6 +1620,69 @@ describe("local dashboard HTTP boundary", () => {
         })
       ).status,
     ).toBe(200);
+  });
+  it("selects and revalidates an approved ticket when a coding run omits the ticket", async () => {
+    const enqueue = vi.fn(async (input) => ({
+      ...input,
+      id: "job-auto",
+      status: "queued",
+    }));
+    const priorJobs = [{ id: "previous", type: "developer", ticket: "APP-1" }];
+    const runners = {
+      enqueue,
+      jobs: vi.fn(async () => priorJobs),
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+    } as unknown as LocalRunners;
+    const linearBinding = {
+      connectionId: "default",
+      workspaceId: randomUUID(),
+      ticketId: randomUUID(),
+    };
+    const selectDeveloperTicket = vi.fn(async (input) => ({
+      ...input,
+      area: "core",
+      ticket: "APP-2",
+    }));
+    const validate = vi.fn(async () => ({
+      project: { config: {} },
+      area: { key: "core" },
+      ticket: { identifier: "APP-2", id: linearBinding.ticketId },
+      linearBinding,
+    }));
+    const jobs = { validate, selectDeveloperTicket } as unknown as ReturnType<
+      typeof createJobPreparation
+    >;
+    const { url } = await start(undefined, [], { runners, jobs });
+    const result = await post(`${url}/api/jobs`, {
+      type: "developer",
+      project: "app",
+    });
+    expect(result.status).toBe(202);
+    expect(selectDeveloperTicket).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "app", runOnce: true }),
+      priorJobs,
+    );
+    expect(validate).toHaveBeenCalledWith(
+      expect.objectContaining({ ticket: "APP-2", area: "core" }),
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ ticket: "APP-2", linearBinding }),
+    );
+    selectDeveloperTicket.mockRejectedValueOnce(
+      new JobReadinessError(
+        "No approved tickets are ready. Open Review to approve a proposal.",
+      ),
+    );
+    const empty = await post(`${url}/api/jobs`, {
+      type: "developer",
+      project: "app",
+    });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toMatchObject({
+      error: expect.stringContaining("Open Review"),
+    });
+    expect(enqueue).toHaveBeenCalledOnce();
   });
   it("authenticates worker mutations, validates job inputs, and serves only authorized artifacts", async () => {
     const create = vi.fn(async () => ({

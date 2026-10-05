@@ -118,6 +118,151 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  function queueFixture(
+    tickets: LinearTicket[],
+    fresh: (value: LinearTicket) => LinearTicket | null = (value) => value,
+  ) {
+    const listTickets = vi.fn(async () => tickets);
+    const getTicket = vi.fn(async (id: string) => {
+      const found = tickets.find(
+        (value) => value.id === id || value.identifier === id,
+      );
+      return found ? fresh(found) : null;
+    });
+    return {
+      listTickets,
+      getTicket,
+      ...createJobPreparation({
+        root,
+        env,
+        linear: () => ({ listTickets, getTicket }),
+      }),
+    };
+  }
+  const codingRequest = {
+    type: "developer" as const,
+    project: "app",
+    runOnce: true,
+  };
+  const queueTicket = (
+    id: string,
+    over: Partial<LinearTicket> = {},
+  ): LinearTicket => ({
+    ...ticket,
+    id,
+    identifier: `APP-${id}`,
+    priority: 3,
+    ...over,
+  });
+  it("finds the highest-priority approved ticket without an identifier and binds its current issue", async () => {
+    const f = queueFixture([
+      queueTicket("20", { priority: 3 }),
+      queueTicket("21", { priority: 1, createdAt: "2026-10-03T00:00:00Z" }),
+      queueTicket("22", { priority: 1, createdAt: "2026-10-02T00:00:00Z" }),
+    ]);
+    const chosen = await f.selectDeveloperTicket(codingRequest, []);
+    expect(chosen).toMatchObject({
+      ticket: "APP-22",
+      area: "core",
+      runOnce: true,
+      linearBinding: { connectionId: "default", ticketId: "22" },
+    });
+    expect(f.listTickets).toHaveBeenCalledExactlyOnceWith("linear-project", [
+      "pm:core",
+      "pm-approved",
+    ]);
+    expect((await f.validate(chosen)).ticket?.id).toBe("22");
+    expect(
+      (await f.selectDeveloperTicket({ ...codingRequest, ticket: "   " }, []))
+        .ticket,
+    ).toBe("APP-22");
+  });
+  it("skips proposals, owner blockers, completed work and every previously attempted issue", async () => {
+    const f = queueFixture([
+      queueTicket("1", { labels: ["pm:core", "pm-approved", "pm-proposal"] }),
+      queueTicket("2", {
+        labels: ["pm:core", "pm-approved", "pm-needs-human"],
+      }),
+      queueTicket("3", { labels: ["pm:core", "pm-approved", "pm-dispatched"] }),
+      queueTicket("4", { labels: ["pm:core", "pm-approved", "pm-verified"] }),
+      queueTicket("5", { stateType: "completed" }),
+      queueTicket("6"),
+      queueTicket("7"),
+    ]);
+    const previous = {
+      ...job,
+      ticket: "APP-6",
+      status: "failed" as const,
+      linearBinding: { connectionId: "default", ticketId: "6" },
+    };
+    expect(
+      (await f.selectDeveloperTicket(codingRequest, [previous])).ticket,
+    ).toBe("APP-7");
+    expect(f.getTicket).toHaveBeenCalledExactlyOnceWith("7");
+  });
+  it("rechecks listed approval and continues to the next candidate when it was removed", async () => {
+    const f = queueFixture([queueTicket("1"), queueTicket("2")], (value) =>
+      value.id === "1"
+        ? { ...value, labels: ["pm:core", "pm-proposal"] }
+        : value,
+    );
+    expect((await f.selectDeveloperTicket(codingRequest, [])).ticket).toBe(
+      "APP-2",
+    );
+    expect(f.getTicket.mock.calls.map((call) => call[0])).toEqual(["1", "2"]);
+  });
+  it("allows paused PMs for one manual run without enabling automation", async () => {
+    edit("areas.json", (raw) => {
+      raw.areas.core.enabled = false;
+    });
+    const f = queueFixture([queueTicket("1")]);
+    expect((await f.selectDeveloperTicket(codingRequest, [])).area).toBe(
+      "core",
+    );
+    expect(
+      JSON.parse(readFileSync(join(root, "projects/app/areas.json"), "utf8"))
+        .areas.core.enabled,
+    ).toBe(false);
+  });
+  it("keeps full PM work-in-progress slots out of automatic selection", async () => {
+    const f = queueFixture([queueTicket("1")]);
+    const area = JSON.parse(
+      readFileSync(join(root, "projects/app/areas.json"), "utf8"),
+    ).areas.core;
+    const previous = Array.from({ length: area.wipLimit }, (_, i) => ({
+      ...job,
+      id: `active-${i}`,
+      area: "core",
+      ticket: `APP-${10 + i}`,
+      status: "running" as const,
+    }));
+    await expect(
+      f.selectDeveloperTicket(codingRequest, previous),
+    ).rejects.toThrow("No approved tickets are ready");
+    expect(f.listTickets).not.toHaveBeenCalled();
+  });
+  it("does not treat another project incarnation's job as this project's attempted issue", async () => {
+    const f = queueFixture([queueTicket("1")]);
+    const previous = {
+      ...job,
+      projectInstanceId: "a1b2c3d4-1111-4222-8333-444444444444",
+      ticket: "APP-1",
+      status: "succeeded" as const,
+      linearBinding: { connectionId: "default", ticketId: "1" },
+    };
+    expect(
+      (await f.selectDeveloperTicket(codingRequest, [previous])).ticket,
+    ).toBe("APP-1");
+  });
+  it("gives a useful empty-queue result instead of requesting an arbitrary ticket", async () => {
+    const f = queueFixture([
+      queueTicket("1", { labels: ["pm:core", "pm-proposal"] }),
+    ]);
+    await expect(f.selectDeveloperTicket(codingRequest, [])).rejects.toThrow(
+      "Review and approve a proposal",
+    );
+    expect(f.getTicket).not.toHaveBeenCalled();
+  });
   it("rejects queued work from a previous project incarnation before resolving a ticket", async () => {
     const prepared = setup();
     edit("project.json", (raw) => {

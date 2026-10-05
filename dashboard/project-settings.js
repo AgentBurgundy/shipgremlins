@@ -166,6 +166,11 @@
         "The name of a saved credential, never the token value. Add its value in Connections after saving.",
       ],
       [
+        "customEnvironmentId",
+        "Vercel custom environment ID (optional)",
+        "Set by the Environment picker for custom staging. Leave blank for standard Preview deployments.",
+      ],
+      [
         "environmentId",
         "Railway environment ID",
         "Select the preview or staging environment in Railway.",
@@ -294,7 +299,14 @@
     container.replaceChildren(root);
     const providerKeys = {
       url: ["url"],
-      vercel: ["connectionId", "projectId", "teamId", "bypassSecret", "branch"],
+      vercel: [
+        "connectionId",
+        "projectId",
+        "teamId",
+        "bypassSecret",
+        "branch",
+        "customEnvironmentId",
+      ],
       railway: [
         "projectId",
         "environmentId",
@@ -381,6 +393,7 @@
     fields.connectionId.addEventListener("change", () => {
       fields.projectId.value = "";
       fields.teamId.value = "";
+      fields.customEnvironmentId.value = "";
     });
     fields.workflow.addEventListener("change", render);
     fields.baseBranch.addEventListener("input", () => {

@@ -13,6 +13,32 @@ import {
 } from "./projectCapabilities.ts";
 
 describe("project capabilities", () => {
+  it("accepts a named custom Vercel environment and rejects reserved or unsafe identifiers", () => {
+    const raw = (customEnvironmentId: string) => ({
+      verification: { mode: "browser", environment: "preview" },
+      environments: {
+        preview: {
+          kind: "vercel",
+          role: "preview",
+          projectId: "prj_example",
+          customEnvironmentId,
+        },
+      },
+    });
+    expect(
+      parseProjectCapabilities(raw("env_staging")).environments?.preview,
+    ).toMatchObject({ customEnvironmentId: "env_staging" });
+    for (const id of [
+      "production",
+      "preview",
+      "development",
+      "../../production",
+      "token with spaces",
+    ])
+      expect(() => parseProjectCapabilities(raw(id))).toThrow(
+        "customEnvironmentId",
+      );
+  });
   it("supports disposable browser apps but never grants Docker promotion proof", () => {
     const raw = {
       workflow: { kind: "pull-request", baseBranch: "main" },

@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { createDashboardServer } from "./dashboard.ts";
+import { createDashboardServer, type DashboardOptions } from "./dashboard.ts";
 import { initializeSetup } from "../setup/files.ts";
 import { createLocalRunners } from "../localRunners/engine.ts";
 import {
@@ -42,7 +42,7 @@ afterEach(async () => {
     rmSync(root, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
-async function fixture() {
+async function fixture(extra: DashboardOptions = {}) {
   const root = mkdtempSync(
     join(realpathSync(tmpdir()), "gremlins-onboarding-api-"),
   );
@@ -93,6 +93,7 @@ async function fixture() {
     sourceControl: source,
     projectOnboarding: onboarding,
     environmentAccess,
+    ...extra,
   });
   servers.push(server);
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -131,6 +132,100 @@ const target = {
 };
 
 describe("authenticated project onboarding", () => {
+  it("protects Vercel setup actions, binds review revisions, and routes chat without deploying", async () => {
+    const status = {
+      project: "app",
+      revision: "r1",
+      configurationRevision: "c1",
+      status: "idle",
+      message: "Find previews",
+      updatedAt: new Date().toISOString(),
+      stale: false,
+    };
+    const vercelSetup = {
+      status: vi.fn(async () => status),
+      discover: vi.fn(async () => status),
+      prepare: vi.fn(async () => status),
+      deploy: vi.fn(async () => status),
+      busy: () => false,
+      idle: async () => {},
+      close: async () => {},
+    } as unknown as NonNullable<DashboardOptions["vercelSetup"]>;
+    const environmentGuide = {
+      ask: vi.fn(async () => ({ answer: "Choose a preview." })),
+      busy: () => false,
+      close: async () => {},
+    };
+    const f = await fixture({ vercelSetup, environmentGuide });
+    const path = "/api/projects/app/onboarding/vercel";
+    expect((await f.call(path, undefined, false)).status).toBe(401);
+    expect(
+      (
+        await f.call(
+          path + "/deploy",
+          { revision: "r1", confirmTestData: true },
+          false,
+        )
+      ).status,
+    ).toBe(401);
+    expect((await f.call(path + "?token=no")).status).toBe(400);
+    expect((await f.call(path + "/deploy", { revision: "r1" })).status).toBe(
+      400,
+    );
+    expect(
+      (
+        await f.call(path + "/deploy", {
+          revision: "r1",
+          confirmTestData: true,
+          target: "production",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await f.call(path + "/prepare", { branch: "pm-staging" })).status,
+    ).toBe(400);
+    expect(
+      (await f.call(path + "/discover", { connectionId: "does-not-exist" }))
+        .status,
+    ).toBe(409);
+    expect(vercelSetup.discover).not.toHaveBeenCalled();
+    expect(
+      (
+        await f.call(path + "/discover", {
+          connectionId: "default",
+          teamId: "team_test",
+        })
+      ).status,
+    ).toBe(200);
+    expect(vercelSetup.discover).toHaveBeenCalledWith("app", {
+      connectionId: "default",
+      teamId: "team_test",
+    });
+    expect(
+      (
+        await f.call(path + "/chat", {
+          message: "Can this preview use my test database?",
+        })
+      ).status,
+    ).toBe(200);
+    expect(environmentGuide.ask).toHaveBeenCalledWith(
+      "app",
+      "Can this preview use my test database?",
+    );
+    expect(vercelSetup.deploy).not.toHaveBeenCalled();
+    expect(
+      (
+        await f.call(path + "/deploy", {
+          revision: "r1",
+          confirmTestData: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(vercelSetup.deploy).toHaveBeenCalledWith("app", {
+      revision: "r1",
+      confirmTestData: true,
+    });
+  });
   it("requires authorization for reports, actions and screenshots", async () => {
     const f = await fixture();
     for (const path of ["", "/screenshot"])

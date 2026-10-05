@@ -180,7 +180,8 @@ async function vercel(
   const headers = { Authorization: `Bearer ${accessToken}` };
   const url = new URL("https://api.vercel.com/v6/deployments");
   url.searchParams.set("projectId", target.projectId);
-  url.searchParams.set("target", "preview");
+  url.searchParams.set("branch", branch);
+  if (!target.customEnvironmentId) url.searchParams.set("target", "preview");
   url.searchParams.set("limit", "100");
   if (teamId) url.searchParams.set("teamId", teamId);
   const data = await json(url, options, "Vercel", { headers });
@@ -191,7 +192,9 @@ async function vercel(
         (meta.githubCommitRef ??
           meta.gitlabCommitRef ??
           record(entry.gitSource).ref) === branch &&
-        entry.target !== "production"
+        entry.target !== "production" &&
+        (record(entry.customEnvironment).id ?? entry.customEnvironmentId) ===
+          target.customEnvironmentId
       );
     })
     .sort(
@@ -218,7 +221,13 @@ async function vercel(
   if (
     (detail.readyState ?? detail.state) !== "READY" ||
     detail.target === "production" ||
-    (detail.projectId !== undefined && detail.projectId !== target.projectId)
+    detail.projectId !== target.projectId ||
+    (detail.id ?? detail.uid) !== deploymentId ||
+    (record(detail.customEnvironment).id ?? detail.customEnvironmentId) !==
+      target.customEnvironmentId ||
+    (record(detail.meta).githubCommitRef ??
+      record(detail.meta).gitlabCommitRef ??
+      record(detail.gitSource).ref) !== branch
   )
     throw new HostingError(
       "Vercel preview is no longer ready for this project.",

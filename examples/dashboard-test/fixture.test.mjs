@@ -203,3 +203,48 @@ test("optional fake login rejects wrong input and accepts only the public synthe
   });
   assert.match(await signedIn.text(), /id="fixture-signed-in"/);
 });
+test("Run coding selects an approved synthetic ticket without an identifier and preserves previous attempts", async () => {
+  const response = await call("/api/jobs", {
+    type: "developer",
+    project: "checkout-demo",
+  });
+  assert.equal(response.status, 202, await response.clone().text());
+  const { job } = await response.json();
+  assert.equal(job.ticket, "FIX-103");
+  assert.equal(job.area, "checkout");
+  assert.equal(job.status, "queued");
+  assert.match(job.message, /Simulated.*does not start a real agent/);
+  assert.equal(
+    job.linearBinding.ticketId,
+    "66666666-6666-4666-8666-000000000003",
+  );
+  const repeat = await call("/api/jobs", {
+    type: "developer",
+    project: "checkout-demo",
+  });
+  assert.equal(repeat.status, 400);
+  assert.match(
+    (await repeat.json()).error,
+    /No approved tickets are ready.*synthetic/,
+  );
+  const unapproved = await call("/api/jobs", {
+    type: "developer",
+    project: "checkout-demo",
+    ticket: "FIX-199",
+  });
+  assert.equal(unapproved.status, 400);
+  assert.match((await unapproved.json()).error, /approved synthetic ticket/);
+  assert.equal((await call(`/api/jobs/${job.id}/cancel`, {})).status, 202);
+  const afterCancel = await call("/api/jobs", {
+    type: "developer",
+    project: "checkout-demo",
+  });
+  assert.equal(afterCancel.status, 400);
+  const history = await (await call("/api/jobs")).json();
+  assert.equal(
+    history.jobs.filter(
+      (item) => item.type === "developer" && item.ticket === "FIX-103",
+    ).length,
+    1,
+  );
+});

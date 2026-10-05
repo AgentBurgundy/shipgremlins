@@ -5,6 +5,8 @@ type Call = { url: URL; headers: Headers };
 
 const dep = (over: Record<string, unknown> = {}) => ({
   uid: "dpl_1",
+  projectId: "prj_1",
+  ownerId: "team_1",
   name: "game",
   url: "game-abc123-team.vercel.app",
   state: "READY",
@@ -15,7 +17,7 @@ const dep = (over: Record<string, unknown> = {}) => ({
 
 function stubVercel(
   deployments: unknown[],
-  detail: (id: string) => unknown = () => null,
+  detail?: (id: string) => unknown,
 ): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -26,9 +28,17 @@ function stubVercel(
       let body: unknown;
       if (url.pathname === "/v6/deployments") body = { deployments };
       else if (url.pathname.startsWith("/v13/deployments/")) {
-        body = detail(url.pathname.split("/").pop()!);
-        if (body === null)
+        const id = url.pathname.split("/").pop()!;
+        const extra = detail?.(id);
+        if (extra === null)
           return new Response(JSON.stringify({ error: {} }), { status: 404 });
+        body = {
+          ...(deployments.find(
+            (item) => (item as { uid: string }).uid === id,
+          ) as object),
+          id,
+          ...(extra as object),
+        };
       } else return new Response("nope", { status: 404 });
       return new Response(JSON.stringify(body), {
         status: 200,
@@ -85,8 +95,9 @@ describe("latestDeployment", () => {
     expect(q.origin + q.pathname).toBe("https://api.vercel.com/v6/deployments");
     expect(q.searchParams.get("projectId")).toBe("prj_1");
     expect(q.searchParams.get("teamId")).toBe("team_1");
+    expect(q.searchParams.get("branch")).toBe("pm-staging");
     expect(q.searchParams.get("target")).toBe("preview");
-    expect(q.searchParams.get("limit")).toBe("20");
+    expect(q.searchParams.get("limit")).toBe("100");
     expect(calls[0]!.headers.get("authorization")).toBe("Bearer vc_test");
   });
 
@@ -137,7 +148,14 @@ describe("branchUrl", () => {
 
   it("slugifies the branch when matching the alias", async () => {
     stubVercel(
-      [dep({ meta: { githubCommitRef: "pm/game-12", githubCommitSha: "1" } })],
+      [
+        dep({
+          meta: {
+            githubCommitRef: "pm/game-12",
+            githubCommitSha: "1".repeat(40),
+          },
+        }),
+      ],
       () => ({
         alias: ["game-git-pm-game-12-team.vercel.app"],
       }),
@@ -147,15 +165,15 @@ describe("branchUrl", () => {
     );
   });
 
-  it("falls back to the deployment url when no branch alias exists or the detail 404s", async () => {
+  it("falls back to the deployment url only when confirmed detail has no branch alias", async () => {
     stubVercel([dep()], () => ({ alias: ["game-abc123-team.vercel.app"] }));
     await expect(client().branchUrl("prj_1", null, "pm-staging")).resolves.toBe(
       "https://game-abc123-team.vercel.app",
     );
     vi.unstubAllGlobals();
-    stubVercel([dep()]);
+    stubVercel([dep()], () => null);
     await expect(client().branchUrl("prj_1", null, "pm-staging")).resolves.toBe(
-      "https://game-abc123-team.vercel.app",
+      null,
     );
   });
 
@@ -163,6 +181,97 @@ describe("branchUrl", () => {
     stubVercel([]);
     await expect(
       client().branchUrl("prj_1", null, "pm-staging"),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("selected environment isolation", () => {
+  it("omits the preview filter for a custom environment and selects only its exact deployment", async () => {
+    const calls = stubVercel([
+      dep({
+        uid: "dpl_production",
+        target: "production",
+        customEnvironmentId: "env_test",
+      }),
+      dep({ uid: "dpl_other", customEnvironment: { id: "env_other" } }),
+      dep({ uid: "dpl_preview" }),
+      dep({ uid: "dpl_custom", customEnvironment: { id: "env_test" } }),
+    ]);
+    const api = new VercelApi({
+      token: "vc_test",
+      customEnvironmentId: "env_test",
+    });
+    await expect(
+      api.latestDeployment("prj_1", "team_1", "pm-staging"),
+    ).resolves.toMatchObject({ id: "dpl_custom", sha: "f".repeat(40) });
+    expect(calls[0]!.url.searchParams.has("target")).toBe(false);
+    expect(calls[1]!.url.pathname).toBe("/v13/deployments/dpl_custom");
+  });
+  it("never selects custom or production deployments for ordinary Preview", async () => {
+    stubVercel([
+      dep({ target: "production" }),
+      dep({ customEnvironmentId: "env_test" }),
+      dep({ target: "env_test" }),
+    ]);
+    await expect(
+      client().latestDeployment("prj_1", "team_1", "pm-staging"),
+    ).resolves.toBeNull();
+  });
+  it.each([
+    { projectId: "prj_other" },
+    { projectId: undefined },
+    { ownerId: "team_other" },
+    { teamId: "team_other" },
+    { id: "dpl_other" },
+    { target: "production" },
+    { customEnvironmentId: "env_other" },
+    { meta: { githubCommitRef: "main", githubCommitSha: "f".repeat(40) } },
+    { meta: { githubCommitRef: "pm-staging", githubCommitSha: "not-a-sha" } },
+    { url: "example.com@production.example.com/path" },
+    { url: undefined },
+  ])(
+    "rejects deployment detail that no longer proves its selected scope: %j",
+    async (changed) => {
+      stubVercel([dep()], () => changed);
+      await expect(
+        client().latestDeployment("prj_1", "team_1", "pm-staging"),
+      ).resolves.toBeNull();
+    },
+  );
+  it("rechecks the custom environment in detail rather than trusting the list alone", async () => {
+    stubVercel([dep({ customEnvironmentId: "env_test" })], () => ({
+      customEnvironmentId: "env_other",
+    }));
+    const api = new VercelApi({
+      token: "vc_test",
+      customEnvironmentId: "env_test",
+    });
+    await expect(
+      api.latestDeployment("prj_1", "team_1", "pm-staging"),
+    ).resolves.toBeNull();
+  });
+  it("uses the immutable custom deployment URL instead of a shared branch alias", async () => {
+    stubVercel([dep({ customEnvironmentId: "env_test" })], () => ({
+      alias: ["game-git-pm-staging-team.vercel.app"],
+    }));
+    const api = new VercelApi({
+      token: "vc_test",
+      customEnvironmentId: "env_test",
+    });
+    await expect(api.branchUrl("prj_1", "team_1", "pm-staging")).resolves.toBe(
+      "https://game-abc123-team.vercel.app",
+    );
+  });
+  it("keeps a newer failed deployment visible instead of using an older healthy one", async () => {
+    stubVercel([
+      dep({ uid: "dpl_old", created: 1000 }),
+      dep({ uid: "dpl_failed", state: "ERROR", created: 2000 }),
+    ]);
+    await expect(
+      client().latestDeployment("prj_1", "team_1", "pm-staging"),
+    ).resolves.toMatchObject({ id: "dpl_failed", state: "ERROR" });
+    await expect(
+      client().branchUrl("prj_1", "team_1", "pm-staging"),
     ).resolves.toBeNull();
   });
 });

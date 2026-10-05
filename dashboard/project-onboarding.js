@@ -66,13 +66,37 @@
       },
     };
   }
+  function withProtection(target, draft) {
+    const result = structuredClone(target);
+    if (result.kind !== "vercel" || draft.vercelBypassEnabled === undefined)
+      return result;
+    if (draft.vercelBypassEnabled) {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(draft.vercelBypassSecret || ""))
+        throw new Error(
+          "Use the saved Vercel bypass secret name, such as VERCEL_BYPASS_MY_APP. Add the token itself in Connections.",
+        );
+      result.bypassSecret = draft.vercelBypassSecret;
+    } else delete result.bypassSecret;
+    return result;
+  }
   window.readOnboardingTarget = (draft) => {
     if (draft.profile === "hosted") {
+      if (draft.providerTarget)
+        return {
+          profile: "hosted",
+          target: withAccess(
+            withProtection(draft.providerTarget, draft),
+            draft,
+          ),
+        };
       if (draft.existing)
         return {
           profile: "hosted",
           environment: draft.existing,
-          target: withAccess(structuredClone(draft.existingTarget), draft),
+          target: withAccess(
+            withProtection(draft.existingTarget, draft),
+            draft,
+          ),
         };
       const url = new URL(draft.url);
       if (
@@ -272,6 +296,7 @@
       for (const key of ["start", "env", "services", "migrate", "seed"])
         if (local?.[key] !== undefined) advanced[key] = local[key];
       return {
+        ...protectionDraft(target, s.project),
         ...accessDraft(
           target,
           s.data?.environment?.legacySignIn,
@@ -292,6 +317,20 @@
         port: String(local?.port || ""),
         healthPath: local?.healthPath || "/",
         advanced: JSON.stringify(advanced, null, 2),
+      };
+    }
+    function protectionDraft(target, project) {
+      const name = project.name.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+      const instance = project.instanceId
+        ? `_${project.instanceId.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}`
+        : "";
+      return {
+        vercelBypassEnabled: Boolean(
+          target?.kind === "vercel" && target.bypassSecret,
+        ),
+        vercelBypassSecret:
+          (target?.kind === "vercel" && target.bypassSecret) ||
+          `VERCEL_BYPASS_${name}${instance}`,
       };
     }
     function entry(project) {
@@ -467,6 +506,7 @@
         s.draft.existing,
         s.draft.recipeKind,
         s.draft.accessKind,
+        s.draft.vercelBypassEnabled,
         s.draft.accounts.length,
         Object.keys(s.project.environments || {}),
       ]);
@@ -500,11 +540,57 @@
       }
       s.form.append(choices);
       if (s.draft.profile === "hosted") {
+        if (window.createVercelSetup) {
+          if (!s.vercelSetup)
+            s.vercelSetup = window.createVercelSetup({
+              api,
+              project: s.project,
+              getStatus,
+              isLocked: () => disabled(s),
+              onSelect: ({ target, label }) => {
+                const previous =
+                  s.draft.providerTarget || s.draft.existingTarget;
+                const sameProject =
+                  previous?.kind === "vercel" &&
+                  previous.projectId === target.projectId &&
+                  (previous.connectionId || "default") ===
+                    (target.connectionId || "default") &&
+                  (previous.teamId || null) === (target.teamId || null);
+                if (!sameProject)
+                  Object.assign(s.draft, protectionDraft(target, s.project));
+                s.draft.providerTarget = target;
+                s.draft.providerLabel = label;
+                s.draft.existing = "";
+                s.draft.existingTarget = undefined;
+                s.formSignature = "";
+                paintForm(s);
+              },
+            });
+          s.vercelSetup.mount(s.form);
+        }
+        if (s.draft.providerTarget) {
+          const selected = node("div", undefined, "vercel-selected-target");
+          selected.append(
+            node("strong", `Selected environment · ${s.draft.providerLabel}`),
+            node(
+              "p",
+              "Review sign-in below, then save and test this environment.",
+              "onboarding-help",
+            ),
+            button("Use a different URL instead", () => {
+              delete s.draft.providerTarget;
+              delete s.draft.providerLabel;
+              s.formSignature = "";
+              paintForm(s);
+            }),
+          );
+          s.form.append(selected);
+        }
         const existing = Object.entries(s.project.environments || {}).filter(
           ([, target]) =>
             target.role !== "production" && target.kind !== "docker",
         );
-        if (existing.length) {
+        if (existing.length && !s.draft.providerTarget) {
           const label = node("label", "Saved environment"),
             select = node("select");
           select.id = `onboarding-${s.project.name}-existing`;
@@ -518,6 +604,7 @@
             s.draft.existingTarget = s.project.environments?.[select.value];
             Object.assign(
               s.draft,
+              protectionDraft(s.draft.existingTarget, s.project),
               accessDraft(
                 s.draft.existingTarget,
                 Boolean(select.value && s.data?.environment?.legacySignIn),
@@ -532,7 +619,7 @@
           wrap.append(label, select);
           s.form.append(wrap);
         }
-        if (!s.draft.existing)
+        if (!s.draft.existing && !s.draft.providerTarget)
           s.form.append(
             field(
               s,
@@ -542,6 +629,64 @@
               "url",
             ),
           );
+        const vercelTarget =
+          s.draft.providerTarget ||
+          (s.draft.existing && s.draft.existingTarget);
+        if (vercelTarget?.kind === "vercel") {
+          const protection = node(
+              "div",
+              undefined,
+              "onboarding-vercel-protection",
+            ),
+            label = node("label", undefined, "onboarding-confirm"),
+            enabled = node("input");
+          enabled.type = "checkbox";
+          enabled.checked = s.draft.vercelBypassEnabled;
+          enabled.addEventListener("change", () => {
+            s.draft.vercelBypassEnabled = enabled.checked;
+            s.formSignature = "";
+            paintForm(s);
+          });
+          label.append(
+            enabled,
+            node("span", "This preview has Vercel deployment protection"),
+          );
+          protection.append(
+            label,
+            node(
+              "p",
+              "Use a Vercel automation bypass when the preview shows a Vercel login wall. Your app’s own sign-in is configured below.",
+              "onboarding-help",
+            ),
+          );
+          if (s.draft.vercelBypassEnabled) {
+            protection.append(
+              node(
+                "p",
+                "Save this environment, then add its automation bypass token in Connections. Keep the token out of chat.",
+                "onboarding-help",
+              ),
+            );
+            const advanced = node("details", undefined, "onboarding-advanced");
+            advanced.append(
+              node("summary", "Saved bypass secret name"),
+              field(
+                s,
+                "vercelBypassSecret",
+                "Secret name",
+                "A reference to the token in Connections, not the token itself.",
+              ),
+            );
+            protection.append(advanced);
+            const credentials = node(
+              "a",
+              "Open project access in Connections →",
+            );
+            credentials.href = "/connections#project-access";
+            protection.append(credentials);
+          }
+          s.form.append(protection);
+        }
         const advanced = node("details", undefined, "onboarding-advanced");
         advanced.append(
           node("summary", "Hosting provider settings"),
@@ -563,6 +708,7 @@
           s.form.append(tips);
         }
       } else {
+        s.vercelSetup?.setActive(false);
         s.form.append(
           node(
             "p",
@@ -1207,7 +1353,10 @@
       updateFormActions(s);
     }
     function deactivate() {
-      for (const s of entries.values()) clearTimeout(s.timer);
+      for (const s of entries.values()) {
+        clearTimeout(s.timer);
+        s.vercelSetup?.setActive(false);
+      }
     }
     const pagechange = (event) => {
       if (
@@ -1227,7 +1376,10 @@
     window.addEventListener("pagehide", deactivate);
     return {
       syncConnections() {
-        if (active) paintConnections(active);
+        if (active) {
+          paintConnections(active);
+          active.vercelSetup?.syncConnections();
+        }
       },
       mount(container, project) {
         const s = entry(project);
@@ -1235,6 +1387,8 @@
         active = s;
         container.append(s.node);
         paint(s);
+        if (!s.form.hidden && s.draft?.profile === "hosted")
+          s.vercelSetup?.setActive(true);
         load(s);
         schedule(s);
       },
@@ -1253,13 +1407,15 @@
         paint(s);
         s.form.querySelector?.("input,select,textarea")?.focus();
       },
-      isBusy: () => [...entries.values()].some((s) => s.busy),
+      isBusy: () =>
+        [...entries.values()].some((s) => s.busy || s.vercelSetup?.isBusy()),
       protectFocus: () =>
         Boolean(active?.form.contains(document.activeElement)),
       forget(project) {
         const s = entries.get(project);
         if (s) {
           clearTimeout(s.timer);
+          s.vercelSetup?.destroy();
           if (s.imageUrl) URL.revokeObjectURL(s.imageUrl);
           s.generation++;
           if (active === s) active = null;
@@ -1269,8 +1425,10 @@
       destroy() {
         destroyed = true;
         deactivate();
-        for (const s of entries.values())
+        for (const s of entries.values()) {
+          s.vercelSetup?.destroy();
           if (s.imageUrl) URL.revokeObjectURL(s.imageUrl);
+        }
         window.removeEventListener("dashboard:pagechange", pagechange);
         document.removeEventListener("visibilitychange", visibility);
         window.removeEventListener("pagehide", deactivate);

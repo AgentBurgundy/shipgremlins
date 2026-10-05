@@ -406,6 +406,11 @@ describe("GitLab local provider verification", () => {
                     readyState: "READY",
                     url: "preview.example.com",
                     projectId: "prj_demo",
+                    id: "dpl_test",
+                    meta: {
+                      gitlabCommitRef: "pm-staging",
+                      gitlabCommitSha: "a".repeat(40),
+                    },
                   }
                 : {},
           ),
@@ -573,6 +578,11 @@ describe("Linear and Vercel OAuth verification", () => {
                     readyState: "READY",
                     url: "preview.example.com",
                     projectId: "prj_app",
+                    id: "dpl_test",
+                    meta: {
+                      githubCommitRef: "pm-staging",
+                      githubCommitSha: "a".repeat(40),
+                    },
                   }
                 : {},
         );

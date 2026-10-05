@@ -4372,3 +4372,16 @@ main [tabindex="-1"]:not(#job-detail):focus {
 #connections .password-wrap input {
   padding-right: 54px;
 }
+
+#job-ticket-field > summary {
+  color: #455c37;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#job-ticket-field[open] > summary {
+  margin-bottom: 12px;
+}
+.coding-queue-actions {
+  margin-top: 12px;
+}

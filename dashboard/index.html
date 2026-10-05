@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/workspace.css" />
     <link rel="stylesheet" href="/project-workspace.css" />
     <link rel="stylesheet" href="/project-onboarding.css" />
+    <link rel="stylesheet" href="/vercel-setup.css" />
     <link rel="stylesheet" href="/patrol-flow.css" />
     <link rel="stylesheet" href="/operations.css" />
     <link rel="stylesheet" href="/deletion.css" />
@@ -34,6 +35,7 @@
     <script src="/operations.js" defer></script>
     <script src="/setup-suggestions.js" defer></script>
     <script src="/remote-workers.js" defer></script>
+    <script src="/vercel-setup.js" defer></script>
     <script src="/project-onboarding.js" defer></script>
     <script src="/project-workspace.js" defer></script>
     <script src="/deletion.js" defer></script>
@@ -2057,7 +2059,8 @@
                       <option value="">Choose a project</option>
                     </select>
                   </div>
-                  <div class="field" id="job-ticket-field" hidden>
+                  <details class="field" id="job-ticket-field" hidden>
+                    <summary>Choose a specific ticket (optional)</summary>
                     <label for="job-ticket">Approved Linear ticket</label
                     ><input
                       id="job-ticket"
@@ -2069,12 +2072,12 @@
                       aria-describedby="job-ticket-help"
                     />
                     <p id="job-ticket-help">
-                      Paste a Linear identifier such as ENG-123. It must belong
-                      to one of this project's PMs and have its pm:area and
-                      pm-approved labels. A paused PM can still receive a manual
-                      run.
+                      Leave empty to let your Coding Gremlin pick the next
+                      approved ticket from this project's Linear queue. A
+                      specific ticket must belong to one of its PMs and be
+                      approved for coding. Paused PMs can receive manual runs.
                     </p>
-                  </div>
+                  </details>
                 </div>
                 <div class="form-bottom">
                   <p id="job-guidance">

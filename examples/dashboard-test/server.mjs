@@ -19,6 +19,7 @@ for (const key of Object.keys(process.env))
   if (
     ![
       "PATH",
+      "Path",
       "SystemRoot",
       "COMSPEC",
       "TEMP",

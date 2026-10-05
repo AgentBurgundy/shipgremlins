@@ -72,6 +72,20 @@ function fixture(
     onboardingStep: (_data: unknown) => 0,
     readOnboardingTarget: (draft: Draft): Draft => draft,
     createProjectOnboarding: (_options: object): Panel => ({}) as Panel,
+    createVercelSetup: undefined as
+      | undefined
+      | ((options: {
+          onSelect(input: {
+            target: Record<string, unknown>;
+            label: string;
+          }): void;
+        }) => {
+          mount(root: Element): void;
+          setActive(active: boolean): void;
+          destroy(): void;
+          isBusy(): boolean;
+          syncConnections(): void;
+        }),
   };
   class Option extends Element {
     constructor(label: string, value: string) {
@@ -134,6 +148,132 @@ const docker = (): Draft => ({
 });
 
 describe("guided environment target review", () => {
+  it("keeps a discovered Vercel target and its account binding when applying app access", () => {
+    const f = fixture();
+    const target = {
+      kind: "vercel",
+      role: "staging",
+      projectId: "prj_testing",
+      connectionId: "testing-account",
+      teamId: "team_testing",
+      branch: "pm-staging",
+      customEnvironmentId: "env_testing",
+    };
+    expect(
+      f.window.readOnboardingTarget({ ...hosted(), providerTarget: target }),
+    ).toEqual({
+      profile: "hosted",
+      target: { ...target, access: { kind: "public" } },
+    });
+    expect(target).not.toHaveProperty("access");
+    f.panel.destroy();
+  });
+  it("keeps a saved bypass secret when selecting a new preview in the same Vercel project", async () => {
+    const target = {
+      kind: "vercel",
+      role: "preview",
+      projectId: "prj_testing",
+      connectionId: "test",
+      teamId: "team_test",
+      branch: "pm-staging",
+      bypassSecret: "SAVED_TEST_BYPASS",
+      access: { kind: "public" },
+    };
+    const api = vi.fn(async () => ({
+      ...state(),
+      environment: { name: "pm-test", profile: "hosted", target },
+    }));
+    const f = fixture(api),
+      root = new Element();
+    let select!: (input: {
+      target: Record<string, unknown>;
+      label: string;
+    }) => void;
+    f.window.createVercelSetup = (options) => {
+      select = options.onSelect;
+      return {
+        mount() {},
+        setActive() {},
+        destroy() {},
+        syncConnections() {},
+        isBusy: () => false,
+      };
+    };
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: { "pm-test": target },
+    });
+    await settle();
+    select({
+      target: {
+        kind: "vercel",
+        role: "preview",
+        projectId: "prj_testing",
+        connectionId: "test",
+        teamId: "team_test",
+        branch: "pm-next",
+        customEnvironmentId: "env_test",
+      },
+      label: "New preview",
+    });
+    await walk(root)
+      .find((item) => item.textContent === "Save environment")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      expect.objectContaining({
+        target: expect.objectContaining({
+          branch: "pm-next",
+          bypassSecret: "SAVED_TEST_BYPASS",
+          customEnvironmentId: "env_test",
+        }),
+      }),
+    );
+    f.panel.destroy();
+  });
+  it("stores only a secret reference for Vercel protection and supports removing it", () => {
+    const f = fixture(),
+      target = {
+        kind: "vercel",
+        role: "preview",
+        projectId: "prj_test",
+        bypassSecret: "OLD_BYPASS",
+      };
+    expect(
+      f.window.readOnboardingTarget({
+        ...hosted(),
+        providerTarget: target,
+        vercelBypassEnabled: true,
+        vercelBypassSecret: "VERCEL_BYPASS_SHOP",
+      }),
+    ).toEqual({
+      profile: "hosted",
+      target: {
+        ...target,
+        bypassSecret: "VERCEL_BYPASS_SHOP",
+        access: { kind: "public" },
+      },
+    });
+    expect(
+      (
+        f.window.readOnboardingTarget({
+          ...hosted(),
+          providerTarget: target,
+          vercelBypassEnabled: false,
+        }).target as Record<string, unknown>
+      ).bypassSecret,
+    ).toBeUndefined();
+    expect(() =>
+      f.window.readOnboardingTarget({
+        ...hosted(),
+        providerTarget: target,
+        vercelBypassEnabled: true,
+        vercelBypassSecret: "the-actual-token-not-a-reference",
+      }),
+    ).toThrow("Add the token itself in Connections");
+    f.panel.destroy();
+  });
   it("shows configured services and updates missing connection links without resetting environment edits", async () => {
     let status = {
       sourceConnections: [
