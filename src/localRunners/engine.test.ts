@@ -29,6 +29,62 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6eH8AAAAASUVORK5CYII=",
   "base64",
 );
+it("keeps the app alive through trusted completion and retries terminal cleanup after Docker failure", async () => {
+  const f = fixture();
+  await f.ready();
+  const cleanupEnvironment = vi.fn(async (_id: string) => {});
+  f.options.docker.cleanupEnvironment = cleanupEnvironment;
+  let finish!: () => void;
+  const reconcileCompletedJob = vi.fn(
+    async () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const engine = createLocalRunners({ ...f.options, reconcileCompletedJob });
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  f.finish(job.id);
+  const tick = engine.tick();
+  await vi.waitFor(() => expect(reconcileCompletedJob).toHaveBeenCalled());
+  expect(cleanupEnvironment).not.toHaveBeenCalledWith(job.id);
+  cleanupEnvironment.mockImplementationOnce(async (id) => {
+    if (id === job.id) throw new Error("Docker offline");
+  });
+  finish();
+  await tick;
+  expect(cleanupEnvironment).toHaveBeenCalledWith(job.id);
+  await engine.tick();
+  expect(
+    cleanupEnvironment.mock.calls.filter(([id]) => id === job.id).length,
+  ).toBeGreaterThanOrEqual(2);
+});
+it("recovers old environment resources with one namespace sweep instead of one Docker cleanup per retained job", async () => {
+  const f = fixture();
+  await f.ready();
+  const historical = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await f.engine.tick();
+  f.finish(historical.id);
+  await f.engine.tick();
+  const cleanupEnvironment = vi.fn(async (_id: string) => {}),
+    reconcileEnvironments = vi.fn(async (_ids: string[]) => {});
+  f.options.docker.cleanupEnvironment = cleanupEnvironment;
+  f.options.docker.reconcileEnvironments = reconcileEnvironments;
+  const restarted = createLocalRunners(f.options);
+  await restarted.tick();
+  await restarted.tick();
+  expect(cleanupEnvironment).not.toHaveBeenCalled();
+  expect(reconcileEnvironments).toHaveBeenCalledOnce();
+  expect(reconcileEnvironments).toHaveBeenCalledWith([]);
+});
 it("serializes deletion guards with job admission and preserves typed mutation errors", async () => {
   const f = fixture(),
     queued = await f.engine.enqueue({

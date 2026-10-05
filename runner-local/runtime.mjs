@@ -90,15 +90,26 @@ export function restoreGitConfig(directory, repoUrl) {
   );
 }
 
-export function enforceDeadline(stop, exit = process.exit, minutes = 45) {
+export function enforceDeadline(
+  stop,
+  exit = process.exit,
+  minutes = 45,
+  remainingMs = minutes * 60_000,
+) {
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > 45)
     throw new Error("Invalid job runtime limit.");
+  if (
+    !Number.isSafeInteger(remainingMs) ||
+    remainingMs <= 0 ||
+    remainingMs > minutes * 60_000
+  )
+    throw new Error("Invalid remaining job runtime budget.");
   let forced;
   const timer = setTimeout(() => {
     stop();
     forced = setTimeout(() => exit(124), 10_000);
     forced.unref();
-  }, minutes * 60_000);
+  }, remainingMs);
   timer.unref();
   return () => {
     clearTimeout(timer);

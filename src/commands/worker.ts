@@ -45,9 +45,12 @@ export async function runWorker(
       io.err(
         "This worker uses unencrypted private-network HTTP. Use HTTPS or a trusted encrypted network such as Tailscale.",
       );
-    const docker = createDockerRunners({ packageRoot });
     const workerHome =
       values["--worker-home"] ?? join(homedir(), ".shipgremlins", "worker");
+    const docker = createDockerRunners({
+      packageRoot,
+      environmentNamespace: workerHome,
+    });
     unlock = lockWorkerDirectory(workerHome);
     const preflight = await docker.preflight();
     if (!preflight.available) throw new RemoteWorkerError(preflight.message);

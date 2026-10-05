@@ -81,9 +81,20 @@
       "target",
       "Verification target",
       "Repository-only work uses your source and configured commands. Browser work visits a preview or staging environment.",
-      targetKinds,
+      Object.values(environments).some((target) => target.kind === "docker")
+        ? [
+            ...targetKinds,
+            ["docker", "Disposable local app · edit in Environment"],
+          ]
+        : targetKinds,
     );
     const browser = node("div", "environment-fields");
+    const dockerHint = node(
+      "p",
+      "runner-guidance",
+      "The saved Docker recipe and test accounts are retained. Edit them from this project's Environment tab.",
+    );
+    browser.append(dockerHint);
     const available = Object.entries(environments).filter(
       ([, value]) => value.role !== "production",
     );
@@ -346,6 +357,7 @@
         ];
     const render = () => {
       const kind = fields.target.value;
+      dockerHint.hidden = kind !== "docker";
       browser.hidden = kind === "repository";
       for (const input of browser.querySelectorAll("input,select"))
         input.disabled = browser.hidden;

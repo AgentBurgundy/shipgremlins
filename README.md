@@ -90,6 +90,8 @@ gremlins setup
 
 The dashboard opens in your browser with gremlins, project setup, official GitHub/GitLab sign-in, and local connection-token entry. The `gremlins` CLI works from any directory; `shipgremlins` and `hub` remain compatibility aliases. Everyday commands do not need a source checkout or an `npm run` wrapper. [Connect source control →](docs/SOURCE_CONTROL.md)
 
+Add a repository and the **Setup Gremlin** recommends a test environment from its actual source. Choose an existing staging URL (including Railway/Vercel) or a disposable Docker app with optional PostgreSQL/Redis. Review any proposed setup files as a draft PR/MR, then run the browser and test-account checks. Create PMs afterward; Linear is not needed for this onboarding step. [Project onboarding →](docs/PROJECT_ONBOARDING.md)
+
 Separate pages keep Connections, Projects, Your gremlins, Activity, and Settings
 focused. Provider cards contain setup instructions and token creation links.
 Connect Slack once for the workspace; every project inherits that channel unless

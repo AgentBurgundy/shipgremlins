@@ -429,6 +429,143 @@ describe("remote worker enrollment and scope", () => {
 });
 
 describe("remote worker process", () => {
+  it("renews a mutable admission deadline while app preparation outlasts its first lease", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const d = dockerFixture();
+    d.docker.cleanupEnvironment = vi.fn(async () => {});
+    const active = {
+      id: "job-one",
+      workerId: "worker-one",
+      lease: "b".repeat(64),
+      ttlMs: 120000,
+      payload: { ...payload, remoteLease: true },
+    };
+    const fetcher = vi.fn(
+      async (url: string | URL | Request) =>
+        new Response(
+          JSON.stringify(
+            String(url).endsWith("/enroll")
+              ? {
+                  id: "remote-12345678-1234-1234-1234-123456789012",
+                  token: "a".repeat(64),
+                }
+              : String(url).endsWith("/poll")
+                ? { job: active }
+                : {},
+          ),
+          { status: 200 },
+        ),
+    );
+    const worker = createRemoteWorker({
+      root: root(),
+      controller: "https://controller.example",
+      docker: d.docker,
+      fetch: fetcher,
+    });
+    await worker.enroll("c".repeat(64));
+    let release!: () => void;
+    let admitted: DockerJobPayload | undefined;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(d.docker.startJob).mockImplementation(async (input) => {
+      admitted = input.payload;
+      await ready;
+      d.jobs.set(input.id, {
+        exists: true,
+        running: true,
+        status: "running",
+        workerId: input.workerId,
+      });
+      return { id: input.id, name: input.id, image: "fixture" };
+    });
+    const pending = worker.step();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(admitted).toBeDefined();
+    const first = admitted!.remoteLeaseDeadline!;
+    await vi.advanceTimersByTimeAsync(180000);
+    expect(admitted!.remoteLeaseDeadline).toBeGreaterThan(first + 120000);
+    release();
+    await pending;
+    expect(d.docker.refreshLease).toHaveBeenCalled();
+    expect(d.docker.cleanupEnvironment).not.toHaveBeenCalled();
+    d.jobs.set("job-one", {
+      exists: true,
+      running: false,
+      status: "exited",
+      exitCode: 0,
+      workerId: "worker-one",
+    });
+    await worker.step();
+    expect(d.docker.cleanupEnvironment).toHaveBeenCalledWith("job-one");
+    const artifactOrder = vi
+      .mocked(d.docker.readArtifact)
+      .mock.invocationCallOrder.at(-1)!;
+    expect(
+      vi.mocked(d.docker.cleanupEnvironment).mock.invocationCallOrder[0],
+    ).toBeGreaterThan(artifactOrder);
+  });
+  it("revokes the launch deadline and cleans app resources when canceled during preparation", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const d = dockerFixture();
+    d.docker.cleanupEnvironment = vi.fn(async () => {});
+    let polls = 0;
+    const job = {
+      id: "job-one",
+      workerId: "worker-one",
+      lease: "b".repeat(64),
+      ttlMs: 120000,
+      payload: { ...payload, remoteLease: true },
+    };
+    const fetcher = vi.fn(
+      async (url: string | URL | Request) =>
+        new Response(
+          JSON.stringify(
+            String(url).endsWith("/enroll")
+              ? {
+                  id: "remote-12345678-1234-1234-1234-123456789012",
+                  token: "a".repeat(64),
+                }
+              : { job: { ...job, cancel: ++polls > 1 } },
+          ),
+          { status: 200 },
+        ),
+    );
+    const worker = createRemoteWorker({
+      root: root(),
+      controller: "https://controller.example",
+      docker: d.docker,
+      fetch: fetcher,
+    });
+    await worker.enroll("c".repeat(64));
+    let release!: () => void;
+    let admitted: DockerJobPayload | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(d.docker.startJob).mockImplementation(async (input) => {
+      admitted = input.payload;
+      await gate;
+      d.jobs.set(input.id, {
+        exists: true,
+        running: true,
+        status: "running",
+        workerId: input.workerId,
+      });
+      return { id: input.id, name: input.id, image: "fixture" };
+    });
+    const pending = worker.step();
+    const rejected = expect(pending).rejects.toThrow(
+      "lease ended during environment preparation",
+    );
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(admitted?.remoteLeaseDeadline).toBe(0);
+    release();
+    await rejected;
+    expect(d.docker.stopJob).toHaveBeenCalledWith("job-one");
+    expect(d.docker.cleanupEnvironment).toHaveBeenCalledWith("job-one");
+    expect(d.docker.refreshLease).not.toHaveBeenCalled();
+  });
   it("prioritizes independent proof over model artifacts and terminates oversized review evidence clearly", () => {
     const names = new Set([
         "pm-review-proof.json",

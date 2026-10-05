@@ -11,6 +11,7 @@ import {
 } from "../projectCapabilities.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
 import { assertNoSymlinks } from "./files.ts";
+import { testAccessSecretNames } from "../testAccess.ts";
 
 function configuredControllerNames(config: ProjectConfig): string[] {
   return [
@@ -57,6 +58,10 @@ export function assertBrowserSecretSafety(
       ? verification.target.bypassSecret
       : undefined,
     config.signIn?.databaseUrlSecret,
+    ...testAccessSecretNames(verification.target.access),
+    ...(verification.target.kind === "docker"
+      ? Object.values(verification.target.env ?? {})
+      : []),
   ].filter((name): name is string => !!name);
   if (!names.length) return;
   const controllerNames = root

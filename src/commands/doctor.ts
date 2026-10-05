@@ -32,6 +32,7 @@ import { resolveEnvironment } from "../hosting/index.ts";
 import { controllerPreviewFetch } from "../hosting/controllerProbe.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import { assertNoSymlinks } from "../setup/files.ts";
+import { environmentVerificationStatus } from "../setup/environmentAccess.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -237,9 +238,21 @@ export async function doctorChecks(
 
   if (verification.mode === "browser") {
     try {
-      const environment = await (deps.resolveEnvironment ?? resolveEnvironment)(
-        verification.target,
-        {
+      if (verification.target.kind === "docker") {
+        const check = deps.root
+          ? environmentVerificationStatus(deps.root, project, deps.env)
+          : undefined;
+        add(
+          "browser environment",
+          check?.status === "passed",
+          check?.status === "passed"
+            ? "Docker environment passed its browser setup test. Each run starts and checks a fresh isolated app."
+            : "Open this project's Environment page and Test environment before running PMs. Docker and required test inputs must be available on its worker.",
+        );
+      } else {
+        const environment = await (
+          deps.resolveEnvironment ?? resolveEnvironment
+        )(verification.target, {
           env: deps.env,
           fetch: deps.fetch,
           vercelConnection: deps.vercelConnection,
@@ -257,21 +270,21 @@ export async function doctorChecks(
                   })
               : undefined),
           branch: inspectionBranch(config),
-        },
-      );
-      const bypass =
-        verification.target.kind === "vercel" &&
-        verification.target.bypassSecret
-          ? deps.env[verification.target.bypassSecret]
-          : undefined;
-      const available = await reachable(environment.url, deps.fetch, bypass);
-      add(
-        "browser environment",
-        available,
-        available
-          ? `Selected ${verification.target.kind} environment responds over HTTP; the worker still verifies browser behavior.`
-          : "The selected environment did not respond successfully. Check its access settings, protection bypass, and network reachability.",
-      );
+        });
+        const bypass =
+          verification.target.kind === "vercel" &&
+          verification.target.bypassSecret
+            ? deps.env[verification.target.bypassSecret]
+            : undefined;
+        const available = await reachable(environment.url, deps.fetch, bypass);
+        add(
+          "browser environment",
+          available,
+          available
+            ? `Selected ${verification.target.kind} environment responds over HTTP; the worker still verifies browser behavior.`
+            : "The selected environment did not respond successfully. Check its access settings, protection bypass, and network reachability.",
+        );
+      }
     } catch {
       add(
         "browser environment",

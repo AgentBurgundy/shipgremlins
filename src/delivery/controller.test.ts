@@ -25,6 +25,7 @@ import type {
 import { createDeliveryController, deliveryEnvironment } from "./controller.ts";
 import { deliveryConfiguration } from "./index.ts";
 import { createPromotionExecutor } from "./executor.ts";
+import { createSourceControl } from "../sourceControl/index.ts";
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -32,7 +33,7 @@ afterEach(() => {
 });
 const HEAD = "a".repeat(40),
   BASE = "b".repeat(40);
-function world() {
+function world(realSource = false) {
   const root = realpathSync(
     mkdtempSync(join(tmpdir(), "gremlins-delivery-controller-")),
   );
@@ -121,10 +122,21 @@ function world() {
       check,
     };
   }) as unknown as typeof createPromotionExecutor;
+  const sourceAccess = realSource
+    ? createSourceControl({
+        root,
+        env: { GITHUB_TOKEN: "synthetic-delivery-source-token" },
+        fetch: async () => {
+          throw new Error(
+            "This lease-contract test must not contact a provider.",
+          );
+        },
+      })
+    : { resolveCredential: source };
   const controller = createDeliveryController({
     root,
     loadProject: () => project,
-    sourceControl: { resolveCredential: source },
+    sourceControl: sourceAccess,
     linearConnectionFor: connectionFor,
     forge: () => forge,
     linear: () => linear,
@@ -157,6 +169,8 @@ function world() {
     job,
     payload,
     source,
+    sourceAccess,
+    executor,
     connectionFor,
     controller,
     check,
@@ -165,6 +179,41 @@ function world() {
 }
 const noArtifacts = {} as DockerRunners;
 describe("local delivery controller integration", () => {
+  it("uses valid real source lease identifiers for independent checks and promotion, releasing both on completion or failure", async () => {
+    const w = world(true);
+    const source = w.sourceAccess as ReturnType<typeof createSourceControl>;
+    const acquire = vi.spyOn(source, "acquireLease"),
+      release = vi.spyOn(source, "releaseLease");
+    await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);
+    await w.controller.completeJob(w.job, w.result, noArtifacts);
+    expect(acquire).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: expect.stringMatching(/^job-checks-[a-f0-9]{24}$/),
+      }),
+    );
+    expect(w.check).toHaveBeenCalledOnce();
+    // The real credential contract is exercised before the normal later gate:
+    // this unreviewed delivery must still not be packaged for staging.
+    await expect(
+      w.controller.preparePromotion("game", {
+        docker: {
+          ensureImage: async () => "shipgremlins-local:aaaaaaaaaaaaaaaa",
+        },
+      }),
+    ).rejects.toThrow("verified deliveries");
+    expect(acquire).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: expect.stringMatching(/^job-promotion-[a-f0-9]{24}$/),
+        write: true,
+      }),
+    );
+    expect(release.mock.calls.map(([id]) => id)).toEqual(
+      acquire.mock.calls.map(([input]) => input.jobId),
+    );
+    expect(w.executor).toHaveBeenCalledTimes(2);
+    expect(w.forge.merged).toEqual([]);
+    expect(w.linear.stateUpdates).toEqual([]);
+  });
   it("captures the approved ticket before launch and registers the actual exact-head draft idempotently", async () => {
     const w = world();
     await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);

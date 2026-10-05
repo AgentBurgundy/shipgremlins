@@ -44,6 +44,7 @@
   });
   let currentStatus = null;
   let projectOperations = null;
+  let projectOnboarding = null;
   let remoteWorkers = null;
   let workspaceDeletion = null;
   let deletedResources = null;
@@ -924,7 +925,7 @@
     for (const input of $("connections-form").querySelectorAll(
       ".password-wrap input, textarea[data-secret-json]",
     )) {
-      if (input.value.trim()) values[input.name] = input.value.trim();
+      if (input.value !== "") values[input.name] = input.value;
     }
     if (!Object.keys(values).length) {
       message(
@@ -995,6 +996,23 @@
     newProjectSettings.setProjectName?.($("project-name").value);
   }
   $("project-repo").addEventListener("input", suggestProjectName);
+  $("project-form").addEventListener(
+    "invalid",
+    (event) => {
+      for (
+        let parent = event.target.parentElement;
+        parent;
+        parent = parent.parentElement
+      )
+        if (parent.tagName === "DETAILS") parent.open = true;
+      message(
+        $("project-message"),
+        "Complete the highlighted project setting before continuing.",
+        true,
+      );
+    },
+    true,
+  );
   $("project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!$("manual-repository").checked && !$("repository-select").value) {
@@ -1010,6 +1028,7 @@
       project: $("project-name").value.trim(),
       repo: $("project-repo").value.trim(),
       provider: $("project-provider").value,
+      onboarding: true,
       linearMode: $("project-linear-mode").value,
       linear: {
         connectionId: $("project-linear-connection").value || "default",
@@ -1062,7 +1081,7 @@
       $("project-message"),
       data.linearMode === "later"
         ? "Saving your app configuration…"
-        : "Saving your app and setting up its Linear team and initial PM project…",
+        : "Saving your app and its selected Linear team…",
     );
     try {
       const result = await api("/api/projects", data, "POST", 90000);
@@ -1083,12 +1102,15 @@
         : null;
       message(
         $("project-message"),
-        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Review Edit settings, then verify connections before running agents.`,
+        `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, choose and test the environment for your crew.`,
         result.linear?.status === "error",
       );
       try {
         await refreshStatus();
         await refreshConfigFiles();
+        pages.navigate(
+          `/projects/${encodeURIComponent(data.project)}?tab=environment`,
+        );
       } catch {
         message(
           $("global-message"),
@@ -3071,7 +3093,7 @@
     $("project-linear-connection").disabled =
       formsLocked || linearResourcesLoading;
     const mode = $("project-linear-mode");
-    if (!linearModeEdited) mode.value = connected ? "create" : "later";
+    if (!linearModeEdited) mode.value = "later";
     for (const option of mode.options)
       option.disabled = option.value !== "later" && !connected;
     $("project-linear-team-field").hidden = mode.value !== "reuse";
@@ -3081,7 +3103,7 @@
     $("refresh-linear-resources").disabled =
       !connected || formsLocked || linearResourcesLoading;
     $("project-linear-help").textContent = connected
-      ? "New apps get their own team by default. Existing teams are available if you prefer."
+      ? "Optional now. Configure the environment first, then choose or create a team when your PM needs to file tickets."
       : "Connect Linear above to create a team. You can save the app now and finish the mapping later.";
     const teamSelect = $("project-linear-team");
     const previousTeam = teamSelect.value;
@@ -4261,6 +4283,14 @@
         ".password-wrap input, textarea[data-secret-json], #gcp-credentials, #slack-webhook",
       ),
     ].find((input) => input.value);
+    if (projectOnboarding?.isDirty() && !isEditorDirty()) {
+      const project = projectOnboarding.dirtyProject();
+      pages.navigate(
+        `/projects/${encodeURIComponent(project)}?tab=environment`,
+      );
+      projectOnboarding.focusDraft(project);
+      return;
+    }
     const target = isEditorDirty()
       ? $("config-content")
       : pendingToken ||
@@ -4812,6 +4842,8 @@
       [...profileControls.values()].some((control) => control.isBusy?.()) ||
       projectOperations?.isDirty() ||
       projectOperations?.isBusy() ||
+      projectOnboarding?.isDirty() ||
+      projectOnboarding?.isBusy() ||
       remoteWorkers?.isBusy() ||
       Object.keys(pmCharter.read()).length > 0 ||
       pmDraft?.hasDraft() ||
@@ -4914,6 +4946,8 @@
         isEditorDirty() ||
         projectWorkspace?.isDirty() ||
         projectOperations?.isDirty() ||
+        projectOnboarding?.isDirty() ||
+        projectOnboarding?.isBusy() ||
         workspaceDeletion?.isBusy() ||
         pmActions?.isBusy() ||
         connectionsView?.isBusy() ||
@@ -5067,10 +5101,49 @@
     if (formsLocked || pmCreating) return;
     openPmCreation(event.detail.project);
   });
+  projectOnboarding = window.createProjectOnboarding({
+    api,
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onSaved: async (project) => {
+      projectChecks.delete(project);
+      await refreshStatus();
+      await refreshConfigFiles();
+    },
+    onCreatePm: (project) => openPmCreation(project),
+    loadImage: async (path) => {
+      const url = new URL(path, window.location.origin);
+      if (
+        url.origin !== window.location.origin ||
+        !/^\/api\/projects\/[^/]+\/onboarding\/screenshot$/.test(
+          url.pathname,
+        ) ||
+        url.search ||
+        url.username ||
+        url.password
+      )
+        throw new Error("The environment screenshot address is invalid.");
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "error",
+        signal: AbortSignal.timeout(20000),
+      });
+      if (
+        !response.ok ||
+        !response.headers.get("content-type")?.startsWith("image/")
+      )
+        throw new Error(
+          "The browser screenshot could not be loaded. Test the environment again.",
+        );
+      return response.blob();
+    },
+  });
   projectWorkspace = window.createProjectWorkspace($("project-workspace"), {
     api,
     pages,
     operations: projectOperations,
+    onboarding: projectOnboarding,
     getJobs: () => mergedJobs(),
     onDelete: openDeletion,
     getCheck: (name) => projectChecks.get(name),

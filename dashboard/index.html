@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/update-banner.css" />
     <link rel="stylesheet" href="/workspace.css" />
     <link rel="stylesheet" href="/project-workspace.css" />
+    <link rel="stylesheet" href="/project-onboarding.css" />
     <link rel="stylesheet" href="/operations.css" />
     <link rel="stylesheet" href="/deletion.css" />
     <script src="/signals-settings.js" defer></script>
@@ -31,6 +32,7 @@
     <script src="/operations.js" defer></script>
     <script src="/setup-suggestions.js" defer></script>
     <script src="/remote-workers.js" defer></script>
+    <script src="/project-onboarding.js" defer></script>
     <script src="/project-workspace.js" defer></script>
     <script src="/deletion.js" defer></script>
     <script src="/deleted-resources.js" defer></script>
@@ -1646,8 +1648,19 @@
                       </p>
                     </div>
                   </div>
-                  <div id="new-project-settings"></div>
-                  <div class="project-linear-setup">
+                  <details
+                    class="onboarding-advanced"
+                    id="new-project-advanced"
+                  >
+                    <summary>
+                      Advanced workflow &amp; repository commands
+                    </summary>
+                    <div id="new-project-settings"></div>
+                  </details>
+                  <details class="project-linear-setup onboarding-advanced">
+                    <summary>
+                      Linear team · optional until your PM is ready
+                    </summary>
                     <div class="field">
                       <label for="project-linear-connection"
                         >Linear connection</label
@@ -1692,11 +1705,12 @@
                       role="status"
                       hidden
                     ></div>
-                  </div>
+                  </details>
                   <div class="form-bottom">
                     <p>
-                      Creates configuration, templates, and the selected Linear
-                      setup. It doesn’t start agents or change your app.
+                      Adds your repository and starts a Setup Gremlin when
+                      source and Claude access are ready. No PM is created and
+                      no app changes are published.
                     </p>
                     <button
                       class="button button-dark"

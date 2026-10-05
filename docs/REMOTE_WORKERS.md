@@ -4,6 +4,8 @@ The dashboard controller owns the queue, approved tickets, project connections, 
 
 Workers run on Linux, or Docker Desktop on Windows and macOS. This release does not run native macOS or iOS jobs. A Google Compute Engine VM with Docker and Node.js 22.12 or newer can run the same worker command; this is a persistent worker process, not a Cloud Run service.
 
+Projects can select a [managed Docker test environment](PROJECT_ONBOARDING.md). The remote worker then creates the app and optional PostgreSQL/Redis beside the gremlin on a private network, renews its controller lease during preparation, and cleans up after evidence upload. Keep the controller and remote CLI on version 0.14.0 or newer for this payload; run `gremlins update` on each machine. A controller-side environment check does not prove a hosted URL is reachable from another worker's network.
+
 ## Connect a worker
 
 1. Install ShipGremlins and Docker on the worker machine. Confirm Docker can run Linux containers as the account that will run the worker.

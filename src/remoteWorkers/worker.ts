@@ -247,6 +247,7 @@ export function createRemoteWorker(options: {
         "Waiting for the owned job container to stop.",
         409,
       );
+    await options.docker.cleanupEnvironment?.(active.id);
   }
   async function renew(job: Assignment, requestAt: number) {
     const remaining =
@@ -321,6 +322,10 @@ export function createRemoteWorker(options: {
           throw error;
         }
         const job = response.job as Assignment | null;
+        await options.docker.reconcileEnvironments?.([
+          ...(state.active ? [state.active.id] : []),
+          ...(job ? [job.id] : []),
+        ]);
         if (!job) {
           if (state.active) {
             await stop(state.active);
@@ -401,18 +406,62 @@ export function createRemoteWorker(options: {
           }
           state.active.attempted = true;
           save(state);
-          await options.docker.startJob({
-            id: job.id,
-            workerId: job.workerId,
-            payload: {
-              ...job.payload,
-              remoteLeaseDeadline:
-                clock() +
-                Math.min(120000, Number(job.ttlMs)) -
-                Math.max(0, clock() - at) -
-                10000,
-            },
-          });
+          const launchPayload = {
+            ...job.payload,
+            remoteLeaseDeadline:
+              clock() +
+              Math.min(120000, Number(job.ttlMs)) -
+              Math.max(0, clock() - at) -
+              10000,
+          };
+          // App builds can outlast a lease. Poll during preparation, then let the
+          // Docker adapter enforce the last confirmed deadline before executing AI.
+          let renewing: Promise<void> | undefined;
+          let revoked = false;
+          const heartbeat = setInterval(() => {
+            if (renewing || revoked) return;
+            renewing = (async () => {
+              const started = clock();
+              try {
+                const current = await request("poll", {}, state.token);
+                if (
+                  !current.job ||
+                  current.job.id !== job.id ||
+                  current.job.lease !== job.lease ||
+                  current.job.cancel
+                ) {
+                  revoked = true;
+                  launchPayload.remoteLeaseDeadline = 0;
+                  return;
+                }
+                launchPayload.remoteLeaseDeadline =
+                  started + Math.min(120000, Number(current.job.ttlMs)) - 10000;
+                const running = await options.docker.inspectJob(job.id);
+                if (running.running) await renew(current.job, started);
+              } catch {
+                /* The last confirmed deadline remains in force. */
+              }
+            })().finally(() => {
+              renewing = undefined;
+            });
+          }, 20000);
+          try {
+            await options.docker.startJob({
+              id: job.id,
+              workerId: job.workerId,
+              payload: launchPayload,
+            });
+          } finally {
+            clearInterval(heartbeat);
+            await renewing;
+          }
+          if (revoked || launchPayload.remoteLeaseDeadline < clock() + 1000) {
+            await stop(job);
+            throw new RemoteWorkerError(
+              "The job lease ended during environment preparation.",
+              409,
+            );
+          }
           inspect = await options.docker.inspectJob(job.id);
         }
         if (inspect.workerId !== job.workerId)
@@ -420,7 +469,20 @@ export function createRemoteWorker(options: {
             "The container does not belong to this worker assignment.",
             403,
           );
-        if (inspect.running) await renew(job, at);
+        if (inspect.running) {
+          const freshAt = clock(),
+            fresh = await request("poll", {}, state.token);
+          if (
+            !fresh.job ||
+            fresh.job.id !== job.id ||
+            fresh.job.lease !== job.lease ||
+            fresh.job.cancel
+          ) {
+            await stop(job);
+            return;
+          }
+          await renew(fresh.job, freshAt);
+        }
         let logs = await options.docker.logs(job.id).catch(() => "");
         if (inspect.running) {
           const reported = await request(
@@ -578,6 +640,7 @@ export function createRemoteWorker(options: {
           },
           state.token,
         );
+        await options.docker.cleanupEnvironment?.(job.id);
         delete state.active;
         save(state);
       } finally {

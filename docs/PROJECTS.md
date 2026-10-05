@@ -17,6 +17,8 @@ project ready for a new crew. [Removal and recovery details](RESOURCE_LIFECYCLE.
 
 ## Get one PM ready, then automate
 
+New projects first open **Environment**. A Setup Gremlin reads source and recommends existing hosted staging or a disposable Docker application. You can review proposed setup files as a draft PR/MR, configure named test accounts, and test access in Chromium before creating a PM. Analysis and successful verification are separate states. See [project onboarding](PROJECT_ONBOARDING.md).
+
 Start from the selected project's guided setup actions. Source control selects
 the app repository; Connections supplies Claude Code and the chosen Linear
 account; Edit settings holds commands, optional browser targets, and Linear
@@ -102,7 +104,7 @@ from TypeScript source. Its worker needs Node.js 22.12 or newer.
 
 ## Add a browser environment
 
-Choose **Docker or another host**, **Vercel**, **Railway**, or **Google Cloud Run** in the project form. Give the target a name and a `preview` or `staging` role. Browser verification selects exactly one named environment:
+Use the project's **Environment** page for an existing hosted target or a managed Docker app. Advanced project settings also configure **Vercel**, **Railway**, **Google Cloud Run**, or a direct URL. Give the target a name and a `preview` or `staging` role. Browser verification selects exactly one named environment:
 
 ```json
 {
@@ -122,9 +124,11 @@ The browser target and PR base are separate choices. Provider-discovered Vercel 
 
 Production environments may be recorded for context, but cannot be selected for browser verification. Use isolated accounts, synthetic data, and a mandate that explains allowed test actions. The URL must be HTTP(S), without embedded credentials, query parameters, or a fragment.
 
-### Docker, a homelab, or another hosting provider
+### Existing Docker service, a homelab, or another hosting provider
 
 Use `kind: "url"` with an existing reachable preview. Discovery credentials are unnecessary. ShipGremlins does not start, deploy, or expose your application just because a URL is configured.
+
+For ShipGremlins to start the app itself, choose **Docker** on the Environment page instead. A `kind: "docker"` target defines an image or repository Dockerfile, port, optional PostgreSQL/Redis and bounded seed/migration commands. Each job gets its own private app network and cleanup. See [the managed Docker example](PROJECT_ONBOARDING.md#docker-configuration-example).
 
 The URL must be reachable **from the worker container**. `localhost` points to that container, not the machine running your app. Use a reachable private-network address or `http://host.docker.internal:PORT` for a host service; the local worker configures the host gateway mapping. Bind the app to the appropriate interface and check its firewall. Services in another container need a published port or an intentionally shared network. This applies equally to your own server, Docker, a VPS, or a provider without a native connector.
 

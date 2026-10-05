@@ -818,7 +818,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     if (input.area && !project.areas.some((a) => a.key === input.area))
       throw new Error("Choose a configured owning PM area.");
     const access = source(),
-      jobId = `promotion-${randomBytes(12).toString("hex")}`;
+      jobId = `job-promotion-${randomBytes(12).toString("hex")}`;
     const target = {
       provider: project.config.provider ?? ("github" as const),
       serverUrl: project.config.serverUrl,
@@ -943,7 +943,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         };
     }
     const access = source(),
-      jobId = `checks-${randomBytes(12).toString("hex")}`,
+      jobId = `job-checks-${randomBytes(12).toString("hex")}`,
       target = {
         provider: project.config.provider ?? ("github" as const),
         serverUrl: project.config.serverUrl,

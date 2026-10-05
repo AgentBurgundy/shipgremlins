@@ -13,6 +13,72 @@ import {
 } from "./projectCapabilities.ts";
 
 describe("project capabilities", () => {
+  it("supports disposable browser apps but never grants Docker promotion proof", () => {
+    const raw = {
+      workflow: { kind: "pull-request", baseBranch: "main" },
+      verification: { mode: "browser", environment: "local" },
+      environments: {
+        local: {
+          kind: "docker",
+          role: "preview",
+          recipe: {
+            kind: "dockerfile",
+            dockerfile: "Dockerfile",
+            context: ".",
+          },
+          port: 3000,
+          env: { APP_KEY: "APP_TEST_KEY" },
+          access: {
+            kind: "password",
+            loginPath: "/login",
+            usernameSelector: "#user",
+            passwordSelector: "#password",
+            submitSelector: "button",
+            successSelector: "#signed-in",
+            accounts: [
+              {
+                name: "Tester",
+                usernameSecret: "TEST_USER",
+                passwordSecret: "TEST_PASSWORD",
+              },
+            ],
+          },
+        },
+      },
+    };
+    const config = {
+      ...makeProject().config,
+      ...parseProjectCapabilities(raw),
+      vercel: undefined,
+    };
+    expect(effectiveVerification(config)).toMatchObject({
+      mode: "browser",
+      target: { kind: "docker" },
+    });
+    expect(projectSecretNames(config)).toEqual([
+      "TEST_USER",
+      "TEST_PASSWORD",
+      "APP_TEST_KEY",
+    ]);
+    expect(promotionVercel(config)).toBeNull();
+    expect(() =>
+      parseProjectCapabilities({
+        ...raw,
+        workflow: { kind: "promotion", candidateEnvironment: "local" },
+      }),
+    ).toThrow("nonproduction Vercel or Railway");
+    config.environments!.host = {
+      kind: "railway",
+      role: "preview",
+      projectId: "p",
+      environmentId: "e",
+      serviceId: "s",
+      tokenSecret: "APP_TEST_KEY",
+    };
+    expect(() => validateWorkerSecretReferences(config)).toThrow(
+      "dedicated test",
+    );
+  });
   it("requires a distinct nonproduction provider target for candidate verification", () => {
     const raw = {
       workflow: { kind: "promotion", candidateEnvironment: "candidate" },

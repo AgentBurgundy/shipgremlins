@@ -1,5 +1,15 @@
 import type { ProjectConfig } from "./config.ts";
 import { validConnectionId } from "./oauthConnection/profileId.ts";
+import {
+  parseDockerTarget,
+  type DockerEnvironmentTarget,
+} from "./testEnvironments/recipe.ts";
+import {
+  parseTestAccess,
+  testAccessSecretNames,
+  type TestAccess,
+} from "./testAccess.ts";
+export type { DockerEnvironmentTarget } from "./testEnvironments/recipe.ts";
 export { validConnectionId } from "./oauthConnection/profileId.ts";
 
 export type ProjectWorkflow =
@@ -11,7 +21,9 @@ export type ProjectVerification =
 /** Accounts are connections; these are resource identities, never credentials. */
 export type EnvironmentTarget = {
   role: "preview" | "staging" | "production";
+  access?: TestAccess;
 } & (
+  | DockerEnvironmentTarget
   | { kind: "url"; url: string }
   | {
       kind: "vercel";
@@ -128,8 +140,21 @@ function parseTarget(value: unknown): EnvironmentTarget {
     throw new Error(
       "Each environment needs a preview, staging, or production role.",
     );
-  const common = ["kind", "role"];
+  const common = ["kind", "role", "access"];
+  parseTestAccess(value.access);
   switch (value.kind) {
+    case "docker": {
+      const parsed = parseDockerTarget(value);
+      if (
+        Object.values(parsed.env ?? {}).some(
+          (name) => !validWorkerSecretName(name),
+        )
+      )
+        throw new Error(
+          "Docker apps must use dedicated test secrets, never controller credentials.",
+        );
+      return parsed;
+    }
     case "url":
       keys(value, [...common, "url"]);
       if (!validEnvironmentUrl(value.url))
@@ -220,7 +245,7 @@ function parseTarget(value: unknown): EnvironmentTarget {
       break;
     default:
       throw new Error(
-        "Environment kind must be url, vercel, railway, or cloud-run.",
+        "Environment kind must be url, vercel, railway, cloud-run, or docker.",
       );
   }
   if (value.branch !== undefined && !validBranch(value.branch))
@@ -358,8 +383,13 @@ export function validateWorkerSecretReferences(config: ProjectConfig): void {
   const workerNames = [
     config.vercel?.bypassSecret,
     config.signIn?.databaseUrlSecret,
+    ...targets.flatMap((target) => testAccessSecretNames(target.access)),
     ...targets.flatMap((target) =>
-      target.kind === "vercel" ? [target.bypassSecret] : [],
+      target.kind === "vercel"
+        ? [target.bypassSecret]
+        : target.kind === "docker"
+          ? Object.values(target.env ?? {})
+          : [],
     ),
   ].filter((name): name is string => name !== undefined);
   if (
@@ -442,13 +472,22 @@ export function projectSecretNames(config: ProjectConfig): string[] {
   return [
     ...new Set(
       targets.flatMap((target) => {
+        const access = testAccessSecretNames(target.access);
         if (target.kind === "vercel")
-          return target.bypassSecret ? [target.bypassSecret] : [];
+          return [
+            ...access,
+            ...(target.bypassSecret ? [target.bypassSecret] : []),
+          ];
         if (target.kind === "railway")
-          return [target.tokenSecret ?? "RAILWAY_TOKEN"];
+          return [...access, target.tokenSecret ?? "RAILWAY_TOKEN"];
         if (target.kind === "cloud-run")
-          return [target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON"];
-        return [];
+          return [
+            ...access,
+            target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON",
+          ];
+        if (target.kind === "docker")
+          return [...access, ...Object.values(target.env ?? {})];
+        return access;
       }),
     ),
   ];

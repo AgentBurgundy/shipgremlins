@@ -5,6 +5,68 @@ uses evidence to propose useful work. The same workflow can serve a web app,
 API, internal tool, library or service. Hosting and browser access are optional
 for repository verification.
 
+## The flow at a glance
+
+Project onboarding and a PM's own discovery are separate steps. The Setup Gremlin recommends how to run the application; PM discovery learns one mandate's part of that codebase.
+
+```mermaid
+flowchart TD
+  Repo[Connect repository] --> Setup[Setup Gremlin analyzes source]
+  Setup --> Strategy{Choose how to test}
+  Strategy --> Hosted[Existing hosted staging]
+  Strategy --> Docker[Disposable Docker app]
+  Strategy --> Code[Repository checks only]
+  Hosted --> Access[Test browser access and configured logins]
+  Docker --> Access
+  Access --> PM[Create PM with mandate and boundaries]
+  Code --> PM
+  PM --> Discovery[Optional read-only PM discovery]
+  Discovery --> Memory[Code map, features, ranked queue and memory]
+```
+
+```mermaid
+flowchart TD
+  Trigger[Run now or enabled UTC schedule] --> Gate{Connections, mapping, budget and worker ready?}
+  Gate -->|No| Block[Show blocker; preserve existing work]
+  Gate -->|Yes| Context[Load current mandate, learned notes and shared observations]
+  Context --> Checkout[Start isolated worker and checkout]
+  Checkout --> Mode{Verification mode}
+  Mode -->|Hosted| Staging[Resolve selected staging URL]
+  Mode -->|Docker| App[Start private app and services; check health]
+  Mode -->|Repository| Inspect[Inspect code and configured checks]
+  Staging --> Patrol[Observe, research, rank and investigate]
+  App --> Patrol
+  Inspect --> Patrol
+  Patrol --> Evidence[Reproduce findings; collect test output and browser evidence when applicable]
+  Evidence --> Findings{Supported new work?}
+  Findings -->|Yes| Propose[Deduplicate and propose Linear tickets]
+  Findings -->|No| Coverage[Record tested hypotheses, coverage and blockers]
+  Propose --> Learn[Save validated knowledge, artifacts and visible activity]
+  Coverage --> Learn
+  Evidence --> Fixes[Review earlier implementations when supplied]
+  Fixes --> Proof{Independent evidence matches required deployment?}
+  Proof -->|No| Hold[Keep delivery unverified]
+  Proof -->|Yes, promotion workflow| Candidate[Controller prepares selective candidate]
+  Candidate --> CandidateGate[Run candidate checks; await deployed candidate and trusted signed verification]
+  CandidateGate --> Promotion[Only passing candidates get a staging promotion PR]
+  Promotion --> Production[Owner merges staging and production]
+  Production --> Scope[Owner declares complete delivery scope]
+  Scope --> Audit[Controller audits exact production inclusion]
+  Audit --> Done[Only then can Linear become Done]
+  Learn --> Finish[Report to dashboard and optional Slack; clean disposable resources]
+  Finish --> Next[Next patrol uses updated memory]
+  Next -.-> Trigger
+  Propose --> Owner[Owner approves scope]
+  Owner --> Coding[Coding Gremlin implements and runs checks]
+  Coding --> Draft[Passing checks produce a draft PR or MR]
+  Draft --> Integration[Promotion workflow: eligible integration merge]
+  Integration -.-> Fixes
+```
+
+The diagram describes distinct agent instructions and controller checks. Investigation quality, prioritization, deduplication and proposal wording are prompt-directed behavior. Job admission, approved coding scope, delivery verification, and promotion gates are enforced by the controller. A successful process exit is not proof that every feature or security boundary was tested.
+
+The owning PM does not itself publish or merge promotion PRs. In the optional promotion workflow, its review feeds a separately verified candidate. Candidate promotion waits for the configured trusted signer; a PM's own review is insufficient. Owners retain staging and production merge decisions. Linear completion requires an explicit complete-scope declaration and an exact production-merge/content audit; it does not assert that a live production deployment is healthy. Ordinary pull-request mode ends with reviewed drafts, and Docker/direct-URL/Cloud Run environments do not qualify for the current Vercel/Railway promotion-review route.
+
 ## Give the PM a product brief
 
 The PM's `mandate` states its job. An optional `charter` in its `areas.json` entry

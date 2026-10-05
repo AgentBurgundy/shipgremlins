@@ -235,7 +235,7 @@
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (locked || row.busy) return;
-        const value = input.value.trim();
+        const value = input.value;
         if (!value) {
           message(
             status,

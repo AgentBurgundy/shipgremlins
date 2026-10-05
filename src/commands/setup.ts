@@ -16,6 +16,7 @@ import { createVercelConnection } from "../vercelConnection/index.ts";
 import { listConnectionIds } from "../oauthConnection/profiles.ts";
 
 export interface SetupDeps extends PreflightDeps {
+  createInitialPm?: boolean;
   projectSettings?: Record<string, unknown>;
   templatesRoot?: string;
   detectHubRepo?: (directory: string) => string | undefined;
@@ -152,6 +153,7 @@ export async function runSetup(
         serverUrl: string("server-url"),
         hubRepo,
         area: string("area"),
+        createInitialPm: deps.createInitialPm,
         runner,
         runnerLabel: string("runner-label"),
         settings: string("base-branch")

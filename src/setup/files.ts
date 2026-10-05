@@ -137,6 +137,8 @@ export interface InitInput {
   provider?: "github" | "gitlab";
   serverUrl?: string;
   area?: string;
+  /** Dashboard onboarding can discover the project before creating its first PM. */
+  createInitialPm?: boolean;
   runner?: "local" | "self-hosted" | "gce";
   runnerLabel?: string;
   today?: string;
@@ -159,7 +161,11 @@ export function initializeSetup(
 ): InitResult {
   validateName(input.project, "project");
   validateName(input.area ?? "core", "area");
-  assertResourceAvailable(root, input.project, input.area ?? "core");
+  assertResourceAvailable(
+    root,
+    input.project,
+    input.createInitialPm === false ? undefined : (input.area ?? "core"),
+  );
   validateRepo(input.repo, input.provider);
   if (
     input.settings &&
@@ -280,7 +286,8 @@ export function initializeSetup(
         (project.config.provider ?? "github") !== input.provider) ||
       (input.serverUrl !== undefined &&
         project.config.serverUrl !== input.serverUrl) ||
-      !project.areas.some((item) => item.key === area)
+      (input.createInitialPm !== false &&
+        !project.areas.some((item) => item.key === area))
     ) {
       throw new Error(
         "Existing project uses a different repository or area. No files changed.",
@@ -326,6 +333,8 @@ export function initializeSetup(
       "queue.md",
       "memory.md",
     ]) {
+      if (input.createInitialPm === false && !filename.endsWith(".json"))
+        continue;
       const template = join(templatesRoot, "projects", "_templates", filename);
       if (!existsSync(template))
         throw new Error(
@@ -343,6 +352,7 @@ export function initializeSetup(
         const config = JSON.parse(content) as {
           areas: Record<string, { enabled: boolean }>;
         };
+        if (input.createInitialPm === false) config.areas = {};
         for (const item of Object.values(config.areas)) item.enabled = false;
         content = JSON.stringify(config, null, 2) + "\n";
       }
@@ -409,8 +419,14 @@ export function initializeSetup(
     secretNames: [...new Set([...COMMON_SECRETS, ...secrets])],
     next: [
       `Review projects/${input.project}/project.json: base branch and install/test commands. Repository review needs no hosting provider; optionally choose browser verification and an environment.`,
-      `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
-      `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
+      ...(input.createInitialPm === false
+        ? [
+            "Open the project's Environment page to analyze its source, choose hosted staging or a disposable Docker app, and test browser access before creating PMs.",
+          ]
+        : [
+            `Edit projects/${input.project}/areas.json: Linear project ID, ownership paths, and schedule; PMs start disabled.`,
+            `Write projects/${input.project}/${area}/mandate.md and configure isolated test accounts.`,
+          ]),
       `Use gremlins setup to save connections and create a Docker worker on this machine. Use gremlins setup --lan for a server accessed from other devices.`,
       `Run gremlins setup --check --project ${input.project}. If using a local .env, create/fill it first, then use gremlins --env-file .env setup --check --project ${input.project}.`,
       `For live provider checks run gremlins --env-file .env doctor ${input.project} (or gremlins doctor ${input.project} when credentials are already exported).`,

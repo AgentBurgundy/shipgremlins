@@ -117,6 +117,64 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("pins Docker builds to the admitted checkout and separates app secrets from browser credentials", async () => {
+    const target = {
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "dockerfile", dockerfile: "Dockerfile", context: "." },
+      port: 3000,
+      env: { APP_KEY: "TEST_APP_KEY" },
+      access: {
+        kind: "password",
+        loginPath: "/login",
+        usernameSelector: "#email",
+        passwordSelector: "#password",
+        submitSelector: "button",
+        successSelector: "#home",
+        accounts: [
+          {
+            name: "Member",
+            usernameSecret: "TEST_USER",
+            passwordSecret: "TEST_PASSWORD",
+          },
+        ],
+      },
+    };
+    edit("project.json", (raw) => {
+      raw.verification = { mode: "browser", environment: "test" };
+      raw.environments = { test: target };
+    });
+    const sha = "a".repeat(40);
+    const hostingFetch = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ sha }), { status: 200 }),
+    );
+    const prepared = createJobPreparation({
+      root,
+      env: {
+        ...env,
+        TEST_APP_KEY: "app-only",
+        TEST_USER: "test@example.test",
+        TEST_PASSWORD: "password with spaces",
+      },
+      hostingFetch,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [ticket],
+      }),
+    });
+    const payload = await prepared.prepareJob(job);
+    expect(payload.expectedCommitSha).toBe(sha);
+    expect(payload.testEnvironment?.env).toEqual({ APP_KEY: "app-only" });
+    expect(payload.credentials).toMatchObject({
+      GREMLINS_TEST_USERNAME_1: "test@example.test",
+      GREMLINS_TEST_PASSWORD_1: "password with spaces",
+    });
+    expect(JSON.stringify(payload.credentials)).not.toContain("app-only");
+    expect(payload.prompt).toContain("http://app.test:3000");
+    expect(payload.prompt).toContain("GREMLINS_TEST_PASSWORD_1");
+    expect(payload.prompt).not.toContain("password with spaces");
+    expect(String(hostingFetch.mock.calls[0]?.[0])).toContain("pm-staging");
+  });
   it("supplies bounded shared observations and captures approved ticket identity before publication", async () => {
     const beforeDeveloper = vi.fn(
       async (

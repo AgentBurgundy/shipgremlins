@@ -39,6 +39,15 @@ import {
 } from "../setup/connections.ts";
 import { assertNoSymlinks } from "../setup/files.ts";
 import {
+  createProjectOnboarding,
+  ProjectOnboardingError,
+  type ProjectOnboarding,
+} from "../projectOnboarding/index.ts";
+import {
+  createEnvironmentAccess,
+  EnvironmentAccessError,
+} from "../setup/environmentAccess.ts";
+import {
   ConfigEditorError,
   listEditableConfigs,
   readEditableConfig,
@@ -85,6 +94,7 @@ import {
   effectiveVerification,
   effectiveWorkflow,
   validConnectionId,
+  parseProjectCapabilities,
 } from "../projectCapabilities.ts";
 import {
   createLinearConnection,
@@ -293,6 +303,8 @@ export interface DashboardOptions {
   vercelConnectionFor?: (connectionId?: string) => VercelConnection;
   linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
   pmPlanner?: PmPlanner;
+  projectOnboarding?: ProjectOnboarding;
+  environmentAccess?: ReturnType<typeof createEnvironmentAccess>;
   delivery?: ReturnType<typeof createDeliveryController>;
   remote?: ReturnType<typeof createRemoteWorkers>;
 }
@@ -362,7 +374,9 @@ export function createDashboardServer(
       finish();
     }
   }
-  const localDocker = options.docker ?? createDockerRunners({ packageRoot });
+  const localDocker =
+    options.docker ??
+    createDockerRunners({ packageRoot, environmentNamespace: root });
   const docker = remote.adapter(localDocker);
   const sourceControl =
     options.sourceControl ?? createSourceControl({ root, session });
@@ -394,6 +408,39 @@ export function createDashboardServer(
   }
   const linearConnectionFor = (id?: string) => selectedConnection("linear", id);
   const vercelConnectionFor = (id?: string) => selectedConnection("vercel", id);
+  const projectOnboarding =
+    options.projectOnboarding ??
+    createProjectOnboarding({ root, packageRoot, sourceControl });
+  const environmentAccess =
+    options.environmentAccess ??
+    createEnvironmentAccess({
+      root,
+      packageRoot,
+      sourceControl,
+      vercelConnectionFor,
+      docker: localDocker,
+    });
+  async function onboardingState(name: string) {
+    const state = await projectOnboarding.status(name);
+    const project = loadProject(root, name),
+      verification = effectiveVerification(project.config);
+    return {
+      ...state,
+      environment:
+        verification.mode === "browser"
+          ? {
+              name: verification.environment,
+              profile:
+                verification.target.kind === "docker" ? "docker" : "hosted",
+              target: verification.target,
+              verification: environmentAccess.status(name),
+              legacySignIn: project.config.signIn ?? null,
+            }
+          : null,
+    };
+  }
+  const setupBusy = (name?: string) =>
+    projectOnboarding.busy(name) || environmentAccess.busy(name);
   async function requireProfile(provider: OAuthProvider, id: string) {
     if (
       !validConnectionId(id) ||
@@ -745,6 +792,10 @@ export function createDashboardServer(
     }));
   async function resourceBlockers(target: ResourceTarget): Promise<string[]> {
     const blockers: string[] = [];
+    if (setupBusy(target.project))
+      blockers.push(
+        "Repository setup or an environment test is still running. Wait for it to finish before removing this configuration.",
+      );
     if (activeProjectOperations.has(target.project))
       blockers.push(
         "Project setup, editing, or provider work is still running. Wait for it to finish.",
@@ -783,6 +834,7 @@ export function createDashboardServer(
       configurationMutation ||
       activeMutationRequests ||
       activeProjectOperations.size ||
+      setupBusy(target.project) ||
       (!target.project && automaticPromotions.pending().length > 0) ||
       [...deliveryOperations.values()].some((item) => item.phase === "running")
     )
@@ -1472,6 +1524,11 @@ export function createDashboardServer(
             );
           if (Object.keys(await body(req)).length)
             throw new RequestError(400, "Stop takes an empty object.");
+          if (setupBusy())
+            throw new RequestError(
+              409,
+              "Wait for repository setup and environment tests to finish before stopping this controller.",
+            );
           res.once("finish", options.shutdown);
           json(res, 202, { ok: true });
           return;
@@ -2225,6 +2282,11 @@ export function createDashboardServer(
               409,
               "Another update is running. Wait for it to finish.",
             );
+          if (action !== "check" && setupBusy())
+            throw new RequestError(
+              409,
+              "Wait for repository setup and environment tests to finish before updating or restarting this controller.",
+            );
           if (action === "restart") {
             if (!options.restart)
               throw new RequestError(
@@ -2494,6 +2556,190 @@ export function createDashboardServer(
           json(res, 200, { ok: true });
           return;
         }
+        const onboardingRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|configure|verify|setup-pr|cancel|screenshot))?$/.exec(
+            url.pathname,
+          );
+        if (onboardingRoute) {
+          const name = onboardingRoute[1]!,
+            action = onboardingRoute[2];
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Setup requests do not accept query parameters.",
+            );
+          if (!listProjectNames(root).includes(name))
+            throw new RequestError(404, "Project not found.");
+          if (!action) {
+            if (req.method !== "GET")
+              throw new RequestError(405, "Use GET for project setup.");
+            json(res, 200, await onboardingState(name));
+          } else if (action === "screenshot") {
+            if (req.method !== "GET")
+              throw new RequestError(
+                405,
+                "Use GET for the environment screenshot.",
+              );
+            const png = environmentAccess.screenshot(name);
+            res.writeHead(200, {
+              "Content-Type": "image/png",
+              "Content-Length": png.length,
+            });
+            res.end(png);
+          } else {
+            if (req.method !== "POST")
+              throw new RequestError(405, "Use POST for setup actions.");
+            if (updateRunning)
+              throw new RequestError(
+                409,
+                "Wait for the controller update before starting setup work.",
+              );
+            const input = await body(req);
+            if (action === "configure") {
+              if (
+                Object.keys(input).some(
+                  (key) =>
+                    ![
+                      "configurationRevision",
+                      "profile",
+                      "environment",
+                      "target",
+                    ].includes(key),
+                ) ||
+                typeof input.configurationRevision !== "string" ||
+                !["hosted", "docker"].includes(String(input.profile)) ||
+                (input.environment !== undefined &&
+                  (typeof input.environment !== "string" ||
+                    !/^[a-z][a-z0-9-]{0,62}$/.test(input.environment))) ||
+                (input.target !== undefined && !record(input.target)) ||
+                (!input.target && !input.environment)
+              )
+                throw new RequestError(
+                  400,
+                  "Choose an environment profile and target with the current configuration revision.",
+                );
+              if (setupBusy(name))
+                throw new RequestError(
+                  409,
+                  "Wait for this project's setup or environment test before changing its environment.",
+                );
+              await runners().withConfigurationMutation(
+                { project: name },
+                async () => {
+                  const file = `projects/${name}/project.json`,
+                    current = readEditableConfig(root, file);
+                  if (current.revision !== input.configurationRevision)
+                    throw new RequestError(
+                      409,
+                      "Project settings changed. Reload before saving this environment.",
+                    );
+                  const raw = JSON.parse(current.content) as Record<
+                    string,
+                    unknown
+                  >;
+                  const existing = record(raw.environments)
+                    ? raw.environments
+                    : {};
+                  // Reuse a current target only when the owner selected it explicitly.
+                  const environment =
+                    typeof input.environment === "string"
+                      ? input.environment
+                      : "pm-test";
+                  const selected = input.target ?? existing[environment];
+                  let capabilities;
+                  try {
+                    capabilities = parseProjectCapabilities({
+                      ...raw,
+                      environments: { ...existing, [environment]: selected },
+                      verification: { mode: "browser", environment },
+                    });
+                  } catch {
+                    throw new RequestError(
+                      400,
+                      "Choose a valid nonproduction environment, recipe and secret references.",
+                    );
+                  }
+                  const target = capabilities.environments![environment]!;
+                  if (
+                    (target.kind === "docker") !==
+                      (input.profile === "docker") ||
+                    target.role === "production"
+                  )
+                    throw new RequestError(
+                      400,
+                      "Choose a matching nonproduction environment profile.",
+                    );
+                  if (target.kind === "vercel" && target.connectionId)
+                    await requireProfile("vercel", target.connectionId);
+                  // No analyzed values or provider credentials are silently copied into configuration.
+                  raw.environments = capabilities.environments;
+                  raw.verification = { mode: "browser", environment };
+                  raw.verified = null;
+                  saveEditableConfig(root, {
+                    path: file,
+                    content: JSON.stringify(raw, null, 2) + "\n",
+                    revision: current.revision,
+                  });
+                  await projectOnboarding.recordConfigured(name, {
+                    previousConfigurationRevision: current.revision,
+                    profile: input.profile as "hosted" | "docker",
+                  });
+                },
+              );
+              json(res, 200, await onboardingState(name));
+            } else {
+              if (
+                Object.keys(input).some((key) => key !== "revision") ||
+                (input.revision !== undefined &&
+                  typeof input.revision !== "string")
+              )
+                throw new RequestError(
+                  400,
+                  "Provide only an optional setup revision.",
+                );
+              if (action === "discover") {
+                if (environmentAccess.busy(name))
+                  throw new RequestError(
+                    409,
+                    "Wait for the environment test before analyzing this project.",
+                  );
+                await projectOnboarding.discover(name, {
+                  revision: input.revision as string | undefined,
+                });
+              } else if (action === "setup-pr") {
+                if (typeof input.revision !== "string")
+                  throw new RequestError(
+                    400,
+                    "Review the latest setup files before publishing their draft.",
+                  );
+                if (environmentAccess.busy(name))
+                  throw new RequestError(
+                    409,
+                    "Wait for the environment test before publishing setup files.",
+                  );
+                await projectOnboarding.prepareSetupPr(name, {
+                  revision: input.revision,
+                });
+              } else if (action === "cancel") {
+                await projectOnboarding.cancel(name, {
+                  revision:
+                    typeof input.revision === "string"
+                      ? input.revision
+                      : (await projectOnboarding.status(name)).revision,
+                });
+              } else {
+                if (projectOnboarding.busy(name))
+                  throw new RequestError(
+                    409,
+                    "Wait for repository setup before testing this environment.",
+                  );
+                await environmentAccess.verify(name);
+              }
+              json(res, 202, await onboardingState(name));
+            }
+          }
+          return;
+        }
         if (url.pathname === "/api/projects") {
           if (req.method !== "POST")
             throw new RequestError(405, "Use POST to add a project.");
@@ -2516,10 +2762,13 @@ export function createDashboardServer(
                   "commands",
                   "branches",
                   "telemetry",
+                  "onboarding",
                 ].includes(key),
             ) ||
             typeof input.project !== "string" ||
             typeof input.repo !== "string" ||
+            (input.onboarding !== undefined &&
+              typeof input.onboarding !== "boolean") ||
             (input.hubRepo !== undefined &&
               typeof input.hubRepo !== "string") ||
             (input.provider !== undefined &&
@@ -2650,6 +2899,7 @@ export function createDashboardServer(
             args.push("--provider", input.provider);
           if (typeof input.serverUrl === "string")
             args.push("--server-url", input.serverUrl);
+          const existed = listProjectNames(root).includes(input.project);
           const output: string[] = [];
           const code = await runSetup(
             root,
@@ -2658,6 +2908,7 @@ export function createDashboardServer(
             {
               env: {},
               templatesRoot: packageRoot,
+              ...(input.onboarding === true ? { createInitialPm: false } : {}),
               projectSettings: Object.fromEntries(
                 [
                   "workflow",
@@ -2679,7 +2930,7 @@ export function createDashboardServer(
               "Project setup could not finish. Check the project ID, source repository, and existing configuration with gremlins setup init --help.",
             );
           const linear =
-            input.linearMode === "later"
+            input.linearMode === "later" || input.onboarding === true
               ? {
                   status: "skipped" as const,
                   message: "App saved. Set up its Linear team when ready.",
@@ -2690,10 +2941,19 @@ export function createDashboardServer(
                     ? input.linearTeamId
                     : undefined,
                 );
+          let onboarding;
+          if (input.onboarding === true && !existed) {
+            try {
+              onboarding = await projectOnboarding.discover(input.project);
+            } catch {
+              onboarding = await projectOnboarding.status(input.project);
+            }
+          }
           json(res, 200, {
             ok: true,
             result: JSON.parse(output.join("\n")),
             linear,
+            ...(onboarding ? { onboarding } : {}),
           });
           return;
         }
@@ -3058,6 +3318,9 @@ export function createDashboardServer(
         error instanceof LocalRunnerError ||
         error instanceof ProjectKnowledgeError ||
         error instanceof ResourceDeletionError ||
+        error instanceof ProjectOnboardingError ||
+        error instanceof EnvironmentAccessError ||
+        error instanceof ConfigEditorError ||
         error instanceof RemoteWorkerError
           ? error.status
           : error instanceof ConnectionSaveError
@@ -3068,6 +3331,9 @@ export function createDashboardServer(
         error instanceof LocalRunnerError ||
         error instanceof ProjectKnowledgeError ||
         error instanceof ResourceDeletionError ||
+        error instanceof ProjectOnboardingError ||
+        error instanceof EnvironmentAccessError ||
+        error instanceof ConfigEditorError ||
         error instanceof ConnectionSaveError ||
         error instanceof RemoteWorkerError
           ? error.message
@@ -3094,7 +3360,11 @@ export function createDashboardServer(
   deliveryTimer.unref();
   server.once("close", () => {
     clearInterval(deliveryTimer);
-    void Promise.resolve(manager?.stop()).finally(() => activityStore.close());
+    void Promise.allSettled([
+      projectOnboarding.close(),
+      environmentAccess.close(),
+      Promise.resolve(manager?.stop()),
+    ]).finally(() => activityStore.close());
   });
   return server;
 }

@@ -13,6 +13,8 @@ self-approval and memory-branch descriptions below do not apply to local workers
 Current local operations also have a [project control room](PROJECT_OPERATIONS.md),
 [owning-PM selective delivery](DELIVERY_WORKFLOW.md), and [remote Docker workers](REMOTE_WORKERS.md).
 
+For choosing and testing hosted staging or disposable Docker apps before creating PMs, use [project onboarding](PROJECT_ONBOARDING.md).
+
 For current PM log and analytics access, see [project telemetry](TELEMETRY.md):
 Sentry logs/errors, Datadog logs, and per-area Mixpanel Insights reports.
 

@@ -78,6 +78,8 @@ export interface ProjectConnectionUsage {
     | "vercel"
     | "railway"
     | "cloud-run"
+    | "app"
+    | "docker"
     | "neon"
     | "slack"
     | "sentry"
@@ -87,13 +89,14 @@ export interface ProjectConnectionUsage {
     | "deployment-access"
     | "preview-bypass"
     | "test-sign-in"
+    | "app-environment"
     | "slack-override"
     | "telemetry-read";
   label: string;
   description: string;
   optional: boolean;
   targetName?: string;
-  targetType?: "vercel" | "railway" | "cloud-run";
+  targetType?: EnvironmentTarget["kind"];
 }
 export interface ProjectConnectionDescriptor extends Omit<
   ProjectConnectionUsage,
@@ -124,6 +127,40 @@ export function projectConnections(
         active: boolean,
       ) => {
         const context = { project, targetName };
+        if (target.access?.kind === "password") {
+          for (const account of target.access.accounts) {
+            for (const [name, field] of [
+              [account.usernameSecret, "username"],
+              [account.passwordSecret, "password"],
+            ] as const)
+              references.push({
+                ...context,
+                name,
+                group: "sign-in",
+                provider: "app",
+                targetType: target.kind,
+                purpose: "test-sign-in",
+                label: `${account.name} · ${field}`,
+                description: `Dedicated ${field} for the ${account.name} test account in ${targetName}. Never use a production account.`,
+                optional: !active,
+              });
+          }
+        }
+        if (target.kind === "docker") {
+          for (const [variable, name] of Object.entries(target.env ?? {}))
+            references.push({
+              ...context,
+              name,
+              group: "preview",
+              provider: "docker",
+              targetType: "docker",
+              purpose: "app-environment",
+              label: `${targetName} · ${variable}`,
+              description:
+                "Test-only application input. Passed to the disposable app, not the AI worker.",
+              optional: !active,
+            });
+        }
         if (target.kind === "vercel" && target.bypassSecret) {
           references.push({
             ...context,
@@ -470,7 +507,7 @@ function replaceValues(
       const key = assignment[1]!;
       if (Object.hasOwn(updates, key)) {
         if (remaining.delete(key) && updates[key] !== null)
-          output += `${key}='${updates[key]}'\n`;
+          output += encodeConnection(key, updates[key]!);
         start = end;
         continue;
       }
@@ -485,7 +522,7 @@ function replaceValues(
   )
     output += "\n";
   for (const key of remaining)
-    if (updates[key] !== null) output += `${key}='${updates[key]}'\n`;
+    if (updates[key] !== null) output += encodeConnection(key, updates[key]!);
 
   // Refuse ambiguous/malformed quoting instead of risking an unrelated setting.
   const before = parseEnv(source);
@@ -507,6 +544,15 @@ function replaceValues(
 }
 
 /** All dashboard saves and explicit clears share the same local write lock. */
+function encodeConnection(key: string, value: string): string {
+  const quote = ["'", '"', "`"].find((candidate) => !value.includes(candidate));
+  if (!quote)
+    throw new ConnectionSaveError(
+      "invalid_test_input",
+      "This test input cannot be represented safely in the connection file.",
+    );
+  return `${key}=${quote}${value}${quote}\n`;
+}
 function updateSource(root: string, updates: Record<string, string | null>) {
   let temporary: string | undefined;
   let handle: number | undefined;
@@ -649,8 +695,32 @@ export function saveConnections(root: string, input: unknown): void {
         "invalid_input",
         "Connection values must be text.",
       );
-    let value = raw.trim();
+    const dedicatedInput = projectConnections(root).find(
+      (entry) =>
+        entry.name === name &&
+        entry.usages.every(
+          (usage) =>
+            usage.provider === "app" || usage.purpose === "app-environment",
+        ),
+    );
+    let value = dedicatedInput ? raw : raw.trim();
     if (!value) continue;
+    if (dedicatedInput) {
+      if (
+        value.length > 16384 ||
+        [...value].some(
+          (character) =>
+            character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+        ) ||
+        ["'", '"', "`"].every((quote) => value.includes(quote))
+      )
+        throw new ConnectionSaveError(
+          "invalid_test_input",
+          "Test inputs must be single-line values under 16384 characters. Use a test credential that does not contain all three quote styles.",
+        );
+      updates[name] = value;
+      continue;
+    }
     if (name === "CLAUDE_CODE_OAUTH_TOKEN") {
       try {
         value = normalizeClaudeToken(value);

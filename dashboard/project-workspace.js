@@ -693,6 +693,27 @@
         );
     }
     function home(project) {
+      if (project.verification?.mode !== "browser" && !project.areas?.length) {
+        const setup = node("section", "onboarding-setup-callout"),
+          copy = node("div");
+        copy.append(
+          node("strong", "", "Give your crew a safe place to test."),
+          node(
+            "p",
+            "",
+            "Analyze the repository or connect a test URL. You can also keep this project repository-only.",
+          ),
+        );
+        setup.append(
+          copy,
+          link(
+            "Set up environment",
+            path(project.name, "", "environment"),
+            "small-button",
+          ),
+        );
+        root.append(setup);
+      }
       const crew = node("section", "project-crew-section");
       const title = node("div", "project-section-title");
       title.append(
@@ -1134,7 +1155,8 @@
       const currentRoute = `${pages.project}/${pages.pm}/${pages.tab}`;
       if (
         renderedRoute === currentRoute &&
-        options.operations?.protectFocus(root)
+        (options.operations?.protectFocus(root) ||
+          options.onboarding?.protectFocus(root))
       )
         return;
       renderedRoute = currentRoute;
@@ -1169,6 +1191,7 @@
         navigation.setAttribute("aria-label", "Project sections");
         for (const [key, label] of [
           ["overview", "Overview"],
+          ["environment", "Environment"],
           ["review", "Review"],
           ["knowledge", "Knowledge"],
           ["delivery", "Delivery"],
@@ -1191,6 +1214,8 @@
           link("Project overview", path(project.name), "small-button"),
         );
       else if (area) pmWorkspace(project, area);
+      else if (pages.tab === "environment")
+        options.onboarding?.mount(root, project);
       else if (
         ["review", "knowledge", "delivery", "limits"].includes(pages.tab)
       )
@@ -1236,6 +1261,7 @@
             notices.delete(key);
           }
         setupSuggestions?.forget(project, area);
+        if (!area) options.onboarding?.forget(project);
         if (editor.project === project && (!area || editor.area === area)) {
           finishClose();
           editor.original = "";

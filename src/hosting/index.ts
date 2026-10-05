@@ -496,6 +496,11 @@ export async function resolveEnvironment(
       provider: "url",
       url: webUrl(target.url, "Configured environment"),
     };
+  if (target.kind === "docker")
+    throw new HostingError(
+      "Managed Docker apps start on the assigned worker. Use the Docker environment verifier, not a hosted deployment lookup.",
+      "invalid",
+    );
   if (!resource(target.projectId))
     throw new HostingError("Invalid hosting project identifier.", "invalid");
   switch (target.kind) {

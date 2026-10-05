@@ -349,7 +349,10 @@ export function createRemoteWorkers(options: {
           String(input.lease),
         );
         worker.lastSeenAt = clock();
-        const secrets = Object.values(job.payload.credentials ?? {});
+        const secrets = [
+          ...Object.values(job.payload.credentials ?? {}),
+          ...Object.values(job.payload.testEnvironment?.env ?? {}),
+        ];
         job.logs = publicActivityLogs(sanitize(String(input.logs), secrets))
           .join("\n")
           .slice(-1024 * 1024);
@@ -441,10 +444,10 @@ export function createRemoteWorkers(options: {
           throw new RemoteWorkerError("Remote artifact total is too large.");
         if (!/\.(png|jpe?g|webp)$/i.test(name))
           content = Buffer.from(
-            sanitize(
-              content.toString("utf8"),
-              Object.values(job.payload.credentials ?? {}),
-            ),
+            sanitize(content.toString("utf8"), [
+              ...Object.values(job.payload.credentials ?? {}),
+              ...Object.values(job.payload.testEnvironment?.env ?? {}),
+            ]),
           );
         writePrivate(path, content);
         const png = content
@@ -622,6 +625,10 @@ export function createRemoteWorkers(options: {
             }
             delete state.jobs[id];
           });
+        },
+        async cleanupEnvironment(id) {
+          // The remote daemon cleans its app after its final evidence upload.
+          if (!remoteJob(id)) await local.cleanupEnvironment?.(id);
         },
         async verifyReview(id, plan, reviewOptions) {
           const job = remoteJob(id);

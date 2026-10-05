@@ -427,7 +427,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   const notifications = join(base, "notifications");
   const cancellations = join(base, "cancellations");
   const docker =
-    options.docker ?? createDockerRunners({ packageRoot: options.packageRoot });
+    options.docker ??
+    createDockerRunners({
+      packageRoot: options.packageRoot,
+      environmentNamespace: options.root,
+    });
   const clock = options.clock ?? (() => new Date());
   let imageReady = false;
   let inFlight: Promise<void> | undefined;
@@ -440,18 +444,25 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   const captured = new Map<string, { fingerprint: string; at: number }>();
   const sideEffectWarnings = new Map<string, string>();
   const releasedResources = new Set<string>();
+  let historicalTerminalEnvironments: Set<string> | undefined;
+  let lastEnvironmentSweep: number | undefined;
   const now = () => clock().toISOString();
 
   async function releaseResources(job: LocalJob): Promise<void> {
-    if (!options.releaseJobResources || releasedResources.has(job.id)) return;
+    if (releasedResources.has(job.id)) return;
     try {
-      await options.releaseJobResources(job.id);
+      await options.releaseJobResources?.(job.id);
+      if (
+        TERMINAL.has(job.status) &&
+        !historicalTerminalEnvironments?.has(job.id)
+      )
+        await docker.cleanupEnvironment?.(job.id);
       sideEffectWarnings.delete(`resources:${job.id}`);
       if (TERMINAL.has(job.status)) releasedResources.add(job.id);
     } catch {
       sideEffectWarnings.set(
         `resources:${job.id}`,
-        "Source connection lease cleanup is pending. Other jobs may wait for the lease to expire; existing work is preserved.",
+        "Run resource cleanup is pending. Existing work and evidence are preserved; cleanup will retry.",
       );
     }
   }
@@ -1491,6 +1502,14 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
 
   async function tickOnce(): Promise<void> {
     await exclusive(async (state) => {
+      // One namespace sweep recovers historical resources. Avoid three Docker
+      // subprocesses per retained terminal run when restarting a large history.
+      if (docker.reconcileEnvironments && !historicalTerminalEnvironments)
+        historicalTerminalEnvironments = new Set(
+          state.jobs
+            .filter((job) => TERMINAL.has(job.status))
+            .map((job) => job.id),
+        );
       state.operation = {
         phase: "idle",
         message: "Local workers are watching the queue.",
@@ -1511,6 +1530,25 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         await reconcileCancellation(state, job);
       for (const job of state.jobs.filter((item) => TERMINAL.has(item.status)))
         await releaseResources(job);
+      if (
+        lastEnvironmentSweep === undefined ||
+        clock().getTime() - lastEnvironmentSweep >= 60_000
+      ) {
+        lastEnvironmentSweep = clock().getTime();
+        await docker
+          .reconcileEnvironments?.(
+            state.jobs
+              .filter((job) => !TERMINAL.has(job.status))
+              .map((job) => job.id),
+          )
+          .catch(() => {
+            state.operation = {
+              phase: "error",
+              message:
+                "Disposable environment cleanup needs attention. Check Docker; active jobs were preserved.",
+            };
+          });
+      }
       if (stopping) {
         state.operation = {
           phase: "idle",

@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
+import * as testEnvironments from "../testEnvironments/index.ts";
 import { fileURLToPath } from "node:url";
 import {
   mkdtempSync,
@@ -21,6 +22,7 @@ import {
 } from "../../runner-local/runtime.mjs";
 import {
   createDockerRunners,
+  validatePayload,
   type DockerRun,
   type DockerRunOptions,
   type DockerJobPayload,
@@ -52,12 +54,18 @@ function fake() {
     const missing = (stderr: string) => ({ code: 1, stdout: "", stderr });
     if (args[0] === "version")
       return ok(JSON.stringify({ Os: "linux", Arch: "amd64" }));
+    if (args[0] === "network" && args[1] === "inspect")
+      return missing("No such network");
+    if (args[0] === "network" && args[1] === "connect") return ok();
+    if (args[0] === "ps") return ok();
     if (args[0] === "inspect") {
       const value = containers.get(args.at(-1)!);
       return value
         ? ok(JSON.stringify(value))
         : missing("Error: No such object");
     }
+    if (args[0] === "image" && args.at(-1)?.startsWith("shipgremlins-app:"))
+      return missing("No such image");
     if (args[0] === "image")
       return imageExists ? ok("[{}]") : missing("No such image");
     if (args[0] === "build") {
@@ -167,6 +175,227 @@ const developer = {
 } satisfies DockerJobPayload;
 
 describe("local Docker job runtime", () => {
+  it("counts app preparation against runtime and never launches when the budget is exhausted", async () => {
+    let now = 1_000;
+    const time = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const managed = {
+      start: vi.fn(async () => {
+        now += 125_000;
+        return {
+          url: "http://app.test:3000",
+          network: "private-app-net",
+          imageId: `sha256:${"f".repeat(64)}`,
+          health: { ready: true as const, status: 200 },
+        };
+      }),
+      cleanup: vi.fn(async () => {}),
+      reconcile: vi.fn(async () => {}),
+      smoke: vi.fn(),
+    };
+    const factory = vi
+      .spyOn(testEnvironments, "createTestEnvironments")
+      .mockReturnValue(managed);
+    try {
+      const payload: DockerJobPayload = {
+        ...developer,
+        expectedCommitSha: "a".repeat(40),
+        maxRuntimeMinutes: 10,
+        testEnvironment: {
+          target: {
+            kind: "docker",
+            role: "preview",
+            recipe: { kind: "image", image: "example/app:1" },
+            port: 3000,
+          },
+        },
+      };
+      const f = fake();
+      await f.api.startJob({ id, workerId, payload });
+      const received = f.calls.find((c) =>
+        c.args.includes("/opt/gremlins/receive-job.mjs"),
+      )!.options!.stdin!;
+      expect(JSON.parse(received)).toMatchObject({
+        maxRuntimeMinutes: 10,
+        remainingRuntimeMs: 475_000,
+      });
+      const expired = fake();
+      await expect(
+        expired.api.startJob({
+          id,
+          workerId,
+          payload: { ...payload, maxRuntimeMinutes: 2 },
+        }),
+      ).rejects.toThrow("runtime budget");
+      expect(expired.calls.some((c) => c.args[0] === "create")).toBe(false);
+      expect(managed.cleanup).toHaveBeenCalledWith(id);
+    } finally {
+      factory.mockRestore();
+      time.mockRestore();
+    }
+  });
+  it("preserves a one-minute job's precise remaining budget through payload handoff", async () => {
+    let now = 1_000;
+    const time = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const managed = {
+      start: vi.fn(async () => {
+        now += 1_235;
+        return {
+          url: "http://app.test:3000",
+          network: "private-app-net",
+          imageId: `sha256:${"f".repeat(64)}`,
+          health: { ready: true as const, status: 200 },
+        };
+      }),
+      cleanup: vi.fn(async () => {}),
+      reconcile: vi.fn(async () => {}),
+      smoke: vi.fn(),
+    };
+    const factory = vi
+      .spyOn(testEnvironments, "createTestEnvironments")
+      .mockReturnValue(managed);
+    try {
+      const f = fake();
+      await f.api.startJob({
+        id,
+        workerId,
+        payload: {
+          ...developer,
+          maxRuntimeMinutes: 1,
+          expectedCommitSha: "a".repeat(40),
+          testEnvironment: {
+            target: {
+              kind: "docker",
+              role: "preview",
+              recipe: { kind: "image", image: "example/app:1" },
+              port: 3000,
+            },
+          },
+        },
+      });
+      const delivery = f.calls.find((c) =>
+        c.args.includes("/opt/gremlins/receive-job.mjs"),
+      )!;
+      expect(JSON.parse(delivery.options!.stdin!)).toMatchObject({
+        maxRuntimeMinutes: 1,
+        remainingRuntimeMs: 58_765,
+      });
+      expect(await f.api.inspectJob(id)).toMatchObject({ running: true });
+      expect(() =>
+        validatePayload({
+          ...developer,
+          maxRuntimeMinutes: 1,
+          remainingRuntimeMs: 60_001,
+        }),
+      ).toThrow("remaining");
+    } finally {
+      factory.mockRestore();
+      time.mockRestore();
+    }
+  });
+  it("keeps application inputs out of the model payload and attaches only its private network", async () => {
+    const managed = {
+      start: vi.fn(async () => ({
+        url: "http://app.test:3000",
+        network: "private-app-net",
+        imageId: `sha256:${"f".repeat(64)}`,
+        commitSha: "a".repeat(40),
+        health: { ready: true as const, status: 200 },
+      })),
+      cleanup: vi.fn(async () => {}),
+      reconcile: vi.fn(async () => {}),
+      smoke: vi.fn(),
+    };
+    const factory = vi
+      .spyOn(testEnvironments, "createTestEnvironments")
+      .mockReturnValue(managed);
+    try {
+      const f = fake();
+      const payload: DockerJobPayload = {
+        ...developer,
+        expectedCommitSha: "a".repeat(40),
+        testEnvironment: {
+          target: {
+            kind: "docker",
+            role: "preview",
+            recipe: { kind: "image", image: "example/app:1" },
+            port: 3000,
+            env: { APP_KEY: "TEST_APP_KEY" },
+          },
+          env: { APP_KEY: "private-app-secret" },
+        },
+      };
+      await f.api.startJob({ id, workerId, payload });
+      expect(managed.start).toHaveBeenCalledWith(
+        expect.objectContaining({ env: { APP_KEY: "private-app-secret" } }),
+      );
+      const delivered = f.calls.find((c) =>
+        c.args.includes("/opt/gremlins/receive-job.mjs"),
+      )!.options!.stdin!;
+      expect(delivered).not.toContain("private-app-secret");
+      expect(delivered).not.toContain("testEnvironment");
+      expect(JSON.parse(delivered)).toMatchObject({
+        expectedCommitSha: "a".repeat(40),
+        prompt: expect.stringContaining("http://app.test:3000"),
+      });
+      expect(
+        f.calls.some(
+          (c) =>
+            JSON.stringify(c.args) ===
+            JSON.stringify([
+              "network",
+              "connect",
+              "private-app-net",
+              `gremlins-job-${id}`,
+            ]),
+        ),
+      ).toBe(true);
+      await f.api.stopJob(id);
+      expect(managed.cleanup).toHaveBeenCalledWith(id);
+    } finally {
+      factory.mockRestore();
+    }
+  });
+  it("allows only bounded test-account credential aliases and requires pinned app jobs", () => {
+    expect(() =>
+      validatePayload({
+        ...developer,
+        credentials: {
+          ...developer.credentials,
+          GREMLINS_TEST_USERNAME_1: "test-user",
+          GREMLINS_TEST_PASSWORD_8: "test-password",
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validatePayload({
+        ...developer,
+        credentials: {
+          ...developer.credentials,
+          GREMLINS_TEST_PASSWORD_9: "test-password",
+        },
+      }),
+    ).toThrow();
+    const app = {
+      target: {
+        kind: "docker" as const,
+        role: "preview" as const,
+        recipe: { kind: "image" as const, image: "example/app:1" },
+        port: 3000,
+      },
+    };
+    expect(() =>
+      validatePayload({ ...developer, testEnvironment: app }),
+    ).toThrow("pinned");
+    expect(() =>
+      validatePayload({
+        ...developer,
+        kind: "pm",
+        pmMode: "discovery",
+        expectedCommitSha: "a".repeat(40),
+        testEnvironment: app,
+      }),
+    ).toThrow("normal job");
+  });
   it("stops only a labeled owned container and retains its output volume", async () => {
     const test = fake();
     await test.api.startJob({ id, workerId, payload: verify });
@@ -316,7 +545,10 @@ describe("local Docker job runtime", () => {
     expect(commandText).not.toContain("private-model-value");
     const delivery = test.calls.find((call) => call.args[0] === "exec")!;
     expect(delivery.args).toContain("--interactive");
-    expect(JSON.parse(delivery.options!.stdin!)).toEqual(developer);
+    expect(JSON.parse(delivery.options!.stdin!)).toMatchObject(developer);
+    expect(
+      JSON.parse(delivery.options!.stdin!).maxRuntimeMinutes,
+    ).toBeLessThanOrEqual(45);
     expect(await test.api.inspectJob(id)).toMatchObject({
       exists: true,
       running: true,
@@ -798,6 +1030,16 @@ describe("trusted local job publication", () => {
       expect(stop).toHaveBeenCalledTimes(2);
       shorter();
       expect(() => enforceDeadline(stop, exit, 46)).toThrow();
+      const remaining = enforceDeadline(stop, exit, 1, 58_765);
+      vi.advanceTimersByTime(58_764);
+      expect(stop).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(1);
+      expect(stop).toHaveBeenCalledTimes(3);
+      remaining();
+      for (const value of [0, -1, 60_001, 1.5, Infinity])
+        expect(() => enforceDeadline(stop, exit, 1, value)).toThrow(
+          "remaining",
+        );
     } finally {
       vi.useRealTimers();
     }

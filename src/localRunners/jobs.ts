@@ -50,6 +50,8 @@ import {
 } from "../pmKnowledge/prompts.ts";
 import { createProjectKnowledge } from "../projectKnowledge/index.ts";
 import type { ExecutionLimits } from "../execution.ts";
+import { resolveTestAccess, type TestAccess } from "../testAccess.ts";
+import { resolveRepositoryHead } from "../projectOnboarding/repository.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -155,7 +157,7 @@ function projectSecrets(
   if (Buffer.byteLength(source) > 512 * 1024)
     throw new Error("Connection file is too large.");
   const saved = parseEnv(source);
-  return Object.fromEntries(
+  const result = Object.fromEntries(
     names
       .filter(
         (name) =>
@@ -178,6 +180,21 @@ function projectSecrets(
           : [];
       }),
   );
+  const access = resolveTestAccess(verification.target.access, {
+    ...saved,
+    ...env,
+  });
+  access?.accounts.forEach((account, index) => {
+    result[`GREMLINS_TEST_USERNAME_${index + 1}`] = account.username;
+    result[`GREMLINS_TEST_PASSWORD_${index + 1}`] = account.password;
+  });
+  return result;
+}
+
+function accessInstruction(access: TestAccess | undefined): string {
+  if (!access || access.kind === "public")
+    return "No password test account is configured for this environment.";
+  return `Use only these dedicated test accounts for the selected environment. Read credential values from the named variables without printing them. Login recipe: ${JSON.stringify({ ...access, accounts: access.accounts.map((account, index) => ({ name: account.name, usernameVariable: `GREMLINS_TEST_USERNAME_${index + 1}`, passwordVariable: `GREMLINS_TEST_PASSWORD_${index + 1}` })) })}. This login configuration is not proof of RBAC correctness; test roles and isolation explicitly.`;
 }
 
 export function createJobPreparation(options: JobPreparationOptions) {
@@ -559,7 +576,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
     Object.assign(credentials, projectSecrets(root, project, env));
     let preview: string | undefined;
     if (verification.mode === "browser") {
-      if (options.preview && verification.target.kind === "vercel") {
+      if (verification.target.kind === "docker") {
+        preview = `http://app.test:${verification.target.port}`;
+      } else if (options.preview && verification.target.kind === "vercel") {
         const credential = await vercelFor(
           verification.target.connectionId,
         ).resolveCredential({
@@ -621,6 +640,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       `Ownership paths and gates: ${JSON.stringify({ paths: area.paths, sharedTouchpoints: area.sharedTouchpoints, tiers: project.tiers, commands: project.config.commands })}`,
       ...(verification.mode === "browser"
         ? [
+            accessInstruction(verification.target.access),
             `Preview bypass credential, if configured, is environment variable GREMLINS_PREVIEW_BYPASS; use it only for the selected environment. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
           ]
         : []),
@@ -702,6 +722,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
               instructions.at(-1),
               ...(verification.mode === "browser"
                 ? [
+                    accessInstruction(verification.target.access),
                     `Preview bypass credential, if configured, is GREMLINS_PREVIEW_BYPASS; use it only for the selected environment. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
                   ]
                 : []),
@@ -724,6 +745,33 @@ export function createJobPreparation(options: JobPreparationOptions) {
           }
         : {}),
     };
+    if (
+      verification.mode === "browser" &&
+      verification.target.kind === "docker"
+    ) {
+      const head = await resolveRepositoryHead({
+        project,
+        credential: { token: credentials[sourceKey]! },
+        fetch: options.hostingFetch,
+        branch: checkoutBranch,
+      });
+      payload.expectedCommitSha = head.sha;
+      payload.testEnvironment = {
+        target: verification.target,
+        env: Object.fromEntries(
+          Object.entries(verification.target.env ?? {}).map(
+            ([variable, reference]) => {
+              const value = saved[reference];
+              if (!value)
+                throw new JobReadinessError(
+                  "Save the selected Docker environment's named test inputs in Connections before running.",
+                );
+              return [variable, value];
+            },
+          ),
+        ),
+      };
+    }
     return ticket && options.beforeDeveloper
       ? await options.beforeDeveloper(job, payload, ticket)
       : payload;

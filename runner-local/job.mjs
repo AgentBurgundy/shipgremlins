@@ -200,12 +200,12 @@ try {
   if (!input || !["verify", "pm", "developer"].includes(input.kind))
     throw new Error("Unsupported job kind.");
   kind = input.kind;
-  if (input.maxRuntimeMinutes !== undefined) {
-    if (
-      !Number.isInteger(input.maxRuntimeMinutes) ||
-      input.maxRuntimeMinutes < 1 ||
-      input.maxRuntimeMinutes > 45
-    )
+  if (
+    input.maxRuntimeMinutes !== undefined ||
+    input.remainingRuntimeMs !== undefined
+  ) {
+    const minutes = input.maxRuntimeMinutes ?? 45;
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 45)
       throw new Error("Invalid job runtime limit.");
     clearDeadline();
     clearDeadline = enforceDeadline(
@@ -214,7 +214,8 @@ try {
         stop();
       },
       undefined,
-      input.maxRuntimeMinutes,
+      minutes,
+      input.remainingRuntimeMs,
     );
   }
   const discovery = input.pmMode === "discovery";
@@ -297,7 +298,8 @@ try {
       throw new Error("Invalid job credentials.");
     for (const [key, value] of Object.entries(credentials)) {
       if (
-        !allowedCredentials.has(key) ||
+        (!allowedCredentials.has(key) &&
+          !/^GREMLINS_TEST_(USERNAME|PASSWORD)_[1-8]$/.test(key)) ||
         typeof value !== "string" ||
         value.length > 16384 ||
         /[\r\n\0]/.test(value)
@@ -333,9 +335,26 @@ try {
       ],
       { env: publication },
     );
+    if (input.expectedCommitSha !== undefined) {
+      if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(input.expectedCommitSha))
+        throw new Error("Invalid pinned source revision.");
+      await run(
+        "git",
+        ["fetch", "--depth", "1", "origin", input.expectedCommitSha],
+        { cwd: "/work/repo", env: publication },
+      );
+      await run("git", ["checkout", "--detach", input.expectedCommitSha], {
+        cwd: "/work/repo",
+        env,
+      });
+    }
     const baseSha = (
       await run("git", ["rev-parse", "HEAD"], { cwd: "/work/repo", env })
     ).trim();
+    if (input.expectedCommitSha && baseSha !== input.expectedCommitSha)
+      throw new Error(
+        "The worker checkout does not match the admitted environment revision.",
+      );
     if (input.reviewPlan && baseSha !== input.reviewPlan.deployment.sha)
       throw new Error(
         "Integration moved before checkout. Queue a patrol after its deployment settles.",

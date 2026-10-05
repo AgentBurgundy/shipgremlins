@@ -5,6 +5,13 @@ import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { validateDelivery } from "../../runner-local/delivery.mjs";
 import { validateReviewPlan } from "../../runner-local/review-receipts.mjs";
+import {
+  createTestEnvironments,
+  parseDockerTarget,
+  type DockerEnvironmentTarget,
+  type TestEnvironmentInput,
+  type TestEnvironment,
+} from "../testEnvironments/index.ts";
 
 export interface DockerJobPayload {
   kind: "verify" | "pm" | "developer";
@@ -17,10 +24,17 @@ export interface DockerJobPayload {
   browserVerification?: boolean;
   pmMode?: "discovery";
   maxRuntimeMinutes?: number;
+  /** Internal remaining execution budget after trusted environment preparation. */
+  remainingRuntimeMs?: number;
   project?: string;
   remoteLease?: boolean;
   remoteLeaseDeadline?: number;
   reviewPlan?: import("../delivery/types.ts").PmReviewPlan;
+  expectedCommitSha?: string;
+  testEnvironment?: {
+    target: DockerEnvironmentTarget;
+    env?: Record<string, string>;
+  };
   credentials?: Record<string, string>;
   commands?: Partial<
     Record<"install" | "test" | "lint" | "typecheck" | "build", string | null>
@@ -54,6 +68,8 @@ export interface DockerReview {
 }
 export interface DockerRunOptions {
   stdin?: string;
+  stdinBuffer?: Buffer;
+  env?: Record<string, string>;
   timeoutMs?: number;
   maxBytes?: number;
   onOutput?: (line: string) => void;
@@ -81,6 +97,12 @@ export interface DockerRunners {
   readArtifact(id: string, name: string): Promise<Buffer>;
   removeJob(id: string): Promise<void>;
   stopJob(id: string): Promise<void>;
+  cleanupEnvironment?(id: string): Promise<void>;
+  reconcileEnvironments?(activeJobIds: string[]): Promise<void>;
+  smokeEnvironment?(
+    input: TestEnvironmentInput,
+    verify?: (environment: TestEnvironment) => Promise<void>,
+  ): Promise<TestEnvironment>;
   refreshLease?(id: string, ttlMs: number): Promise<void>;
   prepareWorker?(workerId: string, remoteId?: string): Promise<void>;
   canRun?(remoteId: string | undefined, project?: string): boolean;
@@ -141,7 +163,14 @@ const runDocker: DockerRun = async (args, options = {}) =>
     const child = spawn("docker", args, {
       shell: false,
       windowsHide: true,
-      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      stdio: [
+        options.stdin === undefined && options.stdinBuffer === undefined
+          ? "ignore"
+          : "pipe",
+        "pipe",
+        "pipe",
+      ],
+      ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
     });
     let stdout = "";
     let stderr = "";
@@ -183,7 +212,8 @@ const runDocker: DockerRun = async (args, options = {}) =>
       }
     });
     child.stdin?.on("error", () => {});
-    if (options.stdin !== undefined) child.stdin?.end(options.stdin);
+    if (options.stdin !== undefined || options.stdinBuffer !== undefined)
+      child.stdin?.end(options.stdinBuffer ?? options.stdin);
   });
 
 export function validatePayload(payload: DockerJobPayload): string {
@@ -202,10 +232,13 @@ export function validatePayload(payload: DockerJobPayload): string {
           "browserVerification",
           "pmMode",
           "maxRuntimeMinutes",
+          "remainingRuntimeMs",
           "project",
           "remoteLease",
           "remoteLeaseDeadline",
           "reviewPlan",
+          "expectedCommitSha",
+          "testEnvironment",
           "credentials",
           "commands",
           "memory",
@@ -214,6 +247,42 @@ export function validatePayload(payload: DockerJobPayload): string {
     )
   )
     throw new Error("Invalid local job payload.");
+  if (
+    payload.expectedCommitSha !== undefined &&
+    !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(payload.expectedCommitSha)
+  )
+    throw new Error("Invalid pinned source revision.");
+  if (payload.testEnvironment !== undefined) {
+    if (
+      !record(payload.testEnvironment) ||
+      Object.keys(payload.testEnvironment).some(
+        (k) => !["target", "env"].includes(k),
+      ) ||
+      payload.kind === "verify" ||
+      payload.pmMode ||
+      payload.reviewPlan ||
+      !payload.expectedCommitSha
+    )
+      throw new Error(
+        "Managed app environments require a pinned normal job, without promotion review.",
+      );
+    parseDockerTarget(payload.testEnvironment.target);
+    const resolved = payload.testEnvironment.env ?? {};
+    if (
+      !record(resolved) ||
+      JSON.stringify(Object.keys(resolved).sort()) !==
+        JSON.stringify(
+          Object.keys(payload.testEnvironment.target.env ?? {}).sort(),
+        ) ||
+      Object.values(resolved).some(
+        (v) =>
+          typeof v !== "string" || !v || v.length > 16384 || /[\r\n\0]/.test(v),
+      )
+    )
+      throw new Error(
+        "Supply the dedicated app inputs declared by its Docker recipe.",
+      );
+  }
   if (
     payload.project !== undefined &&
     !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(payload.project)
@@ -248,6 +317,13 @@ export function validatePayload(payload: DockerJobPayload): string {
       payload.maxRuntimeMinutes > 45)
   )
     throw new Error("Job runtime limit must be between 1 and 45 minutes.");
+  if (
+    payload.remainingRuntimeMs !== undefined &&
+    (!Number.isSafeInteger(payload.remainingRuntimeMs) ||
+      payload.remainingRuntimeMs <= 0 ||
+      payload.remainingRuntimeMs > (payload.maxRuntimeMinutes ?? 45) * 60_000)
+  )
+    throw new Error("Invalid remaining job runtime budget.");
   if (
     payload.browserVerification !== undefined &&
     typeof payload.browserVerification !== "boolean"
@@ -313,7 +389,8 @@ export function validatePayload(payload: DockerJobPayload): string {
       throw new Error("Invalid job credentials.");
     for (const [key, value] of Object.entries(payload.credentials))
       if (
-        !credentialNames.has(key) ||
+        (!credentialNames.has(key) &&
+          !/^GREMLINS_TEST_(USERNAME|PASSWORD)_[1-8]$/.test(key)) ||
         typeof value !== "string" ||
         value.length > 16384 ||
         [...value].some((character) => character.charCodeAt(0) < 32)
@@ -334,11 +411,17 @@ export function validatePayload(payload: DockerJobPayload): string {
 export function createDockerRunners(options: {
   packageRoot: string;
   run?: DockerRun;
+  environmentNamespace?: string;
 }): DockerRunners {
   const run = options.run ?? runDocker;
   const directory = join(resolve(options.packageRoot), "runner-local");
   const secrets = new Map<string, string[]>();
   let building: Promise<string> | undefined;
+  const environments = createTestEnvironments({
+    run,
+    ensureImage: () => api.ensureImage(),
+    namespace: options.environmentNamespace,
+  });
   const imageTag = () => {
     const hash = createHash("sha256");
     const files = readdirSync(directory)
@@ -549,7 +632,7 @@ export function createDockerRunners(options: {
     async startJob(input) {
       idValue(input.id);
       idValue(input.workerId);
-      const payload = validatePayload(input.payload);
+      validatePayload(input.payload);
       const existing = await inspectOwned(input.id);
       if (existing) {
         const config = existing.Config as {
@@ -560,108 +643,163 @@ export function createDockerRunners(options: {
           throw new Error("This job belongs to another worker.");
         return { id: input.id, name: name(input.id), image: config.Image };
       }
+      const preparationStarted = Date.now();
+      const budgetMs =
+        input.payload.remainingRuntimeMs ??
+        (input.payload.maxRuntimeMinutes ?? 45) * 60_000;
       const image = await api.ensureImage();
-      if (!(await ownedVolume(input.id))) {
+      const environment = input.payload.testEnvironment
+        ? await environments.start({
+            jobId: input.id,
+            target: input.payload.testEnvironment.target,
+            env: input.payload.testEnvironment.env,
+            source: {
+              repoUrl: input.payload.repoUrl!,
+              provider: input.payload.provider!,
+              commitSha: input.payload.expectedCommitSha!,
+              token:
+                input.payload.credentials?.[
+                  input.payload.provider === "gitlab"
+                    ? "GITLAB_TOKEN"
+                    : "GITHUB_TOKEN"
+                ] ?? "",
+            },
+          })
+        : undefined;
+      try {
+        // App secrets/recipe are controller-only. The agent receives only its private URL and pinned source SHA.
+        const delivered = { ...input.payload };
+        delete delivered.testEnvironment;
+        const remainingRuntime = () =>
+          budgetMs - Math.max(0, Date.now() - preparationStarted);
+        if (remainingRuntime() <= 0) {
+          if (environment) await environments.cleanup(input.id);
+          throw new Error(
+            "Application preparation exhausted the job runtime budget. Increase the project limit or use a prebuilt image, then retry.",
+          );
+        }
+        delivered.maxRuntimeMinutes = input.payload.maxRuntimeMinutes ?? 45;
+        if (environment)
+          delivered.prompt += `\n\nManaged test app: ${environment.url}. This disposable app is the admitted baseline; it is not proof of unmerged changes. Use Playwright against this URL. Image: ${environment.imageId}.`;
+        if (!(await ownedVolume(input.id))) {
+          const created = await run([
+            "volume",
+            "create",
+            "--label",
+            `${MANAGED}=true`,
+            "--label",
+            `${JOB}=${input.id}`,
+            volume(input.id),
+          ]);
+          if (created.code !== 0)
+            throw new Error("Could not create the local job output volume.");
+        }
+        const container = name(input.id);
         const created = await run([
-          "volume",
           "create",
+          "--name",
+          container,
           "--label",
           `${MANAGED}=true`,
           "--label",
           `${JOB}=${input.id}`,
-          volume(input.id),
+          "--label",
+          `${WORKER}=${input.workerId}`,
+          "--restart",
+          "no",
+          "--init",
+          "--add-host",
+          "host.docker.internal:host-gateway",
+          "--user",
+          "1000:1000",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "--pids-limit",
+          "512",
+          "--memory",
+          "4g",
+          "--cpus",
+          "2",
+          "--shm-size",
+          "1g",
+          "--env",
+          `GREMLINS_JOB_ID=${input.id}`,
+          "--mount",
+          `type=volume,source=${volume(input.id)},target=/output`,
+          image,
         ]);
-        if (created.code !== 0)
-          throw new Error("Could not create the local job output volume.");
-      }
-      const container = name(input.id);
-      const created = await run([
-        "create",
-        "--name",
-        container,
-        "--label",
-        `${MANAGED}=true`,
-        "--label",
-        `${JOB}=${input.id}`,
-        "--label",
-        `${WORKER}=${input.workerId}`,
-        "--restart",
-        "no",
-        "--init",
-        "--add-host",
-        "host.docker.internal:host-gateway",
-        "--user",
-        "1000:1000",
-        "--cap-drop",
-        "ALL",
-        "--security-opt",
-        "no-new-privileges",
-        "--pids-limit",
-        "512",
-        "--memory",
-        "4g",
-        "--cpus",
-        "2",
-        "--shm-size",
-        "1g",
-        "--env",
-        `GREMLINS_JOB_ID=${input.id}`,
-        "--mount",
-        `type=volume,source=${volume(input.id)},target=/output`,
-        image,
-      ]);
-      if (created.code !== 0)
-        throw new Error("Could not create the isolated local job container.");
-      secrets.set(
-        input.id,
-        Object.values(input.payload.credentials ?? {}).filter(Boolean),
-      );
-      try {
-        const started = await run(["start", container]);
-        if (started.code !== 0) throw new Error();
-        if (input.payload.remoteLease) {
-          const ttlMs = Math.min(
-            120000,
-            (input.payload.remoteLeaseDeadline ?? Date.now() + 30000) -
-              Date.now(),
-          );
-          if (ttlMs < 1000)
-            throw new Error("Remote lease expired before launch.");
-          const lease = await run(
+        if (created.code !== 0) {
+          await environments.cleanup(input.id);
+          throw new Error("Could not create the isolated local job container.");
+        }
+        secrets.set(
+          input.id,
+          Object.values(input.payload.credentials ?? {}).filter(Boolean),
+        );
+        try {
+          if (environment) {
+            const connected = await run([
+              "network",
+              "connect",
+              environment.network,
+              container,
+            ]);
+            if (connected.code !== 0) throw new Error();
+          }
+          const started = await run(["start", container]);
+          if (started.code !== 0) throw new Error();
+          if (input.payload.remoteLease) {
+            const ttlMs = Math.min(
+              120000,
+              (input.payload.remoteLeaseDeadline ?? Date.now() + 30000) -
+                Date.now(),
+            );
+            if (ttlMs < 1000)
+              throw new Error("Remote lease expired before launch.");
+            const lease = await run(
+              [
+                "exec",
+                "--interactive",
+                "--user",
+                "0",
+                container,
+                "node",
+                "/opt/gremlins/lease.mjs",
+                "renew",
+              ],
+              { stdin: JSON.stringify({ ttlMs }), timeoutMs: 15000 },
+            );
+            if (lease.code !== 0) throw new Error();
+          }
+          delivered.remainingRuntimeMs = remainingRuntime();
+          const payload = validatePayload(delivered);
+          const accepted = await run(
             [
               "exec",
               "--interactive",
               "--user",
-              "0",
+              "1000:1000",
               container,
               "node",
-              "/opt/gremlins/lease.mjs",
-              "renew",
+              "/opt/gremlins/receive-job.mjs",
             ],
-            { stdin: JSON.stringify({ ttlMs }), timeoutMs: 15000 },
+            { stdin: payload, timeoutMs: 30_000 },
           );
-          if (lease.code !== 0) throw new Error();
+          if (accepted.code !== 0) throw new Error();
+        } catch {
+          await run(["stop", "--time", "10", container]).catch(() => {});
+          await environments.cleanup(input.id).catch(() => {});
+          throw new Error(
+            "The local job could not receive its payload. Credentials were not written to host files or Docker configuration.",
+          );
         }
-        const accepted = await run(
-          [
-            "exec",
-            "--interactive",
-            "--user",
-            "1000:1000",
-            container,
-            "node",
-            "/opt/gremlins/receive-job.mjs",
-          ],
-          { stdin: payload, timeoutMs: 30_000 },
-        );
-        if (accepted.code !== 0) throw new Error();
-      } catch {
-        await run(["stop", "--time", "10", container]).catch(() => {});
-        throw new Error(
-          "The local job could not receive its payload. Credentials were not written to host files or Docker configuration.",
-        );
+        return { id: input.id, name: container, image };
+      } catch (error) {
+        if (environment) await environments.cleanup(input.id).catch(() => {});
+        throw error;
       }
-      return { id: input.id, name: container, image };
     },
     async inspectJob(id) {
       const data = await inspectOwned(id);
@@ -768,7 +906,11 @@ export function createDockerRunners(options: {
             "The owned job could not be stopped; cancellation remains pending.",
           );
       }
+      await environments.cleanup(id);
     },
+    cleanupEnvironment: (id) => environments.cleanup(id),
+    reconcileEnvironments: (ids) => environments.reconcile(ids),
+    smokeEnvironment: (input, verify) => environments.smoke(input, verify),
     async refreshLease(id, ttlMs) {
       if (!Number.isInteger(ttlMs) || ttlMs < 1000 || ttlMs > 120000)
         throw new Error("Invalid remote lease duration.");
@@ -968,6 +1110,7 @@ export function createDockerRunners(options: {
             throw new Error("The job output volume could not be removed.");
       }
       secrets.delete(id);
+      await environments.cleanup(id);
     },
   };
   return api;

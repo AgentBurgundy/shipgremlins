@@ -3,14 +3,14 @@
 ## Default local Docker setup
 
 Open `gremlins setup` (or `gremlins setup --lan` on your server), save the source,
-Linear and Claude Code connections, and add your app repository. Hosting is optional. A fork
+and Claude Code connections, and add your app repository. Linear can come later. Hosting is optional. A fork
 or separate automation repository is not required. Terminal initialization is:
 
 ```sh
 gremlins setup init --project my-app --repo your-org/my-app
 ```
 
-Review the PR base branch, test commands, area and mandate. New projects use repository-only verification; add a preview/staging target only for browser work. Use **Edit settings** for commands, workflow, and named environments. See [Projects and hosting](PROJECTS.md) for Vercel, Railway, Cloud Run, or direct URL choices.
+The new project's **Environment** page starts a Setup Gremlin to inspect the source and recommend hosted staging or a disposable Docker app. Review and test the selected strategy, then create a PM. You can also keep repository-only verification. Review the PR base branch and test commands under **Edit settings**. See [project onboarding](PROJECT_ONBOARDING.md) for draft setup PRs, test accounts and Docker services.
 Use Configuration to edit advanced JSON and File locations to find the mandate/memory
 files. Create a Docker worker in the dashboard and wait for its browser screenshot
 verification. Choose **Verify connections** or run `gremlins doctor my-app`, then enable reviewed areas. The local

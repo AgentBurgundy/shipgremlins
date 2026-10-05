@@ -3,6 +3,8 @@
 Updated October 5, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
+Project onboarding now includes bounded source analysis, hosted-staging or managed-Docker selection, reviewed draft setup PR/MR publication, and real Chromium access/login checks. Managed Docker supports a pinned repository Dockerfile or existing image, optional disposable PostgreSQL/Redis, migration/seed commands, per-job networks and cleanup. New projects need no initial PM or Linear mapping. This does not provision hosted cloud environments, support arbitrary Compose stacks, certify coding gates, or extend automatic promotion beyond its existing evidence-supported providers. See [onboarding scope and limits](PROJECT_ONBOARDING.md).
+
 Project telemetry now includes optional read adapters for Sentry logs/error
 events, Datadog logs, and Mixpanel saved Insights reports. Project configuration,
 local dashboard credential fields, preflight/doctor checks and PM workflow secret
