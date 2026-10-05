@@ -88,6 +88,13 @@ always fill in the form manually.
 
 ## Connections and configuration
 
+Claude Code accepts the token from `claude setup-token`, including copied terminal
+line wrapping or a quoted `CLAUDE_CODE_OAUTH_TOKEN` assignment. It never executes
+the pasted text. A failed save reports whether the token format or credential
+file caused the problem, without revealing the token. File permissions apply to
+the account running the controller on your server, which may differ from your
+interactive shell account. Existing credentials stay unchanged on failure.
+
 Connections shows compact service cards with setup instructions when opened. The
 Claude Code card explains how to run `claude setup-token` in a terminal with Claude
 Code installed and a Claude subscription, then paste the resulting token. You can

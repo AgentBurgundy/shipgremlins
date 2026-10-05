@@ -8,6 +8,7 @@ import {
   symlinkSync,
   statSync,
   realpathSync,
+  chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ import {
   readConnections,
   saveConnections,
   projectConnections,
+  ConnectionSaveError,
 } from "./connections.ts";
 import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
 import { initializeSetup } from "./files.ts";
@@ -447,6 +449,88 @@ describe("dashboard connection storage", () => {
     if (process.platform !== "win32")
       expect(statSync(join(root, ".env")).mode & 0o777).toBe(0o600);
   });
+
+  it("saves a full Claude token shape while preserving unrelated credentials", () => {
+    const root = temporary();
+    const token = "sk-ant-oat01-" + "synthetic_0-A".repeat(16);
+    writeFileSync(join(root, ".env"), "LINEAR_API_KEY='keep-linear'\n");
+    saveConnections(root, { CLAUDE_CODE_OAUTH_TOKEN: token });
+    expect(readConnections(root)).toEqual({
+      LINEAR_API_KEY: "keep-linear",
+      CLAUDE_CODE_OAUTH_TOKEN: token,
+    });
+    saveConnections(root, { CLAUDE_CODE_OAUTH_TOKEN: token + "new" });
+    expect(readConnections(root).CLAUDE_CODE_OAUTH_TOKEN).toBe(token + "new");
+  });
+
+  it("normalizes copied Claude tokens before private dotenv serialization", () => {
+    const root = temporary();
+    const token = "sk-ant-oat01-" + "synthetic_0-A".repeat(16);
+    writeFileSync(join(root, ".env"), "LINEAR_API_KEY='keep-linear'\n");
+    saveConnections(root, {
+      CLAUDE_CODE_OAUTH_TOKEN: `export CLAUDE_CODE_OAUTH_TOKEN='${token.slice(0, 80)}\n  ${token.slice(80)}'`,
+    });
+    expect(readConnections(root)).toEqual({
+      LINEAR_API_KEY: "keep-linear",
+      CLAUDE_CODE_OAUTH_TOKEN: token,
+    });
+    const original = readFileSync(join(root, ".env"), "utf8");
+    expect(() =>
+      saveConnections(root, {
+        CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-private\u200bhidden",
+      }),
+    ).toThrow(ConnectionSaveError);
+    expect(readFileSync(join(root, ".env"), "utf8")).toBe(original);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "identifies directory write permission failures without changing credentials",
+    () => {
+      const root = temporary();
+      const original = "LINEAR_API_KEY='keep-private'\n";
+      writeFileSync(join(root, ".env"), original, { mode: 0o600 });
+      chmodSync(root, 0o500);
+      try {
+        let failure: unknown;
+        try {
+          saveConnections(root, {
+            CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-never-disclose",
+          });
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeInstanceOf(ConnectionSaveError);
+        expect(failure).toMatchObject({ code: "storage_eacces" });
+        expect((failure as Error).message).toContain(
+          "directory write permissions",
+        );
+        expect((failure as Error).message).not.toContain("never-disclose");
+        expect(readFileSync(join(root, ".env"), "utf8")).toBe(original);
+      } finally {
+        chmodSync(root, 0o700);
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "protects credentials even when Windows utilities are missing from PATH",
+    () => {
+      const root = temporary();
+      const previousPath = process.env.PATH;
+      try {
+        process.env.PATH = "";
+        saveConnections(root, {
+          CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-synthetic-path-check",
+        });
+        expect(readConnections(root).CLAUDE_CODE_OAUTH_TOKEN).toBe(
+          "sk-ant-oat01-synthetic-path-check",
+        );
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+      }
+    },
+  );
 
   it.each([
     { NODE_OPTIONS: "--require malware" },

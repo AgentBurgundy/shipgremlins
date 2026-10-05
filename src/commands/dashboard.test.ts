@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readConnections } from "../setup/connections.ts";
 import { ChildProcess, type spawn } from "node:child_process";
 import {
   mkdtempSync,
@@ -1624,6 +1625,8 @@ describe("local dashboard HTTP boundary", () => {
         values: {
           GITHUB_TOKEN: "unique-private-token",
           LINEAR_API_KEY: "linear-private",
+          CLAUDE_CODE_OAUTH_TOKEN:
+            "export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-synthetic_\n  wrapped-credential'",
         },
       },
       { Origin: url },
@@ -1633,6 +1636,10 @@ describe("local dashboard HTTP boundary", () => {
     const status = await updated.text();
     expect(status).not.toContain("unique-private-token");
     expect(status).not.toContain("linear-private");
+    expect(status).not.toContain("wrapped-credential");
+    expect(readConnections(root).CLAUDE_CODE_OAUTH_TOKEN).toBe(
+      "sk-ant-oat01-synthetic_wrapped-credential",
+    );
     expect(
       JSON.parse(status).connections.find(
         (item: { name: string }) => item.name === "GITHUB_TOKEN",
@@ -1650,6 +1657,31 @@ describe("local dashboard HTTP boundary", () => {
     expect(readFileSync(join(root, ".env"), "utf8")).toContain(
       "unique-private-token",
     );
+  });
+
+  it("reports Claude input errors separately from credential storage failures", async () => {
+    const { root, url } = await start();
+    const invalid = await post(`${url}/api/connections`, {
+      values: {
+        CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-never-disclose; extra command",
+      },
+    });
+    expect(invalid.status).toBe(400);
+    const invalidText = await invalid.text();
+    expect(invalidText).toContain("Claude");
+    expect(invalidText).toContain("claude setup-token");
+    expect(invalidText).not.toContain("never-disclose");
+    expect(invalidText).not.toContain("Google");
+
+    mkdirSync(join(root, ".env"));
+    const blocked = await post(`${url}/api/connections`, {
+      values: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-private-test" },
+    });
+    expect(blocked.status).toBe(400);
+    const blockedText = await blocked.text();
+    expect(blockedText).toContain(".env path is a directory");
+    expect(blockedText).not.toContain("private-test");
+    expect(blockedText).not.toContain("Google");
   });
 
   it("rejects missing or incorrect sessions, foreign origins, and DNS rebinding hosts", async () => {

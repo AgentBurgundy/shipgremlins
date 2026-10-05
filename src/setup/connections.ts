@@ -20,6 +20,7 @@ import {
   type EnvironmentTarget,
 } from "../projectCapabilities.ts";
 import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
+import { ClaudeTokenError, normalizeClaudeToken } from "./claudeToken.ts";
 
 export const CONNECTIONS = [
   {
@@ -285,34 +286,102 @@ const isAllowed = (name: string, root: string): boolean =>
 const MAX_ENV_BYTES = 512 * 1024;
 let ownerSid: string | undefined;
 
-function protectWindowsFile(file: string): void {
-  if (process.platform !== "win32") return;
-  ownerSid ??= execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
-    encoding: "utf8",
-    windowsHide: true,
-    timeout: 5000,
-    maxBuffer: 16_384,
-  }).match(/S-1-(?:\d+-)+\d+/)?.[0];
-  if (!ownerSid) throw new Error();
-  execFileSync(
-    "icacls.exe",
-    [file, "/inheritance:r", "/grant:r", `*${ownerSid}:(F)`],
-    {
-      windowsHide: true,
-      timeout: 5000,
-      maxBuffer: 16_384,
-      stdio: "ignore",
-    },
+/** Only these deliberately written messages may be returned to the dashboard. */
+export class ConnectionSaveError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ConnectionSaveError";
+  }
+}
+
+function storageError(error: unknown): ConnectionSaveError {
+  if (error instanceof ConnectionSaveError) return error;
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? error.code
+      : undefined;
+  const reasons: Record<string, string> = {
+    EACCES:
+      "The account running Gremlins cannot access its configuration directory or .env file. Check ownership and directory write permissions for that account.",
+    EPERM:
+      "The operating system denied the file update. Check the Gremlins account's directory permissions and whether .env is locked or marked immutable.",
+    EROFS:
+      "The configuration directory is on a read-only filesystem. Give Gremlins a writable configuration directory or container volume.",
+    EISDIR: "The .env path is a directory; it must be a regular file.",
+    ENOTDIR:
+      "A configuration path component is a file instead of a directory. Check the configuration location shown in Settings.",
+    ENOSPC:
+      "The configuration filesystem is full. Free disk space before saving again.",
+    EDQUOT:
+      "The configuration filesystem's disk quota is full. Free space or increase the quota before saving again.",
+    EBUSY:
+      "The .env file is locked or mounted as a single file. Release the lock or mount the configuration directory so Gremlins can save atomically.",
+  };
+  return new ConnectionSaveError(
+    typeof code === "string" && Object.hasOwn(reasons, code)
+      ? `storage_${code.toLowerCase()}`
+      : "storage_unavailable",
+    "Connections could not be saved. " +
+      (typeof code === "string" && Object.hasOwn(reasons, code)
+        ? reasons[code]
+        : "The configuration file could not be updated. Check its location and file permissions in Settings; existing credentials were preserved."),
   );
 }
 
+function protectWindowsFile(file: string): void {
+  if (process.platform !== "win32") return;
+  const system32 = join(process.env.SystemRoot ?? "C:\\Windows", "System32");
+  try {
+    ownerSid ??= execFileSync(
+      join(system32, "whoami.exe"),
+      ["/user", "/fo", "csv", "/nh"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 5000,
+        maxBuffer: 16_384,
+      },
+    ).match(/S-1-(?:\d+-)+\d+/)?.[0];
+    if (!ownerSid) throw new Error();
+    execFileSync(
+      join(system32, "icacls.exe"),
+      [file, "/inheritance:r", "/grant:r", `*${ownerSid}:(F)`],
+      {
+        windowsHide: true,
+        timeout: 5000,
+        maxBuffer: 16_384,
+        stdio: "ignore",
+      },
+    );
+  } catch {
+    throw new ConnectionSaveError(
+      "storage_windows_protection",
+      "Connections could not be saved. Windows could not restrict the credential file to your account. Check access to System32/whoami.exe and System32/icacls.exe and the configuration directory permissions.",
+    );
+  }
+}
+
 function assertConnectionPath(file: string): void {
-  assertNoSymlinks(file);
+  try {
+    assertNoSymlinks(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code) throw error;
+    throw new ConnectionSaveError(
+      "storage_symlink",
+      "Connections could not be saved. The configuration path contains a symbolic link. Use its real directory with gremlins --home PATH setup.",
+    );
+  }
   // existsSync follows links, so also catch a dangling .env link or ancestor.
   let current = resolve(file);
   for (;;) {
     if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
-      throw new Error("Connection paths cannot contain symbolic links.");
+      throw new ConnectionSaveError(
+        "storage_symlink",
+        "Connections could not be saved. The configuration path contains a symbolic link. Use its real directory with gremlins --home PATH setup.",
+      );
     const parent = dirname(current);
     if (parent === current) return;
     current = parent;
@@ -325,7 +394,10 @@ function readSource(root: string): string {
   if (!existsSync(file)) return "";
   const source = readFileSync(file, "utf8");
   if (Buffer.byteLength(source) > MAX_ENV_BYTES)
-    throw new Error("Connection file is too large.");
+    throw new ConnectionSaveError(
+      "storage_too_large",
+      "Connections could not be saved. The .env file exceeds the 512 KB limit. Review its size without sharing its contents.",
+    );
   return source;
 }
 
@@ -396,21 +468,43 @@ function replaceValues(
     Object.keys(after).length !== Object.keys(expected).length ||
     Object.entries(expected).some(([key, value]) => after[key] !== value)
   )
-    throw new Error("Connection file needs repair before it can be updated.");
+    throw new ConnectionSaveError(
+      "storage_format",
+      "Connections could not be saved. Existing .env quoting is ambiguous or malformed. Fix unmatched quotes before saving; existing credentials were preserved.",
+    );
   return output;
 }
 
 /** Save allowlisted tokens atomically; blanks preserve existing credentials. */
 export function saveConnections(root: string, input: unknown): void {
   if (!input || typeof input !== "object" || Array.isArray(input))
-    throw new Error("Expected a connection values object.");
+    throw new ConnectionSaveError(
+      "invalid_input",
+      "Expected a connection values object.",
+    );
   const updates: Record<string, string> = {};
   for (const [name, raw] of Object.entries(input)) {
-    if (!isAllowed(name, root)) throw new Error("Unsupported connection name.");
+    if (!isAllowed(name, root))
+      throw new ConnectionSaveError(
+        "unsupported_connection",
+        "Unsupported connection name. Refresh the dashboard and use a supported connection field.",
+      );
     if (typeof raw !== "string")
-      throw new Error("Connection values must be text.");
+      throw new ConnectionSaveError(
+        "invalid_input",
+        "Connection values must be text.",
+      );
     let value = raw.trim();
     if (!value) continue;
+    if (name === "CLAUDE_CODE_OAUTH_TOKEN") {
+      try {
+        value = normalizeClaudeToken(value);
+      } catch (error) {
+        if (error instanceof ClaudeTokenError)
+          throw new ConnectionSaveError("invalid_claude_token", error.message);
+        throw error;
+      }
+    }
     const google =
       name === "GCP_SERVICE_ACCOUNT_JSON" ||
       projectConnections(root).some(
@@ -419,9 +513,17 @@ export function saveConnections(root: string, input: unknown): void {
     if (google) {
       // Canonical JSON contains escaped PEM newlines, not dotenv line breaks. Projected
       // fields contain no apostrophes, so single-quoted dotenv preserves backslashes.
-      value = JSON.stringify(parseGoogleServiceAccount(value));
+      try {
+        value = JSON.stringify(parseGoogleServiceAccount(value));
+      } catch {
+        throw new ConnectionSaveError(
+          "invalid_google_json",
+          "Enter a valid Google service-account JSON key with a 2048-bit or stronger RSA key and the official Google token endpoint.",
+        );
+      }
       if (value.includes("'"))
-        throw new Error(
+        throw new ConnectionSaveError(
+          "invalid_google_json",
           "Google service-account JSON could not be stored safely.",
         );
       updates[name] = value;
@@ -435,7 +537,8 @@ export function saveConnections(root: string, input: unknown): void {
           character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
       )
     )
-      throw new Error(
+      throw new ConnectionSaveError(
+        "invalid_token",
         "Tokens must be single-line values without quotes or whitespace (maximum 8192 characters).",
       );
     updates[name] = value;
@@ -460,10 +563,8 @@ export function saveConnections(root: string, input: unknown): void {
     assertConnectionPath(file);
     renameSync(temporary, file);
     temporary = undefined;
-  } catch {
-    throw new Error(
-      "Connections could not be saved. Check .env formatting, directory permissions, and symbolic links.",
-    );
+  } catch (error) {
+    throw storageError(error);
   } finally {
     if (temporary) {
       try {

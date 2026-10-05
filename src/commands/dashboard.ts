@@ -33,6 +33,7 @@ import {
   CONNECTIONS,
   readConnections,
   saveConnections,
+  ConnectionSaveError,
   projectConnections as projectConnectionDefinitions,
 } from "../setup/connections.ts";
 import { assertNoSymlinks } from "../setup/files.ts";
@@ -1343,10 +1344,12 @@ export function createDashboardServer(
             throw new RequestError(400, "Expected a values object.");
           try {
             saveConnections(root, input.values);
-          } catch {
+          } catch (error) {
             throw new RequestError(
               400,
-              "Connections were not saved. Use supported tokens or valid Google service-account JSON, and check .env permissions and formatting.",
+              error instanceof ConnectionSaveError
+                ? error.message
+                : "Connections were not saved. The configuration store could not be updated; check its location in Settings. Existing credentials were preserved.",
             );
           }
           json(res, 200, { ok: true });

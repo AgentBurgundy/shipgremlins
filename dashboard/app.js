@@ -904,7 +904,7 @@
       }
       message(
         $("connections-message"),
-        "Claude token saved on your server. Your local workers can use it for PM and coding jobs.",
+        "Claude token saved on your server for AI setup suggestions, PMs, and coding jobs.",
       );
       try {
         await refreshStatus();
