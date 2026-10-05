@@ -616,15 +616,21 @@
   flex-shrink: 0;
 }
 .project-top-tabs:has(a[href*="tab=environment"]) {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+}
+@media (min-width: 761px) {
+  .project-workspace .project-top-tabs a {
+    padding-inline: 12px;
+  }
 }
 @media (max-width: 760px) {
   .project-top-tabs:has(a[href*="tab=environment"]) {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3px;
   }
   .project-top-tabs:has(a[href*="tab=environment"]) a {
     font-size: 11px;
+    padding-inline: 10px;
   }
   .onboarding-heading h2 {
     font-size: 23px;

@@ -355,6 +355,7 @@ export function createActivityStore(options: {
           "runId",
           "type",
           "pmMode",
+          "grumblin",
           "discoveryRevision",
           "project",
           "projectInstanceId",

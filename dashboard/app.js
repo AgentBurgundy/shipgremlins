@@ -2364,7 +2364,7 @@
         element(
           "h4",
           "",
-          `${job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : job.pmMode === "exploration" ? "PM Gremlin · Product exploration" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
+          `${job.grumblin ? `AI customer simulation · ${job.grumblin.name}` : job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : job.pmMode === "exploration" ? "PM Gremlin · Product exploration" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
         ),
       );
       text.append(
@@ -2845,6 +2845,11 @@
   const runViewer = window.createRunViewer($("job-detail"), {
     onClose: () => closeJobDetail(),
   });
+  const grumblinReport = window.createGrumblinReport?.({
+    root: $("grumblin-report"),
+    fetchArtifact,
+    renderMarkdown: window.renderKnowledgeDocument,
+  });
   const jobOutput = window.createJobOutput({
     load: (resource, id, signal) =>
       api(
@@ -2879,6 +2884,7 @@
           !patrolOutput.artifacts.length
         )
           patrolOutput.artifacts = value.files || [];
+        await grumblinReport?.render(context.id, value.files || [], context);
       }
       renderPatrolOutput();
       if (resource === "logs") {
@@ -2956,6 +2962,10 @@
     if (!id) return;
     const changed = id !== selectedJobId;
     selectedJobId = id;
+    grumblinReport?.select(
+      id,
+      mergedJobs().find((job) => job.id === id),
+    );
     jobOutput.select(id);
     if (changed) {
       $("job-action-confirm").hidden = true;
@@ -3001,14 +3011,16 @@
     if (!selectedJobId) return;
     renderPatrolOutput();
     const job = mergedJobs().find((item) => item.id === selectedJobId);
+    grumblinReport?.select(selectedJobId, job);
     const project = currentStatus?.projects?.find(
       (item) =>
         item.name === job?.project &&
         (item.instanceId ?? null) === (job?.projectInstanceId ?? null),
     );
     const area = project?.areas?.find((item) => item.key === job?.area);
-    const role =
-      job?.type === "verify"
+    const role = job?.grumblin
+      ? `AI customer simulation · ${job.grumblin.name}`
+      : job?.type === "verify"
         ? "Worker check"
         : job?.type === "developer"
           ? "Coding"
@@ -3131,6 +3143,16 @@
       return;
     }
     if (!active && !["failed", "canceled"].includes(job.status)) return;
+    if (!active && (job.grumblin || job.pmMode === "grumblin")) {
+      const review = element(
+        "a",
+        "small-button",
+        "Review Grumblin & simulate again",
+      );
+      review.href = `/projects/${encodeURIComponent(job.project)}?tab=grumblins`;
+      root.append(review);
+      return;
+    }
     const action = element(
       "button",
       "small-button",
@@ -3244,6 +3266,7 @@
   });
   function closeJobDetail({ navigate = true, restoreFocus = true } = {}) {
     selectedJobId = "";
+    grumblinReport?.clear();
     clearTimeout(jobOutputTimer);
     jobOutput.close();
     outputErrors.clear();

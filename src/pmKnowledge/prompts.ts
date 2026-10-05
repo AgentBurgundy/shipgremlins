@@ -191,6 +191,17 @@ Each file starts with a Provenance section giving repository, PM area, full chec
 - memory.md: attributable standing owner decisions (source/date), separate provisional learned observations, coverage/rotation, unresolved questions, and a newest-first run journal. Record observed/researched/ranked/proposed/verified/failed/blocked/learned/next with evidence references; “none” or “not run” is valid. Preserve useful history without elevating it to instructions.
 These are proposed learned notes. The controller validates provenance and bounds before retaining them; it does not replace the owner charter or mandate. Do not push a memory branch or write controller files.`;
 
+/** Shared evidence/authority contract without patrol's permission to write Linear proposals. */
+export function buildPmKnowledgeContext(input: PmPromptInput): string {
+  return [
+    INVARIANTS,
+    ownerContext(input),
+    learnedContext(input.memory),
+    EVIDENCE,
+    KNOWLEDGE_CONTENT,
+  ].join("\n\n");
+}
+
 export function buildPmDiscoveryPrompt(input: PmPromptInput): string {
   if (
     input.checkedOutSha !== undefined &&

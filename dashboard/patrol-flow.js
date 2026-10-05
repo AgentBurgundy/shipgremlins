@@ -286,9 +286,11 @@
       node(
         "p",
         "patrol-evidence-note",
-        counts.calls
-          ? "Calls show attempts; images may also be test fixtures. Inspect the results before treating the app, sign-in or permissions as verified."
-          : "A finished run does not prove the app was tested. Repository-only patrols can finish without browser use.",
+        job?.grumblin || job?.pmMode === "grumblin"
+          ? "A completed run alone does not prove this customer journey was tested. Check the recorded actions and screenshots."
+          : counts.calls
+            ? "Calls show attempts; images may also be test fixtures. Inspect the results before treating the app, sign-in or permissions as verified."
+            : "A finished run does not prove the app was tested. Repository-only patrols can finish without browser use.",
       ),
     );
     if (

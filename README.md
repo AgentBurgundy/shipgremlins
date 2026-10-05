@@ -18,7 +18,7 @@
   <a href="CONTRIBUTING.md">Join the crew</a>
 </p>
 
-# Give your idea a crew.
+# AI product managers that actually use your app.
 
 Describe an app you want to build, or bring the one you already have.
 ShipGremlins helps organize the work into focused PM responsibilities and
@@ -83,6 +83,12 @@ One PM per mandate. Different obsessions. The same app.
 </table>
 
 These are example mandates, not fixed agent types. Each area has its own instructions, feature inventory, queue, and memory. Start with one; add another when a different part of your product needs attention. [Create a mandate →](docs/add-a-project.md)
+
+**Let customers try it with Grumblins.** AI creates three simulated customers
+from your project's purpose, PM briefs and learned context. Each has a relevant
+goal, opinionated personality and patience budget. Choose one to try your test
+app, then read its journey and the PM's proposed experiment. Observed friction,
+simulated preferences and assumptions stay separate. [Meet your Grumblins →](docs/GRUMBLINS.md)
 
 ## From “that's weird” to shipped
 

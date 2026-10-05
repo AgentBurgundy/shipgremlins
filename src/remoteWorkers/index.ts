@@ -8,7 +8,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { loadProject } from "../config.ts";
-import { stripVTControlCharacters } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 import { publicActivityLogs } from "../storage/activity.ts";
 import { safeOAuthPath } from "../oauthConnection/storage.ts";
 import {
@@ -533,7 +533,18 @@ export function createRemoteWorkers(options: {
             if (existing) {
               if (
                 existing.workerId !== input.workerId ||
-                existing.remoteId !== remoteId
+                existing.remoteId !== remoteId ||
+                ((existing.payload.pmMode === "grumblin" ||
+                  input.payload.pmMode === "grumblin") &&
+                  (existing.payload.pmMode !== input.payload.pmMode ||
+                    !isDeepStrictEqual(
+                      existing.payload.grumblin,
+                      input.payload.grumblin,
+                    ) ||
+                    !isDeepStrictEqual(
+                      existing.payload.grumblinTarget,
+                      input.payload.grumblinTarget,
+                    )))
               )
                 throw new RemoteWorkerError(
                   "Remote job is already assigned.",

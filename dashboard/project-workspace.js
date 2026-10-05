@@ -241,6 +241,13 @@
       timer = null,
       contextKey = "";
     let launching = false;
+    const grumblins = window.createGrumblins?.({
+      api,
+      pages,
+      getJobs,
+      onJob,
+      isLocked: () => locked,
+    });
     const knowledge = new Map(),
       notices = new Map(),
       disclosures = new Map();
@@ -723,7 +730,7 @@
           node(
             "strong",
             "",
-            `${job.pmMode === "discovery" ? "Discovery" : job.pmMode === "exploration" ? "Product exploration" : job.type === "pm" ? "PM patrol" : "Coding run"} · ${job.type === "developer" ? job.ticket || job.area || "" : job.area || ""}`,
+            `${job.grumblin ? `Customer simulation · ${job.grumblin.name}` : job.pmMode === "discovery" ? "Discovery" : job.pmMode === "exploration" ? "Product exploration" : job.type === "pm" ? "PM patrol" : "Coding run"} · ${job.type === "developer" ? job.ticket || job.area || "" : job.area || ""}`,
           ),
           node(
             "span",
@@ -797,6 +804,8 @@
         );
         root.append(setup);
       }
+      if (window.renderGrumblinsLauncher)
+        root.append(window.renderGrumblinsLauncher(project));
       const crew = node("section", "project-crew-section");
       const title = node("div", "project-section-title");
       title.append(
@@ -1243,6 +1252,7 @@
         renderedRoute === currentRoute &&
         (options.operations?.protectFocus(root) ||
           options.onboarding?.protectFocus(root) ||
+          grumblins?.protectFocus() ||
           setupSuggestions?.protectFocus())
       )
         return;
@@ -1281,6 +1291,7 @@
           ["environment", "Environment"],
           ["review", "Review"],
           ["knowledge", "Knowledge"],
+          ["grumblins", "Grumblins"],
           ["delivery", "Delivery"],
           ["limits", "Run limits"],
         ]) {
@@ -1303,6 +1314,7 @@
       else if (area) pmWorkspace(project, area);
       else if (pages.tab === "environment")
         options.onboarding?.mount(root, project);
+      else if (pages.tab === "grumblins") grumblins?.mount(root, project);
       else if (
         ["review", "knowledge", "delivery", "limits"].includes(pages.tab)
       )
@@ -1321,6 +1333,7 @@
         contextKey = key;
       }
       render();
+      grumblins?.resume(status?.projects || []);
       if (key) refreshKnowledge();
     }
     window.addEventListener("dashboard:pagechange", routeChanged);
@@ -1350,7 +1363,11 @@
       discover,
       openBrief,
       isDirty,
-      isBusy: () => editor.busy || launching || setupSuggestions?.isBusy(),
+      isBusy: () =>
+        editor.busy ||
+        launching ||
+        setupSuggestions?.isBusy() ||
+        grumblins?.isBusy(),
       refresh: refreshKnowledge,
       forget(project, area) {
         stopKnowledge();
@@ -1365,6 +1382,7 @@
         setupSuggestions?.forget(project, area);
         if (!area) options.onboarding?.forget(project);
         if (!area) options.operations?.forget(project);
+        if (!area) grumblins?.forget(project);
         if (editor.project === project && (!area || editor.area === area)) {
           finishClose();
           editor.original = "";

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { validateGrumblinPayload } from "./grumblin-runtime.mjs";
 import {
   appendFileSync,
   existsSync,
@@ -221,9 +222,11 @@ try {
   const discovery = input.pmMode === "discovery";
   if (
     input.pmMode !== undefined &&
-    (!["discovery", "exploration"].includes(input.pmMode) || kind !== "pm")
+    (!["discovery", "exploration", "grumblin"].includes(input.pmMode) ||
+      kind !== "pm")
   )
     throw new Error("Invalid PM mode.");
+  const grumblin = validateGrumblinPayload(input);
   if (input.pmMode === "exploration" && input.delivery)
     throw new Error("Product exploration cannot publish code changes.");
   if (
@@ -500,6 +503,7 @@ try {
           commitSha: baseSha,
           branch: input.branch,
           ...(input.pmMode ? { pmMode: input.pmMode } : {}),
+          ...(grumblin ? { grumblin } : {}),
           ...deliveryResult,
           ...(activity.summary() ? { summary: activity.summary() } : {}),
           completedAt: new Date().toISOString(),

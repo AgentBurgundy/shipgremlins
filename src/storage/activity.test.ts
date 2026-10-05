@@ -17,6 +17,7 @@ import {
 import { createActivityWriter } from "../../runner-local/activity.mjs";
 import type { LocalJob } from "../localRunners/types.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
+import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 
 const roots: string[] = [];
 const root = () => {
@@ -128,6 +129,20 @@ function setup() {
 }
 
 describe("durable safe run activity", () => {
+  it("retains the exact selected Grumblin snapshot in archived history", async () => {
+    const { store } = setup();
+    const grumblin = grumblinFixture({ project: job.project! });
+    await store.ensure();
+    await store.recordRun({ ...job, pmMode: "grumblin", grumblin });
+    expect(await store.getRun(job.id)).toMatchObject({
+      pmMode: "grumblin",
+      grumblin,
+    });
+    expect(await store.listRuns()).toContainEqual(
+      expect.objectContaining({ pmMode: "grumblin", grumblin }),
+    );
+    await store.close();
+  });
   it("retains project incarnation identity in archived history", async () => {
     const { store } = setup();
     const projectInstanceId = "a1b2c3d4-1111-2222-3333-444444444444";

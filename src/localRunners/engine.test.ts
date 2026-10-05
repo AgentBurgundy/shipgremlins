@@ -21,6 +21,7 @@ import {
 } from "./engine.ts";
 import type { DockerJobPayload, DockerRunners } from "./docker.ts";
 import type { LocalJobInput } from "./types.ts";
+import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import type { JobNotificationEvent } from "../slack/messages.ts";
 import type { ActivityStore } from "../storage/activity.ts";
 
@@ -467,6 +468,119 @@ it("retries completion reconciliation without executing the agent or publication
     ),
   ).resolves.toBe("historical failure retained");
   expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
+});
+
+it("preserves the selected Grumblin across queued restart and requires matching worker persona provenance", async () => {
+  const f = fixture();
+  await f.ready();
+  const input = {
+    type: "pm" as const,
+    project: "demo",
+    area: "core",
+    runOnce: true,
+    pmMode: "grumblin" as const,
+    grumblin: grumblinFixture({ project: "demo" }),
+    discoveryRevision: "a".repeat(64),
+  };
+  const queued = await f.engine.enqueue(input);
+  const completeJob = vi.fn(async () => {});
+  const engine = createLocalRunners({
+    ...f.options,
+    completeJob,
+    prepareJob: async (job) => ({
+      kind: job.type,
+      pmMode: job.pmMode,
+      grumblin: job.grumblin,
+    }),
+  });
+  expect(await engine.job(queued.id)).toMatchObject(input);
+  await engine.tick();
+  expect(f.mock.startJob).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        grumblin: input.grumblin,
+        pmMode: "grumblin",
+      }),
+    }),
+  );
+  f.finish(queued.id);
+  const originalArtifacts = f.mock.artifacts.getMockImplementation()!;
+  f.mock.artifacts.mockImplementation(
+    async (id) =>
+      ({
+        ...(await originalArtifacts(id)),
+        result: {
+          ok: true,
+          kind: "pm",
+          nonce: id,
+          pmMode: "grumblin",
+          grumblin: input.grumblin,
+        },
+      }) as unknown as Awaited<ReturnType<typeof originalArtifacts>>,
+  );
+  await engine.tick();
+  expect(await engine.job(queued.id)).toMatchObject({
+    status: "succeeded",
+    grumblin: input.grumblin,
+  });
+  expect(completeJob).toHaveBeenCalledOnce();
+  for (const invalid of [
+    { ...input, grumblin: undefined },
+    { ...input, pmMode: undefined },
+    { ...input, grumblin: grumblinFixture({ project: "other" }) },
+    { ...input, runOnce: false },
+    { ...input, linearBinding: { connectionId: "default" } },
+    { ...input, discoveryRevision: undefined },
+  ])
+    await expect(engine.enqueue(invalid)).rejects.toThrow();
+  const mismatched = await engine.enqueue(input);
+  await engine.tick();
+  f.finish(mismatched.id);
+  f.mock.artifacts.mockImplementation(
+    async (id) =>
+      ({
+        ...(await originalArtifacts(id)),
+        result: {
+          ok: true,
+          kind: "pm",
+          nonce: id,
+          pmMode: "grumblin",
+          grumblin: { ...input.grumblin, clickBudget: 30 },
+        },
+      }) as unknown as Awaited<ReturnType<typeof originalArtifacts>>,
+  );
+  await engine.tick();
+  expect(await engine.job(mismatched.id)).toMatchObject({
+    status: "failed",
+    failure: { category: "completion" },
+  });
+  expect(completeJob).toHaveBeenCalledOnce();
+});
+
+it("does not launch a Grumblin if preparation substitutes a different profile", async () => {
+  const f = fixture();
+  await f.ready();
+  const queued = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+    runOnce: true,
+    pmMode: "grumblin",
+    grumblin: grumblinFixture({ project: "demo" }),
+    discoveryRevision: "a".repeat(64),
+  });
+  const engine = createLocalRunners({
+    ...f.options,
+    prepareJob: async (job) => ({
+      kind: job.type,
+      pmMode: job.pmMode,
+      grumblin: grumblinFixture({ project: "demo", goal: "Different task" }),
+    }),
+  });
+  const previous = f.mock.startJob.mock.calls.length;
+  await engine.tick();
+  expect(f.mock.startJob).toHaveBeenCalledTimes(previous);
+  expect(await engine.job(queued.id)).toMatchObject({ status: "failed" });
 });
 
 it("admits explicit product exploration with a Linear binding and preserves its identity through completion", async () => {

@@ -38,6 +38,7 @@
     <script src="/remote-workers.js" defer></script>
     <script src="/vercel-setup.js" defer></script>
     <script src="/project-onboarding.js" defer></script>
+    <script src="/grumblins.js" defer></script>
     <script src="/project-workspace.js" defer></script>
     <script src="/deletion.js" defer></script>
     <script src="/deleted-resources.js" defer></script>
@@ -53,6 +54,7 @@
     <link rel="stylesheet" href="/pm-charter.css" />
     <link rel="stylesheet" href="/project-settings.css" />
     <link rel="stylesheet" href="/signals-settings.css" />
+    <link rel="stylesheet" href="/grumblins.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -2369,6 +2371,11 @@
                   tabindex="0"
                 >
                   <p class="run-summary-state" id="run-summary-state"></p>
+                  <section
+                    id="grumblin-report"
+                    class="grumblins-report"
+                    hidden
+                  ></section>
                   <div id="run-patrol-evidence" hidden></div>
                   <dl class="run-metadata" id="run-metadata"></dl>
                   <h3 class="run-section-title">Outcome</h3>

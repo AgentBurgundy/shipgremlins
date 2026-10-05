@@ -99,6 +99,12 @@ patrols and automatic pickup of approved Coding tickets. Turning it off does not
 cancel work already running. Each action shows its own missing setup requirements
 with direct remedies. A remote worker must be online and enrolled for this project.
 
+**Grumblins** generates three simulated customers from the project's briefs and
+learned context. Each brings a relevant goal, personality and patience budget
+to a walkthrough of the test app. Its PM investigates the observations and
+retains evidence and candidate experiments for review. Start with
+[Let customers try it](GRUMBLINS.md); profiles are hypotheses, not real research.
+
 **Explore product ideas** starts a separate creative PM run. It considers the
 user's whole job, unmet needs, new capabilities and alternative workflows,
 including experiences the app does not have yet. The PM considers distinct

@@ -53,6 +53,8 @@ import type { ExecutionLimits } from "../execution.ts";
 import { resolveTestAccess, type TestAccess } from "../testAccess.ts";
 import { resolveRepositoryHead } from "../projectOnboarding/repository.ts";
 import { foundationNeeded } from "../ideaCrew/foundation.ts";
+import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
+import { buildGrumblinPrompt } from "../grumblins/prompts.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -339,7 +341,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new JobReadinessError(
         "This workspace uses CI runners. Set runners.mode to local in Configuration to use Docker workers.",
       );
-    if (!project.config.verified && input.pmMode !== "discovery")
+    if (
+      !project.config.verified &&
+      input.pmMode !== "discovery" &&
+      input.pmMode !== "grumblin"
+    )
       throw new JobReadinessError(
         "Run Verify connections for this project (or gremlins doctor) before starting agent jobs.",
       );
@@ -351,7 +357,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
     input: LocalJobInput,
     checkConnections: boolean,
   ) {
-    if (input.pmMode !== "discovery" && !hasPmMapping(area))
+    if (
+      input.pmMode !== "discovery" &&
+      input.pmMode !== "grumblin" &&
+      !hasPmMapping(area)
+    )
       throw new JobReadinessError(
         "Map this PM to a Linear project in Edit project → Linear mappings before running it.",
       );
@@ -391,6 +401,28 @@ export function createJobPreparation(options: JobPreparationOptions) {
     discoveryRevision?: string;
   }> {
     const project = projectFor(input);
+    if (input.pmMode === "grumblin") {
+      const profile = validateGrumblinProfileSnapshot(input.grumblin);
+      if (
+        profile.project !== input.project ||
+        profile.projectInstanceId !== project.config.instanceId
+      )
+        throw new JobReadinessError(
+          "This Grumblin belongs to another project. Choose a current profile for this app.",
+        );
+      const verification = effectiveVerification(project.config);
+      if (
+        verification.mode !== "browser" ||
+        verification.target.role === "production"
+      )
+        throw new JobReadinessError(
+          "Choose a non-production browser environment before running a Grumblin. It needs an app to walk through.",
+        );
+    } else if (input.grumblin !== undefined) {
+      throw new JobReadinessError(
+        "A Grumblin profile requires an explicit Grumblin run.",
+      );
+    }
     if (
       requireQueuedBinding &&
       input.projectInstanceId !== project.config.instanceId
@@ -398,7 +430,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new JobReadinessError(
         "This project was replaced after the job was queued. Review the new project and start a fresh run.",
       );
-    if (input.pmMode === "discovery") {
+    if (input.pmMode === "discovery" || input.pmMode === "grumblin") {
       if (
         input.type !== "pm" ||
         !input.runOnce ||
@@ -406,14 +438,14 @@ export function createJobPreparation(options: JobPreparationOptions) {
         input.ticket
       )
         throw new JobReadinessError(
-          "Discovery must be an explicit PM run without a ticket or Linear binding.",
+          "Discovery and Grumblin walkthroughs must be explicit PM runs without a ticket or Linear binding.",
         );
       const area = project.areas.find((item) => item.key === input.area);
       if (!area) throw new JobReadinessError("Choose an existing PM.");
       const revision = knowledgeRevision(project, area);
       if (requireQueuedBinding && input.discoveryRevision !== revision)
         throw new JobReadinessError(
-          "PM settings changed after discovery was queued. Review its brief and start a new discovery run.",
+          "PM settings changed after this run was queued. Review its brief and start a new run.",
         );
       await manualPrerequisites(project, area, input, !requireQueuedBinding);
       return { project, area, discoveryRevision: revision };
@@ -711,8 +743,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
         memory: {},
       };
     }
-    const selectedLinear = linearFor(project.config.linear?.connectionId);
     const saved = connections();
+    const grumblin =
+      job.pmMode === "grumblin"
+        ? validateGrumblinProfileSnapshot(job.grumblin)
+        : undefined;
     const verification = effectiveVerification(project.config);
     const workflow = effectiveWorkflow(project.config);
     const branch = baseBranch(project.config);
@@ -730,6 +765,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       required.map((name) => [name, saved[name]!]),
     );
     Object.assign(credentials, projectSecrets(root, project, env));
+    if (grumblin) delete credentials.GREMLINS_PREVIEW_DATABASE_URL;
     let preview: string | undefined;
     if (verification.mode === "browser") {
       if (verification.target.kind === "docker") {
@@ -776,7 +812,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
     Object.assign(memory, knowledge.memory(project, area));
     const telemetry =
-      job.type === "pm"
+      job.type === "pm" && !grumblin
         ? await pmTelemetrySnapshot(project.config, area, {
             env: saved,
             fetch: options.telemetryFetch ?? fetch,
@@ -817,56 +853,59 @@ export function createJobPreparation(options: JobPreparationOptions) {
     // Reserve the credential only after slow project/provider preparation. Refresh
     // invalidates old OAuth access tokens, so the reservation covers publication.
     try {
-      const linearCredential = await selectedLinear.acquireLease({
-        jobId: job.id,
-        minutes: 50,
-        ...((job.linearBinding?.workspaceId ??
-        project.config.linear?.workspaceId ??
-        linearWorkspaceId)
-          ? {
-              workspaceId:
-                job.linearBinding?.workspaceId ??
-                project.config.linear?.workspaceId ??
-                linearWorkspaceId,
+      if (!grumblin) {
+        const selectedLinear = linearFor(project.config.linear?.connectionId);
+        const linearCredential = await selectedLinear.acquireLease({
+          jobId: job.id,
+          minutes: 50,
+          ...((job.linearBinding?.workspaceId ??
+          project.config.linear?.workspaceId ??
+          linearWorkspaceId)
+            ? {
+                workspaceId:
+                  job.linearBinding?.workspaceId ??
+                  project.config.linear?.workspaceId ??
+                  linearWorkspaceId,
+              }
+            : {}),
+        });
+        if (job.type === "pm") {
+          const mapping = await checkPmMapping(
+            project,
+            area,
+            linearCredential.authorization,
+          );
+          const client = linear(linearCredential.authorization);
+          if (client.ensureLabels) {
+            const teamId =
+              project.config.linear?.teamId ??
+              (mapping?.teamIds.length === 1 ? mapping.teamIds[0] : undefined);
+            if (!teamId)
+              throw new JobReadinessError(
+                "Choose this project's Linear team in Edit project before creating PM labels.",
+              );
+            try {
+              await client.ensureLabels(teamId, [area.label, LABELS.proposal]);
+              if (mapping && uniquelyMappedPmProject(area))
+                await client.repairProposalAreaLabels?.({
+                  teamId,
+                  projectId: area.linearProjectId,
+                  label: area.label,
+                });
+            } catch {
+              throw new JobReadinessError(
+                "Required PM labels could not be prepared in the mapped Linear team. Check this account's permission to read and create issue labels and update proposals, then retry the PM run.",
+              );
             }
-          : {}),
-      });
-      if (job.type === "pm") {
-        const mapping = await checkPmMapping(
-          project,
-          area,
-          linearCredential.authorization,
-        );
-        const client = linear(linearCredential.authorization);
-        if (client.ensureLabels) {
-          const teamId =
-            project.config.linear?.teamId ??
-            (mapping?.teamIds.length === 1 ? mapping.teamIds[0] : undefined);
-          if (!teamId)
-            throw new JobReadinessError(
-              "Choose this project's Linear team in Edit project before creating PM labels.",
-            );
-          try {
-            await client.ensureLabels(teamId, [area.label, LABELS.proposal]);
-            if (mapping && uniquelyMappedPmProject(area))
-              await client.repairProposalAreaLabels?.({
-                teamId,
-                projectId: area.linearProjectId,
-                label: area.label,
-              });
-          } catch {
-            throw new JobReadinessError(
-              "Required PM labels could not be prepared in the mapped Linear team. Check this account's permission to read and create issue labels and update proposals, then retry the PM run.",
-            );
           }
         }
+        credentials.LINEAR_API_KEY = linearCredential.token;
+        instructions.push(
+          linearCredential.method === "oauth"
+            ? "For Linear GraphQL use Authorization: Bearer followed by the LINEAR_API_KEY environment value. Never print the header or token."
+            : "For Linear GraphQL use the LINEAR_API_KEY environment value as the Authorization header. Never print the header or token.",
+        );
       }
-      credentials.LINEAR_API_KEY = linearCredential.token;
-      instructions.push(
-        linearCredential.method === "oauth"
-          ? "For Linear GraphQL use Authorization: Bearer followed by the LINEAR_API_KEY environment value. Never print the header or token."
-          : "For Linear GraphQL use the LINEAR_API_KEY environment value as the Authorization header. Never print the header or token.",
-      );
       const credential = await sourceControl.acquireLease({
         jobId: job.id,
         provider,
@@ -887,7 +926,15 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
     const payload: DockerJobPayload = {
       kind: job.type,
-      ...(job.pmMode === "exploration" ? { pmMode: "exploration" } : {}),
+      ...(job.pmMode ? { pmMode: job.pmMode } : {}),
+      ...(grumblin &&
+      verification.mode === "browser" &&
+      verification.target.role !== "production"
+        ? {
+            grumblin,
+            grumblinTarget: { url: preview!, role: verification.target.role },
+          }
+        : {}),
       browserVerification: verification.mode === "browser",
       nonce: job.id,
       provider,
@@ -896,20 +943,34 @@ export function createJobPreparation(options: JobPreparationOptions) {
       prompt:
         (job.type === "pm"
           ? [
-              buildPmPatrolPrompt({
-                project,
-                area,
-                checkoutBranch,
-                memory,
-                telemetry,
-                preview,
-                focus: job.pmMode === "exploration" ? "exploration" : "patrol",
-              }),
-              instructions.at(-1),
+              grumblin &&
+              verification.mode === "browser" &&
+              verification.target.role !== "production"
+                ? buildGrumblinPrompt({
+                    project,
+                    area,
+                    checkoutBranch,
+                    memory,
+                    grumblin,
+                    target: { url: preview!, role: verification.target.role },
+                  })
+                : buildPmPatrolPrompt({
+                    project,
+                    area,
+                    checkoutBranch,
+                    memory,
+                    telemetry,
+                    preview,
+                    focus:
+                      job.pmMode === "exploration" ? "exploration" : "patrol",
+                  }),
+              ...(grumblin ? [] : [instructions.at(-1)]),
               ...(verification.mode === "browser"
                 ? [
                     accessInstruction(verification.target.access),
-                    `Preview bypass credential, if configured, is GREMLINS_PREVIEW_BYPASS; use it only for the selected environment. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
+                    grumblin
+                      ? "Preview bypass, if configured, is GREMLINS_PREVIEW_BYPASS; use it only for the selected test app. No database or hosting credentials are available; use the browser's normal sign-in with the supplied test account."
+                      : `Preview bypass credential, if configured, is GREMLINS_PREVIEW_BYPASS; use it only for the selected environment. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
                   ]
                 : []),
             ].join("\n\n")

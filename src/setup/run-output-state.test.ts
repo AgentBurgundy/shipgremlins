@@ -31,6 +31,7 @@ function fixture() {
   };
   const context = {
     $,
+    grumblinReport: undefined,
     outputErrors: new Map<string, string>(),
     outputNotices: new Map<string, string>(),
     outputCompleted: new Set<string>(),
@@ -142,6 +143,7 @@ describe("run output presentation state", () => {
         selectedJobId: "job-1",
         currentStatus: { projects: [] },
         renderPatrolOutput() {},
+        grumblinReport: undefined,
         timestamp: (value: string) => value,
         mergedJobs: () => [
           {

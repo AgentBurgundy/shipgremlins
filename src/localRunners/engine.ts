@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
 import { loadProject } from "../config.ts";
 import {
   closeSync,
@@ -76,6 +78,7 @@ const INPUT_KEYS = [
   "linearBinding",
   "runOnce",
   "pmMode",
+  "grumblin",
   "discoveryRevision",
 ];
 
@@ -173,13 +176,28 @@ function validInput(value: unknown): value is LocalJobInput {
   if (
     value.pmMode !== undefined &&
     (value.type !== "pm" ||
-      !["discovery", "exploration"].includes(value.pmMode as string) ||
+      !["discovery", "exploration", "grumblin"].includes(
+        value.pmMode as string,
+      ) ||
       value.runOnce !== true ||
       typeof value.discoveryRevision !== "string" ||
       (value.pmMode === "discovery" && value.linearBinding !== undefined) ||
       value.ticket !== undefined)
   )
     return false;
+  if (value.pmMode === "grumblin") {
+    try {
+      const profile = validateGrumblinProfileSnapshot(value.grumblin);
+      if (
+        profile.project !== value.project ||
+        profile.projectInstanceId !== value.projectInstanceId ||
+        value.linearBinding !== undefined
+      )
+        return false;
+    } catch {
+      return false;
+    }
+  } else if (value.grumblin !== undefined) return false;
   if (
     value.discoveryRevision !== undefined &&
     (value.type !== "pm" ||
@@ -938,6 +956,9 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       );
     const job: LocalJob = {
       ...input,
+      ...(input.grumblin
+        ? { grumblin: validateGrumblinProfileSnapshot(input.grumblin) }
+        : {}),
       id: `job-${randomUUID()}`,
       runId: state.nextRunId++,
       status: "queued",
@@ -1252,7 +1273,17 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         if (!record(result) || result.ok !== true || result.kind !== job.type)
           throw new Error();
         if (job.type === "pm") {
-          if (job.pmMode === "discovery" && !options.completeJob)
+          if (
+            (job.pmMode === "discovery" || job.pmMode === "grumblin") &&
+            !options.completeJob
+          )
+            throw new Error();
+          if (
+            job.pmMode === "grumblin" &&
+            (result.pmMode !== "grumblin" ||
+              result.nonce !== job.id ||
+              !isDeepStrictEqual(result.grumblin, job.grumblin))
+          )
             throw new Error();
           await options.completeJob?.({ ...job, finishedAt: now() }, docker);
         }
@@ -1400,7 +1431,8 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       if (
         !payload ||
         payload.kind !== job.type ||
-        payload.pmMode !== job.pmMode
+        payload.pmMode !== job.pmMode ||
+        !isDeepStrictEqual(payload.grumblin, job.grumblin)
       )
         throw new Error();
     } catch (error) {

@@ -11,6 +11,9 @@ import type { LocalJob } from "./types.ts";
 import { SourceControlError } from "../sourceControl/types.ts";
 import { LocalJobDeferredError } from "./engine.ts";
 import { OAuthConnectionError } from "../oauthConnection/types.ts";
+import { loadProject } from "../config.ts";
+import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
+import { validatePayload } from "./docker.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -118,6 +121,142 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("runs a saved Grumblin on the real selected test app without Linear, full-doctor setup, telemetry, or publication", async () => {
+    edit("project.json", (raw) => {
+      raw.verified = null;
+    });
+    edit("areas.json", (raw) => {
+      raw.areas.core.enabled = false;
+      raw.areas.core.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
+    });
+    writeFileSync(
+      join(root, "projects/app/core/mandate.md"),
+      "Make this app approachable.",
+    );
+    const forbidden = vi.fn(async () => {
+      throw new Error("Provider writes must not occur");
+    });
+    const acquireLease = vi.fn(async () => ({
+      token: "read-source",
+      method: "token" as const,
+    }));
+    const prepared = createJobPreparation({
+      root,
+      env,
+      beforePm: forbidden,
+      sourceControl: {
+        acquireLease,
+        resolveCredential: acquireLease,
+        releaseLease: vi.fn(async () => {}),
+      },
+      linearConnection: {
+        resolveCredential: forbidden,
+        acquireLease: forbidden,
+        releaseLease: vi.fn(async () => {}),
+      },
+      linear: () => {
+        throw new Error("No Linear client expected");
+      },
+      telemetryFetch: forbidden,
+      preview: async () => "https://app-preview.vercel.app",
+    });
+    const project = loadProject(root, "app");
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      projectInstanceId: project.config.instanceId,
+      area: "core",
+      runOnce: true,
+      pmMode: "grumblin" as const,
+      grumblin: grumblinFixture({
+        projectInstanceId: project.config.instanceId,
+      }),
+    };
+    const validated = await prepared.validate(input);
+    expect(validated.linearBinding).toBeUndefined();
+    const queued = {
+      ...job,
+      ...input,
+      ticket: undefined,
+      discoveryRevision: validated.discoveryRevision,
+    };
+    const payload = await prepared.prepareJob(queued);
+    expect(payload).toMatchObject({
+      pmMode: "grumblin",
+      grumblin: input.grumblin,
+      browserVerification: true,
+      grumblinTarget: {
+        url: "https://app-preview.vercel.app",
+        role: "preview",
+      },
+    });
+    expect(() => validatePayload(payload)).not.toThrow();
+    expect(Object.keys(payload.credentials!).sort()).toEqual([
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "GITHUB_TOKEN",
+    ]);
+    expect(payload.prompt).toContain("GRUMBLIN WALKTHROUGH");
+    expect(payload.prompt).toContain("No Linear reads or writes");
+    expect(payload.delivery).toBeUndefined();
+    expect(payload.reviewPlan).toBeUndefined();
+    expect(acquireLease).toHaveBeenLastCalledWith(
+      expect.objectContaining({ write: false }),
+    );
+    expect(forbidden).not.toHaveBeenCalled();
+    for (const invalid of [
+      { ...input, grumblin: undefined },
+      { ...input, grumblin: grumblinFixture({ project: "other" }) },
+      { ...input, runOnce: false },
+      { ...input, linearBinding: { connectionId: "default" } },
+      { ...input, ticket: "APP-1" },
+    ])
+      await expect(prepared.validate(invalid)).rejects.toThrow();
+    writeFileSync(
+      join(root, "projects/app/core/mandate.md"),
+      "Changed owner goal.",
+    );
+    await expect(prepared.prepareJob(queued)).rejects.toThrow(
+      "settings changed",
+    );
+  });
+  it("requires an app browser target for Grumblins and does not fall back to repository discovery", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "repository" };
+    });
+    const project = loadProject(root, "app");
+    await expect(
+      setup().validate({
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+        pmMode: "grumblin",
+        grumblin: grumblinFixture({
+          projectInstanceId: project.config.instanceId,
+        }),
+      }),
+    ).rejects.toThrow("non-production browser environment");
+  });
+  it("blocks Grumblin walkthroughs until a fresh idea has an application foundation", async () => {
+    const path = join(root, "projects/app/project.json");
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    raw.ideaPlanId = "aaaaaaaa-bbbb-4ccc-addd-eeeeeeeeeeee";
+    writeFileSync(path, JSON.stringify(raw));
+    const project = loadProject(root, "app");
+    await expect(
+      setup().validate({
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+        pmMode: "grumblin",
+        grumblin: grumblinFixture({
+          projectInstanceId: project.config.instanceId,
+        }),
+      }),
+    ).rejects.toThrow("Build the foundation first");
+  });
   it("prepares an explicit product exploration with scoped proposals and no delivery review", async () => {
     edit("project.json", (raw) => {
       raw.workflow = { kind: "pull-request", baseBranch: "main" };

@@ -222,4 +222,17 @@ describe("patrol plan and evidence", () => {
     expect(all(root).some((item) => item.tagName === "button")).toBe(false);
     expect(root.dataset.tone).toBe("neutral");
   });
+  it("labels a finished Grumblin as a customer simulation whose journey still needs evidence", () => {
+    const root = fixture().renderPatrolEvidence({
+      job: { type: "pm", pmMode: "grumblin", status: "succeeded" },
+      activityState: "ready",
+      artifactState: "ready",
+      activity: { events: [] },
+      artifacts: [],
+    });
+    expect(text(root)).toContain(
+      "A completed run alone does not prove this customer journey was tested. Check the recorded actions and screenshots.",
+    );
+    expect(text(root)).not.toContain("Repository-only patrols");
+  });
 });

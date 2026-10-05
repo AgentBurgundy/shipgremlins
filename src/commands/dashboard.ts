@@ -93,6 +93,7 @@ import {
   PmPlannerError,
   type PmPlanner,
 } from "../pmPlanner/index.ts";
+import { createGrumblins, GrumblinError } from "../grumblins/index.ts";
 import {
   createIdeaCrew,
   IdeaCrewError,
@@ -326,6 +327,7 @@ export interface DashboardOptions {
   vercelConnectionFor?: (connectionId?: string) => VercelConnection;
   linearProvisioning?: ReturnType<typeof createLinearProvisioning>;
   pmPlanner?: PmPlanner;
+  grumblins?: ReturnType<typeof createGrumblins>;
   ideaCrew?: IdeaCrew;
   foundation?: ReturnType<typeof createFoundation>;
   projectOnboarding?: ProjectOnboarding;
@@ -609,6 +611,8 @@ export function createDashboardServer(
     });
   const pmPlanner =
     options.pmPlanner ?? createPmPlanner({ root, packageRoot, sourceControl });
+  const grumblins = options.grumblins ?? createGrumblins({ root, packageRoot });
+  const grumblinLaunches = new Set<string>();
   const ideaCrew =
     options.ideaCrew ??
     createIdeaCrew({
@@ -1120,6 +1124,56 @@ export function createDashboardServer(
         }),
       },
     };
+  }
+  async function grumblinReadiness(name: string) {
+    const context = await readinessContext();
+    const project = loadProject(root, name);
+    const current = inspectPmReadiness(project, context);
+    // Simulated customers do not use Linear or require its verification stamp.
+    const needed = (item: { id: string }) =>
+      !["linear_mapping", "linear_connection", "verification"].includes(
+        item.id,
+      );
+    const blockers: Array<{ id: string; message: string; action: string }> = [];
+    if (foundationNeeded(root, project))
+      blockers.push({
+        id: "foundation",
+        message:
+          "Build and merge the foundation before a Grumblin tries the app. Your customer profiles can be prepared now.",
+        action: "environment",
+      });
+    const verification = effectiveVerification(project.config);
+    if (
+      verification.mode !== "browser" ||
+      verification.target.role === "production"
+    )
+      blockers.push({
+        id: "environment",
+        message:
+          "Choose a preview or staging app in Environment so Grumblins have somewhere to try their goals.",
+        action: "environment",
+      });
+    const areas = current.areas.map((area) => ({
+      key: area.key,
+      name: project.areas.find((item) => item.key === area.key)!.name,
+      blockers: area.blockers.filter(needed),
+      canRun:
+        blockers.length === 0 && area.blockers.filter(needed).length === 0,
+    }));
+    if (!areas.length)
+      blockers.push({
+        id: "mandate",
+        message:
+          "Create a PM with a product brief to investigate and retain these customer observations.",
+        action: "mandate",
+      });
+    if (!areas.some((area) => area.canRun)) {
+      const best = [...areas].sort(
+        (a, b) => a.blockers.length - b.blockers.length,
+      )[0];
+      blockers.push(...(best?.blockers ?? current.blockers.filter(needed)));
+    }
+    return { canRun: areas.some((area) => area.canRun), blockers, areas };
   }
   let dockerState: Awaited<ReturnType<DockerRunners["preflight"]>> | undefined;
   let dockerCheckedAt = 0;
@@ -3682,6 +3736,193 @@ export function createDashboardServer(
             throw new RequestError(
               400,
               "PM automation could not be changed. Refresh its readiness and check the selected connections.",
+            );
+          }
+          return;
+        }
+        const grumblinRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/grumblins(?:\/(generate|run))?$/.exec(
+            url.pathname,
+          );
+        if (grumblinRoute) {
+          const name = grumblinRoute[1]!,
+            action = grumblinRoute[2];
+          try {
+            if (!action && req.method === "GET") {
+              const readiness = await grumblinReadiness(name);
+              const saved = grumblins.read(name);
+              const jobs = (await runners().jobs())
+                .filter(
+                  (job) =>
+                    job.project === name &&
+                    job.projectInstanceId === saved.projectInstanceId &&
+                    job.pmMode === "grumblin",
+                )
+                .sort((a, b) => b.runId - a.runId)
+                .slice(0, 20);
+              json(res, 200, { ...saved, readiness, jobs });
+            } else if (action === "generate" && req.method === "POST") {
+              const input = await body(req, 16 * 1024);
+              if (
+                Object.keys(input).some((key) => key !== "focus") ||
+                (input.focus !== undefined && typeof input.focus !== "string")
+              )
+                throw new RequestError(
+                  400,
+                  "Provide an optional customer goal or product question.",
+                );
+              const controller = new AbortController();
+              const abort = () => {
+                if (!res.writableEnded) controller.abort();
+              };
+              req.once("aborted", abort);
+              res.once("close", abort);
+              try {
+                json(
+                  res,
+                  200,
+                  await grumblins.generate({
+                    project: name,
+                    ...(input.focus !== undefined
+                      ? { focus: input.focus as string }
+                      : {}),
+                    signal: controller.signal,
+                  }),
+                );
+              } finally {
+                req.removeListener("aborted", abort);
+                res.removeListener("close", abort);
+              }
+            } else if (action === "run" && req.method === "POST") {
+              const input = await body(req, 16 * 1024);
+              if (
+                Object.keys(input).some(
+                  (key) => !["profileId", "revision", "area"].includes(key),
+                ) ||
+                typeof input.profileId !== "string" ||
+                typeof input.revision !== "string" ||
+                (input.area !== undefined && typeof input.area !== "string")
+              )
+                throw new RequestError(
+                  400,
+                  "Choose a generated Grumblin and its current revision.",
+                );
+              if (grumblinLaunches.has(name))
+                throw new RequestError(
+                  409,
+                  "A Grumblin run is being prepared. Wait a moment, then check its progress.",
+                );
+              grumblinLaunches.add(name);
+              try {
+                const profile = grumblins.profile(
+                  name,
+                  input.profileId,
+                  input.revision,
+                );
+                if (
+                  input.area !== undefined &&
+                  !loadProject(root, name).areas.some(
+                    (area) => area.key === input.area,
+                  )
+                )
+                  throw new RequestError(
+                    400,
+                    "Choose an existing PM to investigate this Grumblin's observations.",
+                  );
+                const existing = (await runners().jobs()).filter(
+                  (job) =>
+                    job.project === name &&
+                    job.projectInstanceId === profile.projectInstanceId &&
+                    job.pmMode === "grumblin" &&
+                    job.grumblin?.id === profile.id &&
+                    job.grumblin.revision === profile.revision,
+                );
+                // Reading the queue may await remote/storage work. Reuse is
+                // valid only for the current reviewed profile and selected PM.
+                grumblins.profile(name, input.profileId, input.revision);
+                const active = existing.find((job) =>
+                  ["queued", "running"].includes(job.status),
+                );
+                if (active) {
+                  if (input.area !== undefined && active.area !== input.area)
+                    throw new RequestError(
+                      409,
+                      "This Grumblin already has an active run with another PM. Review that run before changing its owner.",
+                    );
+                  json(res, 202, { job: active, reused: true });
+                  return;
+                }
+                const readiness = await grumblinReadiness(name);
+                const area =
+                  input.area !== undefined
+                    ? readiness.areas.find(
+                        (candidate) => candidate.key === input.area,
+                      )
+                    : (readiness.areas.find(
+                        (candidate) =>
+                          candidate.key === profile.suggestedArea &&
+                          candidate.canRun,
+                      ) ??
+                      readiness.areas.find((candidate) => candidate.canRun));
+                if (!readiness.canRun)
+                  throw new RequestError(
+                    409,
+                    readiness.blockers.map((item) => item.message).join(" "),
+                  );
+                if (!area)
+                  throw new RequestError(
+                    400,
+                    "Choose an existing PM to investigate this Grumblin's observations.",
+                  );
+                if (!area.canRun)
+                  throw new RequestError(
+                    409,
+                    area.blockers.map((item) => item.message).join(" "),
+                  );
+                const jobInput: LocalJobInput = {
+                  type: "pm",
+                  project: name,
+                  projectInstanceId: profile.projectInstanceId,
+                  area: area.key,
+                  pmMode: "grumblin",
+                  grumblin: profile,
+                  runOnce: true,
+                };
+                const validated = await preparation.validate(jobInput);
+                // Recheck after credential/preparation awaits: no stale persona or replaced project.
+                grumblins.profile(name, input.profileId, input.revision);
+                if (
+                  validated.project.config.instanceId !==
+                  profile.projectInstanceId
+                )
+                  throw new RequestError(
+                    409,
+                    "This project changed. Refresh its Grumblins before trying again.",
+                  );
+                jobInput.discoveryRevision = validated.discoveryRevision;
+                jobInput.idempotencyKey = `grumblin:${projectRuntimeKey(validated.project.config)}:${profile.id}:${profile.revision}:${randomBytes(12).toString("hex")}`;
+                const job = await runners().enqueue(jobInput);
+                runners().start();
+                json(res, 202, { job, reused: false });
+              } finally {
+                grumblinLaunches.delete(name);
+              }
+            } else
+              throw new RequestError(
+                405,
+                "Use GET for Grumblins or POST to generate profiles and start a simulation.",
+              );
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            if (error instanceof GrumblinError)
+              throw new RequestError(error.status, error.message);
+            if (error instanceof LocalRunnerError)
+              throw new RequestError(error.status, error.message);
+            if (error instanceof JobReadinessError)
+              throw new RequestError(409, error.message);
+            throw new RequestError(
+              400,
+              "Grumblins could not complete this request. Refresh the project and check its connections; existing profiles were preserved.",
             );
           }
           return;

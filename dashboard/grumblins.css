@@ -1,0 +1,334 @@
+.grumblins-launcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 24px 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f9faf7;
+  min-width: 0;
+}
+.grumblins-launcher h3 {
+  margin: 0 0 7px;
+  font-size: 17px;
+}
+.grumblins-launcher p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.grumblins-launcher > a {
+  flex-shrink: 0;
+}
+.grumblins-workspace {
+  min-width: 0;
+}
+.grumblins-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 30px;
+}
+.grumblins-heading > div {
+  max-width: 660px;
+  min-width: 0;
+}
+.grumblins-heading h2 {
+  margin: 10px 0 14px;
+  font-size: clamp(25px, 3vw, 36px);
+  line-height: 1.2;
+  letter-spacing: -1px;
+}
+.grumblins-heading p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+.grumblins-heading > button {
+  flex-shrink: 0;
+}
+.grumblins-focus {
+  max-width: 760px;
+  padding: 30px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+}
+.grumblins-focus label {
+  font-size: 19px;
+  font-weight: 700;
+}
+.grumblins-help,
+.grumblins-context {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.grumblins-focus input {
+  width: 100%;
+  margin: 10px 0 20px;
+}
+.grumblins-form-actions,
+.grumblin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.grumblins-guidance {
+  padding: 22px 24px;
+  border-left: 3px solid #9eb599;
+  border-radius: 0 12px 12px 0;
+  background: #f2f6ef;
+  margin: 24px 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.grumblins-guidance strong {
+  font-size: 15px;
+}
+.grumblins-guidance p {
+  margin: 7px 0 14px;
+}
+.grumblins-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.grumblin-card {
+  display: flex;
+  flex-direction: column;
+  padding: 25px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+.grumblin-identity {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.grumblin-identity > div {
+  min-width: 0;
+}
+.grumblin-identity h3 {
+  margin: 0 0 5px;
+  font-size: 20px;
+  line-height: 1.3;
+}
+.grumblin-mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 15px;
+  background: #e5eedd;
+  color: #3a5435;
+  font-size: 24px;
+  font-weight: 700;
+}
+.grumblin-tone-1 .grumblin-mark {
+  background: #f8ead2;
+  color: #886123;
+}
+.grumblin-tone-2 .grumblin-mark {
+  background: #e9e4f3;
+  color: #665084;
+}
+.grumblin-role {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.grumblin-personality {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 20px 0 24px;
+}
+.grumblin-goal-label,
+.grumblins-simulation-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: var(--muted);
+}
+.grumblin-goal {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.65;
+  margin: 9px 0 12px;
+}
+.grumblin-rationale {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 0 0 24px;
+}
+.grumblin-status {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--forest);
+}
+.grumblin-actions {
+  margin-top: auto;
+}
+.grumblin-actions button,
+.grumblin-actions a {
+  max-width: 100%;
+  white-space: normal;
+}
+.grumblins-message {
+  padding: 14px 0;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.grumblins-history {
+  margin-top: 32px;
+}
+.grumblins-history h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.grumblin-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.grumblin-history-row > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  min-width: 0;
+}
+.grumblin-history-row > div:first-child {
+  flex-direction: column;
+  gap: 5px;
+}
+.grumblin-history-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.grumblins-disclaimer {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.75;
+  margin: 28px 0 0;
+}
+.grumblins-report {
+  margin: 24px 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  min-width: 0;
+}
+.grumblins-report .grumblins-disclaimer {
+  margin: 0 0 20px;
+}
+.grumblins-report-notice {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.grumblins-report-notice:empty {
+  display: none;
+}
+.grumblins-report-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+dialog.grumblins-dialog {
+  padding: 0;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: var(--ink);
+}
+dialog.grumblins-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.grumblins-dialog .surface-dialog-body {
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.grumblins-dialog .surface-dialog-body h3 {
+  font-size: 16px;
+  margin: 24px 0 8px;
+}
+.grumblins-dialog .surface-dialog-body p {
+  margin: 0 0 12px;
+}
+.grumblins-detail-intro {
+  font-size: 18px;
+  line-height: 1.7;
+  margin-top: 16px !important;
+}
+.grumblins-traits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 20px;
+  background: #f6f8f5;
+  border-radius: 12px;
+}
+.grumblins-traits dt {
+  font-size: 11px;
+  color: var(--muted);
+}
+.grumblins-traits dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+@media (max-width: 1080px) {
+  .grumblins-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .grumblins-launcher,
+  .grumblins-heading,
+  .grumblin-history-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .grumblins-launcher,
+  .grumblins-focus,
+  .grumblin-card {
+    padding: 22px;
+  }
+  .grumblins-launcher > a {
+    align-self: flex-start;
+  }
+  .grumblins-focus label {
+    font-size: 17px;
+  }
+  .grumblins-heading {
+    margin-bottom: 24px;
+  }
+  .grumblins-traits {
+    padding: 16px;
+    gap: 14px;
+  }
+}

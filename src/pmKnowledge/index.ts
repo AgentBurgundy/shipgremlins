@@ -12,7 +12,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { stripVTControlCharacters } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
+import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
 import { loadProject, type AreaConfig, type Project } from "../config.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { readConnections } from "../setup/connections.ts";
@@ -37,6 +38,7 @@ interface Snapshot {
     repository: string;
     branch: string;
     completedAt: string;
+    grumblin?: LocalJob["grumblin"];
   };
 }
 const canonical = (value: unknown): unknown =>
@@ -214,17 +216,28 @@ export function createPmKnowledge(options: {
       !job.area ||
       !job.discoveryRevision
     ) {
-      if (job.pmMode === "discovery")
+      if (job.pmMode === "discovery" || job.pmMode === "grumblin")
         throw new Error(
           "Only an admitted discovery job can update PM knowledge.",
         );
       return;
     }
     const current = selected(job.project, job.area);
+    if (job.pmMode === "grumblin") {
+      const profile = validateGrumblinProfileSnapshot(job.grumblin);
+      if (
+        profile.project !== job.project ||
+        profile.projectInstanceId !== current.project.config.instanceId
+      )
+        throw new Error(
+          "Grumblin knowledge belongs to another project. Previous knowledge was preserved.",
+        );
+    }
     const artifacts = await docker.artifacts(job.id),
       result = artifacts.result;
     if (
       job.pmMode !== "discovery" &&
+      job.pmMode !== "grumblin" &&
       !artifacts.files.some((file) =>
         PM_KNOWLEDGE_FILES.includes(
           file.name as (typeof PM_KNOWLEDGE_FILES)[number],
@@ -242,6 +255,8 @@ export function createPmKnowledge(options: {
       result?.ok !== true ||
       result.kind !== "pm" ||
       (job.pmMode !== undefined && result.pmMode !== job.pmMode) ||
+      (job.pmMode === "grumblin" &&
+        !isDeepStrictEqual(result.grumblin, job.grumblin)) ||
       result.nonce !== job.id ||
       typeof result.commitSha !== "string" ||
       !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(result.commitSha) ||
@@ -362,6 +377,9 @@ export function createPmKnowledge(options: {
           repository: fresh.project.config.repo,
           branch: result.branch,
           completedAt: job.finishedAt ?? new Date().toISOString(),
+          ...(job.grumblin
+            ? { grumblin: validateGrumblinProfileSnapshot(job.grumblin) }
+            : {}),
         },
       };
       temporary = join(

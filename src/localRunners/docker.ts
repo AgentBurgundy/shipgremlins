@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { validateDelivery } from "../../runner-local/delivery.mjs";
 import { validateReviewPlan } from "../../runner-local/review-receipts.mjs";
+import { validateGrumblinPayload } from "../../runner-local/grumblin-runtime.mjs";
 import {
   createTestEnvironments,
   parseDockerTarget,
@@ -22,7 +23,9 @@ export interface DockerJobPayload {
   prompt?: string;
   /** Browser tools remain available; repository mode does not require screenshots. */
   browserVerification?: boolean;
-  pmMode?: "discovery" | "exploration";
+  pmMode?: "discovery" | "exploration" | "grumblin";
+  grumblin?: import("../grumblins/schema.ts").GrumblinProfileSnapshot;
+  grumblinTarget?: { url: string; role: "preview" | "staging" };
   maxRuntimeMinutes?: number;
   /** Internal remaining execution budget after trusted environment preparation. */
   remainingRuntimeMs?: number;
@@ -231,6 +234,8 @@ export function validatePayload(payload: DockerJobPayload): string {
           "prompt",
           "browserVerification",
           "pmMode",
+          "grumblin",
+          "grumblinTarget",
           "maxRuntimeMinutes",
           "remainingRuntimeMs",
           "project",
@@ -332,9 +337,10 @@ export function validatePayload(payload: DockerJobPayload): string {
   if (
     payload.pmMode !== undefined &&
     (payload.kind !== "pm" ||
-      !["discovery", "exploration"].includes(payload.pmMode))
+      !["discovery", "exploration", "grumblin"].includes(payload.pmMode))
   )
     throw new Error("Invalid PM mode.");
+  validateGrumblinPayload(payload);
   if (payload.pmMode === "exploration" && payload.delivery)
     throw new Error("Product exploration cannot publish code changes.");
   if (
