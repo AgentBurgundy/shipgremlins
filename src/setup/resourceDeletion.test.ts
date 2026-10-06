@@ -26,11 +26,16 @@ import { createProjectKnowledge } from "../projectKnowledge/index.ts";
 import { createOnboardingStore } from "../projectOnboarding/store.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 const roots: string[] = [];
-afterEach(() => {
-  vi.restoreAllMocks();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(
+  () => {
+    vi.restoreAllMocks();
+    for (const root of roots.splice(0))
+      rmSync(root, { recursive: true, force: true });
+  },
+  // The large restore test leaves both the archive and 1,800 restored files.
+  // Its Windows cleanup needs the same budget as the test, not the 10s default.
+  process.platform === "win32" ? 120_000 : 10_000,
+);
 function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gremlins-deletion-")));
   roots.push(root);
