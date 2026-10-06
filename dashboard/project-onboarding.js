@@ -23,6 +23,7 @@
   };
   const ongoing = (data) =>
     ["analyzing", "publishing"].includes(data?.status) ||
+    data?.environmentSetup?.status === "preparing" ||
     data?.environment?.verification?.status === "testing";
   function openDialogAtStart(dialog, heading) {
     heading.setAttribute("tabindex", "-1");
@@ -232,6 +233,35 @@
       ]);
     const previewNeedsSave = (s) =>
       dirty(s) || s.draft?.suggestedEnvironment || !s.data?.environment;
+    const preparedTargetKey = (target) => {
+      const sorted = (value) =>
+        Array.isArray(value)
+          ? value.map(sorted)
+          : value && typeof value === "object"
+            ? Object.fromEntries(
+                Object.keys(value)
+                  .sort()
+                  .map((key) => [key, sorted(value[key])]),
+              )
+            : value;
+      return JSON.stringify(sorted({ ...target, bypassSecret: undefined }));
+    };
+    function acceptPreparedDraft(s, data) {
+      if (
+        !s.prepareDraft ||
+        s.prepareDraft.revision === data.configurationRevision ||
+        s.prepareDraft.snapshot !== JSON.stringify(s.draft) ||
+        preparedTargetKey(data.environment?.target) !== s.prepareDraft.target
+      )
+        return false;
+      s.draft = initialDraft(s);
+      s.baseline = JSON.stringify(s.draft);
+      s.draftRevision = data.configurationRevision;
+      s.formSignature = "";
+      s.prepareDraft = null;
+      s.showForm = false;
+      return true;
+    }
     function paintConnections(s) {
       if (!s.connectionLinks) return;
       const status = getStatus(),
@@ -459,6 +489,7 @@
         s.message = node("div", undefined, "onboarding-message");
         s.message.setAttribute("role", "status");
         s.analysis = node("section", undefined, "onboarding-analysis");
+        s.automatic = node("section", undefined, "onboarding-automatic");
         s.form = node("section", undefined, "onboarding-choice");
         s.verification = node("section", undefined, "onboarding-verification");
         s.proposal = node("section", undefined, "onboarding-proposal");
@@ -467,6 +498,7 @@
           s.foundation,
           s.steps,
           s.message,
+          s.automatic,
           s.analysis,
           s.form,
           s.verification,
@@ -504,6 +536,7 @@
         )
           return;
         const wasDirty = dirty(s);
+        const previousRevision = s.data?.configurationRevision;
         if (
           JSON.stringify(s.data?.report?.proposedFiles) !==
           JSON.stringify(data.report?.proposedFiles)
@@ -512,7 +545,12 @@
         s.data = data;
         s.loaded = true;
         s.error = "";
-        if (wasDirty && s.draftRevision !== data.configurationRevision)
+        const savedPreparation = acceptPreparedDraft(s, data);
+        if (
+          wasDirty &&
+          !savedPreparation &&
+          s.draftRevision !== data.configurationRevision
+        )
           s.notice =
             "Project settings changed elsewhere. Your draft is kept; discard and reload before applying it to the newer configuration.";
         if (!wasDirty && !s.form.contains(document.activeElement)) {
@@ -521,12 +559,116 @@
           s.draftRevision = data.configurationRevision;
           s.formSignature = "";
         }
+        if (
+          s.preparingSaved &&
+          previousRevision !== data.configurationRevision
+        ) {
+          s.preparingSaved = false;
+          await onSaved(s.project.name);
+        }
+        if (
+          data.environmentSetup?.status &&
+          data.environmentSetup.status !== "preparing"
+        )
+          s.preparingSaved = false;
       } catch (error) {
         if (generation === s.generation)
           s.error = error.message || "Environment setup could not be loaded.";
       } finally {
         if (generation === s.generation) {
           s.loading = false;
+          paint(s);
+          schedule(s);
+          maybePrepareEnvironment(s);
+        }
+      }
+    }
+    function canPrepareEnvironment(s) {
+      if (!s.data?.environmentSetupSupported) return false;
+      if (s.project.ideaPlanId && s.data.foundation?.stage !== "ready")
+        return false;
+      if (s.data.environment)
+        return s.data.environment.target.kind === "vercel";
+      return (getStatus()?.serviceConnections || []).some(
+        (connection) =>
+          connection.provider === "vercel" &&
+          connection.connected &&
+          !connection.needsReconnect,
+      );
+    }
+    function maybePrepareEnvironment(s) {
+      if (!s.environmentActivated || !s.loaded || s.loading || disabled(s))
+        return;
+      s.environmentActivated = false;
+      if (
+        active !== s ||
+        destroyed ||
+        dirty(s) ||
+        !canPrepareEnvironment(s) ||
+        s.data.environmentSetup ||
+        s.data.environment?.verification?.status === "passed" ||
+        s.autoPreparedRevision === s.data.configurationRevision
+      )
+        return;
+      s.autoPreparedRevision = s.data.configurationRevision;
+      void prepareEnvironment(s);
+    }
+    async function prepareEnvironment(s, target, force = false) {
+      if (disabled(s) || s.loading || !s.data || (dirty(s) && !target)) return;
+      const identity = projectIdentity(s.project),
+        current = () =>
+          !destroyed &&
+          entries.get(s.project.name) === s &&
+          projectIdentity(s.project) === identity;
+      clearTimeout(s.timer);
+      s.busy = s.preparePending = true;
+      s.preparingSaved = true;
+      s.error = s.notice = "";
+      if (target && dirty(s))
+        s.prepareDraft = {
+          revision: s.draftRevision,
+          snapshot: JSON.stringify(s.draft),
+          target: preparedTargetKey(target),
+        };
+      paint(s);
+      try {
+        const data = await api(endpoint(s, "prepare-environment"), {
+          configurationRevision: target
+            ? s.draftRevision
+            : s.data.configurationRevision,
+          ...(target ? { target } : {}),
+          ...(force ? { force: true } : {}),
+        });
+        if (!current()) return;
+        const previousRevision = s.data.configurationRevision;
+        s.data = data;
+        s.loaded = true;
+        s.showAnalysis = false;
+        acceptPreparedDraft(s, data);
+        if (!dirty(s)) {
+          s.draft = initialDraft(s);
+          s.baseline = JSON.stringify(s.draft);
+          s.draftRevision = data.configurationRevision;
+          s.formSignature = "";
+        }
+        if (!dirty(s)) s.showForm = false;
+        if (previousRevision !== data.configurationRevision) {
+          s.preparingSaved = false;
+          await onSaved(s.project.name);
+        }
+        if (
+          data.environmentSetup?.status &&
+          data.environmentSetup.status !== "preparing"
+        )
+          s.preparingSaved = false;
+      } catch (error) {
+        if (current())
+          s.error =
+            error.message ||
+            "Environment setup could not start. Your settings are kept.";
+      } finally {
+        if (current()) {
+          s.busy = s.preparePending = false;
           paint(s);
           schedule(s);
         }
@@ -875,6 +1017,7 @@
         caption = node("label", label),
         input = node(type === "textarea" ? "textarea" : "input");
       input.id = `onboarding-${s.project.name}-${key}`;
+      (s.inputs ||= {})[key] = input;
       caption.htmlFor = input.id;
       if (type !== "textarea") input.type = type;
       input.value = s.draft[key];
@@ -882,6 +1025,10 @@
       input.spellcheck = false;
       input.addEventListener("input", () => {
         s.draft[key] = input.value;
+        if (s.recoveryField === key) {
+          s.recoveryField = null;
+          input.setAttribute("aria-invalid", "false");
+        }
         s.notice = "";
         updateFormActions(s);
       });
@@ -895,7 +1042,9 @@
       return wrap;
     }
     function updateFormActions(s) {
-      if (!s.accessPending && s.accessLockedControls) {
+      const preparing =
+        s.preparePending || s.data?.environmentSetup?.status === "preparing";
+      if (!s.accessPending && !preparing && s.accessLockedControls) {
         for (const [control, wasDisabled] of s.accessLockedControls)
           control.disabled = wasDisabled;
         s.accessLockedControls.clear();
@@ -913,7 +1062,9 @@
       const accessConnected =
         !previewNeedsSave(s) &&
         s.draft?.profile === "hosted" &&
-        ["connected", "not_required"].includes(s.data?.previewAccess?.status) &&
+        ["saved", "verified", "connected", "not_required"].includes(
+          s.data?.previewAccess?.status,
+        ) &&
         vercelTargetIdentity(
           s.draft.providerTarget || s.draft.existingTarget,
         ) === vercelTargetIdentity(s.data?.environment?.target);
@@ -943,8 +1094,18 @@
             : dirty(s)
               ? "Unsaved changes · save this choice before testing."
               : "Credentials stay in Connections. Saving does not start a PM or enable automation.";
-      s.form.inert = Boolean(s.accessPending);
-      if (s.accessPending) {
+      if (s.verificationDraftNotice) {
+        s.verificationDraftNotice.hidden = !dirty(s);
+        s.verificationDraftNotice.textContent =
+          "You have unsaved changes. These results describe the saved environment; save your changes before testing again.";
+      }
+      if (s.recoveryAction)
+        s.recoveryAction.disabled = disabled(s) || s.loading;
+      for (const control of s.prepareControls || [])
+        control.disabled =
+          disabled(s) || s.loading || (control.needsCleanDraft && dirty(s));
+      s.form.inert = Boolean(s.accessPending || preparing);
+      if (s.accessPending || preparing) {
         s.accessLockedControls ||= new Map();
         for (const control of s.form.querySelectorAll?.(
           "button,input,select,textarea",
@@ -969,17 +1130,35 @@
         );
       if (manual) s.formPreviewAccess = action;
       else s.savedPreviewAccess = action;
+      if (manual && s.data?.environmentSetupSupported) {
+        s.formPreviewAccess = null;
+        card.append(
+          node("h4", "Preview access is handled for you"),
+          node(
+            "p",
+            "Saving checks Vercel protection, connects the runner’s access and tests the preview. Protection stays enabled.",
+            "onboarding-help",
+          ),
+        );
+        return card;
+      }
       card.append(
         node("h4", "Vercel preview access"),
         node(
           "p",
-          result?.status === "connected"
-            ? "Access connected. Test the environment next."
-            : result?.status === "not_required"
-              ? "No deployment protection detected. Test the environment next."
-              : target.bypassSecret
-                ? "A bypass reference is saved. Connect to check the setup, then test browser access."
-                : "Let ShipGremlins check preview protection and connect automation access when needed.",
+          result?.status === "verified"
+            ? "Preview access verified by the browser check."
+            : result?.status === "saved"
+              ? "Bypass credential saved. Test the environment to verify that it works."
+              : result?.status === "missing"
+                ? "The bypass credential is missing. A reference name is saved, but its value is not in Connections. Connect preview access to repair it."
+                : result?.status === "connected"
+                  ? "Access connected. Test the environment next."
+                  : result?.status === "not_required"
+                    ? "No deployment protection detected. Test the environment next."
+                    : target.bypassSecret
+                      ? "A bypass reference is saved. Connect to check the setup, then test browser access."
+                      : "Let ShipGremlins check preview protection and connect automation access when needed.",
           "onboarding-help",
         ),
         action,
@@ -1048,6 +1227,8 @@
         return;
       }
       s.formSignature = shape;
+      s.inputs = {};
+      s.loginSelectors = null;
       s.form.replaceChildren(node("h3", "Where should your crew test?"));
       const choices = node("div", undefined, "onboarding-strategies");
       for (const [profile, title, detail] of [
@@ -1443,6 +1624,7 @@
           ),
         );
         const selectors = settingsSheet("Advanced login selectors");
+        s.loginSelectors = selectors;
         for (const [key, label] of [
           ["usernameSelector", "Username field"],
           ["passwordSelector", "Password field"],
@@ -1473,10 +1655,20 @@
       s.form.append(connections);
       const actions = node("div", undefined, "onboarding-actions");
       s.save = button(
-        "Save environment",
+        s.data?.environmentSetupSupported &&
+          (s.draft.providerTarget || s.draft.existingTarget)?.kind === "vercel"
+          ? "Save & set up environment"
+          : "Save environment",
         async () => {
           try {
             const input = window.readOnboardingTarget(s.draft);
+            if (
+              s.data?.environmentSetupSupported &&
+              input.target?.kind === "vercel"
+            ) {
+              await prepareEnvironment(s, input.target);
+              return;
+            }
             await run(s, "configure", {
               configurationRevision: s.draftRevision,
               ...input,
@@ -1505,20 +1697,435 @@
       s.form.append(s.draftNotice);
       updateFormActions(s);
     }
+    function editEnvironment(s, diagnosis) {
+      if (disabled(s) || s.loading) return;
+      s.showForm = true;
+      s.showAnalysis = false;
+      paint(s);
+      const key =
+          diagnosis?.field ||
+          (diagnosis?.action === "edit_login" ? "loginPath" : "url"),
+        input = s.inputs?.[key];
+      if (
+        ["usernameSelector", "passwordSelector", "submitSelector"].includes(
+          key,
+        ) &&
+        s.loginSelectors
+      ) {
+        const { dialog } = s.loginSelectors;
+        if (!dialog.open) dialog.showModal();
+        dialog.scrollTop = 0;
+      }
+      if (input) {
+        s.recoveryField = key;
+        input.setAttribute("aria-invalid", "true");
+        input.focus({ preventScroll: true });
+        input.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      } else s.form.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    }
+    function verificationSteps(s, result, target, container = s.verification) {
+      const checks = result?.checks || [],
+        passed = (check) =>
+          check.passed === true ||
+          check.ok === true ||
+          check.status === "passed",
+        failed = (check) =>
+          check.passed === false ||
+          check.ok === false ||
+          check.status === "failed",
+        opening = checks.filter(
+          (check) => check.name === "Browser opens application",
+        ),
+        login = checks.filter((check) => /^Test account \d+/.test(check.name)),
+        status = result?.status,
+        groups = [];
+      if (target.kind === "vercel") {
+        const access = s.data.previewAccess?.status;
+        groups.push({
+          name: "Vercel preview access",
+          state:
+            status === "passed" || opening.some(passed) || access === "verified"
+              ? "passed"
+              : access === "missing" ||
+                  (status === "failed" &&
+                    result.diagnosis?.action === "connect_preview")
+                ? "failed"
+                : "pending",
+          detail:
+            status === "passed" || opening.some(passed) || access === "verified"
+              ? "Runner can pass deployment protection"
+              : access === "missing"
+                ? "Bypass credential missing"
+                : ["saved", "connected"].includes(access)
+                  ? "Credential saved · browser check pending"
+                  : access === "not_required"
+                    ? "No protection detected · browser check pending"
+                    : "Not yet checked",
+        });
+      }
+      groups.push({
+        name: "Browser opens application",
+        state: opening.some(failed)
+          ? "failed"
+          : opening.some(passed) || status === "passed"
+            ? "passed"
+            : "pending",
+        detail: opening.some(failed)
+          ? "The runner could not open the app"
+          : opening.some(passed) || status === "passed"
+            ? "Reached the app from the Docker runner"
+            : "Not yet tested",
+      });
+      if (target.access?.kind === "password") {
+        const accountCount = target.access.accounts?.length || 1,
+          signedIn = login.filter(
+            (check) =>
+              /^Test account \d+ signs in$/.test(check.name) && passed(check),
+          ).length,
+          failedCheck = login.find(failed);
+        groups.push({
+          name: "Test account sign-in",
+          state: failedCheck
+            ? "failed"
+            : status === "passed" || signedIn === accountCount
+              ? "passed"
+              : "pending",
+          detail: failedCheck
+            ? failedCheck.name
+            : signedIn || status === "passed"
+              ? `${signedIn || accountCount} of ${accountCount} accounts signed in`
+              : "Not yet tested",
+        });
+      }
+      const rows = node("ol", undefined, "environment-checklist");
+      let checking = false;
+      for (const group of groups) {
+        const isChecking =
+          status === "testing" && group.state === "pending" && !checking;
+        if (isChecking) checking = true;
+        const row = node(
+            "li",
+            undefined,
+            `environment-check ${group.state}${isChecking ? " checking" : ""}`,
+          ),
+          icon = node(
+            "span",
+            group.state === "passed"
+              ? "✓"
+              : group.state === "failed"
+                ? "!"
+                : isChecking
+                  ? "…"
+                  : "·",
+            "environment-check-icon",
+          ),
+          copy = node("div"),
+          stateLabel = node(
+            "span",
+            group.state === "passed"
+              ? "Passed"
+              : group.state === "failed"
+                ? "Needs attention"
+                : isChecking
+                  ? "Checking…"
+                  : "Not yet tested",
+            "environment-check-status",
+          );
+        icon.setAttribute("aria-hidden", "true");
+        copy.append(node("strong", group.name), node("span", group.detail));
+        row.append(icon, copy, stateLabel);
+        rows.append(row);
+      }
+      container.append(rows);
+      if (checks.length) {
+        const details = settingsSheet("View test details");
+        details.section.classList.add("environment-test-details");
+        const items = node("ul", undefined, "onboarding-checks");
+        for (const check of checks)
+          items.append(
+            node(
+              "li",
+              `${passed(check) ? "✓ Passed" : failed(check) ? "! Failed" : "Not yet tested"} · ${check.name}${check.detail ? ` — ${check.detail}` : ""}`,
+            ),
+          );
+        details.content.append(items);
+        container.append(details.section);
+      }
+    }
+    async function choosePreview(s, choice) {
+      if (disabled(s) || dirty(s)) return;
+      if (choice?.target) {
+        try {
+          await prepareEnvironment(s, withAccess(choice.target, s.draft));
+        } catch (error) {
+          s.error = error.message;
+          paint(s);
+        }
+        return;
+      }
+      const identity = projectIdentity(s.project);
+      s.busy = true;
+      s.error = "";
+      paint(s);
+      try {
+        if (choice?.projectId)
+          await api(endpoint(s, "vercel/discover"), {
+            connectionId: choice.connectionId,
+            projectId: choice.projectId,
+            ...(choice.teamId !== undefined ? { teamId: choice.teamId } : {}),
+          });
+        if (
+          destroyed ||
+          entries.get(s.project.name) !== s ||
+          projectIdentity(s.project) !== identity
+        )
+          return;
+        s.showForm = s.showVercel = true;
+        s.showAnalysis = false;
+        s.formSignature = "";
+      } catch (error) {
+        s.error =
+          error.message || "Vercel previews could not be loaded. Try again.";
+      } finally {
+        s.busy = false;
+        if (!destroyed && entries.get(s.project.name) === s) {
+          paint(s);
+          if (s.showForm)
+            s.form.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }
+      }
+    }
+    function paintAutomatic(s) {
+      const setup = s.data?.environmentSetup,
+        available = s.data?.environmentSetupSupported,
+        preparing = s.preparePending || setup?.status === "preparing",
+        blocked = ["needs_input", "failed"].includes(setup?.status),
+        suggested = !setup && !s.data?.environment && canPrepareEnvironment(s),
+        visible = available && (preparing || blocked || suggested);
+      s.automatic.hidden = !visible;
+      s.prepareControls = [];
+      if (!visible) return;
+      s.steps.hidden = true;
+      s.analysis.hidden = true;
+      s.verification.hidden = true;
+      s.proposal.hidden = true;
+      if (preparing) s.form.hidden = true;
+      s.automatic.replaceChildren();
+      s.automatic.setAttribute("aria-busy", String(Boolean(preparing)));
+      const heading = node("div", undefined, "environment-result-heading"),
+        copy = node("div"),
+        diagnosis =
+          setup?.step === "test_access"
+            ? s.data.environment?.verification?.diagnosis
+            : undefined,
+        title = preparing
+          ? "Getting your crew connected."
+          : suggested
+            ? "We’ll find your test environment."
+            : setup.action === "choose_preview"
+              ? "Choose the app your crew should test."
+              : diagnosis?.title || "One thing needs your help.";
+      copy.append(
+        node("h3", title),
+        node(
+          "p",
+          preparing
+            ? (setup?.status === "preparing" && setup.message) ||
+                "Finding the right preview, connecting access and checking it from the runner."
+            : suggested
+              ? "Your Vercel account is connected. We’ll match this repository to a preview and check that your gremlins can use it."
+              : diagnosis?.detail || setup.message,
+        ),
+      );
+      heading.append(
+        copy,
+        node(
+          "span",
+          preparing ? "Preparing" : blocked ? "Your turn" : "Automatic setup",
+          `environment-result-badge ${blocked && !preparing ? "attention" : "testing"}`,
+        ),
+      );
+      s.automatic.append(heading);
+      if (preparing) {
+        const steps = [
+            ["find_preview", "Find the right preview"],
+            ["save_environment", "Prepare the environment"],
+            ["connect_access", "Connect private preview access"],
+            ["test_access", "Check access from the runner"],
+          ],
+          current = Math.max(
+            0,
+            steps.findIndex(
+              ([key]) => setup?.status === "preparing" && key === setup.step,
+            ),
+          ),
+          progress = node("ol", undefined, "environment-setup-progress");
+        progress.setAttribute("aria-label", "Automatic environment setup");
+        for (const [index, [, label]] of steps.entries()) {
+          const item = node(
+            "li",
+            undefined,
+            index < current
+              ? "complete"
+              : index === current
+                ? "current"
+                : "pending",
+          );
+          if (index === current) item.setAttribute("aria-current", "step");
+          item.append(
+            node("span", index < current ? "✓" : String(index + 1)),
+            node("strong", label),
+          );
+          progress.append(item);
+        }
+        s.automatic.append(
+          progress,
+          node(
+            "p",
+            "You can leave this page. Setup continues in the background.",
+            "onboarding-help",
+          ),
+        );
+        return;
+      }
+      const actions = node("div", undefined, "onboarding-actions"),
+        action = (label, handler, needsCleanDraft = true, primary = true) => {
+          const control = button(label, handler, primary);
+          control.needsCleanDraft = needsCleanDraft;
+          s.prepareControls.push(control);
+          return control;
+        },
+        navigate = (path) => {
+          if (!window.dashboardPages?.navigate(path))
+            window.location.assign(path);
+        };
+      if (
+        blocked &&
+        setup.step === "test_access" &&
+        s.data.environment?.verification?.checks?.length
+      )
+        verificationSteps(
+          s,
+          s.data.environment.verification,
+          s.data.environment.target,
+          s.automatic,
+        );
+      if (setup?.action === "choose_preview" && setup.choices?.length) {
+        const choices = node("div", undefined, "environment-preview-choices");
+        for (const choice of setup.choices) {
+          const select = action("", () => choosePreview(s, choice));
+          select.className = "environment-preview-choice";
+          select.append(
+            node("strong", choice.name || "Vercel app"),
+            node(
+              "span",
+              [
+                choice.rootDirectory
+                  ? `Directory ${choice.rootDirectory}`
+                  : "Repository root",
+                choice.branch ? `Branch ${choice.branch}` : "",
+                choice.target ? "Ready preview" : "Set up a preview",
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            ),
+          );
+          choices.append(select);
+        }
+        s.automatic.append(choices);
+      } else if (setup?.action === "connect_vercel")
+        actions.append(
+          action(
+            "Connect Vercel",
+            () => navigate("/connections#vercel-connection"),
+            false,
+          ),
+        );
+      else if (setup?.action === "manage_credentials")
+        actions.append(
+          action(
+            "Add test credentials",
+            () => navigate("/connections#project-access"),
+            false,
+          ),
+        );
+      else if (setup?.action === "edit_login")
+        actions.append(
+          action(
+            "Fix sign-in settings",
+            () => editEnvironment(s, diagnosis || { action: "edit_login" }),
+            false,
+          ),
+        );
+      else if (setup?.action === "choose_preview")
+        actions.append(
+          action("Set up a Vercel preview", () => choosePreview(s)),
+        );
+      else
+        actions.append(
+          action(
+            suggested ? "Set up my test environment" : "Try setup again",
+            () => prepareEnvironment(s, undefined, true),
+          ),
+        );
+      if (
+        blocked &&
+        ["connect_vercel", "manage_credentials", "edit_login"].includes(
+          setup.action,
+        )
+      )
+        actions.append(
+          action(
+            "Check again",
+            () => prepareEnvironment(s, undefined, true),
+            true,
+            false,
+          ),
+        );
+      s.automatic.append(actions);
+      const manual = action(
+        s.showForm
+          ? "Hide environment settings"
+          : "Review environment settings",
+        () => {
+          s.showForm = !s.showForm;
+          paint(s);
+          if (s.showForm)
+            s.form.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        },
+        false,
+        false,
+      );
+      manual.classList.add("onboarding-text-button");
+      s.automatic.append(manual);
+      if (dirty(s))
+        s.automatic.append(
+          node(
+            "p",
+            "Your edits are kept. Save or discard them before setting up another preview.",
+            "environment-draft-notice",
+          ),
+        );
+    }
     function paint(s) {
       const buildFirst = Boolean(
         s.project.ideaPlanId && s.data?.foundation?.stage !== "ready",
       );
       s.foundation.hidden = !buildFirst;
+      s.automatic.hidden = true;
       s.steps.hidden = buildFirst;
       s.verification.hidden = buildFirst;
       s.proposal.hidden = buildFirst;
       s.title.textContent = buildFirst
         ? "First, let's build your app."
-        : "A safe place to test.";
+        : canPrepareEnvironment(s)
+          ? "Your crew’s test environment."
+          : "A safe place to test.";
       s.description.textContent = buildFirst
         ? "Your plan is ready. A Coding Gremlin can turn it into a working first version before you need a test environment."
-        : "Choose where your crew can explore. Test access before using a browser environment.";
+        : canPrepareEnvironment(s)
+          ? "We handle preview access and check it from the runner. We’ll ask only when a choice or test account is needed."
+          : "Choose where your crew can explore. Test access before using a browser environment.";
       if (buildFirst) {
         s.analysis.hidden = s.form.hidden = true;
         s.vercelSetup?.setActive(false);
@@ -1746,54 +2353,222 @@
       if (s.data?.environment) {
         const environment = s.data.environment,
           result = environment.verification,
-          hasCrew = Boolean(s.project.areas?.length);
-        s.verification.append(
+          hasCrew = Boolean(s.project.areas?.length),
+          target = environment.target,
+          ready = result?.status === "passed",
+          testing = result?.status === "testing",
+          preview = s.data.previewAccess,
+          diagnosis =
+            !ready &&
+            !testing &&
+            (result?.diagnosis ||
+              (preview?.status === "missing"
+                ? {
+                    title: "The preview bypass credential is missing.",
+                    detail:
+                      "A credential name is saved, but the credential itself is not in Connections. Connect preview access to repair this without turning off protection.",
+                    action: "connect_preview",
+                  }
+                : result?.status === "failed"
+                  ? {
+                      title: "Browser access could not be verified.",
+                      detail:
+                        result.message ||
+                        "The last test did not complete. Run it again for a current diagnosis, then review the saved environment if it still fails.",
+                      action: "retry",
+                    }
+                  : null)),
+          header = node("div", undefined, "environment-result-heading"),
+          heading = node("div"),
+          badge = node(
+            "span",
+            ready
+              ? "Ready"
+              : testing
+                ? "Testing"
+                : diagnosis
+                  ? "Needs attention"
+                  : "Not tested",
+            `environment-result-badge ${ready ? "ready" : testing ? "testing" : diagnosis ? "attention" : "pending"}`,
+          );
+        s.verification.setAttribute("aria-busy", String(testing));
+        header.setAttribute("aria-live", "polite");
+        heading.append(
           node(
             "h3",
-            result?.status === "passed"
+            ready
               ? hasCrew
                 ? "Your crew can explore."
                 : "Ready for a PM."
-              : "Test the environment.",
+              : testing
+                ? "Checking the runner’s access…"
+                : diagnosis
+                  ? "Let’s get your crew connected."
+                  : "Test the environment.",
           ),
+        );
+        heading.append(
           node(
             "p",
-            result?.message ||
-              "Run a browser check against the saved environment before using it.",
+            ready
+              ? target.access?.kind === "password"
+                ? "The app opened and your test accounts signed in successfully."
+                : "The runner reached the public app. Signed-in flows are not included in this check."
+              : testing
+                ? "Opening the app from Docker, then checking the configured sign-in."
+                : "We check the same access your gremlins will use.",
           ),
         );
-        const detail = node(
-          "p",
-          `${environment.name} · ${environment.target.kind === "url" ? environment.target.url : environment.profile === "docker" ? "Disposable local app" : environment.target.kind}`,
-          "onboarding-help",
-        );
-        s.verification.append(detail);
-        s.savedPreviewAccess = null;
-        if (environment.target.kind === "vercel" && !s.showForm)
-          s.verification.append(previewAccessCard(s, environment.target));
-        if (result?.checks?.length) {
-          const checks = node("ul", undefined, "onboarding-checks");
-          for (const item of result.checks)
-            checks.append(
-              node(
-                "li",
-                `${item.passed === true || item.ok === true || item.status === "passed" ? "✓" : item.passed === false || item.ok === false || item.status === "failed" ? "!" : "·"} ${item.name}${item.detail ? ` — ${item.detail}` : ""}`,
-              ),
-            );
-          s.verification.append(checks);
+        header.append(heading, badge);
+        s.verification.append(header);
+        const summary = node("dl", undefined, "environment-target-summary");
+        for (const [label, value] of [
+          [
+            "Environment",
+            `${environment.name} · ${target.kind === "vercel" ? "Vercel preview" : environment.profile === "docker" ? "Disposable local app" : target.kind === "url" ? "Hosted app" : target.kind}`,
+          ],
+          target.kind === "url"
+            ? ["Test URL", target.url]
+            : target.branch
+              ? ["Branch", target.branch]
+              : null,
+          target.access?.kind === "password"
+            ? [
+                "Sign-in",
+                `${target.access.accounts?.length || 1} test account${target.access.accounts?.length === 1 ? "" : "s"} · ${target.access.loginPath}`,
+              ]
+            : ["Access", "Public app"],
+        ].filter(Boolean)) {
+          const row = node("div");
+          row.append(node("dt", label), node("dd", value));
+          summary.append(row);
         }
+        s.verification.append(summary);
+        if (diagnosis) {
+          const issue = node("div", undefined, "environment-diagnosis");
+          issue.setAttribute("role", "status");
+          issue.append(
+            node("h4", diagnosis.title),
+            node("p", diagnosis.detail),
+          );
+          s.verification.append(issue);
+        } else if (!ready && !testing && target.kind === "vercel") {
+          const previewMessage = ["saved", "connected"].includes(
+            preview?.status,
+          )
+            ? preview.status === "saved"
+              ? "Bypass credential saved. Test the environment to verify that it works."
+              : "Access connected. Test the environment next."
+            : preview?.status === "not_required"
+              ? "No deployment protection detected. Test the environment next."
+              : target.bypassSecret
+                ? "A bypass reference is saved. Connect preview access to check that its credential is available."
+                : "Connect preview access to check Vercel protection and save automation access when needed.";
+          s.verification.append(
+            node(
+              "p",
+              `${previewMessage} Protection stays on.`,
+              "environment-preview-note",
+            ),
+          );
+        }
+        s.savedPreviewAccess = null;
+        s.recoveryAction = null;
+        verificationSteps(s, result, target);
+        s.verificationDraftNotice = node(
+          "p",
+          undefined,
+          "environment-draft-notice",
+        );
+        s.verification.append(s.verificationDraftNotice);
+        const needsPreview =
+            !ready &&
+            !testing &&
+            target.kind === "vercel" &&
+            (diagnosis?.action === "connect_preview" ||
+              (!diagnosis &&
+                !["saved", "connected", "not_required", "verified"].includes(
+                  preview?.status,
+                ))),
+          recovery =
+            diagnosis &&
+            !["connect_preview", "retry"].includes(diagnosis.action);
         s.test = button(
-          result?.status === "testing"
+          testing
             ? "Testing environment…"
-            : result?.status === "passed"
+            : ready
               ? "Test again"
-              : "Test environment",
-          () => run(s, "verify", {}),
-          result?.status !== "passed",
+              : result?.status === "failed"
+                ? "Retry test"
+                : "Test environment",
+          () =>
+            canPrepareEnvironment(s)
+              ? prepareEnvironment(s, undefined, true)
+              : run(s, "verify", {}),
+          !ready && !needsPreview && !recovery,
         );
         const primaryActions = node("div", undefined, "onboarding-actions");
+        if (needsPreview) {
+          if (canPrepareEnvironment(s)) {
+            s.recoveryAction = button(
+              "Set up & test environment",
+              () => prepareEnvironment(s, undefined, true),
+              true,
+            );
+            primaryActions.append(s.recoveryAction);
+          } else {
+            s.savedPreviewAccess = button(
+              "Connect preview access",
+              () => connectPreviewAccess(s),
+              true,
+            );
+            primaryActions.append(s.savedPreviewAccess);
+          }
+        } else if (recovery) {
+          const credentials = diagnosis.action === "manage_credentials";
+          s.recoveryAction = button(
+            credentials
+              ? "Add test credentials"
+              : diagnosis.action === "edit_login"
+                ? "Fix sign-in settings"
+                : "Review environment settings",
+            () => {
+              if (credentials) {
+                const path = "/connections#project-access";
+                if (!window.dashboardPages?.navigate(path))
+                  window.location.assign(path);
+              } else editEnvironment(s, diagnosis);
+            },
+            true,
+          );
+          primaryActions.append(s.recoveryAction);
+        }
         primaryActions.append(s.test);
+        if (
+          !ready &&
+          !diagnosis &&
+          !s.data.environmentSetupSupported &&
+          target.kind === "vercel" &&
+          ["saved", "connected", "not_required"].includes(preview?.status)
+        ) {
+          s.savedPreviewAccess = button("Check preview access", () =>
+            connectPreviewAccess(s),
+          );
+          primaryActions.append(s.savedPreviewAccess);
+        }
         s.verification.append(primaryActions);
+        if (
+          result?.checkedAt &&
+          Number.isFinite(new Date(result.checkedAt).getTime())
+        ) {
+          const checked = node(
+            "time",
+            `Last checked ${new Date(result.checkedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`,
+            "environment-checked-at",
+          );
+          checked.dateTime = result.checkedAt;
+          s.verification.append(checked);
+        }
         const editActions = node("div", undefined, "onboarding-actions");
         editActions.append(
           button(
@@ -1942,6 +2717,7 @@
           /* Unknown external URLs remain unavailable. */
         }
       }
+      paintAutomatic(s);
       updateFormActions(s);
     }
     function deactivate() {
@@ -1974,14 +2750,16 @@
         }
       },
       mount(container, project) {
-        const s = entry(project);
-        if (active !== s) deactivate();
+        const s = entry(project),
+          returning = active !== s;
+        if (returning) deactivate();
+        if (returning) s.environmentActivated = true;
         active = s;
         container.append(s.node);
         paint(s);
         if (!s.form.hidden && s.draft?.profile === "hosted" && s.showVercel)
           s.vercelSetup?.setActive(true);
-        load(s);
+        load(s, returning);
         schedule(s);
       },
       refresh(project) {

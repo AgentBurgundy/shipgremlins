@@ -52,25 +52,35 @@ body:has(dialog.run-viewer[open]) {
 body:not([data-page="settings"]) .page-footer .config-location {
   display: none;
 }
-.run-viewer .run-viewer-back {
-  grid-column: 1;
+.run-viewer .run-viewer-close {
+  grid-column: 2;
   grid-row: 1;
-  justify-self: start;
-  padding: 4px 0;
-  min-height: 32px;
-  border: 0;
-  background: none;
-  color: #5a6f61;
-  font-size: 12px;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 13px;
+  min-height: 44px;
+  border: 1px solid #dce5df;
+  border-radius: 9px;
+  background: #fff;
+  color: #173c29;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
-.run-viewer .run-viewer-back:hover {
-  color: #173c29;
+.run-viewer .run-viewer-close:hover {
+  background: #f4f7f5;
+  border-color: #a3b4a8;
+}
+.run-viewer .run-viewer-close span {
+  font-size: 21px;
+  line-height: 1;
 }
 .run-viewer #refresh-job-output {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 1;
+  justify-self: start;
   min-height: 32px;
   padding: 5px 10px;
   font-size: 11px;
@@ -131,7 +141,7 @@ body:not([data-page="settings"]) .page-footer .config-location {
   box-shadow: 0 1px 4px #183c2917;
 }
 .run-viewer .run-viewer-tab:focus-visible,
-.run-viewer .run-viewer-back:focus-visible {
+.run-viewer .run-viewer-close:focus-visible {
   outline: 2px solid #488158;
   outline-offset: 2px;
 }
@@ -288,9 +298,6 @@ body:not([data-page="settings"]) .page-footer .config-location {
   }
   .run-viewer #job-detail-title {
     font-size: 19px;
-  }
-  .run-viewer .run-viewer-back {
-    min-height: 36px;
   }
   .run-viewer .run-viewer-tabs {
     margin: 12px 16px 0;

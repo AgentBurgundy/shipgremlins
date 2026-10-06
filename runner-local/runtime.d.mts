@@ -1,8 +1,13 @@
 export const MAX_JOB_MS: number;
+export function validateCommitIdentity(
+  identity: unknown,
+  provider?: string,
+): void;
 export function jobEnvironments(
   credentials: Record<string, string>,
   provider: string,
   inherited?: Record<string, string | undefined>,
+  commitIdentity?: { name: string; email: string },
 ): {
   execution: Record<string, string | undefined>;
   publication: Record<string, string | undefined>;

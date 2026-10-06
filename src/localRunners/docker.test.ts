@@ -163,6 +163,10 @@ const developer = {
   repoUrl: "https://github.com/example/app.git",
   branch: "pm-staging",
   provider: "github",
+  commitIdentity: {
+    name: "gremlin-user",
+    email: "77+gremlin-user@users.noreply.github.com",
+  },
   prompt: "Fix the approved ticket and run checks.",
   credentials: {
     GITHUB_TOKEN: "private-test-value",
@@ -781,6 +785,7 @@ describe("trusted local job publication", () => {
       baseSha: "a".repeat(40),
       repoUrl: `https://${host}/example/app.git`,
       provider,
+      commitIdentity: developer.commitIdentity,
       run: async (command: string, args: string[]) => {
         calls.push([command, ...args]);
         if (command === "/bin/bash" && args.at(-1) === failure)
@@ -872,7 +877,10 @@ describe("trusted local job publication", () => {
       expect(h.body()).toContain("Tested commit: " + "b".repeat(40));
       const commit = h.calls.find((call) => call.includes("commit"))!;
       expect(commit).toContain("core.hooksPath=/dev/null");
-      expect(commit).toContain("user.name=ShipGremlins");
+      expect(commit).toContain("user.name=gremlin-user");
+      expect(commit).toContain(
+        "user.email=77+gremlin-user@users.noreply.github.com",
+      );
     },
   );
 
@@ -1046,6 +1054,119 @@ describe("trusted local job publication", () => {
     expect(publication.GIT_ASKPASS).toBe("/opt/gremlins/git-askpass.sh");
     expect(inherited.GH_TOKEN).toBe("inherited-gh");
     expect(inherited.SHELLOPTS).toBe("xtrace");
+  });
+  it("sets both commit identities from controller metadata and discards inherited author overrides", () => {
+    const inherited = {
+      GIT_AUTHOR_NAME: "Wrong",
+      GIT_AUTHOR_EMAIL: "wrong@example.test",
+      GIT_COMMITTER_NAME: "Wrong",
+      GIT_COMMITTER_EMAIL: "wrong@example.test",
+      GIT_AUTHOR_DATE: "old",
+      EMAIL: "wrong@example.test",
+    };
+    const { execution, publication } = jobEnvironments(
+      {},
+      "github",
+      inherited,
+      developer.commitIdentity,
+    );
+    for (const value of [execution, publication]) {
+      expect(value).toMatchObject({
+        GIT_AUTHOR_NAME: "gremlin-user",
+        GIT_AUTHOR_EMAIL: developer.commitIdentity.email,
+        GIT_COMMITTER_NAME: "gremlin-user",
+        GIT_COMMITTER_EMAIL: developer.commitIdentity.email,
+      });
+      expect(value).not.toHaveProperty("EMAIL");
+      expect(value).not.toHaveProperty("GIT_AUTHOR_DATE");
+    }
+    expect(() =>
+      validatePayload({ ...developer, commitIdentity: undefined }),
+    ).toThrow("verified source-account");
+    expect(() =>
+      validatePayload({
+        ...developer,
+        commitIdentity: {
+          name: "owner\nattacker",
+          email: developer.commitIdentity.email,
+        },
+      }),
+    ).toThrow("verified source-account");
+    expect(() =>
+      validatePayload({
+        ...developer,
+        commitIdentity: { name: "owner", email: "gremlins@shipgremlins.ai" },
+      }),
+    ).toThrow("verified source-account");
+  });
+  it("normalizes an already committed model change without changing its tested tree", async () => {
+    const directory = mkdtempSync(
+      join(realpathSync(tmpdir()), "gremlins-author-test-"),
+    );
+    const git = (args: string[], env: NodeJS.ProcessEnv = process.env) => {
+      const result = spawnSync("git", args, {
+        cwd: directory,
+        env,
+        encoding: "utf8",
+      });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    try {
+      git(["init", "--quiet"]);
+      writeFileSync(join(directory, "app.txt"), "before");
+      git(["add", "."]);
+      git([
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "--quiet",
+        "-m",
+        "base",
+      ]);
+      const base = git(["rev-parse", "HEAD"]);
+      git(["checkout", "-b", developer.delivery.branch]);
+      writeFileSync(join(directory, "app.txt"), "after");
+      git(["add", "."]);
+      git([
+        "-c",
+        "user.name=Invented Gremlin",
+        "-c",
+        "user.email=gremlins@shipgremlins.ai",
+        "commit",
+        "--quiet",
+        "-m",
+        "model change",
+      ]);
+      const tree = git(["rev-parse", "HEAD^{tree}"]);
+      const h = harness();
+      const { execution } = jobEnvironments(
+        {},
+        "github",
+        process.env,
+        developer.commitIdentity,
+      );
+      await runCheckedDelivery({
+        ...h.input,
+        baseSha: base,
+        commands: { test: "fixture check" },
+        run: async (command, args) =>
+          command === "git" ? git(args, execution) : "",
+        prepareRepository: () => restoreGitConfig(directory, h.input.repoUrl),
+      });
+      expect(git(["show", "-s", "--format=%an|%ae|%cn|%ce"])).toBe(
+        `gremlin-user|${developer.commitIdentity.email}|gremlin-user|${developer.commitIdentity.email}`,
+      );
+      expect(git(["rev-parse", "HEAD^{tree}"])).toBe(tree);
+      expect(h.body()).toContain(
+        `Tested commit: ${git(["rev-parse", "HEAD"])}`,
+      );
+      expect(h.published[0]).toContain("push");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
   it.skipIf(process.platform === "win32")(
     "fails a real piped check before publication and preserves successful pipelines",

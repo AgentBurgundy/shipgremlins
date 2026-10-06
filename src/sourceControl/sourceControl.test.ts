@@ -38,6 +38,12 @@ function fixture(provider: SourceProvider = "github") {
     notInstalled = false,
     lookupDelay = 0;
   let installationPermissions = { contents: "write", pull_requests: "write" };
+  let user: unknown = {
+    id: 77,
+    login: "gremlin-user",
+    username: "gremlin-user",
+    name: "Gremlin User",
+  };
   let access = "",
     refresh = "";
   const calls: Array<{ url: string; body: URLSearchParams; headers: Headers }> =
@@ -103,13 +109,7 @@ function fixture(provider: SourceProvider = "github") {
     }
     if (revoked || headers.get("authorization") !== `Bearer ${access}`)
       return response({ message: "private internal detail" }, 401);
-    if (path.endsWith("/user"))
-      return response({
-        id: 77,
-        login: "gremlin-user",
-        username: "gremlin-user",
-        name: "Gremlin User",
-      });
+    if (path.endsWith("/user")) return response(user);
     if (path === "/user/installations")
       return response({
         installations: [{ id: 123, permissions: installationPermissions }],
@@ -169,6 +169,9 @@ function fixture(provider: SourceProvider = "github") {
     connect,
     advance,
     provider,
+    setUser: (value: unknown) => {
+      user = value;
+    },
     setError: (value: string) => {
       error = value;
     },
@@ -488,6 +491,84 @@ describe("official source OAuth device connections", () => {
       }),
     ).toEqual({ token: "manual-fallback-token", method: "token" });
     expect(test.calls).toEqual([]);
+  });
+  it("binds write commits to the authenticated account rather than the repository owner", async () => {
+    const test = fixture();
+    await test.connect();
+    const credential = await test.api.acquireLease({
+      provider: "github",
+      repository: "example/app",
+      jobId: "job-write",
+      write: true,
+    });
+    expect(credential.commitIdentity).toEqual({
+      name: "gremlin-user",
+      email: "77+gremlin-user@users.noreply.github.com",
+    });
+    expect(credential.commitIdentity?.email).not.toContain("example");
+    const before = test.calls.filter(
+      (call) => new URL(call.url).pathname === "/user",
+    ).length;
+    expect(
+      (
+        await test.api.acquireLease({
+          provider: "github",
+          repository: "example/app",
+          jobId: "job-read",
+        })
+      ).commitIdentity,
+    ).toBeUndefined();
+    expect(
+      test.calls.filter((call) => new URL(call.url).pathname === "/user"),
+    ).toHaveLength(before);
+  });
+  it.each([
+    { id: 0, login: "owner" },
+    { id: 9, login: "name\nuser.email=attacker" },
+    { id: "77", login: "owner" },
+  ])("rejects malformed authenticated commit metadata", async (user) => {
+    const test = fixture();
+    await test.connect();
+    test.setUser(user);
+    await expect(
+      test.api.acquireLease({
+        provider: "github",
+        repository: "example/app",
+        jobId: "job-write",
+        write: true,
+      }),
+    ).rejects.toMatchObject({ code: "commit_identity_unavailable" });
+  });
+  it("resolves manual-token write identity through the authenticated user API", async () => {
+    const calls: string[] = [];
+    const api = createSourceControl({
+      root: temporary(),
+      env: { GITHUB_TOKEN: "private-token" },
+      fetch: (async (url, init) => {
+        calls.push(String(url));
+        expect(new Headers(init?.headers).get("authorization")).toBe(
+          "Bearer private-token",
+        );
+        return new Response(
+          JSON.stringify({ id: 123, login: "actual-account" }),
+          { status: 200 },
+        );
+      }) as typeof fetch,
+    });
+    expect(
+      (
+        await api.acquireLease({
+          provider: "github",
+          repository: "different-owner/app",
+          jobId: "job-write",
+          write: true,
+        })
+      ).commitIdentity,
+    ).toEqual({
+      name: "actual-account",
+      email: "123+actual-account@users.noreply.github.com",
+    });
+    expect(calls).toEqual(["https://api.github.com/user"]);
   });
 
   it("bounds repository enumeration even when client search matches nothing", async () => {

@@ -529,6 +529,27 @@ export function createSourceControl(options: {
     if (input.jobId && !/^job-[a-z0-9-]{1,100}$/.test(input.jobId))
       throw new SourceControlError("Invalid job identifier.");
     return store.locked(async (state, save) => {
+      const identity = async (accessToken: string) => {
+        if (!input.jobId || !input.write || destination.provider !== "github")
+          return undefined;
+        const { data } = await providerApi(destination, accessToken, "/user");
+        if (
+          !object(data) ||
+          !Number.isSafeInteger(data.id) ||
+          (data.id as number) < 1 ||
+          typeof data.login !== "string" ||
+          !/^[a-z0-9][a-z0-9-]{0,38}(?:\[bot\])?$/i.test(data.login)
+        )
+          throw new SourceControlError(
+            "GitHub could not confirm a commit identity for this source connection. Reconnect a GitHub account in Connections before running coding agents.",
+            "commit_identity_unavailable",
+            502,
+          );
+        return {
+          name: data.login,
+          email: `${data.id}+${data.login}@users.noreply.github.com`,
+        };
+      };
       const connection = state.connections[key(destination)];
       if (!connection) {
         const pat = manual(destination.provider);
@@ -538,7 +559,12 @@ export function createSourceControl(options: {
             "not_connected",
             401,
           );
-        return { token: pat, method: "token" };
+        const commitIdentity = await identity(pat);
+        return {
+          token: pat,
+          method: "token",
+          ...(commitIdentity ? { commitIdentity } : {}),
+        };
       }
       await refreshed(state, connection, save, minimum);
       try {
@@ -567,6 +593,7 @@ export function createSourceControl(options: {
         }
         throw error;
       }
+      const commitIdentity = await identity(connection.accessToken);
       if (input.jobId) {
         connection.leases = connection.leases.filter(
           (lease) => lease.jobId !== input.jobId,
@@ -580,6 +607,7 @@ export function createSourceControl(options: {
       return {
         token: connection.accessToken,
         method: "oauth",
+        ...(commitIdentity ? { commitIdentity } : {}),
         ...(connection.expiresAt
           ? { expiresAt: new Date(connection.expiresAt).toISOString() }
           : {}),

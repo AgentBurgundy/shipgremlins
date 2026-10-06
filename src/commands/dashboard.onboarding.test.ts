@@ -23,8 +23,11 @@ import { createOnboardingStore } from "../projectOnboarding/store.ts";
 import { validateSetupAnalysis } from "../projectOnboarding/analysis.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 import { VercelSetupError } from "../vercelSetup/types.ts";
+import { saveConnections } from "../setup/connections.ts";
+import type { EnvironmentVerification } from "../setup/environmentAccess.ts";
 
 interface SetupResponse extends OnboardingState {
+  previewAccess?: { status: string; message: string };
   environment: null | {
     name: string;
     profile: string;
@@ -80,7 +83,7 @@ async function fixture(
   vi.spyOn(runners, "start").mockImplementation(() => {});
   let testing = false;
   const environmentAccess = {
-    status: vi.fn(() => ({
+    status: vi.fn<() => EnvironmentVerification>(() => ({
       status: testing ? ("testing" as const) : ("untested" as const),
       message: "Synthetic probe state.",
     })),
@@ -140,6 +143,109 @@ const target = {
 };
 
 describe("authenticated project onboarding", () => {
+  it("starts automatic environment setup only through authenticated bounded POST input and returns its progress", async () => {
+    let preparing = false;
+    const environmentSetup = {
+      status: vi.fn(() =>
+        preparing
+          ? {
+              status: "preparing" as const,
+              step: "find_preview" as const,
+              message: "Finding the app preview…",
+              configurationRevision: "a".repeat(64),
+              updatedAt: "2026-10-06T00:00:00.000Z",
+            }
+          : undefined,
+      ),
+      prepare: vi.fn(async () => {
+        preparing = true;
+      }),
+      busy: vi.fn(() => preparing),
+      idle: async () => {},
+      close: async () => {},
+    } as unknown as NonNullable<DashboardOptions["environmentSetup"]>;
+    const f = await fixture({ environmentSetup });
+    const initial = await f.state();
+    expect(environmentSetup.prepare).not.toHaveBeenCalled();
+    const path = "/api/projects/app/onboarding/prepare-environment";
+    const input = {
+      configurationRevision: initial.configurationRevision,
+      force: true,
+    };
+    expect((await f.call(path, input, false)).status).toBe(401);
+    expect((await f.call(path)).status).toBe(405);
+    expect((await f.call(path + "?token=no", input)).status).toBe(400);
+    expect(
+      (await f.call(path, { ...input, token: "private-value" })).status,
+    ).toBe(400);
+    expect((await f.call(path, { ...input, repair: true })).status).toBe(400);
+    expect((await f.call(path, { ...input, force: "yes" })).status).toBe(400);
+    expect((await f.call(path, {})).status).toBe(400);
+    const response = await f.call(path, input);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      environmentSetupSupported: true,
+      environmentSetup: { status: "preparing", step: "find_preview" },
+    });
+    expect(environmentSetup.prepare).toHaveBeenCalledExactlyOnceWith(
+      "app",
+      input,
+    );
+    expect((await f.call("/api/updates/apply", {})).status).toBe(409);
+    expect((await f.call("/api/connections", {})).status).toBe(409);
+    expect(
+      (
+        await f.call("/api/projects/app/onboarding/configure", {
+          configurationRevision: initial.configurationRevision,
+          profile: "hosted",
+          target,
+        })
+      ).status,
+    ).toBe(409);
+  });
+  it("reports actual saved preview credentials and current browser evidence after refresh without exposing secrets", async () => {
+    const f = await fixture();
+    const config = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    config.verification = { mode: "browser", environment: "preview" };
+    config.environments = {
+      preview: {
+        kind: "vercel",
+        role: "preview",
+        projectId: "prj_test",
+        branch: "pm-staging",
+      },
+    };
+    writeFileSync(f.projectFile, JSON.stringify(config));
+    expect((await f.state()).previewAccess?.status).toBe("unchecked");
+    config.environments.preview.bypassSecret = "VERCEL_BYPASS_TEST";
+    writeFileSync(f.projectFile, JSON.stringify(config));
+    const missing = await f.state();
+    expect(missing.previewAccess).toMatchObject({
+      status: "missing",
+      message: expect.stringContaining("value is missing"),
+    });
+    saveConnections(f.root, {
+      VERCEL_BYPASS_TEST: "private-automation-bypass",
+    });
+    const saved = await f.state();
+    expect(saved.previewAccess?.status).toBe("saved");
+    expect(JSON.stringify(saved)).not.toContain("private-automation-bypass");
+    f.environmentAccess.status.mockReturnValue({
+      status: "passed",
+      message: "Browser access verified.",
+      checks: [{ name: "Browser opens application", passed: true }],
+    });
+    expect((await f.state()).previewAccess?.status).toBe("verified");
+    f.environmentAccess.status.mockReturnValue({
+      status: "untested",
+      message: "Settings changed.",
+    });
+    expect((await f.state()).previewAccess?.status).toBe("saved");
+    config.environments.preview = target;
+    writeFileSync(f.projectFile, JSON.stringify(config));
+    expect((await f.state()).previewAccess).toBeUndefined();
+  });
+
   it("connects access only for the saved Vercel environment through an authenticated revision-bound action", async () => {
     const vercelAccess = {
       connect: vi.fn(async () => ({

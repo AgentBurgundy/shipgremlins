@@ -316,6 +316,7 @@
 }
 .onboarding-analysis,
 .onboarding-choice,
+.onboarding-automatic,
 .onboarding-verification:not(:empty),
 .onboarding-proposal:not(:empty) {
   padding: 24px;
@@ -323,6 +324,89 @@
   border: 1px solid #dfe7df;
   border-radius: 13px;
   background: #fff;
+}
+.onboarding-automatic[hidden] {
+  display: none;
+}
+.environment-setup-progress {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  list-style: none;
+  padding: 22px 0 6px;
+  margin: 20px 0 0;
+  border-top: 1px solid #e7ece5;
+}
+.environment-setup-progress li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #8a968c;
+}
+.environment-setup-progress li span {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  border-radius: 50%;
+  background: #f0f3ee;
+  font-size: 11px;
+}
+.environment-setup-progress li strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.environment-setup-progress li.current {
+  color: #264c34;
+}
+.environment-setup-progress li.current span {
+  background: #264c34;
+  color: white;
+  box-shadow: 0 0 0 4px #edf3e9;
+}
+.environment-setup-progress li.complete {
+  color: #507457;
+}
+.environment-setup-progress li.complete span {
+  background: #eaf3e7;
+}
+.environment-preview-choices {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+.environment-preview-choice {
+  min-width: 0;
+  width: 100%;
+  text-align: left;
+  padding: 15px 18px;
+  border: 1px solid #dce6d8;
+  border-radius: 9px;
+  background: #f8faf5;
+  color: #254631;
+  cursor: pointer;
+}
+.environment-preview-choice:hover {
+  background: #f0f5e9;
+  border-color: #9fb391;
+}
+.environment-preview-choice strong,
+.environment-preview-choice span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.environment-preview-choice strong {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.environment-preview-choice span {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #72806b;
+}
+.onboarding-automatic > .onboarding-text-button {
+  margin-top: 20px;
 }
 .onboarding-analysis {
   background: #f7f9f3;
@@ -479,6 +563,210 @@
 }
 .onboarding-verification > button + button {
   margin-left: 10px;
+}
+.environment-result-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.environment-result-heading > div {
+  min-width: 0;
+}
+.project-onboarding .environment-result-heading h3 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: -0.6px;
+}
+.environment-result-heading p {
+  color: #5d7065;
+  margin: 0;
+  max-width: 560px;
+}
+.environment-result-badge {
+  flex: 0 0 auto;
+  border-radius: 100px;
+  background: #f0f3ee;
+  color: #5b6b5e;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.6;
+}
+.environment-result-badge.ready {
+  background: #e8f2e5;
+  color: #2e603e;
+}
+.environment-result-badge.attention {
+  background: #fcf0df;
+  color: #835220;
+}
+.environment-result-badge.testing {
+  background: #eaf1f7;
+  color: #3a5d7c;
+}
+.environment-target-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  margin: 24px 0;
+  padding: 17px 0;
+  border-block: 1px solid #e7ece5;
+}
+.environment-target-summary > div {
+  min-width: 0;
+  max-width: 100%;
+}
+.environment-target-summary dt {
+  color: #6a7a6d;
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+.environment-target-summary dd {
+  margin: 0;
+  color: #254331;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.environment-diagnosis {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border-left: 3px solid #c19555;
+  border-radius: 0 8px 8px 0;
+  background: #fcf8f0;
+}
+.project-onboarding .environment-diagnosis h4 {
+  color: #644719;
+  margin-bottom: 5px;
+  line-height: 1.5;
+}
+.environment-diagnosis p {
+  color: #796340;
+  margin: 0;
+  max-width: 650px;
+}
+.environment-preview-note {
+  color: #5f7162;
+  margin: 0 0 18px;
+}
+.environment-checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.environment-check {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+}
+.environment-check + .environment-check {
+  border-top: 1px solid #edf0e9;
+}
+.environment-check-icon {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #f1f3ef;
+  color: #829083;
+  font-size: 13px;
+  font-weight: 650;
+}
+.environment-check.passed .environment-check-icon {
+  background: #eaf3e7;
+  color: #376943;
+}
+.environment-check.failed .environment-check-icon {
+  background: #fcf0df;
+  color: #87571d;
+}
+.environment-check.checking .environment-check-icon {
+  background: #eaf1f7;
+  color: #3a5d7c;
+}
+.environment-check > div strong,
+.environment-check > div span {
+  display: block;
+}
+.environment-check > div strong {
+  color: #2a4332;
+  font-size: 13px;
+  font-weight: 600;
+}
+.environment-check > div span {
+  color: #6c7c70;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.environment-check-status {
+  color: #778478;
+  font-size: 11px;
+  text-align: right;
+}
+.environment-check.passed .environment-check-status {
+  color: #42734d;
+}
+.environment-check.failed .environment-check-status {
+  color: #956029;
+}
+.environment-test-details {
+  margin: 10px 0 18px;
+}
+.environment-test-details > button {
+  width: auto;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: #57705d;
+  font-size: 11px;
+}
+.environment-test-details > button::after {
+  float: none;
+  margin-left: 7px;
+}
+.environment-checked-at {
+  display: block;
+  margin-top: 12px;
+  color: #768477;
+  font-size: 11px;
+}
+.environment-draft-notice {
+  padding-top: 12px;
+  color: #866432;
+}
+.project-onboarding .field input[aria-invalid="true"] {
+  border-color: #b88a47;
+  box-shadow: 0 0 0 3px #b88a4718;
+}
+.onboarding-verification .onboarding-actions button {
+  max-width: 100%;
+  white-space: normal;
+}
+@media (max-width: 600px) {
+  .environment-result-heading {
+    flex-direction: column-reverse;
+    gap: 12px;
+  }
+  .project-onboarding .environment-result-heading h3 {
+    font-size: 20px;
+  }
+  .environment-target-summary {
+    gap: 14px 22px;
+    margin: 20px 0;
+  }
+  .environment-check {
+    grid-template-columns: 25px minmax(0, 1fr);
+    gap: 5px 10px;
+  }
+  .environment-check-status {
+    grid-column: 2;
+    text-align: left;
+  }
 }
 .project-onboarding .onboarding-text-button {
   padding: 4px 0;
@@ -652,9 +940,13 @@
   }
   .onboarding-analysis,
   .onboarding-choice,
+  .onboarding-automatic,
   .onboarding-verification:not(:empty),
   .onboarding-proposal:not(:empty) {
     padding: 18px 16px;
+  }
+  .environment-setup-progress {
+    grid-template-columns: 1fr;
   }
   .onboarding-strategies {
     gap: 8px;

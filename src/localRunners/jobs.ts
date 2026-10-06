@@ -90,6 +90,8 @@ export interface JobPreparationOptions {
       >
     >;
   preview?: (project: Project, token: string) => Promise<string | null>;
+  /** Reconcile controller-managed preview access before private worker handoff. */
+  ensurePreviewAccess?: (project: Project) => Promise<void>;
   now?: () => Date;
   sourceControl?: Pick<SourceControl, "acquireLease"> &
     Partial<Pick<SourceControl, "releaseLease" | "resolveCredential">>;
@@ -206,7 +208,7 @@ function projectSecrets(
 function accessInstruction(access: TestAccess | undefined): string {
   if (!access || access.kind === "public")
     return "No password test account is configured for this environment.";
-  return `Use only these dedicated test accounts for the selected environment. Read credential values from the named variables without printing them. Login recipe: ${JSON.stringify({ ...access, accounts: access.accounts.map((account, index) => ({ name: account.name, usernameVariable: `GREMLINS_TEST_USERNAME_${index + 1}`, passwordVariable: `GREMLINS_TEST_PASSWORD_${index + 1}` })) })}. This login configuration is not proof of RBAC correctness; test roles and isolation explicitly.`;
+  return `Use only these dedicated test accounts for the selected environment. Playwright MCP privately resolves secret names: pass the plain string GREMLINS_TEST_USERNAME_1 or GREMLINS_TEST_PASSWORD_1 as the browser_fill_form or browser_type value (use the matching number for each account; do not wrap the name in tags). Do not read, print or paste the actual values into tool calls. Private browser access blocks navigation and writes outside the selected app origin, including external SSO. Distinguish those worker restrictions from application defects. Login recipe: ${JSON.stringify({ ...access, accounts: access.accounts.map((account, index) => ({ name: account.name, usernameVariable: `GREMLINS_TEST_USERNAME_${index + 1}`, passwordVariable: `GREMLINS_TEST_PASSWORD_${index + 1}` })) })}. This login configuration is not proof of RBAC correctness; test roles and isolation explicitly.`;
 }
 
 export function createJobPreparation(options: JobPreparationOptions) {
@@ -764,10 +766,20 @@ export function createJobPreparation(options: JobPreparationOptions) {
   async function prepare(job: LocalJob): Promise<DockerJobPayload> {
     if (job.type === "verify") return { kind: "verify", nonce: job.id };
     // Recheck approval immediately before the worker starts, including queued jobs.
-    const { project, area, ticket, linearWorkspaceId } = await validate(
-      job,
-      true,
-    );
+    let validated = await validate(job, true);
+    const initialEnvironment = effectiveVerification(validated.project.config);
+    if (
+      job.pmMode !== "discovery" &&
+      initialEnvironment.mode === "browser" &&
+      initialEnvironment.target.kind === "vercel" &&
+      options.ensurePreviewAccess
+    ) {
+      await options.ensurePreviewAccess(validated.project);
+      // Access recovery may save a new scoped reference. Re-read configuration
+      // and approval before building the private payload from that reference.
+      validated = await validate(job, true);
+    }
+    const { project, area, ticket, linearWorkspaceId } = validated;
     const ownerRevision = ticket ? knowledgeRevision(project, area) : undefined;
     if (job.pmMode === "discovery") {
       const saved = connections();
@@ -889,6 +901,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
             now: options.now,
           })
         : undefined;
+    let commitIdentity: DockerJobPayload["commitIdentity"];
     const instructions = [
       `You are a ShipGremlins ${ticket ? "developer working on one approved ticket" : "product manager testing one mandate"}.`,
       `Project: ${project.config.name}. Source: ${provider} ${project.config.repo}. Area: ${area.key}.`,
@@ -903,7 +916,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       ...(verification.mode === "browser"
         ? [
             accessInstruction(verification.target.access),
-            `Preview bypass credential, if configured, is environment variable GREMLINS_PREVIEW_BYPASS; use it only for the selected environment. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
+            `Playwright MCP is already configured to apply saved Vercel preview access privately to the selected environment only. Navigate directly to the clean preview URL. With private access configured, external navigation and writes are blocked; report worker restrictions separately from app defects. Never put bypass credentials in URLs, tool calls, screenshots or logs. If Vercel still asks for sign-in, report preview access as blocked; curl access does not prove a browser walkthrough. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
           ]
         : []),
       ticket
@@ -987,6 +1000,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         write: job.type === "developer",
       });
       credentials[sourceKey] = credential.token;
+      if (job.type === "developer") commitIdentity = credential.commitIdentity;
     } catch (error) {
       if (
         (error instanceof SourceControlError ||
@@ -998,6 +1012,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
     const payload: DockerJobPayload = {
       kind: job.type,
+      ...(commitIdentity ? { commitIdentity } : {}),
       ...(job.pmMode ? { pmMode: job.pmMode } : {}),
       ...(grumblin &&
       verification.mode === "browser" &&
@@ -1008,6 +1023,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
           }
         : {}),
       browserVerification: verification.mode === "browser",
+      ...(verification.mode === "browser" &&
+      verification.target.kind !== "docker" &&
+      preview
+        ? { browserTarget: preview }
+        : {}),
       nonce: job.id,
       provider,
       repoUrl: `${(provider === "gitlab" ? (project.config.serverUrl ?? "https://gitlab.com") : "https://github.com").replace(/\/$/, "")}/${project.config.repo}.git`,
@@ -1040,9 +1060,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
               ...(verification.mode === "browser"
                 ? [
                     accessInstruction(verification.target.access),
+                    "Playwright MCP automatically applies saved Vercel preview access privately to the selected app only. With private access configured, external navigation and writes are blocked; report worker restrictions separately from app defects. Navigate directly to its clean URL; never put bypass credentials in URLs or browser tool calls. If Vercel sign-in still appears, report the browser check blocked. curl responses are not browser evidence.",
                     grumblin
-                      ? "Preview bypass, if configured, is GREMLINS_PREVIEW_BYPASS; use it only for the selected test app. No database or hosting credentials are available; use the browser's normal sign-in with the supplied test account."
-                      : `Preview bypass credential, if configured, is GREMLINS_PREVIEW_BYPASS; use it only for the selected environment. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
+                      ? "No database or hosting credentials are available; use the browser's normal sign-in with the supplied test account placeholders."
+                      : `Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
                   ]
                 : []),
             ].join("\n\n")

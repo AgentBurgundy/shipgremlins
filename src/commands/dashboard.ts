@@ -64,10 +64,15 @@ import {
 } from "../setup/environmentGuide.ts";
 import { createVercelSetup, VercelSetupError } from "../vercelSetup/index.ts";
 import { createVercelAccess } from "../vercelSetup/access.ts";
+import {
+  createEnvironmentSetup,
+  EnvironmentSetupError,
+} from "../setup/environmentSetup.ts";
 import type {
   VercelDiscoverInput,
   VercelPrepareInput,
   VercelDeployInput,
+  VercelTarget,
 } from "../vercelSetup/types.ts";
 import {
   ConfigEditorError,
@@ -350,6 +355,7 @@ export interface DashboardOptions {
   foundation?: ReturnType<typeof createFoundation>;
   projectOnboarding?: ProjectOnboarding;
   environmentAccess?: ReturnType<typeof createEnvironmentAccess>;
+  environmentSetup?: ReturnType<typeof createEnvironmentSetup>;
   vercelSetup?: ReturnType<typeof createVercelSetup>;
   vercelAccess?: ReturnType<typeof createVercelAccess>;
   environmentGuide?: ReturnType<typeof createEnvironmentGuide>;
@@ -479,6 +485,33 @@ export function createDashboardServer(
     });
   const vercelAccess =
     options.vercelAccess ?? createVercelAccess({ root, vercelConnectionFor });
+  const environmentSetup =
+    options.environmentSetup ??
+    createEnvironmentSetup({
+      root,
+      vercelSetup,
+      vercelAccess,
+      environmentAccess,
+      connectionIds: async () => {
+        const profiles = await listConnectionProfiles(root, "vercel");
+        const accounts = await Promise.all(
+          profiles.map(async (profile) => ({
+            id: profile.id,
+            status: await vercelConnectionFor(profile.id).status(),
+          })),
+        );
+        return accounts
+          .filter(
+            (account) =>
+              account.status.connected || account.status.method !== "none",
+          )
+          .map((account) => account.id);
+      },
+      configurationMutation: (name, action) =>
+        runners().withConfigurationMutation({ project: name }, action),
+      recordConfigured: (name, input) =>
+        projectOnboarding.recordConfigured(name, input),
+    });
   const environmentGuide =
     options.environmentGuide ??
     createEnvironmentGuide({
@@ -508,8 +541,46 @@ export function createDashboardServer(
     const state = await projectOnboarding.status(name);
     const project = loadProject(root, name),
       verification = effectiveVerification(project.config);
+    const browserCheck =
+      verification.mode === "browser" ? environmentAccess.status(name) : null;
+    let previewAccess;
+    if (
+      verification.mode === "browser" &&
+      verification.target.kind === "vercel"
+    ) {
+      const reference = verification.target.bypassSecret;
+      const saved = reference
+        ? Boolean({ ...readConnections(root), ...process.env }[reference])
+        : false;
+      previewAccess =
+        browserCheck?.status === "passed"
+          ? {
+              status: "verified",
+              message: "The runner opened this preview successfully.",
+            }
+          : reference && !saved
+            ? {
+                status: "missing",
+                message:
+                  "A credential reference is saved, but its value is missing from Connections. Connect preview access to repair it.",
+              }
+            : saved
+              ? {
+                  status: "saved",
+                  message:
+                    "An automation credential is saved. Test the environment to confirm it works.",
+                }
+              : {
+                  status: "unchecked",
+                  message:
+                    "Preview protection has not been checked. Connect preview access to check it automatically.",
+                };
+    }
     return {
       ...state,
+      environmentSetupSupported: true,
+      environmentSetup: environmentSetup.status(name),
+      ...(previewAccess ? { previewAccess } : {}),
       ...(project.config.ideaPlanId
         ? { foundation: await foundation.status(name) }
         : {}),
@@ -520,13 +591,14 @@ export function createDashboardServer(
               profile:
                 verification.target.kind === "docker" ? "docker" : "hosted",
               target: verification.target,
-              verification: environmentAccess.status(name),
+              verification: browserCheck,
               legacySignIn: project.config.signIn ?? null,
             }
           : null,
     };
   }
   const setupBusy = (name?: string) =>
+    environmentSetup.busy(name) ||
     projectOnboarding.busy(name) ||
     environmentAccess.busy(name) ||
     vercelSetup.busy(name) ||
@@ -631,6 +703,22 @@ export function createDashboardServer(
       vercelConnectionFor,
       beforePm: delivery.beforePm,
       beforeDeveloper: delivery.beforeDeveloper,
+      ensurePreviewAccess: async (project) => {
+        const selected = effectiveVerification(project.config);
+        if (
+          selected.mode !== "browser" ||
+          selected.target.kind !== "vercel" ||
+          !selected.target.bypassSecret
+        )
+          return;
+        const file = readEditableConfig(
+          root,
+          `projects/${project.config.name}/project.json`,
+        );
+        await vercelAccess.connect(project.config.name, {
+          configurationRevision: file.revision,
+        });
+      },
       sharedContext: (project, area, job) =>
         projectKnowledge.context(project, area) +
         improvements.context(project, job),
@@ -1619,7 +1707,11 @@ export function createDashboardServer(
               url.pathname,
             ))
         ) {
-          if (vercelCredentialMutation || vercelAccess.busy())
+          if (
+            vercelCredentialMutation ||
+            vercelAccess.busy() ||
+            environmentSetup.busy()
+          )
             throw new RequestError(
               409,
               "Wait for the current connection or preview access setup to finish before changing credentials.",
@@ -3539,7 +3631,7 @@ export function createDashboardServer(
           return;
         }
         const onboardingRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|setup-pr|cancel|screenshot))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|prepare-environment|setup-pr|cancel|screenshot))?$/.exec(
             url.pathname,
           );
         if (onboardingRoute) {
@@ -3577,7 +3669,38 @@ export function createDashboardServer(
                 "Wait for the controller update before starting setup work.",
               );
             const input = await body(req);
-            if (action === "confirm") {
+            if (action === "prepare-environment") {
+              if (
+                Object.keys(input).some(
+                  (key) =>
+                    !["configurationRevision", "target", "force"].includes(key),
+                ) ||
+                typeof input.configurationRevision !== "string" ||
+                !/^[a-f0-9]{64}$/.test(input.configurationRevision) ||
+                (input.target !== undefined && !record(input.target)) ||
+                (input.force !== undefined && typeof input.force !== "boolean")
+              )
+                throw new RequestError(
+                  400,
+                  "Use the current project settings to prepare its test environment.",
+                );
+              if (
+                vercelCredentialMutation ||
+                (setupBusy(name) && !environmentSetup.busy(name))
+              )
+                throw new RequestError(
+                  409,
+                  "Wait for the current project or connection setup to finish.",
+                );
+              await environmentSetup.prepare(name, {
+                configurationRevision: input.configurationRevision,
+                ...(input.target
+                  ? { target: input.target as unknown as VercelTarget }
+                  : {}),
+                ...(input.force === true ? { force: true } : {}),
+              });
+              json(res, 202, await onboardingState(name));
+            } else if (action === "confirm") {
               if (setupBusy(name))
                 throw new RequestError(
                   409,
@@ -4802,6 +4925,7 @@ export function createDashboardServer(
         error instanceof VercelSetupError ||
         error instanceof OAuthConnectionError ||
         error instanceof EnvironmentAccessError ||
+        error instanceof EnvironmentSetupError ||
         error instanceof ConfigEditorError ||
         error instanceof RemoteWorkerError
           ? error.status
@@ -4817,6 +4941,7 @@ export function createDashboardServer(
         error instanceof VercelSetupError ||
         error instanceof OAuthConnectionError ||
         error instanceof EnvironmentAccessError ||
+        error instanceof EnvironmentSetupError ||
         error instanceof ConfigEditorError ||
         error instanceof ConnectionSaveError ||
         error instanceof RemoteWorkerError
@@ -4847,6 +4972,7 @@ export function createDashboardServer(
     clearInterval(deliveryTimer);
     void Promise.allSettled([
       projectOnboarding.close(),
+      environmentSetup.close(),
       environmentAccess.close(),
       vercelSetup.close(),
       vercelAccess.close(),

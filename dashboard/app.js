@@ -2287,12 +2287,7 @@
   $("load-history").addEventListener("click", () => refreshHistory(true));
   function renderJobs(jobs) {
     jobs = mergedJobs(jobs);
-    if (
-      pages.current === "activity" &&
-      pages.run &&
-      !selectedJobId &&
-      jobs.some((job) => job.id === pages.run)
-    )
+    if (pages.run && !selectedJobId && jobs.some((job) => job.id === pages.run))
       selectJob(pages.run);
     renderRunIdentity();
     renderJobControls();
@@ -2750,7 +2745,6 @@
       !restarting &&
       !jobOutputSuspended &&
       !document.hidden &&
-      pages.current === "activity" &&
       runViewer.isOpen,
     );
   }
@@ -2933,6 +2927,7 @@
   }
   function selectJob(id) {
     if (!id) return;
+    if (!runViewer.isOpen) jobDetailTrigger = document.activeElement;
     const changed = id !== selectedJobId;
     selectedJobId = id;
     grumblinReport?.select(
@@ -2970,7 +2965,7 @@
       $("run-artifact-empty").hidden = false;
       $("job-log").textContent = "Loading job output…";
     }
-    if (pages.current !== "activity" || pages.run !== id)
+    if (pages.run !== id)
       pages.navigate(`/activity?run=${encodeURIComponent(id)}`, {
         focus: false,
         scroll: false,
@@ -3249,32 +3244,32 @@
     runViewer.close({ restoreFocus: false });
     $("job-action-confirm").hidden = true;
     $("job-artifacts").replaceChildren();
-    if (navigate && pages.current === "activity")
-      pages.navigate("/activity", {
-        replace: true,
-        focus: false,
-        scroll: false,
-      });
+    if (navigate) pages.closeRun();
     renderJobs(runnerStatus?.jobs || []);
     const trigger = jobDetailTrigger?.dataset?.jobId;
     const button = [...$("job-list").querySelectorAll("[data-job-id]")].find(
       (item) => item.dataset.jobId === trigger,
     );
-    if (restoreFocus)
-      (button || $("activity-project")).focus({ preventScroll: true });
+    if (restoreFocus) {
+      const target = jobDetailTrigger?.isConnected
+        ? jobDetailTrigger
+        : button ||
+          document.querySelector(
+            `[data-page="${pages.current}"] h1, [data-page="${pages.current}"] h2`,
+          );
+      if (target) {
+        if (target.matches("h1, h2")) target.setAttribute("tabindex", "-1");
+        target.focus({ preventScroll: true });
+      }
+    }
     jobDetailTrigger = null;
   }
   window.addEventListener("dashboard:pagechange", () => {
-    if (runViewer.isOpen && (pages.current !== "activity" || !pages.run)) {
-      closeJobDetail({ navigate: false, restoreFocus: false });
+    if (runViewer.isOpen && !pages.run) {
+      closeJobDetail({ navigate: false, restoreFocus: true });
       return;
     }
-    if (
-      pages.current === "activity" &&
-      pages.run &&
-      pages.run !== selectedJobId
-    )
-      selectJob(pages.run);
+    if (pages.run && pages.run !== selectedJobId) selectJob(pages.run);
     if (jobOutputVisible()) refreshJobOutput();
     else pauseJobOutput();
   });

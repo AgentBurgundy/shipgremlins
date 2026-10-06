@@ -45,6 +45,8 @@ export interface SourceCredential {
   token: string;
   method: "oauth" | "token";
   expiresAt?: string;
+  /** GitHub account authenticated by this write credential, never the repository owner. */
+  commitIdentity?: { name: string; email: string };
 }
 export interface RepositoryOwner {
   id: string;

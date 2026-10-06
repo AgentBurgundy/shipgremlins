@@ -21,6 +21,7 @@ class Element {
   open = false;
   scrollTop = 0;
   focus = vi.fn();
+  scrollIntoView = vi.fn();
   showModal() {
     this.open = true;
     this.scrollTop = 500;
@@ -142,6 +143,583 @@ const state = () => ({
   configurationRevision: "config-1",
   status: "idle",
   message: "",
+});
+
+describe("environment diagnosis and recovery", () => {
+  const passwordTarget = {
+    access: {
+      kind: "password",
+      loginPath: "/sign-in/password",
+      usernameSelector: 'input[type="email"]',
+      passwordSelector: 'input[type="password"]',
+      submitSelector: 'button[type="submit"]',
+      successSelector: '[data-testid="account-menu"]',
+      accounts: [
+        {
+          name: "Admin",
+          usernameSecret: "TEST_USERNAME",
+          passwordSecret: "TEST_PASSWORD",
+        },
+      ],
+    },
+  };
+  const resultPanel = (root: Element) =>
+    walk(root).find((item) => item.className === "onboarding-verification")!;
+  const primaryActions = (root: Element) =>
+    walk(resultPanel(root))
+      .filter(
+        (item) =>
+          item.tagName === "BUTTON" && item.className.includes("button-dark"),
+      )
+      .map((item) => item.textContent);
+
+  it("explains a missing bypass value separately from a saved reference and offers one repair", async () => {
+    const data = {
+      ...vercelState({ bypassSecret: "MISSING_VALUE" }),
+      previewAccess: { status: "missing" },
+    };
+    const api = vi.fn(async () => data),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(resultPanel(root))).toContain(
+      "credential itself is not in Connections",
+    );
+    expect(text(resultPanel(root))).toContain("Bypass credential missing");
+    expect(primaryActions(root)).toEqual(["Connect preview access"]);
+    expect(text(resultPanel(root))).toContain("Not yet tested");
+    await walk(resultPanel(root))
+      .find((item) => item.textContent === "Connect preview access")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/vercel/access",
+      { configurationRevision: "config-1" },
+    );
+    f.panel.destroy();
+  });
+
+  it("keeps passed checks and opens the exact ambiguous selector without losing a draft", async () => {
+    const current = vercelState(passwordTarget);
+    const data = {
+      ...current,
+      previewAccess: { status: "saved" },
+      environment: {
+        ...current.environment,
+        verification: {
+          status: "failed",
+          checkedAt: "2026-10-06T14:00:00.000Z",
+          checks: [
+            { name: "Browser opens application", passed: true },
+            { name: "Test account 1: login page opens", passed: true },
+            { name: "Test account 1: username field", passed: true },
+            { name: "Test account 1: submit control", passed: false },
+          ],
+          diagnosis: {
+            code: "selector_ambiguous",
+            title: "The sign-in button matches 2 elements.",
+            detail:
+              "Choose a selector that matches only the password form’s submit button.",
+            action: "edit_login",
+            field: "submitSelector",
+            matchCount: 2,
+          },
+        },
+      },
+    };
+    const f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(primaryActions(root)).toEqual(["Fix sign-in settings"]);
+    expect(text(resultPanel(root))).toContain(
+      "The sign-in button matches 2 elements.",
+    );
+    expect(text(resultPanel(root))).toContain(
+      "✓ Passed · Browser opens application",
+    );
+    expect(text(resultPanel(root))).toContain(
+      "! Failed · Test account 1: submit control",
+    );
+    expect(
+      walk(resultPanel(root)).find((item) => item.tagName === "TIME")
+        ?.textContent,
+    ).toContain("Last checked");
+    const login = walk(root).find(
+      (item) => item.id === "onboarding-shop-loginPath",
+    )!;
+    login.value = "/my-password-form";
+    login.fire("input");
+    await f.panel.refresh("shop");
+    await walk(resultPanel(root))
+      .find((item) => item.textContent === "Fix sign-in settings")!
+      .fire("click");
+    const selector = walk(root).find(
+      (item) => item.id === "onboarding-shop-submitSelector",
+    )!;
+    expect(selector.focus).toHaveBeenCalled();
+    expect(selector.attributes.get("aria-invalid")).toBe("true");
+    expect(
+      walk(root).find(
+        (item) =>
+          item.attributes.get("aria-label") === "Advanced login selectors",
+      )?.open,
+    ).toBe(true);
+    expect(login.value).toBe("/my-password-form");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(
+      walk(resultPanel(root)).find((item) => item.textContent === "Retry test")
+        ?.disabled,
+    ).toBe(true);
+    expect(text(resultPanel(root))).toContain(
+      "These results describe the saved environment",
+    );
+    selector.value = 'form[data-testid="password-login"] button[type="submit"]';
+    selector.fire("input");
+    expect(selector.attributes.get("aria-invalid")).toBe("false");
+    f.panel.destroy();
+  });
+
+  it("routes missing account credentials to Connections instead of retesting unchanged settings", async () => {
+    const current = vercelState(passwordTarget);
+    const data = {
+      ...current,
+      environment: {
+        ...current.environment,
+        verification: {
+          status: "failed",
+          diagnosis: {
+            code: "credentials_missing",
+            title: "Save the test account credentials.",
+            detail: "The username or password is missing from Connections.",
+            action: "manage_credentials",
+          },
+        },
+      },
+    };
+    const f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(primaryActions(root)).toEqual(["Add test credentials"]);
+    await walk(resultPanel(root))
+      .find((item) => item.textContent === "Add test credentials")!
+      .fire("click");
+    expect(f.window.dashboardPages.navigate).toHaveBeenCalledWith(
+      "/connections#project-access",
+    );
+    f.panel.destroy();
+  });
+
+  it("keeps verified preview access calm and ready after reloading status", async () => {
+    const current = vercelState({
+      ...passwordTarget,
+      bypassSecret: "SAVED_BYPASS",
+    });
+    const data = {
+      ...current,
+      previewAccess: { status: "verified" },
+      environment: {
+        ...current.environment,
+        verification: {
+          status: "passed",
+          checks: [
+            { name: "Browser opens application", passed: true },
+            { name: "Test account 1 signs in", passed: true },
+          ],
+        },
+      },
+    };
+    const f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      areas: [{ key: "product" }],
+    });
+    await settle();
+    await f.panel.refresh("shop");
+    expect(text(resultPanel(root))).toContain("Your crew can explore.");
+    expect(text(resultPanel(root))).toContain("1 of 1 accounts signed in");
+    expect(text(resultPanel(root))).not.toContain("Connect preview access");
+    expect(text(resultPanel(root))).not.toContain("Check preview access");
+    expect(text(resultPanel(root))).not.toContain("Not yet tested");
+    expect(primaryActions(root)).toEqual(["Open project"]);
+    f.panel.destroy();
+  });
+
+  it("distinguishes a stored credential from browser-verified access", async () => {
+    const data = {
+      ...vercelState({ bypassSecret: "SAVED_BYPASS" }),
+      previewAccess: { status: "saved" },
+    };
+    const f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(resultPanel(root))).toContain(
+      "Credential saved · browser check pending",
+    );
+    expect(text(resultPanel(root))).not.toContain(
+      "Runner can pass deployment protection",
+    );
+    expect(primaryActions(root)).toEqual(["Test environment"]);
+    f.panel.destroy();
+  });
+
+  it("refreshes credential status on returning to the environment and preserves unsaved settings", async () => {
+    let status = "missing";
+    const api = vi.fn(async () => ({
+      ...vercelState(passwordTarget),
+      previewAccess: { status },
+    }));
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const input = walk(root).find(
+      (item) => item.id === "onboarding-shop-loginPath",
+    )!;
+    input.value = "/new-login";
+    input.fire("input");
+    f.panel.mount(new Element(), { name: "another", repo: "owner/another" });
+    await settle();
+    status = "saved";
+    const returned = new Element();
+    f.panel.mount(returned, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(api).toHaveBeenCalledTimes(3);
+    expect(text(resultPanel(returned))).toContain(
+      "Credential saved · browser check pending",
+    );
+    expect(input.value).toBe("/new-login");
+    expect(f.panel.isDirty()).toBe(true);
+    f.panel.destroy();
+  });
+
+  it("shows active testing, disables repeated work, and does not reuse an old diagnosis", async () => {
+    const current = vercelState(passwordTarget);
+    const data = {
+      ...current,
+      environment: {
+        ...current.environment,
+        verification: {
+          status: "testing",
+          diagnosis: { title: "Old failure", action: "edit_login" },
+        },
+      },
+    };
+    const f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(resultPanel(root))).toContain("Checking the runner’s access");
+    expect(text(resultPanel(root))).not.toContain("Old failure");
+    expect(resultPanel(root).attributes.get("aria-busy")).toBe("true");
+    expect(
+      walk(resultPanel(root)).find(
+        (item) => item.textContent === "Testing environment…",
+      )?.disabled,
+    ).toBe(true);
+    f.panel.destroy();
+  });
+});
+
+describe("automatic Vercel environment setup", () => {
+  const managed = (setup?: object, verification?: object) => ({
+    ...vercelState(),
+    environmentSetupSupported: true,
+    ...(setup ? { environmentSetup: setup } : {}),
+    environment: {
+      ...vercelState().environment,
+      ...(verification ? { verification } : {}),
+    },
+  });
+  const automatic = (root: Element) =>
+    walk(root).find((item) => item.className === "onboarding-automatic")!;
+  const preparing = {
+    status: "preparing",
+    step: "connect_access",
+    message: "Connecting private preview access.",
+    configurationRevision: "config-1",
+  };
+
+  it("prepares a saved Vercel environment once and never retries a blocker on polls or return", async () => {
+    let data = managed();
+    const api = vi.fn(async (path: string, _body?: unknown) => {
+      if (path.endsWith("/prepare-environment")) data = managed(preparing);
+      return data;
+    });
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await settle();
+    expect(api).toHaveBeenCalledWith(
+      "/api/projects/shop/onboarding/prepare-environment",
+      { configurationRevision: "config-1" },
+    );
+    expect(automatic(root).hidden).toBe(false);
+    expect(text(automatic(root))).toContain("Getting your crew connected.");
+    expect(
+      walk(root).find((item) => item.className === "onboarding-verification")
+        ?.hidden,
+    ).toBe(true);
+    await f.panel.refresh("shop");
+    data = managed({
+      status: "needs_input",
+      step: "test_access",
+      action: "manage_credentials",
+      message: "Save the test account password.",
+      configurationRevision: "config-1",
+    });
+    await f.panel.refresh("shop");
+    expect(text(automatic(root))).toContain("Save the test account password.");
+    f.panel.mount(new Element(), { name: "other", repo: "owner/other" });
+    await settle();
+    f.panel.mount(new Element(), { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(1);
+    f.panel.destroy();
+  });
+
+  it("starts discovery when Vercel is connected and no environment has been selected", async () => {
+    const api = vi.fn(async (path: string, _body?: unknown) => ({
+      ...state(),
+      environmentSetupSupported: true,
+      ...(path.endsWith("/prepare-environment")
+        ? { environmentSetup: preparing }
+        : {}),
+    }));
+    const f = fixture(api, () => ({
+        serviceConnections: [
+          { provider: "vercel", id: "default", connected: true },
+        ],
+      })),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await settle();
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(1);
+    expect(text(automatic(root))).toContain("Getting your crew connected.");
+    f.panel.destroy();
+  });
+
+  it("does not auto-prepare an already verified environment, a disconnected account, or an unsaved draft", async () => {
+    const ready = fixture(
+      vi.fn(async () => managed(undefined, { status: "passed" })),
+    );
+    ready.panel.mount(new Element(), { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(ready.api).toHaveBeenCalledTimes(1);
+    ready.panel.destroy();
+    const disconnected = fixture(
+      vi.fn(async () => ({ ...state(), environmentSetupSupported: true })),
+      () => ({
+        serviceConnections: [
+          { provider: "vercel", connected: false, needsReconnect: true },
+        ],
+      }),
+    );
+    disconnected.panel.mount(new Element(), {
+      name: "shop",
+      repo: "owner/shop",
+    });
+    await settle();
+    expect(disconnected.api).toHaveBeenCalledTimes(1);
+    disconnected.panel.destroy();
+    let enabled = false;
+    const api = vi.fn(async (_path: string, _body?: unknown) => ({
+        ...vercelState(),
+        environmentSetupSupported: enabled,
+      })),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const input = walk(root).find(
+      (item) => item.id === "onboarding-shop-vercelBypassSecret",
+    )!;
+    input.value = "MY_CHANGED_REFERENCE";
+    input.fire("input");
+    f.panel.mount(new Element(), { name: "other", repo: "owner/other" });
+    await settle();
+    enabled = true;
+    f.panel.mount(new Element(), { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(0);
+    expect(f.panel.isDirty()).toBe(true);
+    f.panel.destroy();
+  });
+
+  it("forces the complete orchestration for Test again instead of returning an old ready result", async () => {
+    const api = vi.fn(async (_path: string, _body?: unknown) =>
+        managed({ status: "ready", step: "test_access" }, { status: "passed" }),
+      ),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await walk(root)
+      .find((item) => item.textContent === "Test again")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/prepare-environment",
+      { configurationRevision: "config-1", force: true },
+    );
+    f.panel.destroy();
+  });
+
+  it("leaves an unfinished idea foundation alone even when Vercel is connected", async () => {
+    const api = vi.fn(async (_path: string, _body?: unknown) => ({
+      ...state(),
+      environmentSetupSupported: true,
+      foundation: {
+        stage: "review-code",
+        message: "Review the foundation PR first.",
+      },
+    }));
+    const f = fixture(api, () => ({
+      serviceConnections: [{ provider: "vercel", connected: true }],
+    }));
+    f.panel.mount(new Element(), {
+      name: "shop",
+      repo: "owner/shop",
+      ideaPlanId: "idea-1",
+    });
+    await settle();
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(0);
+    f.panel.destroy();
+  });
+
+  it("keeps a submitted draft until its exact saved target is observed, then enables the ready result", async () => {
+    const access = {
+      kind: "password",
+      loginPath: "/login",
+      usernameSelector: 'input[type="email"]',
+      passwordSelector: 'input[type="password"]',
+      submitSelector: 'button[type="submit"]',
+      successSelector: "#account",
+      accounts: [
+        {
+          name: "Admin",
+          usernameSecret: "TEST_USER",
+          passwordSecret: "TEST_PASSWORD",
+        },
+      ],
+    };
+    let data = {
+      ...managed(
+        { status: "ready", step: "test_access" },
+        { status: "passed" },
+      ),
+      environment: {
+        ...vercelState({ access }).environment,
+        verification: { status: "passed" },
+      },
+    };
+    let target: Record<string, unknown> | undefined;
+    const api = vi.fn(async (path: string, body?: unknown) => {
+      if (path.endsWith("/prepare-environment")) {
+        target = (body as { target: Record<string, unknown> }).target;
+        data = { ...data, environmentSetup: preparing };
+      }
+      return data;
+    });
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const input = walk(root).find(
+      (item) => item.id === "onboarding-shop-loginPath",
+    )!;
+    input.value = "/sign-in/password";
+    input.fire("input");
+    await walk(root)
+      .find((item) => item.textContent === "Save & set up environment")!
+      .fire("click");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(input.disabled).toBe(true);
+    expect((target?.access as typeof access).loginPath).toBe(
+      "/sign-in/password",
+    );
+    data = {
+      ...data,
+      configurationRevision: "config-2",
+      environmentSetup: { status: "ready", step: "test_access" },
+      environment: {
+        ...vercelState({ ...target, bypassSecret: "MANAGED_BYPASS" })
+          .environment,
+        verification: { status: "passed" },
+      },
+    };
+    await f.panel.refresh("shop");
+    expect(f.panel.isDirty()).toBe(false);
+    expect(f.saved).toHaveBeenCalledWith("shop");
+    expect(text(root)).not.toContain("Project settings changed elsewhere");
+    expect(automatic(root).hidden).toBe(true);
+    expect(
+      walk(root).find((item) => item.textContent === "Create a PM")?.disabled,
+    ).toBe(false);
+    f.panel.destroy();
+  });
+
+  it("turns an exact preview choice into one prepare request without separate save or access calls", async () => {
+    const target = {
+      kind: "vercel",
+      role: "preview",
+      projectId: "prj_web",
+      connectionId: "default",
+      branch: "pm-staging",
+    };
+    const data = {
+      ...state(),
+      environmentSetupSupported: true,
+      environmentSetup: {
+        status: "needs_input",
+        step: "find_preview",
+        action: "choose_preview",
+        message: "Two apps use this repository.",
+        choices: [
+          {
+            name: "Web app",
+            rootDirectory: "apps/web",
+            branch: "pm-staging",
+            connectionId: "default",
+            projectId: "prj_web",
+            target,
+          },
+        ],
+      },
+    };
+    const api = vi.fn(async (_path: string, _body?: unknown) => data),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const choice = walk(automatic(root)).find(
+      (item) => item.className === "environment-preview-choice",
+    )!;
+    expect(text(choice)).toContain("apps/web");
+    await choice.fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/prepare-environment",
+      {
+        configurationRevision: "config-1",
+        target: { ...target, access: { kind: "public" } },
+      },
+    );
+    expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+    f.panel.destroy();
+  });
 });
 const settle = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();

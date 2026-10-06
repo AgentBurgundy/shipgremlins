@@ -26,6 +26,9 @@ account, assign a role, read an inbox, or establish an SSO session for you.
 3. Open **Advanced login selectors** if your form differs from the defaults:
    `input[type="email"]`, `input[type="password"]`, and `button[type="submit"]`.
    Use selectors that identify the intended inputs and button on that page.
+   If the page has another form, scope the submit selector to the sign-in dialog,
+   for example `[role="dialog"] button[type="submit"]`. The environment test
+   reports ambiguous selectors and takes you directly to the field to repair.
 4. Choose **Save environment**, then open **Connections → Project access**.
    The saved references appear with the account's name. Enter the actual test
    username/email and password there. Values stay in the controller's private
@@ -39,6 +42,18 @@ You can configure up to eight named accounts using the same login recipe; each
 gets a separate browser session. A successful login does not prove role or tenant
 isolation. Put those checks in the PM's brief. Account leasing and automatic data
 resets are not implemented, so avoid concurrent runs that mutate the same account.
+
+Docker PM and Grumblin browsers receive the saved test credentials through
+Playwright's private secret configuration. Their prompts use plain secret names
+such as `GREMLINS_TEST_PASSWORD_1` for form-filling tools, so actual
+passwords need not appear in model tool arguments. Vercel preview access is
+configured separately for the selected origin before browser navigation. Passing
+deployment protection does not sign the test account into your application.
+Browsers carrying private preview access or test credentials stay on the selected
+app for navigation and writes, including redirect chains. External static assets
+can load without the bypass header. External SSO or a separate-origin login API
+requires a supported same-origin test login; a blocked external request is a
+worker access limitation, not evidence that the app is broken.
 
 ## Email codes, magic links, and SSO
 

@@ -36,12 +36,19 @@ import { readConnections } from "./connections.ts";
 import { assertBrowserSecretSafety } from "./credentialScope.ts";
 import { resolveTestAccess, testAccessSecretNames } from "../testAccess.ts";
 import { ENVIRONMENT_PROBE } from "./environmentProbe.ts";
+import {
+  environmentChecks,
+  environmentDiagnosis,
+  type EnvironmentDiagnosis,
+  type EnvironmentCheck,
+} from "./environmentDiagnosis.ts";
 
 export interface EnvironmentVerification {
   status: "untested" | "testing" | "passed" | "failed";
   message: string;
   checkedAt?: string;
   checks?: Array<{ name: string; passed: boolean }>;
+  diagnosis?: EnvironmentDiagnosis;
   screenshotUrl?: string;
   imageId?: string;
   commitSha?: string;
@@ -54,10 +61,16 @@ export class EnvironmentAccessError extends Error {
   constructor(
     message: string,
     public readonly status = 400,
+    public readonly diagnosis?: EnvironmentDiagnosis,
+    public readonly checks?: EnvironmentCheck[],
   ) {
     super(message);
     this.name = "EnvironmentAccessError";
   }
+}
+function diagnosed(code: string, checks: EnvironmentCheck[] = []) {
+  const diagnosis = environmentDiagnosis({ code })!;
+  return new EnvironmentAccessError(diagnosis.detail, 400, diagnosis, checks);
 }
 function projectKey(project: string) {
   if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(project))
@@ -136,6 +149,24 @@ function read(root: string, project: string): Stored | undefined {
       "Environment test state could not be read.",
       503,
     );
+  if (state.diagnosis) {
+    const diagnosis = environmentDiagnosis(state.diagnosis);
+    if (!diagnosis)
+      throw new EnvironmentAccessError(
+        "Environment test state could not be read.",
+        503,
+      );
+    state.diagnosis = diagnosis;
+  }
+  if (state.checks) {
+    const checks = environmentChecks(state.checks);
+    if (!checks)
+      throw new EnvironmentAccessError(
+        "Environment test state could not be read.",
+        503,
+      );
+    state.checks = checks;
+  }
   return state;
 }
 export function environmentVerificationStatus(
@@ -202,15 +233,15 @@ export function createEnvironmentAccess(options: {
       network?: string;
       access?: ReturnType<typeof resolveTestAccess>;
       bypass?: string;
+      vercel?: boolean;
     },
     job: string,
   ) {
     const image = await docker.ensureImage();
     if (!/^shipgremlins-local:[a-f0-9]{16}$/.test(image))
-      throw new EnvironmentAccessError(
-        "The browser worker image is unavailable.",
-      );
+      throw diagnosed("browser_unavailable");
     const name = `gremlins-probe-${job}`;
+    let checks: EnvironmentCheck[] = [];
     try {
       const created = await run([
         "create",
@@ -241,10 +272,7 @@ export function createEnvironmentAccess(options: {
         "-e",
         ENVIRONMENT_PROBE,
       ]);
-      if (created.code !== 0)
-        throw new EnvironmentAccessError(
-          "The browser test could not start. Check Docker on the controller.",
-        );
+      if (created.code !== 0) throw diagnosed("browser_unavailable");
       const result = await run(["start", "--attach", "--interactive", name], {
         stdin: JSON.stringify(input),
         timeoutMs: 300000,
@@ -254,27 +282,40 @@ export function createEnvironmentAccess(options: {
       try {
         output = JSON.parse(result.stdout);
       } catch {
+        throw diagnosed("invalid_evidence");
+      }
+      if (!output || typeof output !== "object")
+        throw diagnosed("invalid_evidence");
+      const validated = environmentChecks(
+        output.checks ??
+          (output.ok === false && !output.diagnosis ? [] : undefined),
+      );
+      if (!validated) throw diagnosed("invalid_evidence");
+      checks = validated;
+      if (result.code !== 0 || output.ok !== true) {
+        let diagnosis =
+          output.diagnosis === undefined
+            ? environmentDiagnosis({
+                code:
+                  output.stage === "login"
+                    ? "login_unverified"
+                    : "environment_unreachable",
+              })
+            : environmentDiagnosis(output.diagnosis);
+        if (!diagnosis) throw diagnosed("invalid_evidence", checks);
+        if (diagnosis.code === "vercel_protection" && input.bypass)
+          diagnosis = environmentDiagnosis({
+            code: "preview_credential_rejected",
+          })!;
         throw new EnvironmentAccessError(
-          "The browser could not load the application. Check its URL and network access from Docker.",
+          diagnosis.detail,
+          400,
+          diagnosis,
+          checks,
         );
       }
-      if (result.code !== 0 || output.ok !== true)
-        throw new EnvironmentAccessError(
-          output.stage === "login"
-            ? "The app opened, but a test account could not sign in. Check its credentials, login selectors and signed-in success selector. External SSO redirects need a dedicated test login."
-            : "The browser could not open this app. Check the test URL, protection bypass and Docker network access.",
-        );
-      if (
-        !Array.isArray(output.checks) ||
-        output.checks.length > 16 ||
-        output.checks.some(
-          (check: { name?: unknown; passed?: unknown }) =>
-            typeof check.name !== "string" || check.passed !== true,
-        )
-      )
-        throw new EnvironmentAccessError(
-          "The browser test returned invalid evidence.",
-        );
+      if (!checks.length || checks.some((check) => !check.passed))
+        throw diagnosed("invalid_evidence", checks);
       const png = Buffer.from(
         typeof output.screenshot === "string" ? output.screenshot : "",
         "base64",
@@ -285,11 +326,9 @@ export function createEnvironmentAccess(options: {
           .subarray(0, 8)
           .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
       )
-        throw new EnvironmentAccessError(
-          "The browser test did not return a valid screenshot.",
-        );
+        throw diagnosed("invalid_evidence", checks);
       return {
-        checks: output.checks as EnvironmentVerification["checks"],
+        checks,
         png,
       };
     } finally {
@@ -310,9 +349,7 @@ export function createEnvironmentAccess(options: {
         if (removed.code !== 0)
           // A cleanup failure must not become a successful readiness result.
           // eslint-disable-next-line no-unsafe-finally
-          throw new EnvironmentAccessError(
-            "Browser cleanup is pending. Check Docker before retrying.",
-          );
+          throw diagnosed("cleanup_pending", checks);
       }
     }
   }
@@ -335,8 +372,7 @@ export function createEnvironmentAccess(options: {
       );
     assertBrowserSecretSafety(project.config, root);
     const target = verification.target,
-      values = saved(),
-      access = resolveTestAccess(target.access, values);
+      values = saved();
     const job = `job-setup-${randomUUID()}`,
       lock = location(root, name, "test.lock");
     mkdirSync(
@@ -395,8 +431,21 @@ export function createEnvironmentAccess(options: {
       unlinkSync(lock);
       throw error;
     }
+    let completedChecks: EnvironmentCheck[] = [];
     const task = Promise.resolve()
       .then(async () => {
+        if (
+          target.kind === "vercel" &&
+          target.bypassSecret &&
+          !values[target.bypassSecret]?.trim()
+        )
+          throw diagnosed("preview_credential_missing");
+        let access: ReturnType<typeof resolveTestAccess>;
+        try {
+          access = resolveTestAccess(target.access, values);
+        } catch {
+          throw diagnosed("account_credentials_missing");
+        }
         let result: Awaited<ReturnType<typeof probe>> | undefined;
         let identity: Pick<EnvironmentVerification, "imageId" | "commitSha"> =
           {};
@@ -459,6 +508,7 @@ export function createEnvironmentAccess(options: {
                   },
                   job,
                 );
+                completedChecks = result.checks;
               },
             );
             identity = {
@@ -486,7 +536,16 @@ export function createEnvironmentAccess(options: {
               target.kind === "vercel" && target.bypassSecret
                 ? values[target.bypassSecret]
                 : undefined;
-            result = await probe({ url: environment.url, access, bypass }, job);
+            result = await probe(
+              {
+                url: environment.url,
+                access,
+                bypass,
+                vercel: target.kind === "vercel",
+              },
+              job,
+            );
+            completedChecks = result.checks;
           }
         } finally {
           if (leased) await source.releaseLease(job);
@@ -512,6 +571,13 @@ export function createEnvironmentAccess(options: {
       .catch((error) => {
         const failure: EnvironmentVerification = {
           status: "failed",
+          checkedAt: new Date().toISOString(),
+          ...(error instanceof EnvironmentAccessError
+            ? {
+                checks: error.checks ?? completedChecks,
+                ...(error.diagnosis ? { diagnosis: error.diagnosis } : {}),
+              }
+            : { checks: completedChecks }),
           message:
             error instanceof EnvironmentAccessError
               ? error.message

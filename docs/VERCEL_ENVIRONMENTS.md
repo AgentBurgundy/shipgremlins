@@ -1,12 +1,28 @@
 # Find or create a Vercel test environment
 
-Open **Project → Environment → Use hosted staging → Find my Vercel environment**.
-ShipGremlins uses the selected saved Vercel connection; you do not need to paste
-project IDs for the normal flow. Vercel discovery and preview creation do not
-require Claude. The **Ask Setup Gremlin** conversation uses your saved Claude
-connection and Docker to explain your actual setup and next steps.
+Open **Project → Environment**. With a connected Vercel account, ShipGremlins
+finds the matching app, selects its current test preview, connects private
+automation access, and opens the app in a real browser. One progress card follows
+the whole setup, including after a refresh. You do not need to copy project IDs,
+deployment URLs, or protection bypass secrets between forms.
+
+Discovery uses the repository and source provider, not just an app name. It uses
+the saved test branch, a configured nonproduction integration branch, or
+`pm-staging` for a project without a separate integration branch. It never picks
+an arbitrary pull-request preview or falls back to the production branch.
+
+ShipGremlins asks for a choice when multiple Vercel apps match, for a connection
+when an account cannot be accessed, or for an app test login when required. If
+there is no ready test preview, it guides you through the deployment review below.
+Existing Docker and direct-URL environments stay selected unless you choose to
+replace them. An unfinished foundation stays on its build flow.
+
+Vercel setup does not require Claude. The **Ask Setup Gremlin** conversation uses
+your saved Claude connection and Docker to explain your setup and next steps.
 
 ## Use a test environment you already have
+
+For an explicit choice, use the environment editor:
 
 1. Choose the saved Vercel account. Its installation team is used automatically;
    a personal token may need the optional team ID.
@@ -16,10 +32,10 @@ connection and Docker to explain your actual setup and next steps.
 3. Choose a ready Preview deployment or an existing custom staging environment.
    The card shows the branch, environment, deployment state and commit. Production
    deployments are visible for context and cannot be selected as previews.
-4. Choose **Save & connect preview access** to save the selected environment and
-   let ShipGremlins check its Vercel protection. Add app test accounts if
-   necessary, then choose **Test environment**. A successful Vercel build is not
-   proof that a PM can reach the app or sign in.
+4. Save the environment. ShipGremlins connects preview access and tests the app
+   automatically. Add app test accounts if needed. **Test again** reruns setup
+   and browser verification. A successful Vercel build is not proof that a PM can
+   reach the app or sign in.
 
 The saved provider target contains the connection, team, project, branch and
 optional custom environment ID. Later runs resolve the newest matching deployment.
@@ -68,18 +84,32 @@ reviewed actions. Do not paste secrets in chat. Save them in **Connections**.
 
 ## Connect protected preview access
 
-Choose **Connect preview access** on the saved Vercel environment. ShipGremlins
-checks the project using its selected Vercel connection, creates or reuses a
+Preview access is part of automatic setup. ShipGremlins checks the project using
+its selected Vercel connection, creates or reuses a
 dedicated **Protection Bypass for Automation** secret when needed, and saves it
 privately in Connections. Project settings contain only a secret reference;
 the credential is never sent to the dashboard or chat. Public previews need no
-new secret. Opening the page does not create credentials.
+new secret. Opening an eligible, unverified Environment page starts this setup
+once; a failed attempt does not loop on every refresh.
 
 Vercel grants a bypass secret access across **all deployments of that Vercel
 project** until revoked. ShipGremlins keeps deployment protection enabled and
 uses the credential with the selected test environment. It does not replace or
-revoke other tools' bypass secrets. A connected credential is not evidence of a
-successful browser test: choose **Test environment** afterward.
+revoke other tools' bypass secrets. Setup verifies the saved credential in a real
+browser before displaying **Ready**.
+
+Managed credentials are reconciled against Vercel: missing local values can be
+restored and changed provider values refreshed. Browser jobs also reconcile their
+managed access before starting. If a browser check still encounters protection,
+setup attempts one repair and one more browser check, then shows the specific
+remaining problem. Uncertain provider writes are reconciled rather than blindly
+creating duplicate credentials. Manually supplied credentials are preserved;
+a diagnosed repair can create a separate managed reference.
+
+Workers apply the bypass privately to the exact selected deployment origin,
+including redirect hops. Agents use clean URLs and saved test-account names;
+the secret values are not included in prompts, browser output, or screenshots.
+Cross-origin sign-in is not supported by the private password-login flow.
 
 If Vercel denies permission, reconnect an account with permission to manage
 deployment protection, or use **Advanced preview access** to reference a

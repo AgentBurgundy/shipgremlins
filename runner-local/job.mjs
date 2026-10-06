@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { browserSmoke } from "./runner-smoke.mjs";
+import { prepareBrowserAccess } from "./browser-access.mjs";
 import { startLeaseWatchdog } from "./lease.mjs";
 import { chromium } from "playwright";
 import { createActivityWriter } from "./activity.mjs";
@@ -342,6 +343,8 @@ try {
     const { execution: env, publication } = jobEnvironments(
       credentials,
       input.provider,
+      process.env,
+      input.commitIdentity,
     );
     publication.GH_HOST = repo.hostname;
     publication.GITLAB_HOST = repo.hostname;
@@ -426,6 +429,10 @@ try {
                   "--executable-path",
                   chromium.executablePath(),
                   "--no-sandbox",
+                  ...prepareBrowserAccess("/work", {
+                    url: input.browserTarget,
+                    credentials,
+                  }),
                   "--output-dir",
                   "/output/screenshots",
                 ],
@@ -486,6 +493,7 @@ try {
     const deliveryResult =
       kind === "developer"
         ? await runCheckedDelivery({
+            commitIdentity: input.commitIdentity,
             commands,
             delivery: input.delivery,
             report: readImplementationReport("/output", redact),

@@ -184,6 +184,14 @@ afterEach(() => {
 
 describe("project account isolation", () => {
   it("routes two projects' issue lookups, leases and previews to their own accounts", async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      expect(String(input)).toBe("https://api.github.com/user");
+      expect(init?.method ?? "GET").toBe("GET");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer legacy-source",
+      );
+      return new Response(JSON.stringify({ id: 123, login: "source-account" }));
+    });
     const a = accounts();
     const lookedUp: string[] = [];
     const preview = vi.fn(
@@ -217,6 +225,10 @@ describe("project account isolation", () => {
         linearBinding: validated.linearBinding,
       });
       expect(payload.credentials?.LINEAR_API_KEY).toBe(`${name}-linear-token`);
+      expect(payload.commitIdentity).toEqual({
+        name: "source-account",
+        email: "123+source-account@users.noreply.github.com",
+      });
       expect(JSON.stringify(payload)).not.toContain("vercel-token");
       expect(JSON.stringify(payload)).not.toContain("never-default");
       expect(a.linear[name]!.acquireLease).toHaveBeenCalledWith({
@@ -239,6 +251,7 @@ describe("project account isolation", () => {
       "Bearer beta-linear-token",
       "Bearer beta-linear-token",
     ]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
   it("rejects queued issue identifiers after account rebinding, even when both workspaces have ENG-123", async () => {
     const a = accounts();

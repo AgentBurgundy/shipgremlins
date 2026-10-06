@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const script = readFileSync(
   new URL("../../dashboard/pages.js", import.meta.url),
@@ -75,6 +75,7 @@ function browser(path = "/") {
     pm: string;
     tab: string;
     run: string;
+    closeRun(): boolean;
     destroy(): void;
   }
   const window = {
@@ -84,7 +85,7 @@ function browser(path = "/") {
       initialPage?: string;
     }) => Navigation,
     requestAnimationFrame: (fn: () => void) => fn(),
-    scrollTo: () => {},
+    scrollTo: vi.fn(),
     dispatchEvent: () => {},
     addEventListener: (name: string, fn: () => void) =>
       windowEvents.set(name, fn),
@@ -148,6 +149,74 @@ function browser(path = "/") {
 }
 
 describe("dashboard page navigation", () => {
+  it("keeps run dialogs over their project, PM and tab and dismisses without scrolling away", () => {
+    const view = browser("/projects/shop?pm=checkout&tab=activity");
+    const pages = view.initialize();
+    pages.navigate("/activity?run=job-one");
+    expect(pages.current).toBe("project");
+    expect(pages.project).toBe("shop");
+    expect(pages.pm).toBe("checkout");
+    expect(pages.tab).toBe("activity");
+    expect(pages.run).toBe("job-one");
+    expect(view.window.location.pathname).toBe("/projects/shop");
+    expect(view.panels.find((panel) => panel.id === "project")?.hidden).toBe(
+      false,
+    );
+    expect(view.panels.find((panel) => panel.id === "activity")?.hidden).toBe(
+      true,
+    );
+    expect(view.window.scrollTo).not.toHaveBeenCalled();
+    expect(pages.closeRun()).toBe(true);
+    expect(pages.run).toBe("");
+    expect(view.window.location.pathname + view.window.location.search).toBe(
+      "/projects/shop?pm=checkout&tab=activity",
+    );
+    expect(view.window.scrollTo).not.toHaveBeenCalled();
+    expect(pages.closeRun()).toBe(false);
+  });
+
+  it("keeps the projects list open for linked activity and survives reloads and browser back/forward", () => {
+    const view = browser("/projects");
+    const pages = view.initialize();
+    const link = {
+      href: "http://localhost:4311/activity?run=job-one",
+      target: "",
+      hasAttribute: () => false,
+    };
+    view.documentEvents.get("click")!({
+      button: 0,
+      target: { closest: () => link },
+      preventDefault: vi.fn(),
+    });
+    expect(pages.current).toBe("projects");
+    expect(pages.run).toBe("job-one");
+    const detailUrl = view.window.location.href;
+    const reloaded = browser(detailUrl).initialize();
+    expect(reloaded.current).toBe("projects");
+    expect(reloaded.run).toBe("job-one");
+    view.window.location = new URL("http://localhost:4311/projects");
+    view.windowEvents.get("popstate")!();
+    expect(pages.current).toBe("projects");
+    expect(pages.run).toBe("");
+    view.window.location = new URL(detailUrl);
+    view.windowEvents.get("popstate")!();
+    expect(pages.run).toBe("job-one");
+    expect(view.window.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("uses Activity as the background for a direct run link and closes locally", () => {
+    const view = browser("/activity?run=job-one");
+    const pages = view.initialize();
+    expect(pages.current).toBe("activity");
+    expect(pages.run).toBe("job-one");
+    pages.closeRun();
+    expect(view.window.location.pathname + view.window.location.search).toBe(
+      "/activity",
+    );
+    expect(pages.current).toBe("activity");
+    expect(pages.run).toBe("");
+  });
+
   it("retains project operation tabs and exact activity run links through reload and back", () => {
     const view = browser("/projects/shop?tab=limits");
     const pages = view.initialize();

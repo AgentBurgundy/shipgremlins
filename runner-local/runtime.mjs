@@ -3,6 +3,29 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 export const MAX_JOB_MS = 45 * 60_000;
+export function validateCommitIdentity(identity, provider) {
+  if (identity === undefined && provider !== "github") return;
+  if (
+    !identity ||
+    typeof identity !== "object" ||
+    Array.isArray(identity) ||
+    Object.keys(identity).some((key) => !["name", "email"].includes(key)) ||
+    typeof identity.name !== "string" ||
+    !identity.name.trim() ||
+    identity.name.length > 100 ||
+    /[\x00-\x1f\x7f<>]/.test(identity.name) ||
+    typeof identity.email !== "string" ||
+    identity.email.length > 254 ||
+    !/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(identity.email) ||
+    (provider === "github" &&
+      !/^[1-9][0-9]*\+[a-z0-9][a-z0-9-]{0,38}(?:\[bot\])?@users\.noreply\.github\.com$/i.test(
+        identity.email,
+      ))
+  )
+    throw new Error(
+      "A verified source-account commit identity is required. Reconnect GitHub in Connections and retry the coding job.",
+    );
+}
 const sourceKeys = new Set([
   "GITHUB_TOKEN",
   "GH_TOKEN",
@@ -18,9 +41,29 @@ export function jobEnvironments(
   credentials,
   provider,
   inherited = process.env,
+  commitIdentity,
 ) {
   const execution = { ...inherited, ...credentials };
   for (const key of sourceKeys) delete execution[key];
+  for (const key of [
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "GIT_COMMITTER_DATE",
+    "EMAIL",
+  ])
+    delete execution[key];
+  if (commitIdentity !== undefined) {
+    validateCommitIdentity(commitIdentity, provider);
+    Object.assign(execution, {
+      GIT_AUTHOR_NAME: commitIdentity.name,
+      GIT_AUTHOR_EMAIL: commitIdentity.email,
+      GIT_COMMITTER_NAME: commitIdentity.name,
+      GIT_COMMITTER_EMAIL: commitIdentity.email,
+    });
+  }
   execution.GIT_TERMINAL_PROMPT = "0";
   execution.GIT_CONFIG_GLOBAL = "/dev/null";
   execution.GIT_CONFIG_SYSTEM = "/dev/null";

@@ -127,9 +127,14 @@ function world(realSource = false) {
     ? createSourceControl({
         root,
         env: { GITHUB_TOKEN: "synthetic-delivery-source-token" },
-        fetch: async () => {
-          throw new Error(
-            "This lease-contract test must not contact a provider.",
+        fetch: async (input, init) => {
+          expect(String(input)).toBe("https://api.github.com/user");
+          expect(init?.method ?? "GET").toBe("GET");
+          expect(new Headers(init?.headers).get("authorization")).toBe(
+            "Bearer synthetic-delivery-source-token",
+          );
+          return new Response(
+            JSON.stringify({ id: 123, login: "delivery-source-account" }),
           );
         },
       })
@@ -412,6 +417,7 @@ describe("local delivery controller integration", () => {
     });
     const plan = payload.reviewPlan!;
     expect(plan).toBeDefined();
+    expect(payload.browserTarget).toBe(plan.deployment.url);
     const original = {
       ok: true,
       kind: "pm",

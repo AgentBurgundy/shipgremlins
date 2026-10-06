@@ -47,6 +47,24 @@
       event.preventDefault();
       onClose?.();
     });
+    const outsideDialog = (event) => {
+      if (event.target !== dialog) return false;
+      const bounds = dialog.getBoundingClientRect();
+      return (
+        event.clientX < bounds.left ||
+        event.clientX > bounds.right ||
+        event.clientY < bounds.top ||
+        event.clientY > bounds.bottom
+      );
+    };
+    let backdropPressed = false;
+    dialog.addEventListener("pointerdown", (event) => {
+      backdropPressed = outsideDialog(event);
+    });
+    dialog.addEventListener("click", (event) => {
+      if (backdropPressed && outsideDialog(event)) onClose?.();
+      backdropPressed = false;
+    });
     selectTab(selected);
     return {
       open({ reset = false } = {}) {

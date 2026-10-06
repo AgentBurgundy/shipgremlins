@@ -6,6 +6,8 @@ import { stripVTControlCharacters } from "node:util";
 import { validateDelivery } from "../../runner-local/delivery.mjs";
 import { validateReviewPlan } from "../../runner-local/review-receipts.mjs";
 import { validateGrumblinPayload } from "../../runner-local/grumblin-runtime.mjs";
+import { browserOrigin } from "../../runner-local/browser-access.mjs";
+import { validateCommitIdentity } from "../../runner-local/runtime.mjs";
 import {
   createTestEnvironments,
   parseDockerTarget,
@@ -20,9 +22,12 @@ export interface DockerJobPayload {
   repoUrl?: string;
   branch?: string;
   provider?: "github" | "gitlab";
+  commitIdentity?: { name: string; email: string };
   prompt?: string;
   /** Browser tools remain available; repository mode does not require screenshots. */
   browserVerification?: boolean;
+  /** Controller-resolved URL used to scope private Playwright preview access. */
+  browserTarget?: string;
   pmMode?: "discovery" | "exploration" | "grumblin";
   grumblin?: import("../grumblins/schema.ts").GrumblinProfileSnapshot;
   grumblinTarget?: { url: string; role: "preview" | "staging" };
@@ -232,8 +237,10 @@ export function validatePayload(payload: DockerJobPayload): string {
           "repoUrl",
           "branch",
           "provider",
+          "commitIdentity",
           "prompt",
           "browserVerification",
+          "browserTarget",
           "pmMode",
           "grumblin",
           "grumblinTarget",
@@ -253,6 +260,19 @@ export function validatePayload(payload: DockerJobPayload): string {
     )
   )
     throw new Error("Invalid local job payload.");
+  if (payload.browserTarget !== undefined) {
+    if (
+      payload.browserVerification === false ||
+      payload.kind === "verify" ||
+      payload.pmMode === "discovery" ||
+      typeof payload.browserTarget !== "string" ||
+      payload.browserTarget.length > 8192
+    )
+      throw new Error("Invalid selected browser environment.");
+    browserOrigin(payload.browserTarget);
+  }
+  if (payload.kind === "developer" || payload.commitIdentity !== undefined)
+    validateCommitIdentity(payload.commitIdentity, payload.provider);
   if (
     payload.expectedCommitSha !== undefined &&
     !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(payload.expectedCommitSha)
@@ -692,8 +712,10 @@ export function createDockerRunners(options: {
           );
         }
         delivered.maxRuntimeMinutes = input.payload.maxRuntimeMinutes ?? 45;
-        if (environment)
+        if (environment) {
+          delivered.browserTarget = environment.url;
           delivered.prompt += `\n\nManaged test app: ${environment.url}. This disposable app is the admitted baseline; it is not proof of unmerged changes. Use Playwright against this URL. Image: ${environment.imageId}.`;
+        }
         if (!(await ownedVolume(input.id))) {
           const created = await run([
             "volume",

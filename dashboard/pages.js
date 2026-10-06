@@ -83,7 +83,7 @@
       const pm = project ? url.searchParams.get("pm") || "" : "";
       const tab = project ? url.searchParams.get("tab") || "brief" : "brief";
       const query = new URLSearchParams();
-      const run = page === "activity" ? url.searchParams.get("run") || "" : "";
+      const run = url.searchParams.get("run") || "";
       if (run) query.set("run", run);
       if (page === "usage") {
         const range = url.searchParams.get("range");
@@ -164,8 +164,22 @@
       destination,
       { replace = false, focus = true, scroll = true } = {},
     ) {
-      const route = resolve(destination);
+      let route = resolve(destination);
       if (!route) return false;
+      // A run is a dialog over the page that opened it. Keep its project,
+      // PM, tab and scroll context, while keeping copied run URLs shareable.
+      if (currentRoute && route.page === "activity" && route.run) {
+        const background = new URL(currentRoute.path, window.location.origin);
+        background.searchParams.set("run", route.run);
+        route = resolve(background.href);
+      }
+      const samePage =
+        currentRoute &&
+        withoutRun(currentRoute.path) === withoutRun(route.path);
+      if (samePage && (route.run || currentRoute.run)) {
+        focus = false;
+        scroll = false;
+      }
       const next = route.path;
       const existing =
         window.location.pathname +
@@ -179,6 +193,21 @@
         );
       show(route, { focus, scroll });
       return true;
+    }
+
+    function withoutRun(path) {
+      const url = new URL(path, window.location.origin);
+      url.searchParams.delete("run");
+      return url.pathname + url.search + url.hash;
+    }
+
+    function closeRun() {
+      if (!currentRoute?.run) return false;
+      return navigate(withoutRun(currentRoute.path), {
+        replace: true,
+        focus: false,
+        scroll: false,
+      });
     }
 
     function onClick(event) {
@@ -205,7 +234,12 @@
     }
     function onPopState() {
       const route = resolve(window.location.href);
-      if (route) show(route, { focus: true, scroll: true });
+      if (route) {
+        const samePage =
+          currentRoute &&
+          withoutRun(currentRoute.path) === withoutRun(route.path);
+        show(route, { focus: !samePage, scroll: !samePage });
+      }
     }
     function onHashChange() {
       const route = resolve(window.location.href);
@@ -217,6 +251,7 @@
 
     const api = {
       navigate,
+      closeRun,
       get current() {
         return current;
       },
