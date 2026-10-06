@@ -109,8 +109,8 @@ const catalog = {
     "edit_login",
   ],
   login_incomplete: [
-    "The login form is still visible",
-    "The signed-in selector appeared, but the password form remained visible. Choose a confirmation that proves the account is signed in.",
+    "Sign-in did not finish settling",
+    "The signed-in element appeared, but the password form did not close within 15 seconds. Check whether the app finished signing in and whether the saved selectors identify the correct controls.",
     "edit_login",
   ],
   login_unverified: [

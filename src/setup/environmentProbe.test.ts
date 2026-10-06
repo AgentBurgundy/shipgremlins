@@ -20,11 +20,15 @@ async function probe(
     rejected?: boolean;
     invalidCredentials?: boolean;
     brandedWall?: boolean;
+    passwordTransition?: "delayed" | "stuck" | "redirect";
+    confirmationAfterClose?: "missing" | "hidden" | "ambiguous";
   } = {},
 ) {
   let output = "",
     currentUrl = "",
     submitted = false;
+  let formClosed = false;
+  const hiddenWaits: Array<{ state: string; timeout?: number }> = [];
   let onBlocked: (
     destination: string,
     navigation: boolean,
@@ -79,16 +83,38 @@ async function probe(
     locator(selector: string) {
       const fails = selector === options.field;
       return {
-        waitFor: async () => {
+        waitFor: async (wait: { state: string; timeout?: number }) => {
           if (fails) throw Error("private selector");
+          if (selector === "#password" && wait.state === "hidden") {
+            hiddenWaits.push(wait);
+            if (options.passwordTransition === "stuck")
+              throw Error("private password form remained visible");
+            if (options.passwordTransition === "redirect") {
+              onBlocked("https://external.test/login", true, true);
+              throw Error("private blocked destination");
+            }
+            formClosed = true;
+          }
         },
-        count: async () => (fails ? (options.count ?? 0) : 1),
+        count: async () =>
+          fails
+            ? (options.count ?? 0)
+            : selector === "#home" && formClosed
+              ? options.confirmationAfterClose === "missing"
+                ? 0
+                : options.confirmationAfterClose === "ambiguous"
+                  ? 2
+                  : 1
+              : 1,
         fill: async () => {},
         click: async () => {
           submitted = true;
           if (options.rejected) await request("https://app.test/auth", "POST");
         },
-        isVisible: async () => !submitted,
+        isVisible: async () =>
+          selector === "#home"
+            ? !(formClosed && options.confirmationAfterClose === "hidden")
+            : !submitted || (!!options.passwordTransition && !formClosed),
       };
     },
     evaluate: vi.fn(async (callback: (...args: never[]) => unknown) => {
@@ -162,7 +188,12 @@ async function probe(
   );
   expect(output).not.toContain("private-");
   expect(output).not.toContain("token=");
-  return { result: JSON.parse(output), requestLog, exitCode: process.exitCode };
+  return {
+    result: JSON.parse(output),
+    requestLog,
+    exitCode: process.exitCode,
+    hiddenWaits,
+  };
 }
 
 describe("environment browser probe", () => {
@@ -183,6 +214,54 @@ describe("environment browser probe", () => {
       "https://app.test",
       "https://app.test/login",
     ]);
+  });
+  it("waits for a closing login form after the signed-in marker appears", async () => {
+    const { result, hiddenWaits } = await probe({
+      access: true,
+      passwordTransition: "delayed",
+    });
+    expect(result.ok).toBe(true);
+    expect(hiddenWaits).toEqual([{ state: "hidden", timeout: 15000 }]);
+    expect(result.checks.at(-1)).toEqual({
+      name: "Test account 1 signs in",
+      passed: true,
+    });
+  });
+  it("still rejects a form that never closes after the bounded wait", async () => {
+    const { result, hiddenWaits } = await probe({
+      access: true,
+      passwordTransition: "stuck",
+    });
+    expect(result.ok).toBe(false);
+    expect(hiddenWaits).toEqual([{ state: "hidden", timeout: 15000 }]);
+    expect(result.diagnosis.code).toBe("login_incomplete");
+    expect(result.checks.at(-1).passed).toBe(false);
+  });
+  it.each([
+    ["missing", "success_not_found"],
+    ["hidden", "success_not_visible"],
+    ["ambiguous", "selector_ambiguous"],
+  ] as const)(
+    "does not accept a confirmation that becomes %s while the form closes",
+    async (confirmationAfterClose, code) => {
+      const { result } = await probe({
+        access: true,
+        passwordTransition: "delayed",
+        confirmationAfterClose,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.diagnosis.code).toBe(code);
+      expect(result.checks.at(-1).passed).toBe(false);
+    },
+  );
+  it("preserves a blocked sign-in redirect diagnosis during the transition", async () => {
+    const { result } = await probe({
+      access: true,
+      passwordTransition: "redirect",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.diagnosis.code).toBe("login_external_redirect");
+    expect(result.checks.at(-1).passed).toBe(false);
   });
   it.each([
     ["#email", 0, "selector_not_found", "usernameSelector", 2],
