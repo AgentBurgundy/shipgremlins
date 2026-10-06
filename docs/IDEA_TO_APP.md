@@ -15,7 +15,7 @@ An existing app uses the primary **Improve my app** path.
 
 ## Describe the first useful version
 
-1. Open **Projects → Add project** and choose **I have an idea**. Setup asks one
+1. Open **Projects → Add project** and choose **Start from an idea · experimental**. Setup asks one
    question at a time. Back preserves your answers.
 2. Describe the users, their main task, and what to leave out. For example:
 

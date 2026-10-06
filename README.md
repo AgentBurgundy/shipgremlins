@@ -130,16 +130,17 @@ The dashboard opens in your browser with gremlins, project setup, official GitHu
 
 Once the dashboard opens, choose where your gremlin will live:
 
-- **A new idea:** choose **I have an idea**, describe who the app helps, and review
-  its proposed crew. Create a repository that is private by default, then review
-  and approve the foundation build. A Coding Gremlin builds the first app and
-  tests; PMs explore after there is code. [Start from an idea →](docs/IDEA_TO_APP.md)
-- **An existing app:** connect its repository and choose **Adopt a PM Gremlin** on
+- **An existing app:** choose **Improve my app**, connect its repository, and adopt a gremlin on
   the project. Choose its job, give it a name and a clear goal, then review its
   brief. Importing the app may start Setup Gremlin analysis when source access
   and Claude Code are ready; it starts no PM or coding job. Start with one small
   assignment and keep automation paused.
   [Meet your first PM →](docs/SETUP.md#your-first-adoption)
+- **A new idea:** choose **Start from an idea · experimental** and review the
+  proposed foundation and crew. The new repository is private by default. A
+  Coding Gremlin builds an initial draft; review its design, integrations and
+  complete journey before merging. PMs explore after there is code.
+  [Experimental idea builds →](docs/IDEA_TO_APP.md)
 
 Source control and Claude Code are enough to prepare an existing app's PM;
 Discovery also needs a ready worker. Connect Linear when you want proposals or
@@ -158,8 +159,8 @@ Each project also has its own sidebar link and workspace. Open a PM to edit its
 product brief and review its discovery, feature inventory, ranked opportunities,
 and learned memory together. The repository and PM name stay visible while you work.
 
-Project **Review**, **Knowledge**, **Delivery**, and **Run limits** keep decisions,
-shared owner notes, releases, and capacity in separate views. The workspace inbox
+Project **Proposals**, **Changes**, **Your crew**, and **Settings** keep decisions,
+results, shared knowledge, and setup in separate views. The workspace inbox
 shows what needs attention and links to the remedy. [Use the control room →](docs/PROJECT_OPERATIONS.md)
 
 Retire a project or PM from its own workspace with **Delete**. Review the impact

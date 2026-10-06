@@ -4,7 +4,7 @@ ShipGremlins keeps **implemented**, **verified**, **promoted**, and **Done** sep
 
 ## Configure the workflow
 
-In **Projects → Project settings**, choose the promotion workflow and three distinct branches: integration (commonly `pm-staging`), staging, and production. Configure browser verification against the integration environment, then open **Delivery** to manage the resulting flow. Vercel and Railway targets must report the actual ready deployment ID, Git branch and full commit SHA. A URL alone cannot establish this provenance.
+In **Projects → Project settings**, choose the promotion workflow and three distinct branches: integration (commonly `pm-staging`), staging, and production. Configure browser verification against the integration environment, then open **Changes → Advanced delivery workflow** to manage the resulting flow. Vercel and Railway targets must report the actual ready deployment ID, Git branch and full commit SHA. A URL alone cannot establish this provenance.
 
 Create or reuse an isolated, nonproduction integration environment in the hosting provider. ShipGremlins does not create paid hosting resources or modify production settings. In Railway, select the app's project, environment and service in project settings; a project token is scoped to its environment. For GitLab source, select the correct GitLab account/repository independently of the Railway connection.
 
@@ -34,7 +34,7 @@ Vercel branch deployments can provide a candidate preview. A fixed Railway `pm-s
 
 ### One-time Railway candidate setup
 
-Keep the existing integration service selected for browser verification. Add a second named Railway target pointing at an existing nonproduction candidate service/environment, then select it under **Projects → Delivery → Candidate environment**. The corresponding configuration is:
+Keep the existing integration service selected for browser verification. Add a second named Railway target pointing at an existing nonproduction candidate service/environment, then select it under **Changes → Advanced delivery workflow → Candidate environment**. The corresponding configuration is:
 
 ```json
 {

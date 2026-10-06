@@ -6,7 +6,7 @@ deployment. Then a trusted verifier checks the exact candidate assembled from
 those changes on the current staging base. Missing, expired, or mismatched
 evidence keeps the candidate out of staging.
 
-For local Docker jobs, start with [Project → Delivery](DELIVERY_WORKFLOW.md).
+For local Docker jobs, start with [Project → Changes → Advanced delivery workflow](DELIVERY_WORKFLOW.md).
 Owning-PM review receipts are recorded automatically by an isolated replay phase;
 the candidate handoff is available on the Delivery page. The CLI examples below
 describe the original Vercel release path and the shared signing format. For a

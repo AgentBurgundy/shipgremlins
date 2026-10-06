@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { initializeSetup } from "./files.ts";
-import { loadProject } from "../config.ts";
+import { codingPickupEnabled, loadProject } from "../config.ts";
 import {
   assertResourceAvailable,
   preparePmRecreation,
@@ -95,6 +95,38 @@ async function replacedPmFixture() {
   };
 }
 describe("reversible project and PM deletion", () => {
+  it.each(["project", "PM"])(
+    "pauses independent coding pickup when restoring a %s",
+    async (kind) => {
+      const f = fixture();
+      const areas = JSON.parse(readFileSync(f.areasFile, "utf8"));
+      areas.areas.core.enabled = false;
+      areas.areas.core.codingEnabled = true;
+      writeFileSync(f.areasFile, JSON.stringify(areas));
+      expect(codingPickupEnabled(loadProject(f.root, "app").areas[0]!)).toBe(
+        true,
+      );
+      const removed = await f.service.remove(
+        await f.service.preview({
+          project: "app",
+          ...(kind === "PM" ? { area: "core" } : {}),
+        }),
+      );
+      const archivedAreas = join(
+        removed.recoveryPath,
+        kind === "PM" ? "areas.before.json" : "project/areas.json",
+      );
+      const archiveBefore = readFileSync(archivedAreas, "utf8");
+      await f.service.restore(
+        await f.service.previewRestore(removed.recoveryId),
+      );
+      const restored = loadProject(f.root, "app").areas[0]!;
+      expect(restored).toMatchObject({ enabled: false, codingEnabled: false });
+      expect(codingPickupEnabled(restored)).toBe(false);
+      expect(readFileSync(archivedAreas, "utf8")).toBe(archiveBefore);
+      expect(JSON.parse(archiveBefore).areas.core.codingEnabled).toBe(true);
+    },
+  );
   it("restores an explicitly selected older PM generation only after the replacement is deleted", async () => {
     const f = await replacedPmFixture();
     const originalBackup = readFileSync(
@@ -447,6 +479,7 @@ describe("reversible project and PM deletion", () => {
     const project = loadProject(f.root, "app");
     expect(project.config.verified).toBeNull();
     expect(project.areas[0]!.enabled).toBe(false);
+    expect(project.areas[0]!.codingEnabled).toBeUndefined();
     expect(() => assertResourceAvailable(f.root, "app")).not.toThrow();
     expect(
       existsSync(join(result.recoveryPath, "project", "project.json")),
@@ -468,6 +501,7 @@ describe("reversible project and PM deletion", () => {
     ).toThrow("deleted resource");
     await f.service.restore(await f.service.previewRestore(removed.recoveryId));
     expect(loadProject(f.root, "app").areas[0]!.enabled).toBe(false);
+    expect(loadProject(f.root, "app").areas[0]!.codingEnabled).toBeUndefined();
   });
   it("rejects stale revisions, mistyped confirmation and provisioning locks before writing", async () => {
     const f = fixture(),

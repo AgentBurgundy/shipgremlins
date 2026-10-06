@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,6 +86,19 @@ describe("templateVars / fillTemplate", () => {
 });
 
 describe("addProject", () => {
+  it("pauses both automations when importing a template with coding pickup enabled", () => {
+    const source = join(root, "projects", "_templates", "areas.json");
+    const template = JSON.parse(readFileSync(source, "utf8"));
+    template.areas["{{area}}"].codingEnabled = true;
+    writeFileSync(source, JSON.stringify(template));
+    const original = readFileSync(source, "utf8");
+    addProject(root, { name: "app", repo: "owner/app" });
+    expect(loadProject(root, "app").areas[0]).toMatchObject({
+      enabled: false,
+      codingEnabled: false,
+    });
+    expect(readFileSync(source, "utf8")).toBe(original);
+  });
   it("writes a project that loadProject accepts, from the templates", () => {
     const result = addProject(root, {
       name: "game",
@@ -110,6 +124,7 @@ describe("addProject", () => {
     });
     expect(p.config.verification).toEqual({ mode: "repository" });
     expect(p.areas[0]!.enabled).toBe(false);
+    expect(p.areas[0]!.codingEnabled).toBeUndefined();
     expect(p.config.slackWebhookSecret).toBe("SLACK_WEBHOOK_GAME");
     expect(p.config.verified).toBeNull();
     expect(p.areas.map((a) => a.key)).toEqual(["core"]);

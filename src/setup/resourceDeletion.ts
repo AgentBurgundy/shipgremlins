@@ -1338,8 +1338,10 @@ export function createResourceDeletion(options: {
           project.verified = null;
           for (const row of Object.values(
             areas.areas as Record<string, Record<string, unknown>>,
-          ))
+          )) {
             row.enabled = false;
+            if (row.codingEnabled !== undefined) row.codingEnabled = false;
+          }
           write(join(staged, "project.json"), json(project));
           write(join(staged, "areas.json"), json(areas));
           // Validate at its real project name without exposing staged settings to the live scheduler.
@@ -1384,7 +1386,13 @@ export function createResourceDeletion(options: {
               "invalid_recovery",
               "The archived PM configuration is missing.",
             );
-          areas.areas[journal.area] = { ...original, enabled: false };
+          areas.areas[journal.area] = {
+            ...original,
+            enabled: false,
+            ...(original.codingEnabled === undefined
+              ? {}
+              : { codingEnabled: false }),
+          };
           project.verified = null;
           const validation = join(directory, `validate-${randomUUID()}`);
           copyTree(live, join(validation, "projects", journal.project));

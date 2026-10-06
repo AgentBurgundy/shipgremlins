@@ -6,7 +6,7 @@ A developer finishing code, a successful test, or a merge into `pm-staging` must
 
 ## Implemented in the alpha
 
-For local promotion projects, use **Project → Delivery** to select every required
+For local promotion projects, use **Project → Changes → Advanced delivery workflow** to select every required
 promoted deliverable, the staging-to-production PR, and the team's real completed
 state. Confirm that the selection is the whole approved scope. The controller saves
 that declaration and periodically checks provider merge/tree evidence. It does not

@@ -29,7 +29,7 @@ Changes to owner settings make older knowledge stale until discovery refreshes i
 ## Review
 
 The workspace inbox collects setup blockers, stale discovery and failed runs.
-Project **Review** also fetches current Linear proposals on demand. Open a ticket
+Project **Proposals** also fetches current Linear proposals on demand. Open a ticket
 to read its scope and acceptance criteria, then approve coding explicitly.
 Choose **Read proposal & evidence**, then **Approve coding**, and confirm the
 ticket identifier. You do not need to create `pm-approved` yourself: the first
@@ -53,8 +53,8 @@ that hold, re-fetches the ticket, and adds `pm-approved` only if the reviewed sc
 still matches. An interrupted approval stays unapproved. Split broad epics into
 testable milestones in Linear first. Owner-blocked tickets remain blocked.
 Approval does not run a production
-merge or set Done. Enabled automation picks up eligible approved work, or use
-**Run Coding** for one run. The button finds the next ready approved ticket
+merge or set Done. **Automatically build approved work** picks up eligible tickets, or use
+**Start coding** for one run. The button finds the next ready approved ticket
 across this project's mapped PMs, ordered by priority and then oldest first.
 You do not need to paste an identifier. **Choose a specific ticket** remains
 available in the coding form when you want an override or a reviewed retry.

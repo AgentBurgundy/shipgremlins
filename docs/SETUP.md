@@ -113,14 +113,15 @@ see which tests actually ran.
 A PM is a saved product mandate. A worker is the Docker capacity that executes
 it. Creating one does not implicitly create or enable the other.
 
-| Action             | Result                                                                                                                                                               |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Discovery**      | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change. |
-| **Run now**        | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                  |
-| **Run Coding**     | Queues work on one open ticket with `pm-approved`, the matching area label, and the PM's Linear project. Manual coding does not require automation to be enabled.    |
-| **Automation on**  | Allows that PM's UTC patrol schedule and background pickup of its approved tickets while the controller runs.                                                        |
-| **Automation off** | Stops new scheduled patrols and automatic approved-ticket pickup. It does not cancel an already-running job.                                                         |
-| **Pause worker**   | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                      |
+| Action                                | Result                                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Discovery**                         | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change.            |
+| **Run now**                           | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                             |
+| **Start coding**                      | Queues work on one open ticket with `pm-approved`, finite acceptance criteria, the matching area label, and the PM's Linear project. Manual coding does not require automation. |
+| **Look for new improvements**         | Enables that PM's UTC patrol schedule. This is independent of approved-ticket pickup.                                                                                           |
+| **Automatically build approved work** | Enables background pickup of eligible approved tickets while the controller runs. This is independent of patrols.                                                               |
+| **Turn either control off**           | Stops new work for that automation. It does not cancel already-running jobs; use Activity to cancel a run.                                                                      |
+| **Pause worker**                      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                                 |
 
 Use the guided setup actions beside the selected project when something is
 missing. Connect source control and Claude Code in Connections; repair the

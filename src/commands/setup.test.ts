@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -47,6 +48,34 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("setup initialization", () => {
+  it("pauses imported coding settings but preserves the owner's switches on repeat setup", () => {
+    const customRoot = join(root, "template-source");
+    cpSync(
+      join(templatesRoot, "projects", "_templates"),
+      join(customRoot, "projects", "_templates"),
+      { recursive: true },
+    );
+    const source = join(customRoot, "projects", "_templates", "areas.json");
+    const template = JSON.parse(readFileSync(source, "utf8"));
+    template.areas["{{area}}"].codingEnabled = true;
+    writeFileSync(source, JSON.stringify(template));
+    initializeSetup(root, customRoot, input);
+    expect(loadProject(root, input.project).areas[0]).toMatchObject({
+      enabled: false,
+      codingEnabled: false,
+    });
+    const areaFile = join(root, "projects", input.project, "areas.json");
+    const areas = JSON.parse(readFileSync(areaFile, "utf8"));
+    areas.areas.core.codingEnabled = true;
+    writeFileSync(areaFile, JSON.stringify(areas));
+    const before = readFileSync(areaFile, "utf8");
+    initializeSetup(root, customRoot, input);
+    expect(readFileSync(areaFile, "utf8")).toBe(before);
+    expect(loadProject(root, input.project).areas[0]).toMatchObject({
+      enabled: false,
+      codingEnabled: true,
+    });
+  });
   it("seeds repository-only defaults and honors a single CLI base branch", async () => {
     expect(
       await runSetup(
@@ -304,6 +333,7 @@ describe("setup initialization", () => {
     expect(project.config.repo).toBe("example/app");
     expect(project.config.verified).toBeNull();
     expect(project.areas[0]!.enabled).toBe(false);
+    expect(project.areas[0]!.codingEnabled).toBeUndefined();
     const env = readFileSync(join(root, ".env.example"), "utf8");
     expect(
       readFileSync(join(root, "projects", "demo-app", ".env.example"), "utf8"),

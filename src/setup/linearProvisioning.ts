@@ -581,6 +581,7 @@ export function createLinearProvisioning(options: {
         if (chosen === null) {
           value.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
           value.enabled = false;
+          if (value.codingEnabled !== undefined) value.codingEnabled = false;
           nextState.areas[key] = {
             ...previousState?.areas[key],
             id: randomUUID(),
