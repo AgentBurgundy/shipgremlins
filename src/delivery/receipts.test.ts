@@ -23,6 +23,12 @@ afterEach(() => {
 });
 const SHA = "a".repeat(40),
   png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+type PausedRequest = {
+  requestId: string;
+  resourceType: string;
+  frameId: string;
+  request: { url: string; method: string; headers: Record<string, string> };
+};
 function world() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gremlins-review-")));
   roots.push(root);
@@ -84,7 +90,47 @@ function world() {
     check: vi.fn(async () => {}),
     uncheck: vi.fn(async () => {}),
   };
+  let paused: ((event: PausedRequest) => Promise<void>) | undefined;
+  const session = {
+    send: vi.fn(async (method: string, _params?: Record<string, unknown>) => {
+      if (method === "Page.getFrameTree")
+        return { frameTree: { frame: { id: "main" } } };
+      return {};
+    }),
+    on: vi.fn((event: string, listener: typeof paused) => {
+      if (event === "Fetch.requestPaused") paused = listener;
+    }),
+    detach: vi.fn(async () => {}),
+  };
+  const newCDPSession = vi.fn(async () => session);
+  const intercept = async (
+    url: string,
+    {
+      id = "request",
+      method = "GET",
+      resourceType = "Document",
+      headers = {},
+    }: {
+      id?: string;
+      method?: string;
+      resourceType?: string;
+      headers?: Record<string, string>;
+    } = {},
+  ) => {
+    if (!paused)
+      throw new Error("Browser access was not installed before navigation.");
+    await paused({
+      requestId: id,
+      resourceType,
+      frameId: "main",
+      request: { url, method, headers },
+    });
+    return [...session.send.mock.calls]
+      .reverse()
+      .find(([, params]) => params?.requestId === id);
+  };
   const page = {
+    context: () => ({ newCDPSession }),
     setDefaultTimeout: () => {},
     goto: vi.fn(async () => ({ status: () => 200 })),
     url: () => "https://preview.example/settings",
@@ -93,7 +139,7 @@ function world() {
     screenshot: vi.fn(async () => png),
   };
   const context = {
-    route: vi.fn(async () => {}),
+    newCDPSession,
     newPage: async () => page,
     close: vi.fn(async () => {}),
   };
@@ -102,7 +148,7 @@ function world() {
     close: vi.fn(async () => {}),
   };
   const chromium = { launch: async () => browser };
-  const run = () => {
+  const run = (bypass?: string) => {
     writeFileSync(
       join(root, "pm-review-request.json"),
       JSON.stringify(request),
@@ -113,9 +159,21 @@ function world() {
       outputDirectory: root,
       sessionDirectory: join(root, "private"),
       chromium,
+      bypass,
     });
   };
-  return { root, plan, request, locator, page, browser, run };
+  return {
+    root,
+    plan,
+    request,
+    locator,
+    page,
+    browser,
+    context,
+    session,
+    intercept,
+    run,
+  };
 }
 describe("trusted worker browser receipts", () => {
   it("executes real browser API checks and binds screenshots to trusted proof digest", async () => {
@@ -132,7 +190,131 @@ describe("trusted worker browser receipts", () => {
       expect.anything(),
     );
     expect(w.page.screenshot).toHaveBeenCalledOnce();
+    expect(w.browser.newContext).toHaveBeenCalledWith({
+      serviceWorkers: "block",
+    });
+    expect(w.session.send).toHaveBeenCalledWith("Fetch.enable", {
+      patterns: [{ urlPattern: "*", requestStage: "Request" }],
+    });
     expect(existsSync(join(w.root, "pm-review-request.json"))).toBe(false);
+  });
+  it.each([undefined, "private-preview-bypass"])(
+    "blocks a foreign redirect after multiple same-origin hops (bypass=%s)",
+    async (bypass) => {
+      const w = world();
+      w.page.goto.mockImplementation(async () => {
+        for (const [id, url] of [
+          ["first", "https://preview.example/settings"],
+          ["second", "https://preview.example/intermediate"],
+          ["foreign", "https://foreign.example/collect"],
+        ]) {
+          const decision = await w.intercept(url!, { id });
+          if (decision?.[0] === "Fetch.failRequest")
+            throw new Error("Blocked navigation.");
+        }
+        return { status: () => 200 };
+      });
+      const result = await w.run(bypass);
+      const proof = readFileSync(join(w.root, result.reviewProof.file), "utf8");
+      expect(JSON.parse(proof).manifest.deliveries[0].status).toBe("blocked");
+      expect(w.session.send).toHaveBeenCalledWith("Fetch.failRequest", {
+        requestId: "foreign",
+        errorReason: "BlockedByClient",
+      });
+      expect(
+        w.session.send.mock.calls.some(
+          ([method, params]) =>
+            method === "Fetch.continueRequest" &&
+            params?.requestId === "foreign",
+        ),
+      ).toBe(false);
+      expect(w.page.screenshot).not.toHaveBeenCalled();
+      expect(w.context.close).toHaveBeenCalledOnce();
+      expect(proof).not.toContain("private-preview-bypass");
+      expect(proof).not.toContain("foreign.example");
+    },
+  );
+  it("keeps bypass headers on same-origin hops while removing them from external assets", async () => {
+    const w = world();
+    w.page.goto.mockImplementation(async () => {
+      for (const id of ["start", "redirected"])
+        expect(
+          await w.intercept(`https://preview.example/${id}`, {
+            id,
+            headers: {
+              "X-Vercel-Protection-Bypass": "untrusted-value",
+              accept: "text/html",
+            },
+          }),
+        ).toEqual([
+          "Fetch.continueRequest",
+          {
+            requestId: id,
+            headers: [
+              { name: "accept", value: "text/html" },
+              {
+                name: "x-vercel-protection-bypass",
+                value: "private-preview-bypass",
+              },
+            ],
+          },
+        ]);
+      expect(
+        await w.intercept("https://cdn.example/app.js", {
+          id: "asset",
+          resourceType: "Script",
+          headers: {
+            "X-Vercel-Protection-Bypass": "private-preview-bypass",
+            accept: "*/*",
+          },
+        }),
+      ).toEqual([
+        "Fetch.continueRequest",
+        {
+          requestId: "asset",
+          headers: [{ name: "accept", value: "*/*" }],
+        },
+      ]);
+      return { status: () => 200 };
+    });
+    const result = await w.run("private-preview-bypass");
+    const proof = readFileSync(join(w.root, result.reviewProof.file), "utf8");
+    expect(JSON.parse(proof).manifest.deliveries[0].status).toBe("passed");
+    expect(proof).not.toContain("private-preview-bypass");
+  });
+  it("blocks foreign writes from public review interactions", async () => {
+    const w = world();
+    Object.assign(w.request.deliveries[0]!.checks[0]!, {
+      steps: [{ action: "click", selector: "button.save" }],
+    });
+    w.locator.click.mockImplementation(async () => {
+      const decision = await w.intercept("https://foreign.example/submit", {
+        method: "POST",
+        resourceType: "Fetch",
+        id: "write",
+      });
+      if (decision?.[0] === "Fetch.failRequest")
+        throw new Error("Blocked write.");
+    });
+    const result = await w.run();
+    expect(
+      JSON.parse(readFileSync(join(w.root, result.reviewProof.file), "utf8"))
+        .manifest.deliveries[0].status,
+    ).toBe("blocked");
+    expect(w.session.send).toHaveBeenCalledWith("Fetch.failRequest", {
+      requestId: "write",
+      errorReason: "BlockedByClient",
+    });
+  });
+  it("fails closed before navigation if the browser guard cannot initialize", async () => {
+    const w = world();
+    w.session.send.mockRejectedValueOnce(new Error("private-browser-error"));
+    const result = await w.run();
+    const proof = readFileSync(join(w.root, result.reviewProof.file), "utf8");
+    expect(JSON.parse(proof).manifest.deliveries[0].status).toBe("blocked");
+    expect(proof).not.toContain("private-browser-error");
+    expect(w.page.goto).not.toHaveBeenCalled();
+    expect(w.context.close).toHaveBeenCalledOnce();
   });
   it("ignores invented pass flags when the browser assertion fails", async () => {
     const w = world();
