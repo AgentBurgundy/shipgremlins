@@ -1,117 +1,76 @@
 # When to use ShipGremlins
 
-**AI product managers that actually use your app.**
+**When you have an app worth improving and more work than you can keep up with.**
+ShipGremlins gives a product area sustained attention: a PM learns the code and
+product, investigates opportunities, and proposes scoped changes. Coding Gremlins
+implement work you approve on your own runners. You review the result and decide
+what ships.
 
-Start with a product idea or an app you already have. ShipGremlins can turn an
-idea into a proposed first milestone and PM crew, then carry work through the
-same supervised delivery loop used to improve an existing product. PMs plan and
-investigate; Coding Gremlins implement approved tickets and prepare draft PRs
-or MRs. You set priorities and review what ships.
+| Your situation                           | A useful starting point                                                                                                           |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Working prototype                        | Connect the repository, adopt one PM, and let it learn the existing app. A public launch is not required.                         |
+| A neglected user journey                 | Set an outcome such as “Help new users finish their first import.” Investigate the current journey before deciding on a solution. |
+| Approved work waiting for implementation | Start Coding to select a ready ticket, or enable automatic coding pickup separately from PM patrols.                              |
+| Several areas need ongoing attention     | Add distinct mandates and schedules as the first one proves useful. Keep concurrency within your ability to review.               |
 
-## Find your starting point
+An editor assistant is still useful for a direct change you already understand.
+ShipGremlins is useful when the work includes deciding what deserves attention,
+carrying context across runs, coordinating approved implementation, and checking
+the result.
 
-| Where you are                          | A useful next step                                                                                                                         |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| An idea or an empty repository         | Describe the users and first useful version. Review the crew and its private-by-default repository, then approve and build the foundation. |
-| An early codebase or working prototype | Give one PM a focused goal and run repository discovery. Review its feature map and opportunities before assigning more work.              |
-| A product with a growing backlog       | Use a PM patrol to investigate a flow, approve a scoped improvement, and review the Coding Gremlin's draft change.                         |
-| An established app with several areas  | Add distinct mandates for areas that need attention. Set schedules and work limits around your ability to review the results.              |
+## Bring one outcome
 
-An idea can be enough to plan a crew. A prototype can be enough to start improving
-an app. You do not need paying users, a public launch,
-a funding milestone, or a large team. The useful signal is development work that
-deserves sustained attention: an import flow you keep postponing, onboarding
-with too many rough edges, or account permissions that need another careful look.
+For an existing import feature:
+
+> Help users import a CSV and understand which rows were accepted. Investigate
+> upload, validation, and confirmation using synthetic contacts. Propose a bounded
+> improvement with observable acceptance criteria. Leave billing and account
+> permissions alone.
+
+1. **Connect the app.** Choose **Improve my app** in project setup and select its
+   GitHub or GitLab repository. Connect Claude Code and a ready Docker worker.
+2. **Adopt a focused PM.** Give it the goal, ownership boundaries, and expected
+   behavior. Repository discovery can begin without Linear or hosting.
+3. **Start an improvement mission.** Use **What should get better?** on the project
+   home. The mission retains the outcome and links the investigation, proposed
+   tickets, and implementation runs. Connect Linear for ticketed work; configure
+   isolated staging for browser investigation.
+4. **Approve the actual proposal.** Read the evidence and finite acceptance
+   checklist. Approval is tied to the ticket revision you reviewed. A mission is
+   not blanket permission to invent and implement unlimited work.
+5. **Review the change.** Follow the draft PR/MR, checks, and limitations. Re-run
+   the relevant journey against the changed app before deciding it improved.
+6. **Expand when useful.** Enable patrols, automatic coding pickup, or additional
+   PMs independently. Existing work, dependencies, WIP limits, and project budgets
+   continue to govern admission.
+
+[The mission workflow →](IMPROVEMENT_MISSIONS.md)
 
 ## What makes a project ready?
 
-- **An idea or existing source.** Describe the new app, or connect its GitHub or
-  GitLab repository. Idea planning needs no repository; creating the crew also
-  creates a new repository, private by default, in your chosen source account.
-  [Follow the idea-to-app guide →](IDEA_TO_APP.md)
-- **A clear goal.** Explain who uses the product, what should work better, and
-  which area the PM should investigate. Set boundaries for changes it should avoid.
-- **A way to judge the result.** Review findings and acceptance criteria. Before
-  coding work, configure the app's install and check commands.
-- **Time to review.** Start with enough room to read the findings, approve useful
-  work, and inspect the resulting code and checks.
+- **Real source and a clear goal.** Explain the users, the task, and what should
+  remain outside the PM's scope.
+- **A way to assess changes.** Configure actual install/check commands and review
+  acceptance criteria. A successful process does not prove a useful product.
+- **An isolated environment for browser work.** Use staging or a supported
+  disposable Docker app with dedicated test data and accounts. Repository-only
+  tools can stay in repository verification mode.
+- **Time to review.** Read proposals, inspect changes, and make merge decisions.
 
-Browser patrols also need a runnable app in an isolated test environment with
-appropriate test accounts or public test access. Use hosted staging or a
-supported disposable Docker app. The [Setup Gremlin](PROJECT_ONBOARDING.md) can
-recommend a test strategy and propose setup files for your existing application.
+Grumblins add an opinionated simulated perspective on a real journey. Compare
+one profile before and after a change. Observed friction, simulated preferences,
+and actual customer demand must remain distinct. [Grumblins →](GRUMBLINS.md)
 
-Repository discovery can begin before browser or Linear setup. It needs source
-access, Claude Code, and a ready Docker worker. It builds context without filing
-tickets or publishing code. [Learn about discovery →](PM_WORKFLOW.md)
+## What about a new idea?
 
-## A first assignment that earns its keep
+The idea-to-app path remains **experimental**. It proposes a small crew, creates
+a private-by-default repository, and prepares a reviewed foundation build. A
+foundation can establish code, tests, and a first journey; it can still need
+substantial design and integration work. Missing integrations must be reported
+as missing, rather than presented as working through a mock.
 
-For a new app, use **one milestone and a foundation PM**. The idea planner
-proposes one to four PMs with first assignments and dependency order. Creating
-the crew saves their briefs together and creates a repository with a README.
-Private visibility is the default; choose public explicitly for open-source work.
-PMs start paused. Review **Build the foundation** and choose **Approve & build**
-to prepare its Linear ticket and queue a Coding Gremlin. Merge the reviewed draft
-before routine PM analysis and browser walkthroughs. The initial stack is Node.js with npm.
-[Start an app with a PM crew →](IDEA_TO_APP.md)
+Improving an existing app is the primary workflow. If you use idea builds, keep
+the first milestone small and review the implementation before asking PMs to
+investigate it. [Experimental idea builds →](IDEA_TO_APP.md)
 
-For a fresh perspective on a working app, try [Grumblins](GRUMBLINS.md).
-AI generates customers suited to your product and gives each a goal, personality
-and patience budget. Their walkthroughs expose friction and possible unmet needs;
-PMs investigate the evidence and propose experiments. These are simulated
-perspectives to test with real users, not a substitute for customer research.
-
-For an existing app, start with **one PM, one area, one useful change**. For example, give a PM this
-mandate for an existing import feature:
-
-> Help users import a CSV and understand the result. Investigate upload,
-> validation, and confirmation using synthetic contacts. Look for lost valid
-> rows, unclear errors, and confusing empty states. Propose a bounded improvement
-> with reproducible evidence and acceptance criteria. Leave billing and account
-> permissions alone.
-
-1. **Connect the app and adopt one gremlin.** Follow [setup](SETUP.md#your-first-adoption). Choose its job and give the PM
-   the goal, boundaries, and expected behavior in its product brief. Keep
-   automation paused.
-2. **Explore the codebase.** This starts Discovery with source access, Claude
-   Code, and a ready worker; choose **Prepare first mission** if setup is missing.
-   Linear and browser setup can wait. Review the feature inventory, opportunities,
-   and source evidence. Correct the PM’s understanding before asking it to investigate more.
-3. **Try one supervised patrol.** Connect Linear; the run can prepare missing
-   mappings and required verification with your selected account. For browser work, configure and test its environment first. Choose
-   **Run now** and inspect the findings and evidence in Activity.
-4. **Approve one bounded ticket.** Confirm that the scope and acceptance criteria
-   are useful. Run Coding on that approved ticket, then review the draft PR or
-   MR and its checks. Discovery alone does not create a ticket for a Coding run.
-5. **Decide whether to expand.** If the findings and implementation justify the
-   review time, enable a schedule or add another mandate. If they do not, refine
-   the brief and try a narrower assignment.
-
-The first win is a concrete improvement you can inspect. A finished process or
-an impressive report is not proof that the app improved. See the
-[verification model](VERIFICATION.md) and [delivery workflow](DELIVERY_WORKFLOW.md)
-for evidence and merge controls.
-
-## Keep your editor. Grow your crew.
-
-Your editor and coding assistant remain useful for hands-on changes.
-ShipGremlins supplies persistent PM responsibilities, shared direction, and a
-repeatable route from a proposal to reviewed implementation. Idea onboarding
-assembles that crew; the Setup Gremlin helps prepare a runnable app for testing.
-
-If you are still exploring the product, keep the first milestone small and
-review the planner's assumptions. If you only need one immediate edit, a direct
-session with your coding tool may
-be simpler. ShipGremlins becomes more useful when you can give an area ongoing
-attention through a clear mandate and a repeatable review process.
-
-Add mandates deliberately: imports first, then onboarding, then permissions,
-for example. Each should have a useful goal and clear ownership. Add worker
-capacity only when there is approved work and room to review it. More simultaneous
-work still needs coordination and human judgment.
-
-ShipGremlins is early alpha. Start with a small supervised assignment and consult
-the [implementation status](IMPLEMENTATION_STATUS.md) for current boundaries.
-
-[Set up your first crew →](SETUP.md)
+[Set up your crew →](SETUP.md) · [Current boundaries →](IMPLEMENTATION_STATUS.md)

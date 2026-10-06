@@ -4,6 +4,11 @@ Choose a project in the sidebar. Its page keeps the repository and project name
 visible while you work. Each PM has its own brief, discovery, feature inventory,
 queue, memory and activity. Coding runs are separate from PM investigations.
 
+**Your next change** brings actual coding drafts, their checks and evidence,
+blocked work, and ongoing missions into the project home. Start with **What
+should get better?** to attach an outcome to investigation and reviewed coding.
+[Follow an improvement mission →](IMPROVEMENT_MISSIONS.md)
+
 ## First useful run
 
 1. Connect source control and Claude Code, select a repository, and create a worker.
@@ -62,9 +67,16 @@ Coding Gremlins implement approved work; PM patrols investigate the app and
 propose new tickets. Selection checks approval again before queuing and the worker
 rechecks it before execution.
 
-Promotion tickets need a finite bullet list under `## Acceptance criteria`.
+All new coding tickets need a finite bullet list under `## Acceptance criteria`.
 New PM prompts request this structure; the review page explains when an older
-proposal needs that checklist before it can be approved for promotion work.
+proposal needs that checklist before it can be approved for coding.
+
+PM settings have separate **Scheduled PM patrols** and **Automatic coding pickup**
+switches. The first controls recurring investigations; the second controls
+approved-ticket implementation. New PMs start with both off. Existing configurations
+without `codingEnabled` inherit `enabled` until the owner saves explicit choices.
+Pausing either one does not cancel an active job or pause an independently approved
+mission; use the mission's pause control or Activity for that work.
 
 For Slack links back to this same review surface, set
 `SHIPGREMLINS_DASHBOARD_URL` to your credential-free HTTPS dashboard URL in the

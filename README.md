@@ -20,11 +20,11 @@
 
 # AI product managers that actually use your app.
 
-Describe an app you want to build, or bring the one you already have.
-ShipGremlins helps organize the work into focused PM responsibilities and
-turn approved tickets into reviewable code.
+Give the app you already build a crew that keeps improving it.
+Choose a useful outcome, let a PM investigate, and turn approved work into
+reviewable code on your own runners.
 
-**ShipGremlins gives AI product managers a job to do, a memory, and a browser when the project needs one.** They investigate repositories or explore a configured test environment and turn findings into Linear tickets. Docker workers run PMs and developers on your computer, homelab, or an enrolled remote machine. Developers work on approved tickets; the owning PM checks fixes on its next patrol.
+**ShipGremlins gives AI product managers a job to do, a memory, and a browser when the project needs one.** They investigate repositories or explore a configured test environment and turn findings into Linear proposals. Docker workers run PMs and developers on your computer, homelab, or an enrolled remote machine. Developers implement approved tickets with explicit acceptance criteria. In the configured promotion workflow, an exact ready integration deployment triggers the owning PM's verification.
 
 Real browser evidence. Approved work. **Done means merged into production.**
 
@@ -43,27 +43,30 @@ scopes and each PM's Mixpanel report in the dashboard, then save credentials the
 
 ## When to bring in the gremlins
 
-**Start with an idea. Stay as it grows.** Use idea onboarding to plan a first
-milestone and assemble one to four PMs, or give an existing app a focused PM
-to investigate its next improvement. You set direction and review the work.
+**When your app has more opportunities than you have time to pursue.** Start
+with one outcome: make the first import easier, close an account-isolation gap,
+or investigate a feature your current workflow is missing. You set direction;
+the crew investigates and implements the work you approve.
 
-| Where you are                          | Where ShipGremlins fits                                                                                                |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| A new idea                             | Describe the users and first useful version. Review a proposed crew and create its new, private-by-default repository. |
-| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.                             |
-| An app with a growing backlog          | Investigate one area, approve a bounded ticket, and review the Coding Gremlin's draft PR or MR.                        |
-| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity.                |
+| Where you are                          | Where ShipGremlins fits                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.              |
+| An app with a growing backlog          | Investigate one area, approve a bounded ticket, and review the Coding Gremlin's draft PR or MR.         |
+| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity. |
 
-For a new app, start with **one milestone and a foundation PM**. Idea onboarding
-asks one question at a time, creates a private repository by default, and saves
-the PM crew with a shared brief. Choose public explicitly for open-source work. App code
-is implemented through approved tickets. For an existing app, start with
-**one PM, one area, one useful change**. You bring the direction and review the work. Browser patrols need a runnable test environment; repository
-discovery can start before hosting and Linear setup. The Setup Gremlin helps
-prepare an existing app for testing.
+Start with **one PM, one outcome, one useful change**. Your project home collects
+changes ready for review, blocked work, active runs, and the next improvement.
+Browser investigations need a runnable test environment; repository discovery
+can start before hosting and Linear setup. The Setup Gremlin helps prepare an
+existing app for testing. PM patrol schedules and automatic approved-ticket coding
+can be enabled independently.
 
-[Start from an idea →](docs/IDEA_TO_APP.md) ·
-[Find your starting point and first assignment →](docs/WHEN_TO_USE.md)
+[Try an improvement mission →](docs/IMPROVEMENT_MISSIONS.md) ·
+[Find your starting point →](docs/WHEN_TO_USE.md)
+
+Starting from nothing? [Idea builds are experimental](docs/IDEA_TO_APP.md).
+They create a private-by-default repository and a reviewed foundation assignment.
+A scaffold with passing checks is not proof of a polished, integrated product.
 
 ## A particular set of nitpicks
 
@@ -84,7 +87,7 @@ One PM per mandate. Different obsessions. The same app.
 
 These are example mandates, not fixed agent types. Each area has its own instructions, feature inventory, queue, and memory. Start with one; add another when a different part of your product needs attention. [Create a mandate →](docs/add-a-project.md)
 
-**Let customers try it with Grumblins.** AI creates three simulated customers
+**Get another perspective with Grumblins.** AI creates three simulated customers
 from your project's purpose, PM briefs and learned context. Each has a relevant
 goal, opinionated personality and patience budget. Choose one to try your test
 app, then read its journey and the PM's proposed experiment. Observed friction,

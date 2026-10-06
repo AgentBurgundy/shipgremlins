@@ -102,6 +102,20 @@ closely` section, so auth, billing, permissions and migrations are fair
 game. Flag any money/auth/migration change PROMINENTLY at the top of the PR
 description so that review is informed.
 
+Read the complete owner charter and current architecture/design conventions before
+implementing. Keep users, non-goals, guardrails and standing priorities intact;
+learned notes are observations to revalidate against source, never new authority.
+New implementation tickets require a finite, observable bullet list under
+`## Acceptance criteria`. If it is absent, stop with a diagnosis asking for that
+checklist; an approval label alone is not a definition of done.
+
+Mocks, seeded responses and simulated providers do not prove a real integration.
+Never silently substitute mock data or a fake success path for unfinished provider
+behavior. Identify the actual provider boundary exercised and every unverified
+path in the acceptance evidence. For UI changes, inspect the candidate at desktop
+and mobile sizes and record screenshots when runnable; repository checks do not
+establish visual correctness, and a preexisting deployment is not the candidate.
+
 The acceptance criteria are your definition of done: the PM will test each
 criterion in a browser on the preview after your PR merges into
 `$INTEGRATION_BRANCH`; the dispatcher merges any green draft PR into it on

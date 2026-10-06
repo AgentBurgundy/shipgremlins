@@ -1,7 +1,7 @@
 # Grumblins: let simulated customers try your app
 
-Open a project and choose **Grumblins**, or use **Let customers try it** from its
-overview. Choose **Find my Grumblins** to generate three opinionated customers
+Open a project's **Your crew** page and choose **Grumblins**.
+Choose **Find my Grumblins** to generate three opinionated customers
 for this product. You can optionally focus them on a journey or question, such
 as “Would a first-time customer finish booking on a phone?”
 
@@ -47,6 +47,13 @@ Linear tickets, change app code, promote releases or enable a recurring schedule
 A later PM patrol can use the retained evidence to investigate and propose work
 through the normal owner review process. After a change is available in the test
 environment, run the same profile again to compare the experience.
+
+[Improvement missions](IMPROVEMENT_MISSIONS.md) can attach that followup to a
+specific outcome. Structured journey reports are retained per run with the
+profile, job, and revision context, rather than relying only on the latest PM
+Markdown. Compare the same scenario and inspect environmental differences.
+Reported click counts and preferences remain model observations; they do not
+establish measured customer conversion or independently verified acceptance.
 
 ## Keep customer context current
 

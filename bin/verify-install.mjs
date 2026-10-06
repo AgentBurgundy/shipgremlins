@@ -231,7 +231,11 @@ try {
   const origin = `http://127.0.0.1:${info.port}`;
   const projectsPage = await fetch(`${origin}/projects`);
   assert.equal(projectsPage.status, 200);
-  assert.match(await projectsPage.text(), /I have an idea/);
+  const projectsHtml = await projectsPage.text();
+  assert.match(projectsHtml, /Improve my app/);
+  assert.match(projectsHtml, /Start from an idea · experimental/);
+  assert.match(projectsHtml, /src="\/project-mission\.js"/);
+  assert.match(projectsHtml, /href="\/project-mission\.css"/);
   const ideaScript = await fetch(`${origin}/idea-crew.js`);
   assert.equal(ideaScript.status, 200);
   assert.match(await ideaScript.text(), /createIdeaCrew/);
@@ -240,6 +244,17 @@ try {
   assert.match(await wizardScript.text(), /createProjectWizard/);
   const wizardStyles = await fetch(`${origin}/project-wizard.css`);
   assert.equal(wizardStyles.status, 200);
+  const missionScript = await fetch(`${origin}/project-mission.js`);
+  assert.equal(missionScript.status, 200);
+  assert.match(await missionScript.text(), /createProjectMissions/);
+  const missionStyles = await fetch(`${origin}/project-mission.css`);
+  assert.equal(missionStyles.status, 200);
+  assert.match(await missionStyles.text(), /\.project-missions/);
+  const missions = await fetch(`${origin}/api/projects/second-app/missions`, {
+    headers: { authorization: `Bearer ${info.session}` },
+  });
+  assert.equal(missions.status, 200);
+  assert.deepEqual((await missions.json()).missions, []);
   const invalidIdea = await fetch(`${origin}/api/idea-plans`, {
     method: "POST",
     headers: {

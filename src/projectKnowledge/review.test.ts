@@ -30,7 +30,7 @@ function fixture() {
     id: "ticket-1",
     identifier: "APP-1",
     title: "Fix lost uploads",
-    description: "Acceptance: upload survives reload",
+    description: "## Acceptance criteria\n- Upload survives reload.",
     labels: ["pm:core"],
     stateType: "unstarted",
     projectId: "linear-project",
@@ -93,22 +93,33 @@ describe("review inbox approvals", () => {
     ).rejects.toThrow(/cannot be approved/);
     expect(f.addLabel).not.toHaveBeenCalled();
   });
-  it("requires a finite acceptance checklist before approving promotion work", async () => {
-    const path = join(root, "projects", "app", "project.json"),
-      config = JSON.parse(readFileSync(path, "utf8"));
-    config.workflow = { kind: "promotion" };
-    config.branches = {
-      integration: "pm-staging",
-      staging: "staging",
-      production: "main",
-    };
-    writeFileSync(path, JSON.stringify(config));
-    const f = fixture();
-    expect((await f.store.list("app")).items[0]?.canApprove).toBe(false);
-    f.ticket.description =
-      "## Acceptance criteria\n- Uploaded rows survive reload.\n- Another tenant cannot see them.";
-    expect((await f.store.list("app")).items[0]?.canApprove).toBe(true);
-  });
+  it.each(["promotion", "pull-request"])(
+    "requires a finite acceptance checklist before approving %s work",
+    async (kind) => {
+      const path = join(root, "projects", "app", "project.json"),
+        config = JSON.parse(readFileSync(path, "utf8"));
+      config.workflow =
+        kind === "promotion" ? { kind } : { kind, baseBranch: "main" };
+      config.branches = {
+        integration: "pm-staging",
+        staging: "staging",
+        production: "main",
+      };
+      writeFileSync(path, JSON.stringify(config));
+      const f = fixture();
+      f.ticket.description = "Make uploads better";
+      expect((await f.store.list("app")).items[0]?.canApprove).toBe(false);
+      const pending = (await f.store.list("app")).items[0]!;
+      expect(pending.reason).toContain("Acceptance criteria");
+      await expect(
+        f.store.approve("app", pending.id, pending.revision),
+      ).rejects.toThrow(/Acceptance criteria/);
+      expect(f.addLabel).not.toHaveBeenCalled();
+      f.ticket.description =
+        "## Acceptance criteria\n- Uploaded rows survive reload.\n- Another tenant cannot see them.";
+      expect((await f.store.list("app")).items[0]?.canApprove).toBe(true);
+    },
+  );
   it("approves the reviewed ticket scope and never changes workflow state", async () => {
     const f = fixture(),
       result = await f.store.list("app");

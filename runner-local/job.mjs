@@ -21,7 +21,11 @@ import {
   discoveryResult,
   sanitizeKnowledge,
 } from "./discovery.mjs";
-import { runCheckedDelivery, validateDelivery } from "./delivery.mjs";
+import {
+  runCheckedDelivery,
+  validateDelivery,
+  readImplementationReport,
+} from "./delivery.mjs";
 import { validateReviewPlan } from "./review-receipts.mjs";
 import {
   enforceDeadline,
@@ -484,6 +488,7 @@ try {
         ? await runCheckedDelivery({
             commands,
             delivery: input.delivery,
+            report: readImplementationReport("/output", redact),
             baseSha,
             repoUrl: repo.href,
             provider: input.provider,
@@ -495,7 +500,7 @@ try {
                 env: publication,
               }),
             writeBody: (body) =>
-              writeFileSync("/work/pr-body.md", body, { mode: 0o600 }),
+              writeFileSync("/work/pr-body.md", redact(body), { mode: 0o600 }),
             prepareRepository: () => {
               publicationDirectory = preparePublication(
                 "/work/repo",

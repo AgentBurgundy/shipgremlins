@@ -70,6 +70,22 @@ describe("fireDeveloper", () => {
 });
 
 describe("runDispatch", () => {
+  it.each([
+    [true, false],
+    [false, true],
+    [false, false],
+    [true, true],
+  ] as const)(
+    "uses coding=%s independently of patrol=%s",
+    async (codingEnabled, enabled) => {
+      const ctx = makeCtx({
+        project: makeProject({ areas: [{ enabled, codingEnabled }] }),
+      });
+      ctx.linear.seedTicket({ projectId: PROJECT, labels: [LABELS.approved] });
+      await runDispatch(ctx);
+      expect(ctx.forge.dispatched).toHaveLength(codingEnabled ? 1 : 0);
+    },
+  );
   it("fires, labels and comments on an approved ticket", async () => {
     const ctx = makeCtx();
     const t = ctx.linear.seedTicket({

@@ -21,6 +21,7 @@ import { redactHistory } from "../storage/activity.ts";
 import type { LocalJob } from "../localRunners/types.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import { PM_KNOWLEDGE_FILES, PM_KNOWLEDGE_MAX_BYTES } from "./prompts.ts";
+import { createObservations } from "../improvements/observations.ts";
 import { baseBranch, inspectionBranch } from "../projectCapabilities.ts";
 import { jobBelongsToProject } from "../projectIdentity.ts";
 
@@ -68,7 +69,7 @@ export function knowledgeRevision(project: Project, area: AreaConfig): string {
       JSON.stringify(
         canonical({
           config: { ...project.config, verified: undefined },
-          area: { ...area, enabled: undefined },
+          area: { ...area, enabled: undefined, codingEnabled: undefined },
           mandate: mandate(project, area),
         }),
       ),
@@ -310,6 +311,36 @@ export function createPmKnowledge(options: {
         );
       documents.push({ name, content });
     }
+    const reportFile = artifacts.files.find(
+      (file) => file.name === "improvement-report.json",
+    );
+    let retainedReport: string | undefined;
+    if (reportFile && reportFile.size <= 64 * 1024) {
+      try {
+        retainedReport = redactHistory(
+          stripVTControlCharacters(
+            (await docker.readArtifact(job.id, reportFile.name)).toString(
+              "utf8",
+            ),
+          ),
+          secrets,
+        );
+      } catch {
+        retainedReport = "unavailable";
+      }
+    } else if (reportFile) retainedReport = "oversized";
+    // Immutable history is independent of the rolling PM snapshot. A later
+    // patrol or persona must not erase an earlier opportunity or baseline.
+    createObservations({ root: options.root }).retain({
+      project: current.project,
+      area: current.area,
+      job,
+      commitSha: result.commitSha,
+      branch: result.branch,
+      documents,
+      files: artifacts.files.map((file) => file.name),
+      report: retainedReport,
+    });
     const file = fileFor(job.project, job.area, current.area.instanceId),
       directory = dirname(file);
     mkdirSync(directory, { recursive: true, mode: 0o700 });

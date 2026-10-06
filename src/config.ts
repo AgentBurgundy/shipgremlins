@@ -110,8 +110,13 @@ export interface AreaConfig {
   /** 5-field cron in UTC; weekdays by convention */
   schedule: string;
   enabled: boolean;
+  /** Coding pickup is independent; omission preserves the legacy shared switch. */
+  codingEnabled?: boolean;
   memoryBranch: string;
 }
+
+export const codingPickupEnabled = (area: AreaConfig): boolean =>
+  area.codingEnabled ?? area.enabled;
 
 export interface TiersConfig {
   ownerOnlyPrefixes: string[];
@@ -630,6 +635,17 @@ export function loadProject(root: string, name: string): Project {
         "a 5-field cron",
       ),
       enabled: need(af, a, "enabled", isBool, "true or false"),
+      ...(a.codingEnabled === undefined
+        ? {}
+        : {
+            codingEnabled: need(
+              af,
+              a,
+              "codingEnabled",
+              isBool,
+              "true or false",
+            ),
+          }),
       memoryBranch: `pm/${name}/${key}${instanceId ? `/${instanceId}` : ""}`,
     });
   }

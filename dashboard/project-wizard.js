@@ -53,7 +53,10 @@
     fields.append(shell);
     const sections = {},
       labels = {
-        start: ["A little idea. A whole crew.", "Where are you starting?"],
+        start: [
+          "Make your app better.",
+          "Bring your app. Choose a useful improvement. Let your crew do the work.",
+        ],
         idea: [
           "What do you want to build?",
           "Tell us who it’s for and what the first useful version should do.",
@@ -76,7 +79,7 @@
         ],
         repository: [
           "Which app are we joining?",
-          "Choose a repository with application code to explore. Starting from an empty repository? Go back and choose “I have an idea” to build a foundation in a new repository.",
+          "Choose the repository for the app you want to improve. You’ll choose a user outcome next.",
         ],
         visibility: [
           "Who can see your code?",
@@ -97,19 +100,20 @@
     const cards = node("div", undefined, "wizard-choices");
     for (const [value, heading, detail, symbol] of [
       [
-        "idea",
-        "I have an idea",
-        "Describe it. Get a new repository and a crew with a plan.",
-        "✦",
+        "existing",
+        "Improve my app",
+        "Connect an existing app, choose what should get better, and work toward a reviewable change.",
+        "↗",
       ],
       [
-        "existing",
-        "I have an app",
-        "Bring an app with code. Adopt a gremlin to help it grow.",
-        "↗",
+        "idea",
+        "Start from an idea · experimental",
+        "Create a private repository and build a small Node.js foundation. Expect to review and refine the result.",
+        "✦",
       ],
     ]) {
       const button = node("button", undefined, "wizard-choice");
+      if (value === "idea") button.classList.add("wizard-choice-secondary");
       button.type = "button";
       button.append(
         node("span", symbol, "wizard-choice-icon"),
@@ -315,7 +319,7 @@
         summary.append(node("dt", key), node("dd", value));
       expectation.textContent = isIdea()
         ? "We’ll create your repository, add the product brief, and save the crew. Next, review and start the foundation build. We'll set up Linear and check your connections when you do. PM schedules stay paused."
-        : "Next, adopt your first gremlin and give it a useful job. A Setup Gremlin may inspect the code when source and Claude access are ready. You’ll set up testing when a mission needs it.";
+        : "Next, choose the user outcome you want to improve. Your crew investigates before proposing a bounded change for you to approve and build. Testing setup can wait until the work needs it.";
     }
     function update() {
       const ready = crew()?.ready();

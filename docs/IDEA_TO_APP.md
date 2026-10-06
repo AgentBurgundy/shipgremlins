@@ -1,10 +1,17 @@
-# Start an app with a PM crew
+# Experimental: start an app with a PM crew
+
+Improving an existing application is ShipGremlins' primary workflow. This path
+is an experiment for establishing a foundation, not a promise of a polished
+application from one prompt. Inspect the design, actual integrations, and complete
+journey before treating the first draft as a usable product. A mock adapter must
+be identified as a limitation; passing tests against it do not verify the real
+service. [Improve an existing app →](WHEN_TO_USE.md)
 
 Describe the app you want to build. ShipGremlins proposes a first milestone and
 one to four PMs with distinct responsibilities, first assignments, acceptance
 criteria, and a build order. Review the plan and ShipGremlins creates a new
 repository and the crew together. Repositories are **private by default**.
-An existing app uses the separate **I have an app** path.
+An existing app uses the primary **Improve my app** path.
 
 ## Describe the first useful version
 
@@ -78,7 +85,7 @@ proposed Node.js alternative and the unmet requirement in the summary and first
 milestone before you approve it. Review those assumptions in the build brief.
 Automatic foundation building does not scaffold Python-only, native mobile, or
 native engine applications. To work on an existing app using another stack,
-choose **I have an app** and configure its own install and test commands.
+choose **Improve my app** and configure its own install and test commands.
 
 1. Open the project's **Environment** page. A new idea shows **First, let's
    build your app** with the first milestone and acceptance criteria. **Read the

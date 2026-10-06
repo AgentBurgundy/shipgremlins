@@ -4,7 +4,12 @@ export interface Delivery {
   base: string;
   branch: string;
   repo: string;
+  acceptanceCriteria: string[];
 }
+export function readImplementationReport(
+  directory: string,
+  redact?: (text: string) => string,
+): unknown;
 export function validateDelivery(delivery: unknown): void;
 export function runCheckedDelivery(input: {
   commands: Partial<
@@ -19,6 +24,7 @@ export function runCheckedDelivery(input: {
   writeBody: (body: string) => void | Promise<void>;
   prepareRepository: () => void | Promise<void>;
   onCheck?: (name: string, status: "running" | "succeeded" | "failed") => void;
+  report?: unknown;
 }): Promise<{
   checks: string[];
   prUrl?: string;

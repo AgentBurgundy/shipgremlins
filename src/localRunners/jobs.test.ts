@@ -1,6 +1,12 @@
 import { realpathSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +20,9 @@ import { OAuthConnectionError } from "../oauthConnection/types.ts";
 import { loadProject } from "../config.ts";
 import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import { validatePayload } from "./docker.ts";
+import { projectRuntimeKey } from "../projectIdentity.ts";
+import { ticketScopeHash } from "../lifecycle/manifest.ts";
+import { baseBranch } from "../projectCapabilities.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -21,7 +30,8 @@ const ticket: LinearTicket = {
   id: "ticket-id",
   identifier: "APP-12",
   title: "Fix form",
-  description: "Reproduce with test account",
+  description:
+    "Reproduce with test account\n\n## Acceptance criteria\n- A valid form submission persists after reload.",
   labels: ["pm:core", "pm-approved"],
   projectId: "linear-project",
   stateType: "unstarted",
@@ -68,6 +78,7 @@ function edit(
     areas: {
       core: {
         enabled: boolean;
+        codingEnabled?: boolean;
         linearProjectId: string;
         schedule: string;
         instanceId?: string;
@@ -121,6 +132,230 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("enforces persisted mission prerequisites and exact approved scope in manual, scheduled and launch admission", async () => {
+    const planned = { ...ticket, id: "11111111-1111-4111-8111-111111111111" };
+    const prerequisiteId = "22222222-2222-4222-8222-222222222222";
+    const project = loadProject(root, "app"),
+      owner = project.areas[0]!;
+    const directory = join(
+      root,
+      ".run/improvements",
+      projectRuntimeKey(project.config),
+    );
+    mkdirSync(directory, { recursive: true });
+    const previous = {
+      ticketId: prerequisiteId,
+      identifier: "APP-11",
+      title: "Prepare form storage",
+      description: planned.description,
+      acceptanceCriteria: ["Storage persists"],
+      area: "core",
+      areaInstanceId: owner.instanceId,
+      revision: "a".repeat(64),
+      scopeHash: "b".repeat(64),
+      dependsOn: [] as string[],
+      approvedAt: "2026-10-04T00:00:00.000Z",
+      integratedAt: undefined as string | undefined,
+    };
+    const mission = {
+      id: "33333333-3333-4333-8333-333333333333",
+      project: "app",
+      projectInstanceId: project.config.instanceId,
+      repository: project.config.repo,
+      provider: "github",
+      area: "core",
+      areaInstanceId: owner.instanceId,
+      outcome: "Reduce abandoned forms",
+      createdAt: "2026-10-04T00:00:00.000Z",
+      updatedAt: "2026-10-04T00:00:00.000Z",
+      paused: false,
+      investigation: {},
+      followups: [],
+      plan: {
+        approvedAt: "2026-10-04T00:00:00.000Z",
+        baseBranch: baseBranch(project.config),
+        connectionId: "default",
+        workspaceId: project.config.linear?.workspaceId,
+        steps: [
+          previous,
+          {
+            ...previous,
+            ticketId: planned.id,
+            identifier: planned.identifier,
+            title: planned.title,
+            scopeHash: ticketScopeHash(planned),
+            dependsOn: [prerequisiteId],
+          },
+        ],
+      },
+    };
+    const save = () =>
+      writeFileSync(
+        join(directory, "missions.json"),
+        JSON.stringify({ schemaVersion: 1, missions: [mission] }),
+      );
+    save();
+    const prepared = setup(planned);
+    await expect(prepared.validate({ ...job, runOnce: true })).rejects.toThrow(
+      /prerequisite changes/,
+    );
+    await expect(prepared.prepareJob(job)).rejects.toThrow(
+      /prerequisite changes/,
+    );
+    expect(
+      (await prepared.scheduledJobs()).filter(
+        (item) => item.type === "developer",
+      ),
+    ).toEqual([]);
+    await expect(
+      prepared.selectDeveloperTicket(
+        { type: "developer", project: "app", runOnce: true },
+        [],
+      ),
+    ).rejects.toThrow(/No approved tickets/);
+    previous.integratedAt = "2026-10-04T00:01:00.000Z";
+    save();
+    expect(
+      (await prepared.validate({ ...job, runOnce: true })).ticket?.id,
+    ).toBe(planned.id);
+    expect(
+      (await prepared.scheduledJobs()).filter(
+        (item) => item.type === "developer",
+      ),
+    ).toHaveLength(1);
+    expect(
+      (
+        await prepared.selectDeveloperTicket(
+          { type: "developer", project: "app", runOnce: true },
+          [],
+        )
+      ).ticket,
+    ).toBe(planned.identifier);
+    await expect(
+      setup({ ...planned, title: "Replace all billing" }).validate({
+        ...job,
+        runOnce: true,
+      }),
+    ).rejects.toThrow(/scope|changed/i);
+    mission.paused = true;
+    save();
+    await expect(prepared.validate({ ...job, runOnce: true })).rejects.toThrow(
+      /paused/,
+    );
+    expect(
+      (
+        await setup({
+          ...planned,
+          id: "44444444-4444-4444-8444-444444444444",
+        }).validate({ ...job, runOnce: true })
+      ).ticket?.id,
+    ).toBe("44444444-4444-4444-8444-444444444444");
+  });
+  it.each(["pull-request", "promotion"])(
+    "rejects coding without finite criteria in %s delivery",
+    async (kind) => {
+      edit("project.json", (raw) => {
+        raw.workflow =
+          kind === "promotion" ? { kind } : { kind, baseBranch: "main" };
+      });
+      const prepared = setup({
+        ...ticket,
+        description: "Build something nice",
+      });
+      await expect(
+        prepared.validate({ ...job, runOnce: true }),
+      ).rejects.toThrow(/Acceptance criteria/);
+      expect(
+        (await prepared.scheduledJobs()).some(
+          (item) => item.type === "developer",
+        ),
+      ).toBe(false);
+      await expect(
+        prepared.selectDeveloperTicket(
+          { type: "developer", project: "app", runOnce: true },
+          [],
+        ),
+      ).rejects.toThrow(/acceptance criteria/);
+    },
+  );
+  it.each([
+    [true, false, ["pm"]],
+    [false, true, ["developer"]],
+    [false, false, []],
+    [true, true, ["pm", "developer"]],
+  ] as const)(
+    "schedules patrol=%s independently from coding=%s",
+    async (enabled, codingEnabled, types) => {
+      edit("areas.json", (raw) => {
+        Object.assign(raw.areas.core, { enabled, codingEnabled });
+      });
+      const prepared = setup();
+      expect((await prepared.scheduledJobs()).map((item) => item.type)).toEqual(
+        types,
+      );
+      if (codingEnabled)
+        expect((await prepared.validate(job)).ticket?.id).toBe(ticket.id);
+      else
+        await expect(prepared.validate(job)).rejects.toThrow(
+          /Enable coding pickup/,
+        );
+      expect(
+        (await prepared.validate({ ...job, runOnce: true })).ticket?.id,
+      ).toBe(ticket.id);
+    },
+  );
+  it("supplies the full current owner charter and revision while requiring current source conventions", async () => {
+    const path = join(root, "projects/app/areas.json"),
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    raw.areas.core.charter = {
+      ambition: "Accessible invoicing",
+      users: ["Accountants"],
+      expectedToBuild: ["Invoice review"],
+      nonGoals: ["No billing provider replacement"],
+      guardrails: ["Preserve tenant isolation"],
+      standingPriorities: ["Keyboard navigation"],
+      goal: "Reduce invoice corrections",
+      metricDefinition: "Count reopened invoices",
+    };
+    writeFileSync(path, JSON.stringify(raw));
+    const payload = await setup().prepareJob(job);
+    for (const phrase of [
+      "Accessible invoicing",
+      "No billing provider replacement",
+      "Preserve tenant isolation",
+      "Keyboard navigation",
+      "Count reopened invoices",
+    ])
+      expect(payload.prompt).toContain(phrase);
+    expect(payload.prompt).toMatch(/Snapshot revision: [a-f0-9]{64}/);
+    expect(payload.prompt).toContain(
+      "recheck architecture and design conventions",
+    );
+    expect(payload.prompt).toContain("never prove a real integration");
+    expect(payload.delivery?.acceptanceCriteria).toEqual([
+      "A valid form submission persists after reload.",
+    ]);
+  });
+  it("rejects an owner brief changed during asynchronous coding preparation", async () => {
+    const prepared = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [ticket],
+      }),
+      preview: async () => {
+        const file = join(root, "projects/app/areas.json"),
+          raw = JSON.parse(readFileSync(file, "utf8"));
+        raw.areas.core.charter = { nonGoals: ["Do not change form storage"] };
+        writeFileSync(file, JSON.stringify(raw));
+        return "https://app-preview.vercel.app";
+      },
+    });
+    await expect(prepared.prepareJob(job)).rejects.toThrow(
+      /product brief or project configuration changed/,
+    );
+  });
   it("resolves a completed issue's immutable identity without admission, mapping repair, or source leases", async () => {
     edit("project.json", (raw) => {
       raw.verified = null;
@@ -513,7 +748,9 @@ describe("local job preparation", () => {
     }));
     await expect(
       f.selectDeveloperTicket(codingRequest, previous),
-    ).rejects.toThrow("No approved tickets are ready");
+    ).rejects.toThrow(
+      "No approved tickets with finite acceptance criteria are ready",
+    );
     expect(f.listTickets).not.toHaveBeenCalled();
   });
   it("does not treat another project incarnation's job as this project's attempted issue", async () => {
@@ -534,7 +771,7 @@ describe("local job preparation", () => {
       queueTicket("1", { labels: ["pm:core", "pm-proposal"] }),
     ]);
     await expect(f.selectDeveloperTicket(codingRequest, [])).rejects.toThrow(
-      "Review and approve a proposal",
+      "review and approve a proposal",
     );
     expect(f.getTicket).not.toHaveBeenCalled();
   });

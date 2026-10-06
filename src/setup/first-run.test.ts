@@ -48,7 +48,7 @@ const withPm = (blockers: object[] = []) =>
   });
 
 describe("first useful mission guidance", () => {
-  it("shows one deliberate action, retains its project scope, and returns to the normal workspace after success", () => {
+  it("keeps one outcome action until a confirmed reviewable change exists", () => {
     class Node {
       hidden = false;
       disabled = false;
@@ -102,12 +102,10 @@ describe("first useful mission guidance", () => {
     const status = { ...connected(), projects: [project()] };
     ui.renderFirstRunOverview!(status, { jobs: [] }, { locked: true });
     expect(document.body.classes.has("is-first-run")).toBe(true);
-    expect(nodes["overview-primary-action"]!.hidden).toBe(true);
-    expect(nodes["overview-adopt-action"]!.hidden).toBe(false);
+    expect(nodes["overview-primary-action"]!.hidden).toBe(false);
+    expect(nodes["overview-adopt-action"]!.hidden).toBe(true);
     expect(nodes["overview-adopt-action"]!.disabled).toBe(true);
-    expect(nodes["overview-adopt-action"]!.dataset.createPmProject).toBe(
-      "my-app",
-    );
+    expect(nodes["overview-adopt-action"]!.dataset.createPmProject).toBe("");
     expect(
       nodes["first-run-progress"]!.children.filter(
         (node) => node.attributes["aria-current"] === "step",
@@ -123,6 +121,21 @@ describe("first useful mission guidance", () => {
         },
       ],
     });
+    expect(document.body.classes.has("is-first-run")).toBe(true);
+    ui.renderFirstRunOverview!(
+      {
+        ...status,
+        projects: [
+          project({
+            firstReviewableChange: {
+              jobId: "coding-1",
+              url: "https://github.com/org/app/pull/1",
+            },
+          }),
+        ],
+      },
+      { jobs: [] },
+    );
     expect(document.body.classes.has("is-first-run")).toBe(false);
     expect(nodes["overview-primary-action"]!.hidden).toBe(false);
     expect(nodes["overview-adopt-action"]!.hidden).toBe(true);
@@ -185,21 +198,21 @@ describe("first useful mission guidance", () => {
       href: "/connections#source-control",
     });
   });
-  it("adopts into the saved project and keeps the mission a distinct deliberate action", () => {
+  it("starts from a user outcome whether or not a PM already exists", () => {
     const status = { ...connected(), projects: [project()] };
     expect(next(status)).toMatchObject({
       index: 3,
-      adoptProject: "my-app",
-      label: "Adopt a PM Gremlin",
+      href: "/projects/my-app",
+      label: "Choose a user outcome",
     });
     const adopted = next({ ...status, projects: [withPm()] });
     expect(adopted).toMatchObject({
       index: 4,
-      label: "Choose its first mission",
-      href: "/projects/my-app?pm=core&tab=discovery",
+      label: "Choose a user outcome",
+      href: "/projects/my-app",
     });
     expect(adopted.adoptProject).toBeUndefined();
-    expect(adopted.description).toContain("automation stays off");
+    expect(adopted.description).toContain("Automatic work stays off");
   });
   it("prioritizes the reviewed foundation before adoption or empty-repository PM discovery", () => {
     for (const areas of [[], [{ key: "foundation", name: "Foundation" }]]) {
@@ -285,8 +298,8 @@ describe("first useful mission guidance", () => {
       href: "/activity?run=job-first",
     });
     expect(next(status, [{ ...job, status: "succeeded" }])).toMatchObject({
-      active: false,
-      title: "Your crew, at a glance.",
+      active: true,
+      label: "Choose a user outcome",
     });
   });
   it("follows the actual first mission across projects rather than always choosing the alphabetically first app", () => {
@@ -295,8 +308,8 @@ describe("first useful mission guidance", () => {
       projects: [project({ name: "alpha" }), withPm()],
     };
     expect(next(status)).toMatchObject({
-      label: "Choose its first mission",
-      href: "/projects/my-app?pm=core&tab=discovery",
+      label: "Choose a user outcome",
+      href: "/projects/my-app",
     });
     expect(
       next(status, [

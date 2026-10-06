@@ -226,7 +226,7 @@ describe("focused project crew workspace", () => {
         current: "project",
         project: "shipgremlins",
         pm: "",
-        tab: "overview",
+        tab: "crew",
       };
     const project = {
       name: "shipgremlins",
@@ -252,8 +252,8 @@ describe("focused project crew workspace", () => {
     view.setStatus(state, false);
     return { root, pages, project, state, view, jobs };
   }
-  it("puts the linked PM identity and scoped Run/Automation controls before secondary details", () => {
-    const { root } = workspace();
+  it("keeps PM controls and both independent automations on the crew page, with settings separate", () => {
+    const { root, pages, view } = workspace();
     const row = all(root).find((item) => item.className === "project-pm-row")!;
     expect(row.children.map((item) => item.className)).toEqual([
       "",
@@ -272,7 +272,7 @@ describe("focused project crew workspace", () => {
     });
     expect(
       all(row).filter((item) => item.attributes.get("role") === "switch"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(text(row)).not.toContain("Open workspace");
     expect(text(root)).not.toContain("Run discovery");
     const header = all(root).find(
@@ -280,11 +280,9 @@ describe("focused project crew workspace", () => {
     )!;
     expect(text(header)).not.toContain("Run coding");
     expect(text(header)).toContain("shipgremlins");
-    const details = all(root).find((item) =>
-      item.className.includes("project-details project-reference"),
-    )!;
-    expect(details.tagName).toBe("SECTION");
-    expect(text(details)).toContain("AgentBurgundy/shipgremlins");
+    expect(text(root)).toContain("Look for new improvements");
+    expect(text(root)).toContain("Automatically build approved work");
+    expect(text(root)).not.toContain("Project details");
     const coding = all(root).find(
       (item) => item.className === "coding-launch",
     )!;
@@ -294,9 +292,16 @@ describe("focused project crew workspace", () => {
       all(coding).find((item) => item.dataset.launchCrew === "developer")
         ?.dataset.launchProject,
     ).toBe("shipgremlins");
+    pages.tab = "settings";
+    view.render();
+    const details = all(root).find((item) =>
+      item.className.includes("project-details project-reference"),
+    )!;
+    expect(details.tagName).toBe("SECTION");
+    expect(text(details)).toContain("AgentBurgundy/shipgremlins");
   });
   it("keeps project reference visible across polling and labels an active PM action View run", () => {
-    const { root, state, view, jobs } = workspace();
+    const { root, state, view, jobs, pages } = workspace();
     jobs.push({
       id: "run-1",
       runId: 1,
@@ -306,17 +311,20 @@ describe("focused project crew workspace", () => {
       status: "running",
     });
     view.setStatus(state, false);
+    expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
+      "View run",
+    );
+    pages.tab = "settings";
+    view.render();
+    view.setStatus(state, false);
     const details = all(root).find((item) =>
       item.className.includes("project-details project-reference"),
     )!;
     expect(details.tagName).toBe("SECTION");
     expect(text(details)).toContain("AgentBurgundy/shipgremlins");
-    expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
-      "View run",
-    );
   });
   it("does not attach old project runs to a replacement with the same visible name", () => {
-    const { root, state, view, jobs, project } = workspace();
+    const { root, state, view, jobs, project, pages } = workspace();
     jobs.push({
       id: "old",
       runId: 1,
@@ -344,6 +352,8 @@ describe("focused project crew workspace", () => {
     expect(all(root).find((item) => item.dataset.launchArea)?.textContent).toBe(
       "View run",
     );
+    pages.tab = "overview";
+    view.render();
     expect(text(root)).toContain("Run 2");
   });
   it("keeps direct PM switching when the project has more than one PM", () => {

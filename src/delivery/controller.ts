@@ -33,7 +33,8 @@ import type {
   DockerJobPayload,
   DockerRunners,
 } from "../localRunners/docker.ts";
-import type { LocalJob } from "../localRunners/types.ts";
+import type { LocalJob, LocalJobInput } from "../localRunners/types.ts";
+import { knowledgeRevision } from "../pmKnowledge/index.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
 import { runPromote, type PromoteOpts } from "../dispatcher/promote.ts";
 import type { Ctx } from "../dispatcher/context.ts";
@@ -446,6 +447,56 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       state: "READY",
     };
   }
+  async function pendingReviews(name: string): Promise<LocalJobInput[]> {
+    const project = projectFor(name);
+    if (!enabled(project) || !project.config.verified) return [];
+    if (
+      !localLedger(project)
+        .list()
+        .some((record) =>
+          ["awaiting-merge", "awaiting-deployment", "awaiting-review"].includes(
+            record.status,
+          ),
+        )
+    )
+      return [];
+    const target = await deployment(project);
+    const { ledger } = await clients(project);
+    const candidates = await ledger.reviewCandidates(target);
+    return project.areas.flatMap((area): LocalJobInput[] => {
+      const records = candidates
+        .filter((record) => record.area === area.key)
+        .map((record) => ({ id: record.id, scope: record.scopeHash }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+      if (!records.length) return [];
+      const revision = knowledgeRevision(project, area);
+      // Hash identifiers instead of embedding the '~' in a project runtime key.
+      const key = hash(
+        JSON.stringify({
+          project: projectRuntimeKey(project.config),
+          area: area.key,
+          owner: area.instanceId,
+          configuration: configHash(project, area.key),
+          revision,
+          target,
+          records,
+        }),
+      );
+      return [
+        {
+          type: "pm",
+          project: name,
+          ...(project.config.instanceId
+            ? { projectInstanceId: project.config.instanceId }
+            : {}),
+          area: area.key,
+          runOnce: true,
+          discoveryRevision: revision,
+          idempotencyKey: `delivery-review:${key}`,
+        },
+      ];
+    });
+  }
   async function beforePm(
     job: LocalJob,
     payload: DockerJobPayload,
@@ -470,6 +521,10 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       });
     } catch {
       await ledger.reviewUnavailable(job.area);
+      if (job.idempotencyKey?.startsWith("delivery-review:"))
+        throw new Error(
+          "The deployment-triggered review could not admit its exact deployment and checks. Review Delivery before retrying; no verification was performed.",
+        );
       return {
         ...payload,
         prompt:
@@ -477,7 +532,13 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           "\nDelivery verification is waiting for exact integration deployment and successful checks. Continue ordinary PM observation; do not claim delivery verification or promote any change in this run.",
       };
     }
-    if (!plan) return payload;
+    if (!plan) {
+      if (job.idempotencyKey?.startsWith("delivery-review:"))
+        throw new Error(
+          "The deployment-triggered review no longer has eligible approved deliveries. Review Delivery; this run cannot count as verification.",
+        );
+      return payload;
+    }
     if (
       payload.branch !== plan.deployment.branch ||
       payload.browserVerification !== true
@@ -1012,6 +1073,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
   return {
     beforeDeveloper,
     beforePm,
+    pendingReviews,
     completeJob,
     promote,
     preparePromotion,

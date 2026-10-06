@@ -4,7 +4,6 @@ import { LABELS } from "../dispatcher/notes.ts";
 import type { LinearClient, LinearTicket } from "../services/types.ts";
 import { ProjectKnowledgeError } from "./index.ts";
 import { acceptanceCriteria } from "../delivery/index.ts";
-import { effectiveWorkflow } from "../projectCapabilities.ts";
 
 const revision = (project: Project, ticket: LinearTicket) =>
   createHash("sha256")
@@ -49,8 +48,7 @@ export function createProjectReview(options: {
   function canApprove(project: Project, ticket: LinearTicket) {
     return (
       ticket.description.length <= 20000 &&
-      (effectiveWorkflow(project.config).kind !== "promotion" ||
-        acceptanceCriteria(ticket.description).length > 0) &&
+      acceptanceCriteria(ticket.description).length > 0 &&
       !["completed", "canceled"].includes(ticket.stateType) &&
       ![
         LABELS.approved,
@@ -101,6 +99,8 @@ export function createProjectReview(options: {
             id: ticket.id,
             identifier: ticket.identifier,
             title: ticket.title,
+            priority: ticket.priority,
+            acceptanceCriteria: acceptanceCriteria(ticket.description),
             description: ticket.description.slice(0, 20000),
             truncated: ticket.description.length > 20000,
             url: ticket.url,
@@ -111,9 +111,8 @@ export function createProjectReview(options: {
               ? "Repair the Linear mapping before approval."
               : ticket.description.length > 20000
                 ? "Only the first part of this proposal is shown. Review and approve the full ticket in Linear, or split it into a shorter bounded scope before approving here."
-                : effectiveWorkflow(project.config).kind === "promotion" &&
-                    acceptanceCriteria(ticket.description).length === 0
-                  ? "Add a finite bullet list under ## Acceptance criteria in Linear so the owning PM can verify this fix before promotion."
+                : acceptanceCriteria(ticket.description).length === 0
+                  ? "Add a finite, observable bullet list under ## Acceptance criteria in Linear before approving coding. Each item should state an outcome that can be verified."
                   : ticket.labels.includes(LABELS.proposal)
                     ? "Review this proposal's acceptance criteria. Split broad epics into testable milestones before approving coding."
                     : ticket.labels.includes(LABELS.needsHuman)
@@ -154,7 +153,10 @@ export function createProjectReview(options: {
         );
       if (!canApprove(project, ticket))
         throw new ProjectKnowledgeError(
-          "This ticket cannot be approved for coding here. Review its labels and milestones in Linear.",
+          !acceptanceCriteria(ticket.description).length &&
+            ticket.description.length <= 20000
+            ? "Add a finite, observable bullet list under ## Acceptance criteria in Linear before approving coding."
+            : "This ticket cannot be approved for coding here. Review its labels and milestones in Linear.",
           409,
         );
       // Revalidate local mapping immediately before the provider write. Linear lacks atomic CAS;

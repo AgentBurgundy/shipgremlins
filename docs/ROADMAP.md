@@ -1,5 +1,17 @@
 # ShipGremlins delivery roadmap
 
+Product direction: help owners continuously improve existing applications.
+The next proof point is a supervised ForeverMods **describe → preview → download**
+pilot with two reviewed improvements, comparable journey evidence, reported token
+coverage, and recorded owner intervention. Publish the result only after the real
+work exists. Idea-to-app remains experimental.
+
+The current implementation adds [improvement missions](IMPROVEMENT_MISSIONS.md),
+independent patrol/coding controls, stronger coding briefs and acceptance reports,
+retained product observations, and deployment-triggered owning-PM reviews.
+Managed candidate hosting, trusted candidate signing, and independently measured
+customer impact remain separate exit criteria; the mission UI does not imply them.
+
 Current execution decision: local Docker workers are the default, with no fork,
 automation repository, GitHub Actions, or GitLab CI requirement. The local queue,
 background controller, browser verification, worker controls, and job logs/artifacts

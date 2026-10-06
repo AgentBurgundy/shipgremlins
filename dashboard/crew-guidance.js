@@ -50,7 +50,7 @@
         "",
         first
           ? first.message
-          : "Run once to review findings. Enable automation when you're ready for recurring work.",
+          : "Choose a useful outcome, or run a focused investigation. You control when approved work is built.",
       ),
     );
     if (first)
@@ -73,25 +73,14 @@
       }
       root.append(steps);
     }
-    if (pending.length > 1) {
-      const details = el("details", "crew-setup-more");
-      details.append(
+    if (pending.length > 1)
+      root.append(
         el(
-          "summary",
-          "",
-          `${pending.length - 1} more setup ${pending.length === 2 ? "step" : "steps"}`,
+          "p",
+          "setup-help",
+          `${pending.length - 1} more setup steps will follow. Start with the step above.`,
         ),
       );
-      for (const item of pending.slice(1)) {
-        const row = el("div", "crew-setup-item");
-        row.append(
-          el("span", "", item.message),
-          action(project, item.action, undefined, item.id),
-        );
-        details.append(row);
-      }
-      root.append(details);
-    }
     return root;
   };
   window.renderPmControls = (
@@ -140,7 +129,7 @@
     toggle.setAttribute("aria-checked", String(Boolean(area.enabled)));
     toggle.setAttribute(
       "aria-label",
-      `Automation for ${area.name || area.key}`,
+      `Look for new improvements: ${area.name || area.key}`,
     );
     Object.assign(toggle.dataset, {
       toggleArea: area.key,
@@ -154,12 +143,42 @@
         "",
         operation?.busy && operation.mode === "automation"
           ? "Saving…"
-          : `Automation ${area.enabled ? "on" : "off"}`,
+          : "Look for new improvements",
       ),
     );
     toggle.disabled = locked || Boolean(operation?.busy);
-    buttons.append(run, toggle);
-    root.append(buttons);
+    const codingEnabled = area.codingEnabled ?? area.enabled;
+    const coding = el(
+      "button",
+      "pm-automation-switch" + (codingEnabled ? " enabled" : ""),
+    );
+    coding.type = "button";
+    coding.setAttribute("role", "switch");
+    coding.setAttribute("aria-checked", String(Boolean(codingEnabled)));
+    coding.setAttribute(
+      "aria-label",
+      `Automatically build approved work: ${area.name || area.key}`,
+    );
+    Object.assign(coding.dataset, {
+      toggleArea: area.key,
+      areaProject: project.name,
+      automationKind: "coding",
+    });
+    coding.append(
+      el("span", "pm-switch-track"),
+      el(
+        "span",
+        "",
+        operation?.busy && operation.mode === "coding-automation"
+          ? "Saving…"
+          : "Automatically build approved work",
+      ),
+    );
+    coding.disabled = locked || Boolean(operation?.busy);
+    const automation = el("div", "pm-automation-controls");
+    automation.append(toggle, coding);
+    buttons.append(run);
+    root.append(buttons, automation);
     if (operation?.message && operation.error) {
       const message = el(
         "p",
@@ -261,17 +280,17 @@
       );
       root.append(card);
     }
-    const footer = el("details", "project-crew-footer workspace-disclosure");
-    footer.append(el("summary", "", "Setup & automation details"));
-    footer.append(window.renderCrewSetup(project));
+    const footer = el("div", "project-crew-footer");
     footer.append(
       el(
         "p",
         "setup-help",
-        "Automation runs scheduled PM patrols and picks up approved coding tickets. Run once leaves automation unchanged. Pausing keeps current jobs running.",
+        "Investigation schedules and approved-work pickup are independent. Turning either off leaves current jobs running.",
       ),
     );
-    footer.append(action(project, "mapping", "Manage Linear mappings"));
+    const settings = el("a", "small-button", "Project settings");
+    settings.href = `/projects/${encodeURIComponent(project.name)}?tab=settings`;
+    footer.append(settings);
     root.append(footer);
     return root;
   };

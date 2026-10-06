@@ -14,15 +14,9 @@
     if (!status) return null;
     const projects = list(status.projects),
       jobs = list(runners?.jobs);
-    const established = projects.some(
+    const established = projects.find(
       (project) =>
-        !project.foundation?.needed &&
-        jobs.some(
-          (job) =>
-            belongs(job, project) &&
-            actualWork(job) &&
-            job.status === "succeeded",
-        ),
+        !project.foundation?.needed && project.firstReviewableChange?.url,
     );
     const recentWork = jobs
       .filter(
@@ -42,11 +36,11 @@
     if (established)
       return {
         active: false,
-        title: "Your crew, at a glance.",
+        title: "Your first change is ready to review.",
         description:
-          "Pick up your projects, review the latest work, or send a gremlin on its next mission.",
-        label: "Open your project",
-        href: projectPath(project),
+          "Inspect the draft and its evidence. A finished coding run is a change to review, not a claim that the product is finished.",
+        label: "Review your change",
+        href: projectPath(established),
       };
     const sourceStep = list(project?.readiness?.steps).find(
       (item) => item.id === "source_connection",
@@ -141,8 +135,8 @@
       return step(
         2,
         "What are we working on?",
-        "Bring an app you already have, or describe an idea. We’ll give your crew a project to call home.",
-        "Add your first project",
+        "Connect an app you already have. Choose one user outcome and let your crew work toward a useful, reviewable change.",
+        "Improve my app",
         "/projects#project-form",
       );
     if (!Array.isArray(project.areas) || !project.readiness)
@@ -170,11 +164,10 @@
     if (!project.areas.length)
       return step(
         3,
-        "Adopt your first PM Gremlin.",
-        "Give it a name and a useful purpose. It will keep what it learns about your app, ready for the next mission.",
-        "Adopt a PM Gremlin",
+        "Choose the first useful improvement.",
+        "Describe what should get better for your users. We’ll prepare a focused gremlin to investigate and propose a change for your review.",
+        "Choose a user outcome",
         projectPath(project),
-        { adoptProject: project.name },
       );
     const previous = work?.[0];
     if (previous && ["failed", "canceled"].includes(previous.status))
@@ -220,13 +213,13 @@
     return step(
       4,
       readiness?.canRun
-        ? `${area.name || "Your PM Gremlin"} is ready for a first mission.`
-        : "Give your gremlin its first mission.",
+        ? "Turn your direction into a useful change."
+        : "Choose the next useful improvement.",
       readiness?.canRun
-        ? "Start with Discovery: it reads your app and saves a product map and useful next questions. Review the mission before you start; automation stays off."
-        : "Open your gremlin to check what it needs. Discovery is a useful first mission: it reads the app and saves what it learns.",
-      readiness?.canRun ? "Choose its first mission" : "Open your gremlin",
-      `${projectPath(project)}?pm=${encodeURIComponent(area.key)}&tab=discovery`,
+        ? "Choose a user outcome. Your crew investigates, proposes a bounded improvement, and waits for approval before coding. Automatic work stays off."
+        : "Choose a user outcome on the project page. Saved discovery informs the investigation; a report alone is not the first win.",
+      "Choose a user outcome",
+      projectPath(project),
     );
   };
 
@@ -246,7 +239,7 @@
     get("welcome-title").textContent = state.title;
     get("welcome-description").textContent = state.description;
     get("overview-eyebrow").textContent = state.active
-      ? "YOUR FIRST GREMLIN"
+      ? "YOUR FIRST USEFUL CHANGE"
       : "YOUR WORKSPACE";
     const link = get("overview-primary-action"),
       adopt = get("overview-adopt-action");
@@ -262,8 +255,8 @@
       "Connect source",
       "Connect Claude",
       "Add a project",
-      "Adopt a gremlin",
-      "First mission",
+      "Choose an outcome",
+      "Review a change",
     ];
     if (state.active)
       progress.replaceChildren(

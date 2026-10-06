@@ -165,6 +165,59 @@ async function admitted() {
   };
   return { ...w, plan, manifest, ingestion };
 }
+it("preserves a stale historical delivery without blocking a current owning-PM review", async () => {
+  const w = world();
+  await w.service.register(w.input);
+  w.merge();
+  w.project.config.commands.test = "npm run revised-test";
+  const ticket = w.linear.seedTicket({
+    projectId: "lin_core",
+    labels: ["pm:core", "pm-approved"],
+    description: "## Acceptance criteria\n- New behavior is visible.",
+  });
+  w.forge.seedPull(
+    TEST_REPO,
+    {
+      number: 2,
+      headRef: "gremlins/job-two",
+      headSha: "d".repeat(40),
+      baseRef: "pm-staging",
+      draft: true,
+    },
+    ["app/name.ts"],
+  );
+  await w.service.register({
+    ...w.input,
+    jobId: "job-two",
+    ticket,
+    pullNumber: 2,
+  });
+  w.forge.seedPull(
+    TEST_REPO,
+    {
+      number: 2,
+      headRef: "gremlins/job-two",
+      headSha: "d".repeat(40),
+      baseRef: "pm-staging",
+      state: "merged",
+      mergeCommitSha: MERGE,
+      mergedAt: "2026-10-05T11:10:00Z",
+    },
+    ["app/name.ts"],
+  );
+  expect(
+    (await w.service.reviewCandidates(w.deployment)).map((r) => r.id),
+  ).toEqual(["job-two"]);
+  const plan = await w.service.prepareReview({
+    area: "core",
+    jobId: "job-review-two",
+    deployment: w.deployment,
+  });
+  expect(plan?.deliveries.map((r) => r.id)).toEqual(["job-two"]);
+  expect(w.service.list().find((r) => r.id === "job-one")?.status).toBe(
+    "blocked",
+  );
+});
 describe("durable owning-PM delivery", () => {
   it("does not assign a deleted PM's deliveries to a new PM with the same ID", async () => {
     const w = world();
