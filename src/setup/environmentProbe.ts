@@ -74,6 +74,7 @@ const { installBrowserAccess } = require('/opt/gremlins/browser-access.mjs');
           fail(count === 0 ? 'selector_not_found' : 'selector_unusable', extra);
         }
         checks.push({ name: currentCheck, passed: true }); currentCheck = undefined;
+        return locator;
       };
       routeFailure = undefined; stage = 'open'; currentCheck = 'Browser opens application';
       await open(input.url, false);
@@ -85,10 +86,21 @@ const { installBrowserAccess } = require('/opt/gremlins/browser-access.mjs');
         await control('usernameSelector', 'username field', locator => locator.fill(accounts[index].username));
         await control('passwordSelector', 'password field', locator => locator.fill(accounts[index].password));
         await control('submitSelector', 'submit control', locator => { submitted = true; return locator.click(); });
-        await control('successSelector', 'signed-in confirmation');
+        const confirmation = await control('successSelector', 'signed-in confirmation');
         currentCheck = 'Test account ' + (index + 1) + ' signs in';
+        if (routeFailure) fail(routeFailure);
         if (new URL(page.url()).origin !== origin) fail('login_external_redirect');
-        if (await page.locator(input.access.passwordSelector).isVisible().catch(() => false)) fail('login_incomplete', { field: 'successSelector' });
+        // Auth state can update before an animated login dialog finishes closing.
+        // Wait for that transition rather than sampling visibility once.
+        try { await page.locator(input.access.passwordSelector).waitFor({ state: 'hidden', timeout: 15000 }); }
+        catch { fail(routeFailure || 'login_incomplete', { field: 'successSelector' }); }
+        if (routeFailure) fail(routeFailure);
+        if (new URL(page.url()).origin !== origin) fail('login_external_redirect');
+        // The initial success marker must still be present after the form closes.
+        const count = await confirmation.count().catch(() => 0);
+        if (count > 1) fail('selector_ambiguous', { field: 'successSelector', matchCount: Math.min(count,10000) });
+        if (count === 0) fail('success_not_found', { field: 'successSelector', matchCount: 0 });
+        if (!await confirmation.isVisible().catch(() => false)) fail('success_not_visible', { field: 'successSelector', matchCount: 1 });
         checks.push({ name: currentCheck, passed: true }); currentCheck = undefined;
       }
       diagnosis = { code: 'invalid_evidence' };
