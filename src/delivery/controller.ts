@@ -549,6 +549,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     return {
       ...payload,
       reviewPlan: plan,
+      browserTarget: plan.deployment.url,
       prompt: (payload.prompt ?? "") + reviewPrompt(plan),
     };
   }

@@ -23,6 +23,7 @@ import { validatePayload } from "./docker.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
 import { baseBranch } from "../projectCapabilities.ts";
+import { saveConnections } from "../setup/connections.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -92,6 +93,16 @@ function edit(
   writeFileSync(path, JSON.stringify(raw));
 }
 beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string | URL | Request) => {
+      if (String(url) === "https://api.github.com/user")
+        return new Response(JSON.stringify({ id: 42, login: "source-user" }));
+      throw new Error(
+        `Unexpected provider request in job fixture: ${String(url)}`,
+      );
+    }),
+  );
   root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-jobs-"));
   initializeSetup(root, packageRoot, { project: "app", repo: "owner/app" });
   edit("project.json", (raw) => {
@@ -116,7 +127,10 @@ beforeEach(() => {
     raw.areas.core.schedule = "0 9 * * *";
   });
 });
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  vi.unstubAllGlobals();
+  rmSync(root, { recursive: true, force: true });
+});
 function setup(value: LinearTicket | null = ticket) {
   const getTicket = vi.fn(async () => value);
   const listTickets = vi.fn(async () => (value ? [value] : []));
@@ -132,6 +146,34 @@ function setup(value: LinearTicket | null = ticket) {
   };
 }
 describe("local job preparation", () => {
+  it("reconciles managed preview access before handing credentials to the worker", async () => {
+    saveConnections(root, { VERCEL_BYPASS_APP: "obsolete-private-bypass" });
+    const heal = vi.fn(async () => {
+      edit("project.json", (raw) => {
+        raw.vercel.bypassSecret = "VERCEL_BYPASS_REPAIRED";
+      });
+      saveConnections(root, {
+        VERCEL_BYPASS_REPAIRED: "repaired-private-bypass",
+      });
+    });
+    const preparation = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [ticket],
+      }),
+      preview: async () => "https://app-preview.vercel.app",
+      ensurePreviewAccess: heal,
+    });
+    const payload = await preparation.prepareJob(job);
+    expect(heal).toHaveBeenCalledOnce();
+    expect(payload.credentials?.GREMLINS_PREVIEW_BYPASS).toBe(
+      "repaired-private-bypass",
+    );
+    expect(payload.prompt).not.toContain("private-bypass");
+    expect(payload.browserTarget).toBe("https://app-preview.vercel.app");
+  });
   it("enforces persisted mission prerequisites and exact approved scope in manual, scheduled and launch admission", async () => {
     const planned = { ...ticket, id: "11111111-1111-4111-8111-111111111111" };
     const prerequisiteId = "22222222-2222-4222-8222-222222222222";
@@ -1100,9 +1142,14 @@ describe("local job preparation", () => {
     );
   });
   it("uses the connected source token only after preparation and reserves a publication-safe lease", async () => {
+    const commitIdentity = {
+      name: "source-user",
+      email: "42+source-user@users.noreply.github.com",
+    };
     const acquireLease = vi.fn(async () => ({
       token: "official-oauth-token",
       method: "oauth" as const,
+      commitIdentity,
     }));
     const prepared = createJobPreparation({
       root,
@@ -1127,6 +1174,7 @@ describe("local job preparation", () => {
       write: true,
     });
     expect(payload.credentials?.GITHUB_TOKEN).toBe("official-oauth-token");
+    expect(payload.commitIdentity).toEqual(commitIdentity);
     expect(JSON.stringify(payload)).not.toContain("source-token");
     expect(payload.prompt).not.toContain("official-oauth-token");
   });
@@ -1192,6 +1240,9 @@ describe("local job preparation", () => {
     const payload = await prepared.prepareJob(job);
     expect(prepared.getTicket).toHaveBeenCalledTimes(2);
     expect(payload.repoUrl).toBe("https://github.com/owner/app.git");
+    expect(payload.browserTarget).toBe("https://app-preview.vercel.app");
+    expect(payload.prompt).toContain("Playwright MCP is already configured");
+    expect(payload.prompt).not.toContain("preview-secret");
     expect(payload.credentials).toEqual({
       GITHUB_TOKEN: env.GITHUB_TOKEN,
       LINEAR_API_KEY: env.LINEAR_API_KEY,

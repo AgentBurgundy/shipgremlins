@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { validateCommitIdentity } from "./runtime.mjs";
 
 /** A model-authored report is evidence to review, never an executable action. */
 export function readImplementationReport(directory, redact = (text) => text) {
@@ -137,6 +138,7 @@ export async function runCheckedDelivery({
   baseSha,
   repoUrl,
   provider,
+  commitIdentity,
   run,
   publish,
   writeBody,
@@ -145,6 +147,19 @@ export async function runCheckedDelivery({
   report,
 }) {
   validateDelivery(delivery);
+  validateCommitIdentity(commitIdentity, provider);
+  const identity = commitIdentity ?? {
+    name: "ShipGremlins",
+    email: "gremlins@shipgremlins.ai",
+  };
+  const commitOptions = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    `user.name=${identity.name}`,
+    "-c",
+    `user.email=${identity.email}`,
+  ];
   if (!/^[a-f0-9]{40}$/.test(baseSha))
     throw new Error("The original checkout commit is required.");
   if (typeof commands?.test !== "string" || !commands.test.trim())
@@ -182,12 +197,7 @@ export async function runCheckedDelivery({
   if (status) {
     await run("git", ["add", "--all"]);
     await run("git", [
-      "-c",
-      "core.hooksPath=/dev/null",
-      "-c",
-      "user.name=ShipGremlins",
-      "-c",
-      "user.email=gremlins@shipgremlins.ai",
+      ...commitOptions,
       "commit",
       "-m",
       `${delivery.ticket}: ${delivery.title}`,
@@ -198,6 +208,16 @@ export async function runCheckedDelivery({
   ).trim();
   if (!changed) return { checks, noChanges: true };
   const evidence = implementationReport(report, delivery.acceptanceCriteria);
+  // A model may have committed everything already. Normalize the final commit's
+  // identity without changing its tested tree; never publish an invented author.
+  if (!status && commitIdentity)
+    await run("git", [
+      ...commitOptions,
+      "commit",
+      "--amend",
+      "--no-edit",
+      "--reset-author",
+    ]);
   const commit = (await run("git", ["rev-parse", "HEAD"])).trim();
   if (!/^[a-f0-9]{40}$/.test(commit))
     throw new Error("Could not identify the tested commit.");

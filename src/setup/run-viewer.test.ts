@@ -6,7 +6,13 @@ const script = readFileSync(
   new URL("../../dashboard/run-viewer.js", import.meta.url),
   "utf8",
 );
-type Event = { key?: string; preventDefault: () => void };
+type Event = {
+  key?: string;
+  target?: unknown;
+  clientX?: number;
+  clientY?: number;
+  preventDefault: () => void;
+};
 interface Viewer {
   open(options?: { reset?: boolean }): void;
   close(options?: { restoreFocus?: boolean }): void;
@@ -36,8 +42,11 @@ function fixture() {
     addEventListener(name: string, handler: (event: Event) => void) {
       this.events.set(name, handler);
     }
-    dispatch(name: string, key?: string) {
-      const event = { key, preventDefault: vi.fn() };
+    dispatch(name: string, keyOrEvent?: string | Partial<Event>) {
+      const event = {
+        ...(typeof keyOrEvent === "string" ? { key: keyOrEvent } : keyOrEvent),
+        preventDefault: vi.fn(),
+      };
       this.events.get(name)?.(event);
       return event;
     }
@@ -64,6 +73,12 @@ function fixture() {
     querySelectorAll: (selector: string) =>
       selector === "[data-run-tab]" ? tabs : panels,
     querySelector: () => body,
+    getBoundingClientRect: () => ({
+      left: 100,
+      top: 50,
+      right: 900,
+      bottom: 650,
+    }),
   });
   const trigger = new Node();
   trigger.focus();
@@ -164,5 +179,21 @@ describe("dedicated run viewer", () => {
     f.trigger.isConnected = false;
     f.viewer.close();
     expect(f.trigger.focus).toHaveBeenCalledTimes(2);
+  });
+
+  it("dismisses on a backdrop click, without dismissing inside clicks or a drag from the dialog", () => {
+    const f = fixture();
+    f.viewer.open();
+    const inside = { target: f.dialog, clientX: 200, clientY: 100 };
+    const outside = { target: f.dialog, clientX: 20, clientY: 20 };
+    f.dialog.dispatch("pointerdown", inside);
+    f.dialog.dispatch("click", inside);
+    expect(f.onClose).not.toHaveBeenCalled();
+    f.dialog.dispatch("pointerdown", inside);
+    f.dialog.dispatch("click", outside);
+    expect(f.onClose).not.toHaveBeenCalled();
+    f.dialog.dispatch("pointerdown", outside);
+    f.dialog.dispatch("click", outside);
+    expect(f.onClose).toHaveBeenCalledOnce();
   });
 });

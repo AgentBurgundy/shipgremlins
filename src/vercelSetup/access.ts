@@ -230,13 +230,16 @@ export function createVercelAccess(
   }
   async function connect(
     name: string,
-    input: { configurationRevision: string },
+    input: { configurationRevision: string; repair?: boolean },
   ): Promise<VercelAccessResult> {
     if (
       !input ||
       typeof input !== "object" ||
       Array.isArray(input) ||
-      Object.keys(input).some((key) => key !== "configurationRevision") ||
+      Object.keys(input).some(
+        (key) => !["configurationRevision", "repair"].includes(key),
+      ) ||
+      (input.repair !== undefined && typeof input.repair !== "boolean") ||
       !revision.test(input.configurationRevision)
     )
       throw new VercelSetupError(
@@ -263,6 +266,10 @@ export function createVercelAccess(
           unlock = acquire(name);
           const initial = snapshot(name),
             connectionId = initial.target.connectionId ?? "default";
+          let guardedReference = initial.target.bypassSecret;
+          let guardedValue = guardedReference
+            ? readConnections(root)[guardedReference]
+            : undefined;
           const signal = AbortSignal.any([
             controller.signal,
             AbortSignal.timeout(90_000),
@@ -306,7 +313,7 @@ export function createVercelAccess(
               403,
               "connection",
             );
-          const teamId =
+          let teamId =
             initial.target.teamId === undefined
               ? credential.teamId
               : initial.target.teamId;
@@ -411,19 +418,26 @@ export function createVercelAccess(
                     environment.id === initial.target.customEnvironmentId,
                 )) ||
               !resource(data.accountId) ||
-              (teamId
-                ? data.accountId !== teamId
-                : String(data.accountId).startsWith("team_"))
+              (teamId && data.accountId !== teamId)
             )
               throw new VercelSetupError(
                 "The saved preview does not match this repository, Vercel project, and account. Review the preview before connecting access.",
                 409,
                 "preview_mismatch",
               );
+            // A token may omit its default team. The authenticated response for
+            // this exact project and repository identifies its owner; never
+            // infer a team from a project name or override an explicit team.
+            if (!teamId && String(data.accountId).startsWith("team_"))
+              teamId = String(data.accountId);
             return data;
           };
           const data = await readProject();
-          const { bypassSecret: _bypass, ...providerTarget } = initial.target;
+          const {
+            bypassSecret: _bypass,
+            access: _access,
+            ...providerTarget
+          } = initial.target;
           const scope = digest(
             JSON.stringify({
               project: name,
@@ -441,6 +455,23 @@ export function createVercelAccess(
           );
           const file = join(directory, `${scope}.json`);
           let journal = readJournal(file, scope);
+          // Older receipts included app-login fields in their scope. A reference
+          // alone proves no ownership: migrate only a bypass returned by this
+          // authenticated, repository-matched provider project.
+          const referencedScope = /^VERCEL_BYPASS_([A-F0-9]{64})$/
+            .exec(guardedReference ?? "")?.[1]
+            ?.toLowerCase();
+          const legacy =
+            !journal && referencedScope && referencedScope !== scope
+              ? readJournal(
+                  join(directory, `${referencedScope}.json`),
+                  referencedScope,
+                )
+              : undefined;
+          const recoveredLegacy =
+            legacy && ownSecret(data, legacy, configurationId)
+              ? legacy
+              : undefined;
           const checkCurrent = (expected: string) => {
             signal.throwIfAborted();
             const current = snapshot(name);
@@ -450,6 +481,16 @@ export function createVercelAccess(
                 initial.project.config.instanceId
             )
               throw conflict();
+            if (
+              guardedReference &&
+              current.target.bypassSecret === guardedReference &&
+              readConnections(root)[guardedReference] !== guardedValue
+            )
+              throw new VercelSetupError(
+                "Preview credentials changed while access was being repaired. Test the newer credentials before retrying.",
+                409,
+                "credential_changed",
+              );
             return current;
           };
           const checkConnection = async (expected: string) => {
@@ -478,10 +519,30 @@ export function createVercelAccess(
           )
             throw conflict();
           checkCurrent(initial.file.revision);
-          // An owner-saved credential remains authoritative; do not rotate or replace it.
+          if (legacy && !recoveredLegacy) {
+            if (legacy.state === "sent") throw ambiguous();
+            if (!input.repair && !token(guardedValue))
+              throw new VercelSetupError(
+                "The previous preview credential could not be reconciled. Test the saved environment before repairing its access.",
+                409,
+                "access_unconfirmed",
+                data.protectionBypass &&
+                  typeof data.protectionBypass === "object" &&
+                  !Array.isArray(data.protectionBypass)
+                  ? "verify_legacy_credential"
+                  : undefined,
+              );
+          }
+          const managed =
+            (journal && initial.target.bypassSecret === journal.secretName) ||
+            recoveredLegacy;
+          // Reconcile our own bindings on every check. Owner-saved bindings
+          // are replaced only through the controller's diagnosed repair path.
           if (
+            !input.repair &&
+            !managed &&
             initial.target.bypassSecret &&
-            token(readConnections(root)[initial.target.bypassSecret])
+            token(guardedValue)
           )
             return connected();
           if (
@@ -499,6 +560,19 @@ export function createVercelAccess(
               message:
                 "This Vercel project reports no Deployment Protection. Test access to check the preview and its app sign-in.",
             };
+          const repairing =
+            input.repair || managed || journal?.state === "connected";
+          if (
+            repairing &&
+            (!data.protectionBypass ||
+              typeof data.protectionBypass !== "object" ||
+              Array.isArray(data.protectionBypass))
+          )
+            throw new VercelSetupError(
+              "Vercel did not return enough bypass metadata to repair access safely. Check this account's project administration access, then retry.",
+              409,
+              "access_unconfirmed",
+            );
           const raw = JSON.parse(initial.file.content);
           const secretName =
             journal?.secretName ?? `VERCEL_BYPASS_${scope.toUpperCase()}`;
@@ -516,6 +590,7 @@ export function createVercelAccess(
             scope,
             note:
               journal?.note ??
+              recoveredLegacy?.note ??
               `ShipGremlins preview access ${randomBytes(16).toString("hex")}`,
             secretName,
             previousRevision:
@@ -524,11 +599,22 @@ export function createVercelAccess(
                 ? journal.previousRevision
                 : initial.file.revision,
             configurationRevision: digest(content),
-            state: journal?.state ?? "prepared",
+            state: journal?.state ?? recoveredLegacy?.state ?? "prepared",
           };
           // OAuth installations own their integration bypass. Reuse a unique match;
           // manual-token entries require this journal's unguessable note instead.
           let secret = ownSecret(data, journal, configurationId);
+          if (repairing && !secret) {
+            if (journal.state === "sent") throw ambiguous();
+            if (journal.state === "connected")
+              // A completed receipt whose entry is now absent can be replaced.
+              // Persist a fresh operation note before sending exactly one mint.
+              journal = {
+                ...journal,
+                note: `ShipGremlins preview access ${randomBytes(16).toString("hex")}`,
+                state: "prepared",
+              };
+          }
           // Intent and the exact post-CAS revision survive a crash before secret storage.
           await checkConnection(initial.file.revision);
           writeJournal(file, journal);
@@ -539,6 +625,10 @@ export function createVercelAccess(
               revision: initial.file.revision,
               content,
             });
+          if (guardedReference !== secretName) {
+            guardedReference = secretName;
+            guardedValue = readConnections(root)[secretName];
+          }
           const configuredRevision = journal.configurationRevision;
           checkCurrent(configuredRevision);
           if (!secret) {

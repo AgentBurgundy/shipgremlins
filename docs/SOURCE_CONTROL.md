@@ -47,6 +47,15 @@ A saved OAuth connection takes precedence over a manual token for the same provi
 
 ## Jobs keep their credentials until publication finishes
 
+GitHub coding jobs look up the account behind their source connection and use its
+GitHub-provided ID and login to form an associated private `noreply` commit email.
+The worker applies that identity to both the author and committer, including the
+final commit when the model committed its changes itself. Jobs stop before
+publication if GitHub cannot confirm an identity; they do not invent a bot email.
+This lets Vercel associate the commit with a GitHub account. That account still
+needs any access required by the Vercel project's team and plan.
+[Vercel collaboration requirements](https://vercel.com/docs/deployments/troubleshoot-project-collaboration)
+
 Both providers rotate credentials in a way that can invalidate an older access token. Before launching a local job, ShipGremlins reserves a source credential with at least a 50-minute validity window; the worker's execution timeout is 45 minutes. The lease covers checks and trusted draft publication, and is released after the container has conclusively finished.
 
 When a new job needs a refresh while another job still uses that connection, it stays queued. This does not consume its infrastructure retry or generate a failed-job notification. Docker reconciliation preserves leases across controller restarts; an ambiguous container launch is not treated as proof that the credential is unused. An orphaned lease eventually expires if the controller cannot clean it up. Reconnect and disconnect may ask you to wait for active work to finish.

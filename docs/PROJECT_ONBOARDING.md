@@ -18,6 +18,36 @@ Open the project's **Environment** when browser testing is useful. A Setup
 Gremlin can read bounded source at an exact commit and recommend a test strategy;
 no Linear team, PM, or working deployment is required for that analysis.
 
+### Vercel: let the gremlins handle setup
+
+With Vercel connected, opening Environment starts setup automatically for a clean,
+unconfigured project or an unverified saved Vercel environment. ShipGremlins finds
+the exact repository match, chooses the newest ready preview on the configured
+test branch, saves the target, connects private preview access, and opens the app
+in Chromium. Source-only projects use their nonproduction integration branch,
+or `pm-staging` when no separate test branch was configured. You do not need to
+copy a deployment URL, project ID, team ID, or bypass secret.
+
+The page shows progress through finding the preview, saving it, connecting access,
+and testing it. Returning to the page resumes showing the same operation. A failed
+step stays visible; polling does not repeatedly create resources or restart tests.
+**Test again** runs the complete check and tries one bounded access repair when
+Vercel rejects the saved bypass.
+
+ShipGremlins asks only when it cannot choose reliably: multiple matching apps in a
+monorepo, an account that needs reconnecting, no ready preview on the intended
+branch, or an application login that needs a dedicated test account. Preparing a
+new deployment retains the existing test-data confirmation. It never substitutes
+production or an unrelated feature branch for a missing test preview.
+
+Managed automation credentials are reconciled before browser jobs start. Missing
+local values and rotated tool-owned credentials recover from Vercel; a confirmed
+removed managed bypass can be recreated once. Unconfirmed requests are reconciled
+before another credential is created. Other tools' bypasses, manual credentials,
+deployment protection, and production settings are preserved. A diagnosed failed
+manual bypass can be replaced with a separate ShipGremlins reference while keeping
+the original saved value.
+
 Choose **I already know where to test** to skip analysis and enter an environment
 yourself. The page shows one setup stage at a time. Hosted setup starts with a
 test URL; **Find a preview with Vercel** opens the provider workflow when needed.
@@ -50,6 +80,31 @@ The Docker app is separate from the gremlin worker: one hosts your application; 
 5. **Return to your crew.** Choose **Open project** when PMs already exist, or adopt your first PM if the project has none. Review install/test commands and the worker toolchain before coding, and connect Linear for patrols. Repository discovery does not require browser setup. Automation remains paused until you enable it.
 
 The setup browser test runs on the controller's Docker host. A remote worker must separately be able to reach a hosted URL and supply the required architecture/toolchain. A URL reachable only from the controller does not certify remote network access. Each Docker-backed job creates its app on the machine executing that job.
+
+### When a check fails
+
+The result panel keeps the checks that passed, identifies the failed step, and
+offers the relevant repair. Later steps stay **Not yet tested**. **View test
+details** shows each account's login controls and confirmation check; the timestamp
+identifies the last attempt. Opening a repair keeps your unsaved settings.
+
+| Result                                                             | Next action                                                                                                                                             |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Preview credential missing, or Vercel protection stops the browser | Automatic setup reconciles preview access and retries once. If provider access is unavailable, the result names the connection or permission to repair. |
+| App cannot be reached                                              | **Review environment** checks the selected address and Docker network path.                                                                             |
+| Login selector matches zero or several elements                    | **Fix sign-in settings** opens the relevant selector. Scope it to one control inside the login form.                                                    |
+| Test credentials missing or explicitly rejected                    | **Manage test credentials** opens Connections. Verify the account belongs to this test environment.                                                     |
+| Signed-in confirmation not found                                   | Review the success selector and login result. A timeout alone does not prove the password is wrong.                                                     |
+
+Saved Vercel credentials are labeled separately from verified browser access.
+After a successful test, the page shows **Ready** without asking you to connect
+again. Changing the environment or its credentials invalidates that result.
+
+Local and enrolled Docker workers configure Playwright with the selected preview
+origin and its saved automation access before the PM opens the browser. The PM
+navigates to the ordinary URL; it does not need to put a secret in a URL or tool
+call. Protection remains enabled. Successful `curl` requests alone never count
+as a browser walkthrough or verify layout, interactions, or generation time.
 
 ## When the repository needs setup files
 

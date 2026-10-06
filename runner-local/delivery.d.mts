@@ -19,6 +19,7 @@ export function runCheckedDelivery(input: {
   baseSha: string;
   repoUrl: string;
   provider: "github" | "gitlab";
+  commitIdentity?: { name: string; email: string };
   run: (command: string, args: string[]) => Promise<string>;
   publish: (command: string, args: string[]) => Promise<string>;
   writeBody: (body: string) => void | Promise<void>;

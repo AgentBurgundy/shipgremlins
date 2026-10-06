@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -51,6 +52,29 @@ function journals() {
       text: readFileSync(join(directory, file), "utf8"),
     }));
 }
+function legacyJournal(state: "connected" | "sent" = "connected") {
+  const existing = journals()[0]!,
+    journal = JSON.parse(existing.text),
+    legacyScope = "a".repeat(64),
+    reference = `VERCEL_BYPASS_${legacyScope.toUpperCase()}`,
+    path = join(root, ".run/vercel-access", `${legacyScope}.json`);
+  change((value) => {
+    value.environments.preview.bypassSecret = reference;
+  });
+  connections.saveConnections(root, { [reference]: SECRET });
+  renameSync(existing.file, path);
+  writeFileSync(
+    path,
+    JSON.stringify({
+      ...journal,
+      state,
+      scope: legacyScope,
+      secretName: reference,
+      configurationRevision: revision(),
+    }),
+  );
+  return reference;
+}
 beforeEach(() => {
   root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-vercel-access-"));
   services = [];
@@ -83,7 +107,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   rmSync(root, { recursive: true, force: true });
 });
-function fixture(oauth = false) {
+function fixture(oauth = false, inferTeam = false) {
   const data: Record<string, unknown> = {
     id: "prj_app",
     name: "app",
@@ -120,7 +144,9 @@ function fixture(oauth = false) {
         body = JSON.parse(String(init?.body ?? "{}"));
       calls.push({ url, method, body });
       expect(url.origin).toBe("https://api.vercel.com");
-      expect(url.searchParams.get("teamId")).toBe("team_test");
+      expect(url.searchParams.get("teamId")).toBe(
+        inferTeam && calls.length === 1 ? null : "team_test",
+      );
       expect(init?.redirect).toBe("error");
       expect(init?.headers).toMatchObject({ authorization: `Bearer ${TOKEN}` });
       if (method === "GET") {
@@ -302,6 +328,289 @@ describe("Vercel preview access", () => {
     expect(revision()).toBe(before);
     expect(f.patchCalls()).toHaveLength(0);
   });
+
+  it.each([false, true])(
+    "recovers a rotated owned bypass without creating another (repair=%s)",
+    async (repair) => {
+      const f = fixture();
+      await f.create().connect("app", { configurationRevision: revision() });
+      const reference = ref(),
+        rev = revision(),
+        entries = f.data.protectionBypass as Record<string, unknown>;
+      entries["rotated-owned-bypass"] = entries[SECRET];
+      delete entries[SECRET];
+      await f.create().connect("app", { configurationRevision: rev, repair });
+      expect(connections.readConnections(root)[reference]).toBe(
+        "rotated-owned-bypass",
+      );
+      expect(ref()).toBe(reference);
+      expect(revision()).toBe(rev);
+      expect(f.patchCalls()).toHaveLength(1);
+      expect(JSON.stringify(journals())).not.toContain("rotated-owned-bypass");
+    },
+  );
+
+  it("keeps managed bypass ownership when app login selectors or accounts change", async () => {
+    change((value) => {
+      value.environments.preview.access = {
+        kind: "password",
+        loginPath: "/login",
+        usernameSelector: "#email",
+        passwordSelector: "#password",
+        submitSelector: "button",
+        successSelector: "#account",
+        accounts: [
+          {
+            name: "Reader",
+            usernameSecret: "TEST_USER",
+            passwordSecret: "TEST_PASSWORD",
+          },
+        ],
+      };
+    });
+    const f = fixture();
+    await f.create().connect("app", { configurationRevision: revision() });
+    const reference = ref(),
+      entries = f.data.protectionBypass as Record<string, unknown>;
+    change((value) => {
+      value.environments.preview.access.successSelector = "#updated-account";
+      value.environments.preview.access.accounts[0].usernameSecret =
+        "UPDATED_TEST_USER";
+    });
+    entries["rotated-after-login-edit"] = entries[SECRET];
+    delete entries[SECRET];
+    await f.create().connect("app", { configurationRevision: revision() });
+    expect(ref()).toBe(reference);
+    expect(connections.readConnections(root)[reference]).toBe(
+      "rotated-after-login-edit",
+    );
+    expect(journals()).toHaveLength(1);
+    expect(f.patchCalls()).toHaveLength(1);
+  });
+
+  it.each([false, true])(
+    "migrates an authenticated owned legacy receipt without minting (OAuth=%s)",
+    async (oauth) => {
+      const f = fixture(oauth);
+      await f.create().connect("app", { configurationRevision: revision() });
+      const legacy = legacyJournal(),
+        entries = f.data.protectionBypass as Record<string, unknown>;
+      entries["rotated-legacy-bypass"] = entries[SECRET];
+      delete entries[SECRET];
+      await f.create().connect("app", { configurationRevision: revision() });
+      expect(ref()).not.toBe(legacy);
+      expect(connections.readConnections(root)[ref()]).toBe(
+        "rotated-legacy-bypass",
+      );
+      expect(journals()).toHaveLength(2);
+      expect(f.patchCalls()).toHaveLength(1);
+      delete entries["rotated-legacy-bypass"];
+      await f.create().connect("app", { configurationRevision: revision() });
+      expect(f.patchCalls()).toHaveLength(2);
+      expect(connections.readConnections(root)[ref()]).toBe(SECRET);
+    },
+  );
+
+  it("does not infer legacy ownership from a stored reference when its remote entry is absent", async () => {
+    const f = fixture();
+    await f.create().connect("app", { configurationRevision: revision() });
+    const legacy = legacyJournal();
+    delete (f.data.protectionBypass as Record<string, unknown>)[SECRET];
+    await f.create().connect("app", { configurationRevision: revision() });
+    expect(ref()).toBe(legacy);
+    expect(f.patchCalls()).toHaveLength(1);
+    connections.clearConnections(root, [legacy]);
+    await expect(
+      f.create().connect("app", { configurationRevision: revision() }),
+    ).rejects.toMatchObject({
+      code: "access_unconfirmed",
+      status: 409,
+      recovery: "verify_legacy_credential",
+    });
+    expect(f.patchCalls()).toHaveLength(1);
+    await f
+      .create()
+      .connect("app", { configurationRevision: revision(), repair: true });
+    expect(ref()).not.toBe(legacy);
+    expect(f.patchCalls()).toHaveLength(2);
+  });
+
+  it("never duplicates an unconfirmed legacy operation even during diagnosed repair", async () => {
+    const f = fixture();
+    await f.create().connect("app", { configurationRevision: revision() });
+    const legacy = legacyJournal("sent");
+    delete (f.data.protectionBypass as Record<string, unknown>)[SECRET];
+    await expect(
+      f
+        .create()
+        .connect("app", { configurationRevision: revision(), repair: true }),
+    ).rejects.toMatchObject({ code: "access_pending", recovery: undefined });
+    expect(ref()).toBe(legacy);
+    expect(f.patchCalls()).toHaveLength(1);
+    expect(journals()).toHaveLength(1);
+  });
+
+  it.each([undefined, null, []])(
+    "does not offer legacy diagnosis recovery with incomplete bypass metadata %j",
+    async (metadata) => {
+      const f = fixture();
+      await f.create().connect("app", { configurationRevision: revision() });
+      const legacy = legacyJournal();
+      connections.clearConnections(root, [legacy]);
+      f.data.protectionBypass = metadata;
+      const before = journals(),
+        rev = revision();
+      await expect(
+        f.create().connect("app", { configurationRevision: rev }),
+      ).rejects.toMatchObject({
+        code: "access_unconfirmed",
+        recovery: undefined,
+      });
+      expect(journals()).toEqual(before);
+      expect(revision()).toBe(rev);
+      expect(f.patchCalls()).toHaveLength(1);
+    },
+  );
+
+  it.each([false, true])(
+    "recreates a confirmed missing owned bypass once with the same binding (repair=%s)",
+    async (repair) => {
+      const f = fixture();
+      await f.create().connect("app", { configurationRevision: revision() });
+      const reference = ref(),
+        rev = revision(),
+        originalJournal = JSON.parse(journals()[0]!.text),
+        entries = f.data.protectionBypass as Record<string, unknown>,
+        foreign = structuredClone(entries[FOREIGN]);
+      delete entries[SECRET];
+      await f.create().connect("app", { configurationRevision: rev, repair });
+      await f.create().connect("app", { configurationRevision: rev, repair });
+      expect(ref()).toBe(reference);
+      expect(revision()).toBe(rev);
+      expect(connections.readConnections(root)[reference]).toBe(SECRET);
+      expect(f.patchCalls()).toHaveLength(2);
+      expect(entries[FOREIGN]).toEqual(foreign);
+      expect(JSON.parse(journals()[0]!.text)).toMatchObject({
+        state: "connected",
+        secretName: reference,
+        note: expect.not.stringMatching(originalJournal.note),
+      });
+    },
+  );
+
+  it("repairs an owner-saved binding only when diagnosed and preserves its stored value", async () => {
+    change((value) => {
+      value.environments.preview.bypassSecret = "EXISTING_PREVIEW_ACCESS";
+    });
+    connections.saveConnections(root, {
+      EXISTING_PREVIEW_ACCESS: "owner-bypass",
+    });
+    const f = fixture();
+    await f.create().connect("app", {
+      configurationRevision: revision(),
+      repair: true,
+    });
+    expect(ref()).toMatch(/^VERCEL_BYPASS_[A-F0-9]{64}$/);
+    expect(connections.readConnections(root)[ref()]).toBe(SECRET);
+    expect(readFileSync(join(root, ".env"), "utf8")).toContain("owner-bypass");
+    expect(f.patchCalls()).toHaveLength(1);
+    expect(f.data.protectionBypass).toHaveProperty(FOREIGN);
+  });
+
+  it.each([false, true])(
+    "restores a missing managed local credential (remote removed=%s)",
+    async (removed) => {
+      const f = fixture();
+      await f.create().connect("app", { configurationRevision: revision() });
+      const reference = ref(),
+        rev = revision();
+      connections.clearConnections(root, [reference]);
+      if (removed)
+        delete (f.data.protectionBypass as Record<string, unknown>)[SECRET];
+      await f.create().connect("app", { configurationRevision: rev });
+      expect(ref()).toBe(reference);
+      expect(revision()).toBe(rev);
+      expect(connections.readConnections(root)[reference]).toBe(SECRET);
+      expect(f.patchCalls()).toHaveLength(removed ? 2 : 1);
+    },
+  );
+
+  it.each(["GET", "PATCH"])(
+    "does not overwrite a credential changed during repair %s",
+    async (phase) => {
+      const f = fixture();
+      await f.create().connect("app", { configurationRevision: revision() });
+      const reference = ref(),
+        entries = f.data.protectionBypass as Record<string, unknown>;
+      delete entries[SECRET];
+      const update = () =>
+        connections.saveConnections(root, { [reference]: "newer-owner-value" });
+      if (phase === "GET") f.beforeGet(update);
+      else f.afterPatch(update);
+      await expect(
+        f
+          .create()
+          .connect("app", { configurationRevision: revision(), repair: true }),
+      ).rejects.toMatchObject({ status: 409, code: "credential_changed" });
+      expect(connections.readConnections(root)[reference]).toBe(
+        "newer-owner-value",
+      );
+      expect(f.patchCalls()).toHaveLength(phase === "GET" ? 1 : 2);
+      expect(JSON.parse(journals()[0]!.text).state).toBe(
+        phase === "GET" ? "connected" : "sent",
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "does not infer missing owned credentials from omitted metadata (repair=%s)",
+    async (repair) => {
+      const f = fixture();
+      await f.create().connect("app", { configurationRevision: revision() });
+      const rev = revision(),
+        before = journals();
+      delete f.data.protectionBypass;
+      await expect(
+        f.create().connect("app", { configurationRevision: rev, repair }),
+      ).rejects.toMatchObject({ status: 409, code: "access_unconfirmed" });
+      expect(f.patchCalls()).toHaveLength(1);
+      expect(revision()).toBe(rev);
+      expect(journals()).toEqual(before);
+      expect(connections.readConnections(root)[ref()]).toBe(SECRET);
+    },
+  );
+
+  it("does not repeat a repair whose generated bypass cannot yet be reconciled", async () => {
+    const f = fixture();
+    await f.create().connect("app", { configurationRevision: revision() });
+    delete (f.data.protectionBypass as Record<string, unknown>)[SECRET];
+    f.hide();
+    for (let i = 0; i < 2; i++)
+      await expect(
+        f
+          .create()
+          .connect("app", { configurationRevision: revision(), repair: true }),
+      ).rejects.toMatchObject({ code: "access_pending" });
+    expect(f.patchCalls()).toHaveLength(2);
+    expect(JSON.parse(journals()[0]!.text).state).toBe("sent");
+    expect(connections.readConnections(root)[ref()]).toBe(SECRET);
+  });
+
+  it.each(["true", 1, null, {}])(
+    "rejects nonboolean repair option %j",
+    async (repair) => {
+      const f = fixture();
+      await expect(
+        f.create().connect("app", {
+          configurationRevision: revision(),
+          repair,
+        } as unknown as Parameters<
+          ReturnType<typeof createVercelAccess>["connect"]
+        >[1]),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(f.fetcher).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([false, true])(
     "recovers a lost response after restart without a duplicate bypass (OAuth=%s)",
@@ -501,6 +810,41 @@ describe("Vercel preview access", () => {
     expect(f.patchCalls()).toHaveLength(1);
     expect(connections.readConnections(root)[ref()]).toBe(SECRET);
   });
+
+  it("resolves an omitted token team from the verified project owner before creating access", async () => {
+    change((value) => {
+      delete value.environments.preview.teamId;
+    });
+    const f = fixture(false, true);
+    f.credential({ teamId: undefined });
+    const service = f.create();
+    await expect(
+      service.connect("app", { configurationRevision: revision() }),
+    ).resolves.toMatchObject({ status: "connected" });
+    expect(f.calls[0]!.url.searchParams.has("teamId")).toBe(false);
+    expect(f.patchCalls()).toHaveLength(1);
+    expect(f.patchCalls()[0]!.url.searchParams.get("teamId")).toBe("team_test");
+    expect(connections.readConnections(root)[ref()]).toBe(SECRET);
+  });
+
+  it.each(["repo", "project"])(
+    "does not infer team ownership for a mismatched %s",
+    async (kind) => {
+      change((value) => {
+        delete value.environments.preview.teamId;
+      });
+      const f = fixture(false, true);
+      f.credential({ teamId: undefined });
+      if (kind === "repo")
+        f.data.link = { type: "github", org: "unrelated", repo: "app" };
+      else f.data.id = "prj_other";
+      await expect(
+        f.create().connect("app", { configurationRevision: revision() }),
+      ).rejects.toMatchObject({ code: "preview_mismatch" });
+      expect(f.patchCalls()).toHaveLength(0);
+      expect(ref()).toBeUndefined();
+    },
+  );
 
   it.each(["repo", "project", "account", "credential team"])(
     "rejects mismatched provider scope: %s",

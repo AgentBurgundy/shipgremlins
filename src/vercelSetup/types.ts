@@ -100,6 +100,8 @@ export class VercelSetupError extends Error {
     message: string,
     public readonly status = 400,
     public readonly code = "vercel_setup",
+    /** Controller-only hint; a real access diagnosis must precede any repair. */
+    public readonly recovery?: "verify_legacy_credential",
   ) {
     super(message);
     this.name = "VercelSetupError";
