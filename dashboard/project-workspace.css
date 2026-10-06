@@ -326,7 +326,7 @@ body:has(.pm-create-dialog[open]) {
 }
 .project-workspace .project-pm-row {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
   gap: 16px;
   padding: 20px;
@@ -351,6 +351,7 @@ body:has(.pm-create-dialog[open]) {
   font-size: 15px;
   font-weight: 750;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 .project-pm-copy h3 a {
   color: #173526;
@@ -366,30 +367,61 @@ body:has(.pm-create-dialog[open]) {
   font-size: 12px;
   line-height: 1.6;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
-.project-pm-row .pm-simple-controls {
+.project-pm-row > .pm-simple-controls {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 14px 24px;
+  min-width: 0;
   margin: 0;
+  padding-top: 16px;
+  border-top: 1px solid #edf0ed;
 }
 .project-pm-row .pm-simple-actions {
-  flex-wrap: nowrap;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 .project-pm-row .pm-simple-actions > .button {
-  min-width: 88px;
-  min-height: 40px;
+  min-width: 104px;
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}
+.project-pm-row .pm-automation-controls {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 4px 18px;
+  min-width: 0;
 }
 .project-pm-row .pm-automation-switch {
-  min-height: 40px;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 44px;
   font-size: 12px;
-  white-space: nowrap;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+}
+.project-pm-row .pm-automation-switch > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.project-pm-row .pm-switch-track {
+  flex: 0 0 32px;
 }
 .project-pm-row .form-message,
 .project-pm-row > .project-workspace-notice {
   grid-column: 1 / -1;
-  margin: 8px 0 0;
+  min-width: 0;
+  margin: 0;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .project-coding-section {
   display: flex;
@@ -506,13 +538,15 @@ body:has(.pm-create-dialog[open]) {
     grid-template-columns: 44px minmax(0, 1fr);
     gap: 12px;
   }
+}
+@media (max-width: 560px) {
   .project-pm-row > .pm-simple-controls {
-    grid-column: 1 / -1;
-    padding-top: 12px;
-    border-top: 1px solid #edf0ed;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
-  .project-pm-row .pm-simple-actions {
-    justify-content: space-between;
+  .project-pm-row .pm-automation-controls {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
   }
 }
 @media (max-width: 760px) {

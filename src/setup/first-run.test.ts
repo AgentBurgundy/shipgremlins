@@ -48,7 +48,7 @@ const withPm = (blockers: object[] = []) =>
   });
 
 describe("first useful mission guidance", () => {
-  it("keeps one outcome action until a confirmed reviewable change exists", () => {
+  it("keeps first-value guidance until a confirmed reviewable change exists", () => {
     class Node {
       hidden = false;
       disabled = false;
@@ -198,21 +198,30 @@ describe("first useful mission guidance", () => {
       href: "/connections#source-control",
     });
   });
-  it("starts from a user outcome whether or not a PM already exists", () => {
+  it("reviews repository setup before adoption and learns the app before asking for an outcome", () => {
     const status = { ...connected(), projects: [project()] };
     expect(next(status)).toMatchObject({
       index: 3,
       href: "/projects/my-app",
-      label: "Choose a user outcome",
+      label: "Review your app setup",
     });
     const adopted = next({ ...status, projects: [withPm()] });
     expect(adopted).toMatchObject({
       index: 4,
-      label: "Choose a user outcome",
+      label: "Start the first investigation",
       href: "/projects/my-app",
     });
     expect(adopted.adoptProject).toBeUndefined();
-    expect(adopted.description).toContain("Automatic work stays off");
+    expect(adopted.description).toContain("does not create tickets");
+    expect(
+      next({
+        ...status,
+        projects: [{ ...withPm(), onboardingProgress: { investigated: true } }],
+      }),
+    ).toMatchObject({
+      active: true,
+      label: "Open your next change",
+    });
   });
   it("prioritizes the reviewed foundation before adoption or empty-repository PM discovery", () => {
     for (const areas of [[], [{ key: "foundation", name: "Foundation" }]]) {
@@ -299,7 +308,7 @@ describe("first useful mission guidance", () => {
     });
     expect(next(status, [{ ...job, status: "succeeded" }])).toMatchObject({
       active: true,
-      label: "Choose a user outcome",
+      label: "Start the first investigation",
     });
   });
   it("follows the actual first mission across projects rather than always choosing the alphabetically first app", () => {
@@ -308,7 +317,7 @@ describe("first useful mission guidance", () => {
       projects: [project({ name: "alpha" }), withPm()],
     };
     expect(next(status)).toMatchObject({
-      label: "Choose a user outcome",
+      label: "Start the first investigation",
       href: "/projects/my-app",
     });
     expect(

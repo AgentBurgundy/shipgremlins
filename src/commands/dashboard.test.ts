@@ -728,6 +728,16 @@ describe("local dashboard HTTP boundary", () => {
       linearConnection,
       linearProvisioning,
     });
+    vi.mocked(linearProvisioning.addArea).mockImplementation((project, input) =>
+      createLinearProvisioning({
+        root,
+        client: async () => {
+          throw new Error(
+            "Unexpected provider access while saving a local PM.",
+          );
+        },
+      }).addArea(project, input),
+    );
     const response = await post(`${url}/api/projects`, {
       project: "demo",
       repo: "org/app",
@@ -760,6 +770,10 @@ describe("local dashboard HTTP boundary", () => {
       key: "security",
       name: "Security",
       mandate: "Test permission boundaries.",
+    });
+    expect(linearProvisioning.provision).toHaveBeenLastCalledWith("demo", {
+      teamId: undefined,
+      areaKey: "security",
     });
     const fullBrief = {
       key: "full-brief",
@@ -824,7 +838,7 @@ describe("local dashboard HTTP boundary", () => {
     expect(await manual.json()).toMatchObject({
       linear: { status: "skipped" },
     });
-    expect(linearProvisioning.provision).toHaveBeenCalledTimes(2);
+    expect(linearProvisioning.provision).toHaveBeenCalledTimes(4);
   });
   it.each(["linear", "vercel"] as const)(
     "keeps named %s account actions isolated and returns a secret-free catalog",

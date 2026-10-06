@@ -32,6 +32,8 @@ export interface SetupDockerDraft {
   seed?: string[];
 }
 export interface OnboardingReport {
+  /** Untrusted, source-cited suggestions. Only explicit confirmation may save commands. */
+  projectSetup?: ProjectSetupProposal;
   summary: string;
   recommendation: "hosted" | "docker";
   rationale: string;
@@ -81,6 +83,39 @@ export interface OnboardingReport {
   proposedFiles: SetupFile[];
   warnings: string[];
 }
+export const PROJECT_COMMAND_KEYS = [
+  "install",
+  "lint",
+  "typecheck",
+  "test",
+  "build",
+] as const;
+export type ProjectCommandKey = (typeof PROJECT_COMMAND_KEYS)[number];
+export interface SetupEvidence {
+  path: string;
+  quote: string;
+}
+export interface ProjectSetupProposal {
+  commands: Partial<
+    Record<
+      ProjectCommandKey,
+      { command: string; rationale: string; evidence: SetupEvidence[] }
+    >
+  >;
+  firstPm: { name: string; mandate: string; evidence: SetupEvidence[] };
+}
+export interface ConfirmProjectSetupInput {
+  revision: string;
+  configurationRevision: string;
+  repositorySha: string;
+  commandKeys: ProjectCommandKey[];
+}
+export interface SetupConfirmation {
+  confirmed: boolean;
+  confirmedAt?: string;
+  repositorySha?: string;
+  commandKeys?: ProjectCommandKey[];
+}
 export interface SetupPull {
   url: string;
   number: number;
@@ -101,6 +136,7 @@ export interface OnboardingState {
   report?: OnboardingReport;
   setupPull?: SetupPull;
   appliedProfile?: "hosted" | "docker";
+  setupConfirmation?: SetupConfirmation;
 }
 export interface ApplyProfileInput {
   project: string;

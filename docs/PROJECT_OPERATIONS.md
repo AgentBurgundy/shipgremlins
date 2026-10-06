@@ -11,15 +11,21 @@ should get better?** to attach an outcome to investigation and reviewed coding.
 
 ## First useful run
 
-1. Connect source control and Claude Code, select a repository, and create a worker.
-2. Give a PM a mandate, then choose **Run discovery**. Discovery reads source and
-   tests; it needs neither Linear nor a deployed web app.
-3. Review its learned documents. When the source supports a definite setup recipe,
-   **Suggested setup** shows commands, ownership and the supporting files. Apply
-   commands or ownership explicitly. Suggestions never enable automation.
-4. Connect the appropriate Linear account, team and PM project. Choose repository
-   verification or a named test environment. Review the commands, then verify.
-5. Run a patrol once, review the evidence, and enable its schedule when ready.
+1. Connect source control and Claude Code, then select the existing repository.
+   Follow **Inspect your app → Review setup**. Read the cited source, select
+   command suggestions, and choose **Confirm setup**; no command runs yet.
+2. Meet the suggested gremlin or choose your own. Review its mandate and adopt it.
+   Sentry, Mixpanel, and Datadog setup is optional and scoped to this project.
+3. Create a ready worker and choose **Explore the codebase**. This first Discovery
+   reads source and tests; it needs neither Linear nor a deployed web app. Review
+   its learned documents and any further setup suggestions before applying them.
+4. Save the appropriate Linear connection for ticketed work. The PM can prepare
+   missing mappings and labels; select existing resources in **Linear mappings**
+   if you want to reuse them. Add a [test environment](PROJECT_ONBOARDING.md) and
+   [test login](TEST_ACCOUNTS.md) only when browser investigations need them.
+5. Use **What should get better?** to start a mission for one outcome. Review its
+   proposed ticket and evidence before approving coding. Recurring investigations
+   and automatic approved-work pickup remain separate opt-ins.
 
 Suggested commands are code that will execute in an app checkout during future
 jobs. Read them before applying. The worker must already contain the required

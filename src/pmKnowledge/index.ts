@@ -433,5 +433,21 @@ export function createPmKnowledge(options: {
       if (temporary) unlinkSync(temporary);
     }
   }
-  return { read, memory, capture };
+  function onboardingProgress(project: Project) {
+    for (const area of project.areas) {
+      try {
+        const snapshot = readSnapshot(
+          project.config.name,
+          area.key,
+          area.instanceId,
+        );
+        if (snapshot && snapshot.revision === knowledgeRevision(project, area))
+          return { investigated: true, area: area.key };
+      } catch {
+        // A damaged snapshot is still available for diagnosis in Learning.
+      }
+    }
+    return { investigated: false };
+  }
+  return { read, memory, capture, onboardingProgress };
 }

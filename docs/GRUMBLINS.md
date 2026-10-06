@@ -23,6 +23,12 @@ worker. Linear setup is not required for the simulation itself. Hosted staging
 and isolated local app environments use the project's existing environment
 configuration and dedicated test accounts.
 
+For authenticated journeys, use a supported [password test login](TEST_ACCOUNTS.md).
+The guided checker does not support email-code, magic-link, MFA, or external SSO
+flows. Grumblins do not receive the preview database credential used by the
+legacy Neon OTP recipe, so retaining that recipe alone does not give them a
+working signed-in session.
+
 ## Try a goal, then read the evidence
 
 Choose **Simulate** on a profile. The job runs through the existing runner queue,

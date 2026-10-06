@@ -39,6 +39,7 @@ async function fixture(
     permissionDenied?: boolean;
     noWorker?: boolean;
     inaccessibleRepository?: boolean;
+    disconnected?: boolean;
   } = {},
 ) {
   const root = realpathSync(
@@ -115,7 +116,7 @@ async function fixture(
     status: vi.fn(async () => ({
       provider: "linear",
       available: true,
-      connected: true,
+      connected: !options.disconnected,
       method: "oauth",
       workspace,
     })),
@@ -146,6 +147,10 @@ async function fixture(
     enqueue,
     start: vi.fn(),
     stop: vi.fn(async () => {}),
+    withConfigurationMutation: async (
+      _target: unknown,
+      action: () => unknown,
+    ) => action(),
   } as unknown as LocalRunners;
   const server = createDashboardServer(root, process.cwd(), session, [], {
     runners,
@@ -217,10 +222,107 @@ async function fixture(
     run,
     projects,
     workspace,
+    post: (path: string, input: unknown) =>
+      fetch(url + path, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      }),
   };
 }
 
 describe("PM prepare and verify admission", () => {
+  it("saves adoption without remote mutations when the selected Linear connection is missing", async () => {
+    const f = await fixture({ disconnected: true });
+    const response = await f.post("/api/projects/demo/areas", {
+      key: "investigator",
+      name: "App investigator",
+      mandate: "Understand the real app.",
+    });
+    const saved = loadProject(f.root, "demo");
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      projectInstanceId: saved.config.instanceId ?? null,
+      areaInstanceId:
+        saved.areas.find((area) => area.key === "investigator")!.instanceId ??
+        null,
+      linear: { status: "needs-connection" },
+    });
+    expect(
+      loadProject(f.root, "demo").areas.find(
+        (area) => area.key === "investigator",
+      ),
+    ).toMatchObject({
+      enabled: false,
+      linearProjectId: "PASTE_LINEAR_PROJECT_ID",
+    });
+    expect(f.client.organization).not.toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
+  it("automatically prepares a newly adopted PM even when its imported app has no Linear mapping", async () => {
+    const f = await fixture();
+    expect(loadProject(f.root, "demo").config.linear).toBeUndefined();
+    const response = await f.post("/api/projects/demo/areas", {
+      key: "investigator",
+      name: "App investigator",
+      mandate: "Understand the existing app and preserve its workflows.",
+    });
+    expect(response.status).toBe(200);
+    const project = loadProject(f.root, "demo"),
+      adopted = project.areas.find((area) => area.key === "investigator")!;
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      projectInstanceId: project.config.instanceId ?? null,
+      areaInstanceId: adopted.instanceId ?? null,
+      linear: { status: "ready" },
+    });
+    expect(adopted).toMatchObject({ enabled: false, codingEnabled: false });
+    expect(adopted.linearProjectId).not.toBe("PASTE_LINEAR_PROJECT_ID");
+    expect(
+      project.areas
+        .filter((area) => area.key !== "investigator")
+        .every((area) => area.linearProjectId === "PASTE_LINEAR_PROJECT_ID"),
+    ).toBe(true);
+    expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(f.client.ensureLabels).toHaveBeenCalledWith(
+      project.config.linear!.teamId,
+      ["pm:investigator", "pm-proposal"],
+    );
+    const restarted = createLinearProvisioning({
+      root: f.root,
+      client: async () => f.client,
+    });
+    await restarted.provision("demo", { areaKey: "investigator" });
+    expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
+  it("keeps adoption saved and reports actual missing connection or provider permission failures", async () => {
+    const f = await fixture({ permissionDenied: true });
+    const response = await f.post("/api/projects/demo/areas", {
+      key: "investigator",
+      name: "App investigator",
+      mandate: "Understand the real app.",
+    });
+    expect(response.status).toBe(200);
+    const saved = (await response.json()) as {
+      ok: boolean;
+      linear: { status: string; message: string };
+    };
+    expect(saved).toMatchObject({ ok: true, linear: { status: "error" } });
+    expect(saved.linear.message).toContain("read and create issue labels");
+    expect(JSON.stringify(saved)).not.toContain("private-linear-token");
+    expect(
+      loadProject(f.root, "demo").areas.find(
+        (area) => area.key === "investigator",
+      ),
+    ).toBeDefined();
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
   it.each([undefined, "exploration"] as const)(
     "prepares selected PM mappings, verifies real access, and admits %s through normal validation",
     async (mode) => {

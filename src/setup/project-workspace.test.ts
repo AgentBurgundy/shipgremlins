@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 class Element {
   children: Element[] = [];
@@ -12,7 +12,7 @@ class Element {
   value = "";
   open = false;
   disabled = false;
-  listeners = new Map<string, () => void>();
+  listeners = new Map<string, () => unknown>();
   href = "";
   rel = "";
   target = "";
@@ -25,14 +25,14 @@ class Element {
   setAttribute(name: string, value: string) {
     this.attributes.set(name, value);
   }
-  addEventListener(name: string, callback: () => void) {
+  addEventListener(name: string, callback: () => unknown) {
     this.listeners.set(name, callback);
   }
   replaceChildren(...children: Element[]) {
     this.children = children;
   }
   fire(name: string) {
-    this.listeners.get(name)?.();
+    return this.listeners.get(name)?.();
   }
 }
 function fixture() {
@@ -51,6 +51,8 @@ function fixture() {
       prefix: string,
       initial: object,
     ) => { read(): object; reset(): void };
+    createProjectWelcome?: (options: object) => object;
+    createProjectMissions?: (options: object) => object;
   };
   window.addEventListener = () => {};
   const document = {
@@ -73,6 +75,7 @@ function fixture() {
   };
   for (const name of [
     "crew-guidance",
+    "first-run",
     "coding-launch",
     "patrol-flow",
     "project-workspace",
@@ -417,5 +420,197 @@ describe("focused project crew workspace", () => {
     expect(
       all(root).filter((item) => item.textContent === "Run discovery"),
     ).toHaveLength(1);
+  });
+});
+
+describe("project-first investigation", () => {
+  function onboarding() {
+    const ui = fixture(),
+      root = new Element("MAIN"),
+      jobs: Record<string, unknown>[] = [];
+    const welcome = {
+      mount: vi.fn(),
+      resume: vi.fn(),
+      forget: vi.fn(),
+      protectFocus: () => false,
+      isBusy: () => false,
+    };
+    const missions = {
+      mount: vi.fn(),
+      forget: vi.fn(),
+      protectFocus: () => false,
+      isBusy: () => false,
+    };
+    ui.createProjectWelcome = () => welcome;
+    ui.createProjectMissions = () => missions;
+    const project = {
+      name: "shop",
+      instanceId: "current",
+      repo: "org/shop",
+      areas: [] as { key: string; name: string }[],
+      onboardingProgress: { investigated: false, hasMissions: false },
+      readiness: {
+        areas: [] as {
+          key: string;
+          discovery: { canRun: boolean; blockers?: object[] };
+        }[],
+      },
+    };
+    const api = vi.fn(async () => ({
+      job: {
+        id: "new",
+        runId: 2,
+        project: "shop",
+        projectInstanceId: "current",
+        area: "core",
+        type: "pm",
+        pmMode: "discovery",
+        status: "queued",
+      },
+    }));
+    const activity = vi.fn();
+    const view = ui.createProjectWorkspace(root, {
+      pages: { current: "project", project: "shop", pm: "", tab: "overview" },
+      api,
+      getJobs: () => jobs,
+      onJob: (job: Record<string, unknown>) => jobs.push(job),
+      onActivity: activity,
+    });
+    const refresh = () => view.setStatus({ projects: [project] }, false);
+    const adopt = () => {
+      project.areas.push({ key: "core", name: "Moss" });
+      project.readiness.areas.push({
+        key: "core",
+        discovery: { canRun: true },
+      });
+      refresh();
+    };
+    refresh();
+    return {
+      root,
+      jobs,
+      project,
+      api,
+      activity,
+      refresh,
+      adopt,
+      welcome,
+      missions,
+    };
+  }
+  it("shows reviewed repository welcome before adoption, then explicitly starts Discovery rather than an outcome mission", async () => {
+    const f = onboarding();
+    expect(f.welcome.mount).toHaveBeenCalledTimes(1);
+    expect(f.missions.mount).not.toHaveBeenCalled();
+    expect(f.api).not.toHaveBeenCalled();
+    f.adopt();
+    expect(text(f.root)).toContain("Give Moss a first look");
+    expect(f.missions.mount).not.toHaveBeenCalled();
+    await all(f.root)
+      .find((node) => node.textContent === "Explore the codebase")!
+      .fire("click");
+    expect(f.api).toHaveBeenCalledWith("/api/jobs", {
+      type: "pm",
+      project: "shop",
+      area: "core",
+      pmMode: "discovery",
+    });
+    expect(text(f.root)).toContain("Queued for your runner");
+    await all(f.root)
+      .find((node) => node.textContent === "Follow the investigation")!
+      .fire("click");
+    expect(f.activity).toHaveBeenCalledWith("new");
+    expect(f.api).toHaveBeenCalledTimes(1);
+  });
+  it("uses actual readiness and failures, ignoring runs from a replaced project", async () => {
+    const f = onboarding();
+    f.adopt();
+    f.jobs.push({
+      id: "old",
+      runId: 20,
+      project: "shop",
+      projectInstanceId: "replaced",
+      type: "pm",
+      area: "core",
+      status: "running",
+      pmMode: "discovery",
+    });
+    f.project.readiness.areas[0]!.discovery = {
+      canRun: false,
+      blockers: [
+        {
+          action: "worker",
+          id: "worker",
+          message: "A verified runner is needed.",
+        },
+      ],
+    };
+    f.refresh();
+    expect(text(f.root)).toContain("A verified runner is needed");
+    expect(
+      all(f.root).find((node) => node.dataset.setupAction === "worker")
+        ?.textContent,
+    ).toBe("Prepare first mission");
+    expect(text(f.root)).not.toContain("Follow the investigation");
+    f.project.readiness.areas[0]!.discovery = { canRun: true };
+    Object.assign(f.project.areas[0]!, { discoveryRevision: "current-brief" });
+    f.jobs.push({
+      id: "old-pm",
+      runId: 21,
+      project: "shop",
+      projectInstanceId: "current",
+      type: "pm",
+      area: "core",
+      status: "running",
+      pmMode: "discovery",
+      discoveryRevision: "replaced-pm",
+    });
+    f.jobs.push({
+      id: "failed",
+      runId: 1,
+      project: "shop",
+      projectInstanceId: "current",
+      type: "pm",
+      area: "core",
+      status: "failed",
+      pmMode: "discovery",
+      discoveryRevision: "current-brief",
+      message: "Runner disconnected.",
+    });
+    f.refresh();
+    expect(text(f.root)).toContain("Runner disconnected");
+    expect(text(f.root)).toContain("Retry the investigation");
+    expect(f.api).not.toHaveBeenCalled();
+  });
+  it("uses retained identity-scoped investigation evidence and preserves established missions or coding history", () => {
+    const f = onboarding();
+    f.adopt();
+    f.jobs.push({
+      type: "pm",
+      project: "shop",
+      projectInstanceId: "current",
+      status: "succeeded",
+      area: "core",
+    });
+    f.refresh();
+    expect(f.missions.mount).not.toHaveBeenCalled();
+    f.project.onboardingProgress.investigated = true;
+    f.refresh();
+    expect(f.missions.mount).toHaveBeenCalledTimes(1);
+    f.project.onboardingProgress.investigated = false;
+    f.project.onboardingProgress.hasMissions = true;
+    f.project.areas = [];
+    f.refresh();
+    expect(f.missions.mount).toHaveBeenCalledTimes(2);
+    f.project.onboardingProgress.hasMissions = false;
+    f.jobs.push({
+      type: "developer",
+      project: "shop",
+      projectInstanceId: "current",
+      status: "succeeded",
+    });
+    f.refresh();
+    expect(f.missions.mount).toHaveBeenCalledTimes(3);
+    expect(f.welcome.mount).toHaveBeenCalledTimes(1);
   });
 });

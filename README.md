@@ -130,11 +130,13 @@ The dashboard opens in your browser with gremlins, project setup, official GitHu
 
 Once the dashboard opens, choose where your gremlin will live:
 
-- **An existing app:** choose **Improve my app**, connect its repository, and adopt a gremlin on
-  the project. Choose its job, give it a name and a clear goal, then review its
-  brief. Importing the app may start Setup Gremlin analysis when source access
-  and Claude Code are ready; it starts no PM or coding job. Start with one small
-  assignment and keep automation paused.
+- **An existing app:** choose **Improve my app** and connect its repository.
+  The Setup Gremlin inspects the source and suggests commands and a first PM.
+  Review the evidence, select the commands to keep, and choose **Confirm setup**.
+  Then meet the suggested gremlin, review its brief, and adopt it. Optional
+  Sentry, Mixpanel, and Datadog setup opens for this project. Choose **Explore
+  the codebase** for the first read-only Discovery; use **What should get better?**
+  afterward to start an outcome-focused mission. Automation stays paused.
   [Meet your first PM →](docs/SETUP.md#your-first-adoption)
 - **A new idea:** choose **Start from an idea · experimental** and review the
   proposed foundation and crew. The new repository is private by default. A
@@ -143,8 +145,9 @@ Once the dashboard opens, choose where your gremlin will live:
   [Experimental idea builds →](docs/IDEA_TO_APP.md)
 
 Source control and Claude Code are enough to prepare an existing app's PM;
-Discovery also needs a ready worker. Connect Linear when you want proposals or
-approved coding work. Add a test environment when the gremlin needs to use a
+Discovery also needs a ready worker. Save a Linear connection when you want
+proposals or approved coding work; the PM prepares missing mappings and labels
+using the project's selected account. Add a test environment when the gremlin needs to use a
 runnable app in a browser. The Setup Gremlin can help choose hosted staging or
 a disposable Docker app. [Find a test home →](docs/PROJECT_ONBOARDING.md)
 
@@ -190,14 +193,15 @@ required connection verification can be prepared when you start that run.
 The worker runs on the CLI/dashboard server, even when you
 visit from a phone. Ready requires actual Chromium screenshot evidence.
 
-New PMs start with automation paused. Choose **Explore the codebase** on the
+New PMs start with both automation controls paused. Choose **Explore the codebase** on the
 welcome screen for Discovery, or **Prepare first mission** to finish its setup.
 Discovery needs no Linear or browser environment. A fresh idea starts with
 **Build the foundation** instead. For later patrols, choose **Run now** on a PM
 card or its workspace without turning on its schedule. Missing
 setup opens a checklist for that PM with direct actions. Review Activity, then
-turn **Automation** on for recurring patrols and background approved-ticket
-pickup. Turning it off stops new automatic work; manual runs remain separate. A manual
+enable **Look for new improvements** for scheduled patrols or **Automatically
+build approved work** for approved-ticket pickup. These controls are independent.
+Turning either off stops its new automatic work; manual runs remain separate. A manual
 Coding run still requires an open, approved ticket in the PM's Linear project.
 
 Choose **Adopt a PM Gremlin** on your project's page. Describe what it should
@@ -229,6 +233,12 @@ evidence and apply each suggestion explicitly; discovery never enables automatio
 Connect GitHub or GitLab with a device code in **Source control**, then select your repository. GitHub requires installing the App on the repositories you choose. The controller manages token refresh and waits when active work still needs the old credential. Existing manual tokens and self-hosted GitLab remain available as advanced setup options.
 
 Connect Linear from the dashboard. New apps can create a Linear team, and each PM mandate gets its own Linear project. Existing mappings are preserved and interrupted provisioning resumes with the same IDs. [Connection and mapping guide →](docs/LINEAR_VERCEL.md)
+
+Browser test credentials belong in Connections; environment settings hold their
+references. The guided sign-in check currently supports a same-origin password
+form. Email codes, magic links, MFA, and external SSO need additional support;
+do not treat a public-page check as signed-in verification.
+[Set up test accounts →](docs/TEST_ACCOUNTS.md)
 
 **Different clients, different accounts.** Save multiple named Linear and Vercel
 connections, then select the account each project uses. One app can use your own

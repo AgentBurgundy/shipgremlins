@@ -289,6 +289,7 @@ describe("Vercel setup conversation", () => {
     expect(f.selected).toHaveBeenCalledWith({
       target,
       label: "forevermods-staging · pm-staging",
+      url: "https://app-staging.vercel.app",
     });
     expect(f.api).toHaveBeenCalledTimes(1);
     expect(text(f.root)).toContain("save the environment, then test access");

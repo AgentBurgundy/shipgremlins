@@ -241,6 +241,13 @@
       timer = null,
       contextKey = "";
     let launching = false;
+    const welcome = window.createProjectWelcome?.({
+      api,
+      pages,
+      onCreatePm,
+      onSaved,
+      isLocked: () => locked,
+    });
     const missions = window.createProjectMissions?.({
       api,
       pages,
@@ -675,6 +682,8 @@
           (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
           job.area === area.key &&
           job.pmMode === "discovery" &&
+          (!area.discoveryRevision ||
+            job.discoveryRevision === area.discoveryRevision) &&
           ["queued", "running"].includes(job.status),
       )
         ? "refreshing"
@@ -777,8 +786,13 @@
         );
     }
     function home(project) {
-      if (project.foundation?.needed)
+      const step =
+        window.projectFirstStep?.(project, getJobs?.() || []) ||
+        (project.foundation?.needed ? "foundation" : "mission");
+      if (step === "foundation")
         root.append(window.renderFoundationLauncher(project));
+      else if (step === "welcome" && welcome) welcome.mount(root, project);
+      else if (step === "discovery") firstInvestigation(project);
       else if (missions) missions.mount(root, project);
       else if (project.areas?.length)
         root.append(
@@ -794,6 +808,156 @@
         activityList(project, null, 3),
       );
       root.append(recent);
+    }
+    function firstInvestigation(project) {
+      const area =
+        project.areas.find(
+          (item) => item.key === project.onboardingProgress?.area,
+        ) || project.areas[0];
+      const jobs = (getJobs?.() || [])
+        .filter(
+          (job) =>
+            job.type === "pm" &&
+            job.project === project.name &&
+            (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
+            job.area === area.key,
+        )
+        .filter(
+          (job) =>
+            job.pmMode !== "discovery" ||
+            !area.discoveryRevision ||
+            job.discoveryRevision === area.discoveryRevision,
+        )
+        .sort((a, b) => b.runId - a.runId);
+      const active = jobs.find((job) =>
+        ["queued", "running"].includes(job.status),
+      );
+      const previous = jobs.find((job) => job.pmMode === "discovery");
+      const failed =
+        previous && ["failed", "canceled"].includes(previous.status);
+      const readiness = project.readiness?.areas?.find(
+        (item) => item.key === area.key,
+      )?.discovery;
+      const card = node(
+          "section",
+          "project-first-investigation mission-current",
+        ),
+        heading = node("div", "mission-heading"),
+        image = node("img", "first-investigation-creature"),
+        actions = node("div", "mission-actions");
+      image.src = "/assets/gremlin-investigating.webp";
+      image.alt = "";
+      image.width = image.height = 120;
+      heading.append(
+        node("span", "eyebrow muted", "YOUR FIRST INVESTIGATION"),
+        node(
+          "h2",
+          "",
+          active
+            ? `${area.name || "Your gremlin"} is ${active.status === "queued" ? "ready to get started" : "learning the app"}.`
+            : failed
+              ? "Let’s finish getting to know your app."
+              : `Give ${area.name || "your gremlin"} a first look.`,
+        ),
+        node(
+          "p",
+          "",
+          "Discovery reads the code and brings back a map of the product, its important journeys, and the gaps worth investigating. Then you can choose what should get better.",
+        ),
+      );
+      card.append(image, heading);
+      if (active) {
+        card.append(
+          node(
+            "p",
+            "mission-note",
+            active.status === "queued"
+              ? "Queued for your runner. Opening this page does not queue another investigation."
+              : "The investigation is running. You can leave this page and return to its findings.",
+          ),
+        );
+        actions.append(
+          button(
+            "Follow the investigation",
+            () => options.onActivity?.(active.id),
+            "button button-dark",
+          ),
+        );
+      } else {
+        if (failed)
+          card.append(
+            node(
+              "p",
+              "project-workspace-notice",
+              previous.message ||
+                "The last Discovery did not finish. Review the run before trying again.",
+            ),
+          );
+        if (readiness?.canRun) {
+          const start = button(
+            launching
+              ? "Starting investigation…"
+              : failed
+                ? "Retry the investigation"
+                : "Explore the codebase",
+            () => discover(project.name, area.key).catch(() => {}),
+            "button button-dark",
+          );
+          start.disabled = locked || launching;
+          actions.append(start);
+        } else {
+          const blocker = readiness?.blockers?.[0];
+          card.append(
+            node(
+              "p",
+              "project-workspace-notice",
+              blocker?.message ||
+                "Checking what this gremlin needs for its first investigation…",
+            ),
+          );
+          if (blocker?.action)
+            actions.append(
+              action(
+                "Prepare first mission",
+                {
+                  setupAction: blocker.action,
+                  setupProject: project.name,
+                  setupStep: blocker.id,
+                  setupArea: area.key,
+                },
+                "button button-dark",
+              ),
+            );
+        }
+        if (previous)
+          actions.append(
+            button("Review the last run", () =>
+              options.onActivity?.(previous.id),
+            ),
+          );
+      }
+      actions.append(
+        link(
+          "Their brief & findings",
+          path(project.name, area.key, "discovery"),
+          "small-button",
+        ),
+      );
+      const notice = notices.get(`${project.name}/${area.key}`);
+      if (notice) {
+        const status = node("p", "project-workspace-notice", notice);
+        status.setAttribute("role", "status");
+        card.append(status);
+      }
+      card.append(
+        actions,
+        node(
+          "p",
+          "mission-note",
+          "This first look does not file tickets or start coding. Linear and a test environment can wait until the work needs them.",
+        ),
+      );
+      root.append(card);
     }
     function crewWorkspace(project) {
       const crew = node("section", "project-crew-section");
@@ -1285,6 +1449,9 @@
         pages.tab,
         knowledge.get(activeKey()),
         notices.get(activeKey()),
+        project?.areas?.map((item) =>
+          notices.get(`${project.name}/${item.key}`),
+        ),
         locked,
         launching,
         options.getCheck?.(project?.name),
@@ -1307,6 +1474,7 @@
           options.onboarding?.protectFocus(root) ||
           grumblins?.protectFocus() ||
           missions?.protectFocus() ||
+          welcome?.protectFocus() ||
           setupSuggestions?.protectFocus())
       )
         return;
@@ -1398,6 +1566,7 @@
       }
       render();
       grumblins?.resume(status?.projects || []);
+      welcome?.resume(status?.projects || []);
       if (key) refreshKnowledge();
     }
     window.addEventListener("dashboard:pagechange", routeChanged);
@@ -1431,6 +1600,7 @@
         editor.busy ||
         launching ||
         missions?.isBusy() ||
+        welcome?.isBusy() ||
         setupSuggestions?.isBusy() ||
         grumblins?.isBusy(),
       refresh: refreshKnowledge,
@@ -1449,6 +1619,7 @@
         if (!area) options.operations?.forget(project);
         if (!area) grumblins?.forget(project);
         if (!area) missions?.forget(project);
+        if (!area) welcome?.forget(project);
         if (editor.project === project && (!area || editor.area === area)) {
           finishClose();
           editor.original = "";

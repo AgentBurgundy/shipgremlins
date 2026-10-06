@@ -104,6 +104,9 @@ class Element extends Events {
   getAttribute(name: string) {
     return this.attributes.get(name);
   }
+  removeAttribute(name: string) {
+    this.attributes.delete(name);
+  }
   matches(selector: string): boolean {
     if (selector.startsWith(":invalid")) return this.invalid;
     if (selector.startsWith("#")) return this.id === selector.slice(1);
@@ -244,6 +247,16 @@ function fixture(path = "/overview") {
   add(add(pmFields, "div", "", "form-bottom"), "button", "create-pm");
   const projectDialog = add(body, "dialog", "project-settings-dialog");
   const projectForm = add(projectDialog, "form", "edit-project-form");
+  add(projectForm, "fieldset", "edit-project-fields");
+  for (const id of [
+    "close-project-settings",
+    "reload-project-settings",
+    "advanced-project-settings",
+    "delete-project",
+    "keep-project-settings",
+    "discard-project-settings",
+  ])
+    add(projectForm, "button", id);
   for (const id of [
     "project-settings-title",
     "project-settings-name",
@@ -322,6 +335,156 @@ function fixture(path = "/overview") {
     observers,
     navigate,
     focused: () => focused,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+function projectFile(name: string, teamId = `team-${name}`) {
+  return {
+    path: `projects/${name}/project.json`,
+    revision: `revision-${name}`,
+    content: JSON.stringify({ repo: `owner/${name}`, linear: { teamId } }),
+  };
+}
+
+function areasFile(name: string) {
+  return {
+    path: `projects/${name}/areas.json`,
+    revision: `areas-${name}`,
+    content: JSON.stringify({ areas: {} }),
+  };
+}
+
+const linearResources = {
+  teams: ["shop", "new-shop"].map((name) => ({
+    id: `team-${name}`,
+    name,
+    key: name.toUpperCase(),
+  })),
+  projects: [],
+};
+
+async function savedSettingsApi(path: string) {
+  if (path === "/api/service-connections")
+    return {
+      connections: [
+        { id: "default", provider: "linear", label: "Linear", connected: true },
+      ],
+    };
+  if (path === "/api/linear/resources") return linearResources;
+  const file = new URL(path, "http://localhost").searchParams.get("path");
+  const match = file?.match(/^projects\/([^/]+)\/(project|areas)\.json$/);
+  if (match)
+    return match[2] === "project"
+      ? projectFile(match[1]!)
+      : areasFile(match[1]!);
+  throw new Error(`Unexpected request: ${path}`);
+}
+
+function settingsLifecycleFixture(
+  request: (
+    path: string,
+    body?: Record<string, unknown>,
+    method?: string,
+  ) => Promise<unknown> = savedSettingsApi,
+) {
+  const f = fixture();
+  const projectEditor = {
+    name: "",
+    path: "",
+    revision: "",
+    config: null as Record<string, unknown> | null,
+    form: null as { isDirty(): boolean; read(): object } | null,
+    busy: false,
+    loading: false,
+    generation: 0,
+    pending: null as string | null,
+    section: "project",
+  };
+  let dirty = false;
+  const createProjectSettings = vi.fn(
+    (root: Element, _prefix: string, config: { repo: string }) => {
+      dirty = false;
+      root.replaceChildren();
+      f.add(root, "input", "loaded-project-repo").value = config.repo;
+      return { isDirty: () => dirty, read: () => ({ repo: config.repo }) };
+    },
+  );
+  const api = vi.fn(request);
+  const context = {
+    ...f.context,
+    $: f.get,
+    api,
+    projectEditor,
+    formsLocked: false,
+    serviceProfiles: [],
+    window: Object.assign(f.window, { createProjectSettings }),
+    projectChecks: new Map(),
+    refreshStatus: vi.fn(async () => {}),
+    adoptionSignalReturn: null,
+    pmAdoption: null,
+    currentStatus: null,
+    openPmCreation: vi.fn(),
+    openDeletion: vi.fn(),
+    requestEditorAction: vi.fn(),
+    pages: { navigate: vi.fn() },
+    message: (target: Element, value: string) => {
+      target.textContent = value;
+    },
+  };
+  const linear = readFileSync(
+    new URL("../../dashboard/linear-settings.js", import.meta.url),
+    "utf8",
+  );
+  const begin = app.indexOf("  function prepareProjectSections("),
+    end = app.indexOf('  $("reveal-gcp-credentials").addEventListener', begin),
+    linearStart = app.indexOf("  function adoptLinearProjectSnapshot("),
+    linearEnd = app.indexOf(
+      "  for (const provider of Object.keys(serviceProviders))",
+      linearStart,
+    );
+  expect(begin).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(begin);
+  const handlers = runInNewContext(
+    `${linear}
+    ${app.slice(linearStart, linearEnd)}
+    ${app.slice(begin, end)}
+    ({ open: openProjectSettings, action: projectSettingsAction, linear: projectLinearSettings })`,
+    context,
+  ) as {
+    open(name: string): Promise<void>;
+    action(action: string, discard?: boolean): Promise<void>;
+    linear: { isBusy(): boolean; isDirty(): boolean; isWriting(): boolean };
+  };
+  return {
+    ...f,
+    ...handlers,
+    api,
+    refreshStatus: context.refreshStatus,
+    projectEditor,
+    createProjectSettings,
+    makeDirty: () => {
+      dirty = true;
+    },
+    async dismiss(how: "Close" | "Escape") {
+      const preventDefault = vi.fn();
+      if (how === "Close") await f.get("close-project-settings").emit("click");
+      else {
+        await f
+          .get("project-settings-dialog")
+          .emit("cancel", { preventDefault });
+        expect(preventDefault).toHaveBeenCalledOnce();
+      }
+    },
   };
 }
 
@@ -482,6 +645,8 @@ describe("project editor outer-surface integration", () => {
       config: {},
       form: {},
       busy: false,
+      loading: false,
+      generation: 0,
       section: "signals",
     };
     const context = {
@@ -534,6 +699,8 @@ describe("project editor outer-surface integration", () => {
         form: { read: () => ({ telemetry: { sentry: { project: "shop" } } }) },
         section,
         busy: false,
+        loading: false,
+        generation: 0,
       };
       const api = vi.fn(async () => ({ revision: "saved-revision" }));
       const context = {
@@ -658,4 +825,259 @@ describe("project editor outer-surface integration", () => {
       ).toBe(false);
     },
   );
+});
+
+describe("project settings modal request lifecycle", () => {
+  it.each(["Close", "Escape"] as const)(
+    "%s dismisses a pending config read and prevents its late response from mounting fields",
+    async (how) => {
+      const pending = deferred<ReturnType<typeof projectFile>>();
+      const f = settingsLifecycleFixture(() => pending.promise);
+      const opening = f.open("shop");
+      expect(f.projectEditor.loading).toBe(true);
+      expect(f.get("close-project-settings").disabled).toBe(false);
+      await f.dismiss(how);
+      expect(f.get("project-settings-dialog").open).toBe(false);
+      expect(f.projectEditor).toMatchObject({
+        busy: false,
+        loading: false,
+        generation: 2,
+      });
+      pending.resolve(projectFile("shop"));
+      await opening;
+      expect(f.createProjectSettings).not.toHaveBeenCalled();
+      expect(f.get("edit-project-settings").children).toHaveLength(0);
+      expect(f.get("project-settings-dialog").open).toBe(false);
+      expect(f.api).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["resolved", "rejected"] as const)(
+    "a late %s config request cannot overwrite a newly opened project",
+    async (outcome) => {
+      const pending = deferred<ReturnType<typeof projectFile>>();
+      const f = settingsLifecycleFixture((path) =>
+        path.includes("projects%2Fshop%2Fproject.json")
+          ? pending.promise
+          : savedSettingsApi(path),
+      );
+      const oldOpening = f.open("shop");
+      await f.dismiss("Escape");
+      await f.open("new-shop");
+      const form = f.projectEditor.form;
+      if (outcome === "resolved") pending.resolve(projectFile("shop"));
+      else pending.reject(new Error("Old project unavailable"));
+      await oldOpening;
+      expect(f.get("project-settings-dialog").open).toBe(true);
+      expect(f.projectEditor).toMatchObject({
+        name: "new-shop",
+        revision: "revision-new-shop",
+        busy: false,
+        loading: false,
+      });
+      expect(f.projectEditor.form).toBe(form);
+      expect(f.get("loaded-project-repo").value).toBe("owner/new-shop");
+      expect(f.get("project-settings-message").textContent).toBe("");
+      expect(f.createProjectSettings).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ["Close", "initial"],
+    ["Escape", "initial"],
+    ["Close", "refresh"],
+    ["Escape", "refresh"],
+  ] as const)(
+    "%s dismisses an %s Linear resource read without accepting its late data",
+    async (how, phase) => {
+      const resources = deferred<typeof linearResources>();
+      const requested = deferred<void>();
+      let delayResources = phase === "initial";
+      const f = settingsLifecycleFixture((path) => {
+        if (path === "/api/linear/resources" && delayResources) {
+          requested.resolve();
+          return resources.promise;
+        }
+        return savedSettingsApi(path);
+      });
+      let loading = f.open("shop");
+      if (phase === "refresh") {
+        await loading;
+        delayResources = true;
+        loading = f
+          .button(
+            f.get("edit-linear-settings"),
+            "Refresh Linear teams & projects",
+          )
+          .emit("click")
+          .then(() => {});
+      }
+      await requested.promise;
+      expect(f.linear.isBusy()).toBe(true);
+      expect(f.get("close-project-settings").disabled).toBe(false);
+      await f.dismiss(how);
+      expect(f.get("project-settings-dialog").open).toBe(false);
+      expect(f.linear.isBusy()).toBe(false);
+      resources.resolve(linearResources);
+      await loading;
+      expect(f.get("project-linear-settings-title").textContent).toBe(
+        "Linear mappings",
+      );
+      expect(
+        f.get("edit-linear-settings").querySelector(".linear-repair-fields")
+          ?.hidden,
+      ).toBe(true);
+      expect(f.linear.isDirty()).toBe(false);
+      expect(f.projectEditor.busy).toBe(false);
+      expect(f.get("project-settings-dialog").open).toBe(false);
+    },
+  );
+
+  it("a late Linear resource response cannot restore the old project's mappings in a new dialog", async () => {
+    const resources = deferred<typeof linearResources>();
+    const requested = deferred<void>();
+    let resourceCalls = 0;
+    const f = settingsLifecycleFixture((path) => {
+      if (path === "/api/linear/resources" && ++resourceCalls === 1) {
+        requested.resolve();
+        return resources.promise;
+      }
+      return savedSettingsApi(path);
+    });
+    const oldOpening = f.open("shop");
+    await requested.promise;
+    await f.dismiss("Close");
+    await f.open("new-shop");
+    resources.resolve({
+      teams: [{ id: "obsolete-team", name: "Obsolete", key: "OLD" }],
+      projects: [],
+    });
+    await oldOpening;
+    expect(f.get("project-linear-settings-title").textContent).toBe(
+      "Linear mappings · new-shop",
+    );
+    expect(f.get("edit-linear-team").value).toBe("team-new-shop");
+    expect(
+      f
+        .get("edit-linear-team")
+        .children.some((option) => option.value === "obsolete-team"),
+    ).toBe(false);
+    expect(f.get("loaded-project-repo").value).toBe("owner/new-shop");
+    expect(f.linear.isBusy()).toBe(false);
+    expect(f.get("project-settings-dialog").open).toBe(true);
+  });
+
+  it.each(["project", "Linear"] as const)(
+    "preserves real %s edits until the owner discards them to close",
+    async (kind) => {
+      const f = settingsLifecycleFixture();
+      await f.open("shop");
+      if (kind === "project") f.makeDirty();
+      else {
+        f.get("edit-linear-team").value = "team-new-shop";
+        await f.get("edit-linear-team").emit("change");
+        expect(f.linear.isDirty()).toBe(true);
+      }
+      await f.dismiss("Escape");
+      expect(f.get("project-settings-dialog").open).toBe(true);
+      expect(f.get("project-settings-discard").hidden).toBe(false);
+      expect(f.projectEditor.pending).toBe("close");
+      expect(f.focused()).toBe(f.get("keep-project-settings"));
+      await f.get("discard-project-settings").emit("click");
+      expect(f.get("project-settings-dialog").open).toBe(false);
+      expect(f.get("project-settings-discard").hidden).toBe(true);
+      expect(f.projectEditor.pending).toBeNull();
+      expect(f.api.mock.calls.every(([, body]) => !body)).toBe(true);
+    },
+  );
+
+  it("refuses Close, Escape and discard during a real project save, then permits close during its post-save reload", async () => {
+    const write = deferred<{ revision: string }>();
+    const resources = deferred<typeof linearResources>();
+    const reloadStarted = deferred<void>();
+    let saving = false;
+    const f = settingsLifecycleFixture((path, _body, method) => {
+      if (path === "/api/config" && method === "PUT") {
+        saving = true;
+        return write.promise;
+      }
+      if (saving && path === "/api/linear/resources") {
+        reloadStarted.resolve();
+        return resources.promise;
+      }
+      return savedSettingsApi(path);
+    });
+    await f.open("shop");
+    f.makeDirty();
+    const submission = f.get("edit-project-form").emit("submit");
+    const saveGeneration = f.projectEditor.generation;
+    expect(f.projectEditor).toMatchObject({ busy: true, loading: false });
+    expect(f.get("close-project-settings").disabled).toBe(true);
+    await f.dismiss("Close");
+    await f.dismiss("Escape");
+    await f.action("close", true);
+    expect(f.get("project-settings-dialog").open).toBe(true);
+    expect(f.projectEditor.generation).toBe(saveGeneration);
+    expect(
+      f.api.mock.calls.filter(([, , method]) => method === "PUT"),
+    ).toHaveLength(1);
+    write.resolve({ revision: "saved-revision" });
+    await reloadStarted.promise;
+    expect(f.projectEditor.revision).toBe("saved-revision");
+    expect(f.get("close-project-settings").disabled).toBe(false);
+    await f.dismiss("Escape");
+    expect(f.get("project-settings-dialog").open).toBe(false);
+    resources.resolve(linearResources);
+    await submission;
+    expect(f.projectEditor).toMatchObject({ busy: false, loading: false });
+    expect(f.get("project-linear-settings-title").textContent).toBe(
+      "Linear mappings",
+    );
+    expect(f.get("project-settings-dialog").open).toBe(false);
+  });
+
+  it("refuses dismissal during an actual Linear mapping write and permits close while its saved-status refresh is pending", async () => {
+    const write = deferred<{
+      project: ReturnType<typeof projectFile>;
+      areas: ReturnType<typeof areasFile>;
+    }>();
+    const f = settingsLifecycleFixture((path, body) => {
+      if (path === "/api/projects/shop/linear/mappings" && body)
+        return write.promise;
+      return savedSettingsApi(path);
+    });
+    const refresh = deferred<void>();
+    const refreshing = deferred<void>();
+    f.refreshStatus.mockImplementationOnce(() => {
+      refreshing.resolve();
+      return refresh.promise;
+    });
+    await f.open("shop");
+    f.get("edit-linear-team").value = "team-new-shop";
+    await f.get("edit-linear-team").emit("change");
+    const saving = f
+      .button(f.get("edit-linear-settings"), "Save Linear mappings")
+      .emit("click");
+    expect(f.linear.isWriting()).toBe(true);
+    expect(f.get("close-project-settings").disabled).toBe(true);
+    await f.dismiss("Escape");
+    await f.dismiss("Close");
+    await f.action("close", true);
+    expect(f.get("project-settings-dialog").open).toBe(true);
+    expect(f.linear.isWriting()).toBe(true);
+    write.resolve({
+      project: projectFile("shop", "team-new-shop"),
+      areas: areasFile("shop"),
+    });
+    await refreshing.promise;
+    expect(f.linear.isWriting()).toBe(false);
+    expect(f.linear.isDirty()).toBe(false);
+    expect(f.get("close-project-settings").disabled).toBe(false);
+    await f.dismiss("Close");
+    expect(f.get("project-settings-dialog").open).toBe(false);
+    refresh.resolve();
+    await saving;
+    expect(f.get("project-settings-dialog").open).toBe(false);
+    expect(f.linear.isWriting()).toBe(false);
+  });
 });

@@ -80,6 +80,55 @@ function fixture(runId = 1) {
   return { job, project, area, documents, result, artifacts, docker, store };
 }
 describe("PM knowledge retention", () => {
+  it("reports investigation progress only from complete knowledge for the current owner revision and identities", async () => {
+    const f = fixture();
+    expect(f.store.onboardingProgress(f.project)).toEqual({
+      investigated: false,
+    });
+    await f.store.capture(f.job, f.docker);
+    expect(
+      createPmKnowledge({ root }).onboardingProgress(loadProject(root, "app")),
+    ).toEqual({ investigated: true, area: "core" });
+    const areaFile = join(f.project.dir, "areas.json"),
+      original = readFileSync(areaFile, "utf8"),
+      area = JSON.parse(original);
+    area.areas.core.mandate = "A changed owner goal";
+    writeFileSync(areaFile, JSON.stringify(area));
+    expect(f.store.onboardingProgress(loadProject(root, "app"))).toEqual({
+      investigated: false,
+    });
+    writeFileSync(areaFile, original);
+    area.areas.core.instanceId = "11111111-1111-4111-8111-111111111111";
+    writeFileSync(areaFile, JSON.stringify(area));
+    expect(f.store.onboardingProgress(loadProject(root, "app"))).toEqual({
+      investigated: false,
+    });
+    writeFileSync(areaFile, original);
+    const projectFile = join(f.project.dir, "project.json"),
+      project = JSON.parse(readFileSync(projectFile, "utf8"));
+    project.instanceId = "22222222-2222-4222-8222-222222222222";
+    writeFileSync(projectFile, JSON.stringify(project));
+    expect(f.store.onboardingProgress(loadProject(root, "app"))).toEqual({
+      investigated: false,
+    });
+  });
+  it("keeps corrupt knowledge for diagnosis without claiming first-investigation completion", async () => {
+    const f = fixture();
+    await f.store.capture(f.job, f.docker);
+    const file = join(
+      root,
+      ".run",
+      "pm-knowledge",
+      "app",
+      "core",
+      "latest.json",
+    );
+    writeFileSync(file, "{ damaged snapshot");
+    expect(f.store.onboardingProgress(loadProject(root, "app"))).toEqual({
+      investigated: false,
+    });
+    expect(readFileSync(file, "utf8")).toBe("{ damaged snapshot");
+  });
   it("requires exact Grumblin worker provenance and all knowledge documents before retaining simulated findings", async () => {
     const f = fixture();
     const grumblin = grumblinFixture({

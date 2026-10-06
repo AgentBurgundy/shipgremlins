@@ -7,15 +7,24 @@ for repository verification.
 
 ## The flow at a glance
 
-Project onboarding and a PM’s own discovery are separate steps. Existing apps can adopt a PM and begin repository discovery before browser setup. The Setup Gremlin recommends how to run the application; PM discovery learns one mandate’s part of that codebase. A new idea builds its reviewed foundation before either investigates source.
+Project inspection and a PM's own Discovery are separate steps. For an existing
+app, inspect the repository, review and confirm source-backed command suggestions,
+then adopt the recommended PM or choose your own. Optional project signals can
+be connected from the adoption welcome. Start **Explore the codebase** to let
+the PM learn its mandate's part of the real app before choosing an outcome
+mission. Browser setup can wait. A new idea builds its reviewed foundation
+before asking a PM to investigate source.
 
 ```mermaid
 flowchart TD
-  Repo[Connect existing repository] --> PM[Adopt PM with a goal and boundaries]
-  PM --> Discovery[Optional read-only PM discovery]
+  Repo[Connect existing repository] --> Inspect[Inspect source and review command suggestions]
+  Inspect --> Confirm[Confirm selected setup]
+  Confirm --> PM[Adopt PM with a goal and boundaries]
+  PM --> Signals[Optional project signals]
+  Signals --> Discovery[First read-only PM Discovery]
   Discovery --> Memory[Code map, features, ranked queue and memory]
-  Repo --> Setup[Setup Gremlin recommends how to test]
-  Setup --> Strategy{Need browser testing?}
+  Memory --> Mission[Choose one outcome mission]
+  Mission --> Strategy{Need browser testing?}
   Strategy -->|No| Code[Repository checks]
   Strategy -->|Yes| Hosted[Hosted staging or disposable Docker app]
   Hosted --> Access[Test browser access and configured logins]
@@ -95,11 +104,13 @@ Discovery mission, or **Prepare first mission** when its setup is incomplete.
 Discovery needs source access, Claude Code, and a ready worker; no Linear or
 browser environment is required. Fresh ideas offer **Build the foundation** first.
 
-**Run discovery** queues a later codebase investigation. **Run now** queues one normal
-patrol without enabling automation. The **Automation** switch controls scheduled
-patrols and automatic pickup of approved Coding tickets. Turning it off does not
-cancel work already running. Each action shows its own missing setup requirements
-with direct remedies. A remote worker must be online and enrolled for this project.
+**Run discovery** queues a later codebase investigation. **Run now** queues one
+normal patrol without enabling automation and can prepare missing Linear mappings
+and labels using the project's saved connection. **Look for new improvements**
+controls scheduled patrols; **Automatically build approved work** controls coding
+pickup independently. Turning either off does not cancel work already running.
+Each action shows its own missing setup requirements with direct remedies. A
+remote worker must be online and enrolled for this project.
 
 **Grumblins** generates three simulated customers from the project's briefs and
 learned context. Each brings a relevant goal, personality and patience budget

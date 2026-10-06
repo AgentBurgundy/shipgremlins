@@ -40,6 +40,7 @@
     <script src="/remote-workers.js" defer></script>
     <script src="/vercel-setup.js" defer></script>
     <script src="/project-onboarding.js" defer></script>
+    <script src="/project-welcome.js" defer></script>
     <script src="/grumblins.js" defer></script>
     <script src="/project-workspace.js" defer></script>
     <script src="/project-mission.js" defer></script>
@@ -63,6 +64,8 @@
     <link rel="stylesheet" href="/gremlin-adoption.css" />
     <link rel="stylesheet" href="/usage.css" />
     <link rel="stylesheet" href="/project-mission.css" />
+    <link rel="stylesheet" href="/project-welcome.css" />
+    <link rel="stylesheet" href="/project-settings-dialog.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -240,8 +243,8 @@
               >
               <h1 id="welcome-title">Make your app better.</h1>
               <p id="welcome-description">
-                Choose a user outcome. Get a focused investigation, a useful
-                plan, and a change you can review.
+                Connect your app, review its setup, and adopt a gremlin to learn
+                the code. Then choose a useful change together.
               </p>
               <a
                 id="overview-primary-action"
@@ -2901,52 +2904,54 @@
             Close ×
           </button>
         </div>
-        <fieldset id="edit-project-fields">
-          <legend class="sr-only">Execution and hosting settings</legend>
-          <div id="edit-project-settings"></div>
-          <div id="edit-signals-settings" hidden></div>
-          <div class="form-bottom">
+        <div class="settings-dialog-body">
+          <fieldset id="edit-project-fields">
+            <legend class="sr-only">Execution and hosting settings</legend>
+            <div id="edit-project-settings"></div>
+            <div id="edit-signals-settings" hidden></div>
+            <div class="form-bottom">
+              <p>
+                Other project settings and saved credentials are kept. Verify
+                the project after changes.
+              </p>
+              <button
+                type="submit"
+                class="button button-dark"
+                id="save-project-settings"
+              >
+                Save settings
+              </button>
+            </div>
+          </fieldset>
+          <div
+            id="project-settings-message"
+            class="form-message"
+            role="status"
+            hidden
+          ></div>
+          <div id="project-settings-discard" class="settings-discard" hidden>
             <p>
-              Other project settings and saved credentials are kept. Verify the
-              project after changes.
+              There are unsaved project changes. Keep editing, or discard this
+              draft.
             </p>
-            <button
-              type="submit"
-              class="button button-dark"
-              id="save-project-settings"
-            >
-              Save settings
-            </button>
+            <div class="button-row">
+              <button
+                type="button"
+                class="small-button"
+                id="keep-project-settings"
+              >
+                Keep editing</button
+              ><button
+                type="button"
+                class="small-button"
+                id="discard-project-settings"
+              >
+                Discard draft
+              </button>
+            </div>
           </div>
-        </fieldset>
-        <div
-          id="project-settings-message"
-          class="form-message"
-          role="status"
-          hidden
-        ></div>
-        <div id="project-settings-discard" class="settings-discard" hidden>
-          <p>
-            There are unsaved project changes. Keep editing, or discard this
-            draft.
-          </p>
-          <div class="button-row">
-            <button
-              type="button"
-              class="small-button"
-              id="keep-project-settings"
-            >
-              Keep editing</button
-            ><button
-              type="button"
-              class="small-button"
-              id="discard-project-settings"
-            >
-              Discard draft
-            </button>
-          </div>
+          <div id="edit-linear-settings"></div>
         </div>
-        <div id="edit-linear-settings"></div>
         <div class="settings-dialog-footer">
           <button
             type="button"

@@ -8,7 +8,15 @@ foundation**: a reviewed coding run that creates the first app and tests. It
 does not ask for hosting or run a PM patrol against an empty repository.
 [When to bring in ShipGremlins →](WHEN_TO_USE.md)
 
-Start with `gremlins setup`, or `gremlins setup --lan` on a homelab server. Connect source control and Claude Code, then add a repository. The dashboard opens that project's **Environment** page and starts a Setup Gremlin when its connections are ready. It reads bounded source files at an exact commit and recommends a test strategy. No Linear team, PM, or working deployment is required for this analysis.
+Start with `gremlins setup`, or `gremlins setup --lan` on a homelab server.
+An existing repository first opens **Inspect your app → Review setup → Meet your
+gremlin**. Review source-backed commands, confirm the settings you want, and
+adopt a PM before its first read-only Discovery. Neither that first assignment
+nor adoption requires hosting. See [your first adoption](SETUP.md#your-first-adoption).
+
+Open the project's **Environment** when browser testing is useful. A Setup
+Gremlin can read bounded source at an exact commit and recommend a test strategy;
+no Linear team, PM, or working deployment is required for that analysis.
 
 Choose **I already know where to test** to skip analysis and enter an environment
 yourself. The page shows one setup stage at a time. Hosted setup starts with a
@@ -59,9 +67,18 @@ The fixture can exercise dashboard flows and configuration validation. It does n
 
 ## Test accounts
 
-Under **Test accounts**, choose public access or a password login. Supply the login path, username/password fields, submit button and a selector visible after successful login. Give each account a friendly role name and dedicated username/password secret references. Save their actual values in Connections. Up to eight named accounts can be checked independently.
+Under **Test accounts**, choose public access or a same-origin password login.
+The login path and selectors describe the form; username/password **references**
+name credentials that you save separately in Connections. This configuration
+does not create accounts or grant roles. Up to eight accounts can be checked
+independently. [Field-by-field test login setup →](TEST_ACCOUNTS.md)
 
-The check verifies sign-in, not RBAC correctness. PM mandates should explicitly cover roles, tenant boundaries, and allowed test actions. Existing legacy OTP configuration is retained; the new password checker does not claim it verified OTP. External SSO redirects need a dedicated test login or an application-specific recipe. Hosted test-account leasing and automatic data resets are not implemented; avoid sharing mutable accounts across simultaneous patrols.
+The check verifies sign-in, not RBAC correctness. Email OTP, magic links, MFA,
+multi-step forms, and external SSO are not supported by this guided checker.
+Existing legacy Neon OTP settings are retained but are not an end-to-end login
+verification. PM mandates should cover roles, tenant boundaries, and allowed
+test actions. Account leasing and automatic data resets are not implemented;
+avoid sharing mutable accounts across simultaneous patrols.
 
 ## Docker configuration example
 

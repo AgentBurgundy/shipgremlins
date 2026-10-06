@@ -24,13 +24,34 @@
       /\b(security|privacy|permissions|vulnerabilit\w*|authentication|authorization)\b/i.test(
         scope,
       );
+    const poses = [
+      "/assets/gremlin.webp",
+      "/assets/gremlin-investigating.webp",
+      "/assets/gremlin-reviewing.webp",
+      "/assets/gremlin-building.webp",
+    ];
+    const identity = String(area.key || area.name || "");
+    const pose =
+      [...identity].reduce(
+        (value, letter) => (value * 31 + letter.charCodeAt(0)) >>> 0,
+        0,
+      ) % poses.length;
     return {
-      image: security
-        ? "/assets/gremlin-security.webp"
-        : "/assets/gremlin.webp",
+      image: security ? "/assets/gremlin-security.webp" : poses[pose],
       description: security ? "Security & trust PM" : "Product PM",
     };
   };
+  window.isCurrentGremlinAdoption = (adopted, project) => {
+    const area = project?.areas?.find((item) => item.key === adopted?.key);
+    return Boolean(
+      adopted &&
+      area &&
+      project.name === adopted.project &&
+      (project.instanceId ?? null) === (adopted.projectInstanceId ?? null) &&
+      (area.instanceId ?? null) === (adopted.areaInstanceId ?? null),
+    );
+  };
+
   window.createGremlinAdoption = ({
     dialog,
     getInput,
@@ -39,6 +60,7 @@
     onDraft,
     onFirstTask,
     onOpenHome,
+    onOpenSignals,
     onRefreshReadiness,
     isLocked,
   }) => {
@@ -222,6 +244,15 @@
       "Explore the codebase",
       async () => {
         if (!accepted || firstBusy || busy || isLocked()) return;
+        if (
+          !window.isCurrentGremlinAdoption(
+            accepted,
+            getProject(accepted.project),
+          )
+        ) {
+          render();
+          return;
+        }
         firstBusy = true;
         render();
         try {
@@ -238,8 +269,57 @@
       true,
     );
     const openHome = button("Visit their home", () => {
-      if (!busy && !firstBusy) onOpenHome(accepted);
+      if (
+        !busy &&
+        !firstBusy &&
+        window.isCurrentGremlinAdoption(accepted, getProject(accepted?.project))
+      )
+        onOpenHome(accepted);
     });
+    const signals = el("section", "adoption-signals"),
+      signalActions = el("div", "adoption-signal-actions"),
+      signalButtons = [];
+    signals.append(
+      el("h4", "", "Give them more to go on."),
+      el(
+        "p",
+        "",
+        "Optional signals help your gremlin understand real usage. You can start with code only and add these later.",
+      ),
+      signalActions,
+    );
+    for (const [provider, name, purpose] of [
+      ["sentry", "Sentry", "Investigate errors"],
+      ["mixpanel", "Mixpanel", "Understand user behavior"],
+      ["datadog", "Datadog", "Follow service logs"],
+    ]) {
+      const choice = button("", async () => {
+        if (!accepted || busy || firstBusy || isLocked()) return;
+        if (
+          !window.isCurrentGremlinAdoption(
+            accepted,
+            getProject(accepted.project),
+          )
+        ) {
+          render();
+          return;
+        }
+        firstBusy = true;
+        render();
+        try {
+          await onOpenSignals?.(accepted, provider, choice);
+        } catch (error) {
+          welcomeWarning = `Your gremlin is adopted. ${error.message}`;
+        } finally {
+          firstBusy = false;
+          render();
+        }
+      });
+      choice.append(el("strong", "", name), el("span", "", purpose));
+      choice.setAttribute("aria-label", `Set up ${name} for this project`);
+      signalActions.append(choice);
+      signalButtons.push(choice);
+    }
     const adoptAnother = button("Adopt another gremlin", () => {
       if (busy || firstBusy) return;
       accepted = null;
@@ -268,6 +348,7 @@
       welcomeJob,
       welcomeStatus,
       welcomeNotice,
+      signals,
       welcomeActions,
       retryReadiness,
       el(
@@ -390,6 +471,18 @@
           ready = savedProject?.readiness?.areas?.find(
             (area) => area.key === accepted.key,
           );
+        const currentAdoption = window.isCurrentGremlinAdoption(
+          accepted,
+          savedProject,
+        );
+        const replaced = Boolean(
+          savedProject &&
+          ((savedProject.instanceId ?? null) !==
+            (accepted.projectInstanceId ?? null) ||
+            (savedArea &&
+              (savedArea.instanceId ?? null) !==
+                (accepted.areaInstanceId ?? null))),
+        );
         const active = getJobs().find(
           (job) =>
             job.type === "pm" &&
@@ -400,13 +493,17 @@
             ["queued", "running"].includes(job.status),
         );
         welcomeImage.src = window.gremlinIdentity(accepted).image;
-        welcomeTitle.textContent = `${accepted.name} is part of your crew.`;
+        welcomeTitle.textContent = replaced
+          ? "This gremlin’s home has changed."
+          : `${accepted.name} is part of your crew.`;
         welcomeJob.textContent = accepted.charter?.goal || accepted.mandate;
-        welcomeStatus.textContent = savedProject?.foundation?.needed
-          ? "First, build the app’s foundation. Your PM’s brief is saved and ready for when there is something to investigate."
-          : savedArea
-            ? `Their brief is saved. Let them explore the codebase and bring back what they learn. Automation is ${savedArea.enabled ? "on" : "off"}.`
-            : "Their brief is saved. Refresh readiness to see the first task options.";
+        welcomeStatus.textContent = replaced
+          ? "This project or PM was replaced after adoption. Open the current project from the sidebar to review its crew."
+          : savedProject?.foundation?.needed
+            ? "First, build the app’s foundation. Your PM’s brief is saved and ready for when there is something to investigate."
+            : savedArea
+              ? `Their brief is saved. Let them explore the codebase and bring back what they learn. Automation is ${savedArea.enabled ? "on" : "off"}.`
+              : "Their brief is saved. Refresh readiness to see the first task options.";
         welcomeNotice.textContent =
           welcomeWarning || accepted.setupMessage || "";
         welcomeNotice.hidden = !welcomeNotice.textContent;
@@ -419,12 +516,19 @@
               : active
                 ? "View current task"
                 : ready?.discovery?.canRun
-                  ? "Explore the codebase"
+                  ? Object.keys(savedProject?.telemetry || {}).length
+                    ? "Explore the codebase"
+                    : "Start with code only"
                   : "Prepare first mission";
-        firstTask.disabled = firstBusy || busy || isLocked();
-        openHome.disabled = firstBusy || busy;
+        signals.hidden =
+          Boolean(savedProject?.foundation?.needed) || !onOpenSignals;
+        for (const choice of signalButtons)
+          choice.disabled = firstBusy || busy || isLocked() || !currentAdoption;
+        firstTask.disabled =
+          firstBusy || busy || isLocked() || !currentAdoption;
+        openHome.disabled = firstBusy || busy || !currentAdoption;
         adoptAnother.disabled = firstBusy || busy || isLocked();
-        retryReadiness.hidden = !welcomeWarning && Boolean(savedArea);
+        retryReadiness.hidden = !welcomeWarning && currentAdoption;
         retryReadiness.disabled = firstBusy || busy;
       }
       if (selected?.foundation?.needed && stage === "meet")

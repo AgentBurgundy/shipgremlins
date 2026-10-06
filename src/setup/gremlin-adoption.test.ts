@@ -139,7 +139,13 @@ type Adopted = {
   key: string;
   mandate: string;
   charter?: { goal: string };
+  projectInstanceId?: string | null;
+  areaInstanceId?: string | null;
 };
+const identityWindow = {} as {
+  isCurrentGremlinAdoption(adopted: Adopted, project: unknown): boolean;
+};
+runInNewContext(script, { window: identityWindow });
 type Adoption = {
   open(options?: { preselected?: boolean }): void;
   review(): void;
@@ -206,7 +212,8 @@ function fixture() {
   let locked = false;
   const project = {
     name: "shop",
-    areas: [] as { key: string }[],
+    instanceId: null as string | null,
+    areas: [] as { key: string; instanceId?: string | null }[],
     readiness: {
       areas: [] as { key: string; discovery: { canRun: boolean } }[],
     },
@@ -235,6 +242,7 @@ function fixture() {
   const draft = vi.fn(),
     firstTask = vi.fn(),
     openHome = vi.fn(),
+    openSignals = vi.fn(),
     refresh = vi.fn();
   const input = () => ({
     project: get("pm-project").value,
@@ -250,6 +258,7 @@ function fixture() {
     onDraft: draft,
     onFirstTask: firstTask,
     onOpenHome: openHome,
+    onOpenSignals: openSignals,
     onRefreshReadiness: refresh,
     isLocked: () => locked,
   });
@@ -277,6 +286,7 @@ function fixture() {
     draft,
     firstTask,
     openHome,
+    openSignals,
     refresh,
     focused: () => focused,
     lock: (value: boolean) => {
@@ -399,8 +409,48 @@ describe("gremlin adoption", () => {
     f.helper.setBusy(false);
     f.project.foundation.needed = false;
     f.helper.refresh();
-    await f.button("Explore the codebase").click();
+    await f.button("Start with code only").click();
     expect(f.firstTask).toHaveBeenCalledWith(adopted, expect.any(Element));
+  });
+
+  it("offers optional project-scoped signals without starting work or losing the accepted gremlin", async () => {
+    const f = fixture();
+    f.project.areas.push({ key: "moss" });
+    f.project.readiness.areas.push({
+      key: "moss",
+      discovery: { canRun: true },
+    });
+    f.helper.adopted(adopted);
+    const choices = f.dialog
+      .all()
+      .filter((node) =>
+        node.attributes.get("aria-label")?.startsWith("Set up "),
+      );
+    expect(choices).toHaveLength(3);
+    expect(f.openSignals).not.toHaveBeenCalled();
+    for (const [index, provider] of [
+      "sentry",
+      "mixpanel",
+      "datadog",
+    ].entries()) {
+      await choices[index]!.click();
+      expect(f.openSignals).toHaveBeenLastCalledWith(
+        adopted,
+        provider,
+        choices[index],
+      );
+    }
+    f.helper.open({ preselected: true });
+    expect(f.helper.accepted).toEqual(adopted);
+    expect(f.firstTask).not.toHaveBeenCalled();
+    expect(f.draft).not.toHaveBeenCalled();
+    expect(f.button("Start with code only").disabled).toBe(false);
+    f.project.foundation.needed = true;
+    f.helper.refresh();
+    expect(
+      f.dialog.all().find((node) => node.className === "adoption-signals")
+        ?.hidden,
+    ).toBe(true);
   });
 
   it("keeps the manual draft and current step when reopened; context changes return to the mission", async () => {
@@ -414,20 +464,230 @@ describe("gremlin adoption", () => {
     expect(f.get("pm-mandate").value).toBe("My goal");
   });
 
+  it.each(["project", "PM"])(
+    "rejects retained adoption actions after the %s is recreated, even before the next repaint",
+    async (kind) => {
+      const f = fixture();
+      f.project.instanceId = "project-original";
+      f.project.areas.push({ key: "moss", instanceId: "pm-original" });
+      f.project.readiness.areas.push({
+        key: "moss",
+        discovery: { canRun: true },
+      });
+      const original = {
+        ...adopted,
+        projectInstanceId: "project-original",
+        areaInstanceId: "pm-original",
+      };
+      f.helper.adopted(original);
+      const start = f.button("Start with code only");
+      const signal = f.dialog
+        .all()
+        .find(
+          (node) =>
+            node.attributes.get("aria-label") ===
+            "Set up Sentry for this project",
+        )!;
+      if (kind === "project") f.project.instanceId = "project-replacement";
+      else f.project.areas[0]!.instanceId = "pm-replacement";
+      await signal.click();
+      await start.click();
+      await f.button("Visit their home").click();
+      f.helper.open({ preselected: true });
+      expect(f.helper.accepted).toEqual(original);
+      expect(f.firstTask).not.toHaveBeenCalled();
+      expect(f.openSignals).not.toHaveBeenCalled();
+      expect(f.openHome).not.toHaveBeenCalled();
+      expect(
+        f.dialog
+          .all()
+          .some((node) =>
+            node.textContent.includes("was replaced after adoption"),
+          ),
+      ).toBe(true);
+      expect(start.disabled).toBe(true);
+      expect(signal.disabled).toBe(true);
+    },
+  );
+
+  it("treats only absent IDs as the same legacy incarnation", () => {
+    const project = { name: "shop", areas: [{ key: "moss" }] };
+    expect(identityWindow.isCurrentGremlinAdoption(adopted, project)).toBe(
+      true,
+    );
+    expect(
+      identityWindow.isCurrentGremlinAdoption(
+        { ...adopted, projectInstanceId: null, areaInstanceId: null },
+        project,
+      ),
+    ).toBe(true);
+    expect(
+      identityWindow.isCurrentGremlinAdoption(adopted, {
+        ...project,
+        instanceId: "replacement",
+      }),
+    ).toBe(false);
+    expect(
+      identityWindow.isCurrentGremlinAdoption(adopted, {
+        ...project,
+        areas: [{ key: "moss", instanceId: "replacement" }],
+      }),
+    ).toBe(false);
+    expect(
+      identityWindow.isCurrentGremlinAdoption(adopted, {
+        ...project,
+        areas: [],
+      }),
+    ).toBe(false);
+  });
+
   it("uses cosmetic identity from the actual job without inventing backend traits", () => {
     const f = fixture();
     expect(f.identity({ mandate: "Improve permissions" })).toEqual({
       image: "/assets/gremlin-security.webp",
       description: "Security & trust PM",
     });
-    expect(f.identity({ name: "Moss", mandate: "Smooth checkout" })).toEqual({
-      image: "/assets/gremlin.webp",
-      description: "Product PM",
-    });
+    const moss = f.identity({ name: "Moss", mandate: "Smooth checkout" });
+    expect(moss.description).toBe("Product PM");
+    expect(moss.image).toMatch(
+      /^\/assets\/gremlin(?:-investigating|-reviewing|-building)?\.webp$/,
+    );
+    expect(
+      f.identity({ name: "Moss", mandate: "A changed product job" }).image,
+    ).toBe(moss.image);
+    expect(f.identity({ name: "Pip" }).image).not.toBe(moss.image);
   });
 });
 
 describe("adoption creation transaction", () => {
+  it("prefills the reviewed setup suggestion without drafting, adopting, or starting work", () => {
+    const f = fixture();
+    const normalized = app.replaceAll("\r\n", "\n");
+    const start = normalized.indexOf("  function openPmCreation(");
+    const end = normalized.indexOf("  function closePmCreation()", start);
+    const showModal = vi.fn(),
+      reset = vi.fn();
+    const context = {
+      $: f.get,
+      document: { activeElement: f.get("pm-name") },
+      formsLocked: false,
+      pmCreating: false,
+      currentStatus: { projects: [f.project] },
+      changePmCreationProject: vi.fn(),
+      pmAdoption: f.helper,
+      pmDraft: { reset },
+      pmGeneratedValues: {},
+      pmEditedFields: new Set(),
+      pmKeyEdited: true,
+      pmCreateTrigger: null,
+      pendingPmCreate: false,
+      pmCreateDialog: { open: false, showModal },
+      renderLinearSetup: vi.fn(),
+      updatePmCreationReview: vi.fn(),
+      refreshLinearResources: vi.fn(),
+      Event: class {
+        constructor(
+          public type: string,
+          public options: { bubbles: boolean },
+        ) {}
+        get bubbles() {
+          return this.options.bubbles;
+        }
+      },
+      window: {} as {
+        openGremlinAdoption(
+          project: string,
+          trigger: object,
+          suggestion: object,
+        ): void;
+      },
+    };
+    runInNewContext(normalized.slice(start, end), context);
+    context.window.openGremlinAdoption(
+      "shop",
+      {},
+      {
+        name: "Checkout Scout",
+        mandate: "Map order completion and the checkout boundary.",
+      },
+    );
+    expect(f.get("pm-name").value).toBe("Checkout Scout");
+    expect(f.get("pm-mandate").value).toBe(
+      "Map order completion and the checkout boundary.",
+    );
+    expect(f.stage()).toEqual(["mission"]);
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(reset).toHaveBeenCalledOnce();
+    expect(f.helper.accepted).toBeNull();
+    expect(f.draft).not.toHaveBeenCalled();
+    expect(f.firstTask).not.toHaveBeenCalled();
+  });
+
+  it("opens the selected signal provider for the adopted project and retains its incarnation for return", async () => {
+    const normalized = app.replaceAll("\r\n", "\n");
+    const start = normalized.indexOf(
+      "    onOpenSignals: async (adopted, provider, trigger) => {",
+    );
+    const end = normalized.indexOf("    onFirstTask:", start);
+    const settings = vi.fn(),
+      close = vi.fn();
+    const context = {
+      currentStatus: {
+        projects: [
+          {
+            name: "shop",
+            instanceId: "project-v2",
+            areas: [{ key: "moss", instanceId: "pm-v2" }],
+          },
+        ],
+      },
+      adoptionSignalReturn: null,
+      window: identityWindow,
+      closePmCreation: close,
+      openProjectSettings: settings,
+    };
+    const options = runInNewContext(
+      `({${normalized.slice(start, end)}})`,
+      context,
+    ) as {
+      onOpenSignals(
+        adopted: Adopted,
+        provider: string,
+        trigger: object,
+      ): Promise<void>;
+    };
+    const trigger = {};
+    const bound = {
+      ...adopted,
+      projectInstanceId: "project-v2",
+      areaInstanceId: "pm-v2",
+    };
+    await options.onOpenSignals(bound, "mixpanel", trigger);
+    expect(settings).toHaveBeenCalledWith("shop", trigger, {
+      section: "signals",
+      provider: "mixpanel",
+    });
+    expect(context.adoptionSignalReturn).toEqual({
+      project: "shop",
+      key: "moss",
+      instanceId: "project-v2",
+      areaInstanceId: "pm-v2",
+    });
+    expect(close).toHaveBeenCalledOnce();
+    context.currentStatus.projects[0]!.areas = [];
+    await expect(
+      options.onOpenSignals(bound, "sentry", trigger),
+    ).rejects.toThrow("Refresh the project");
+    expect(settings).toHaveBeenCalledOnce();
+    context.currentStatus.projects[0]!.areas = [
+      { key: "moss", instanceId: "pm-v3" },
+    ];
+    await expect(
+      options.onOpenSignals(bound, "sentry", trigger),
+    ).rejects.toThrow("Refresh the project");
+    expect(settings).toHaveBeenCalledOnce();
+  });
+
   it.each([
     {
       foundation: true,
@@ -486,6 +746,7 @@ describe("adoption creation transaction", () => {
               },
             ],
           },
+          window: identityWindow,
           closePmCreation() {},
           refreshStatus: vi.fn(),
           pages: { navigate },
@@ -509,6 +770,7 @@ describe("adoption creation transaction", () => {
     const discover = vi.fn(),
       selectJob = vi.fn();
     const options = runInNewContext(`({${normalized.slice(start, end)}})`, {
+      window: identityWindow,
       currentStatus: {
         projects: [
           { name: "shop", instanceId: "current", areas: [{ key: "moss" }] },
@@ -538,7 +800,7 @@ describe("adoption creation transaction", () => {
       ],
       selectJob,
     }) as { onFirstTask(value: Adopted, trigger: object): Promise<void> };
-    await options.onFirstTask(adopted, {});
+    await options.onFirstTask({ ...adopted, projectInstanceId: "current" }, {});
     expect(selectJob).toHaveBeenCalledWith("active-run");
     expect(discover).not.toHaveBeenCalled();
   });
@@ -649,7 +911,11 @@ describe("adoption creation transaction", () => {
           )
         : end;
     expect(normalizedEnd).toBeGreaterThan(start);
-    const api = vi.fn(async () => ({ linear: { status: "pending" } }));
+    const api = vi.fn(async () => ({
+      projectInstanceId: "created-project",
+      areaInstanceId: "created-pm",
+      linear: { status: "pending" },
+    }));
     const discover = vi.fn(),
       navigate = vi.fn();
     runInNewContext(app.slice(start, normalizedEnd), {
@@ -687,7 +953,11 @@ describe("adoption creation transaction", () => {
     });
     await submit({ preventDefault() {} });
     expect(api).toHaveBeenCalledTimes(1);
-    expect(f.helper.accepted).toMatchObject(adopted);
+    expect(f.helper.accepted).toMatchObject({
+      ...adopted,
+      projectInstanceId: "created-project",
+      areaInstanceId: "created-pm",
+    });
     expect(f.form.hidden).toBe(true);
     expect(
       f.dialog

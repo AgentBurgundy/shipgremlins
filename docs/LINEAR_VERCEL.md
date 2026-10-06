@@ -19,14 +19,18 @@ and **Advanced settings** to inspect direction, ownership, schedule, work limit,
 and Linear choices before **Adopt [name]**. The original goal stays its mandate,
 and generating the draft creates no Linear resources.
 
-Adoption saves the PM with automation paused. When Linear provisioning is
-selected, it creates the PM’s Linear project under the app’s team, or reuses the
-project you explicitly chose. **Run now** prepares any missing mapping for that PM and
-verifies the project's selected connections before queuing a supervised result.
-**Enable automation** opts into UTC
-patrols and automatic approved-ticket pickup; **Pause automation** stops new
-automatic work. Explicit PM and approved Coding runs remain available while
-paused. Neither control approves a ticket or marks it Done.
+Adoption saves the PM with both automation controls paused. With a saved Linear
+connection, ShipGremlins prepares the missing team and PM project using that
+project's selected account, or reuses the project you chose. A connection or
+permission problem leaves the PM adopted with a setup message; its read-only
+Discovery can still run without Linear. **Run now** and outcome missions prepare
+missing mappings when ticketed work is needed and verify required connections.
+You do not need to create routine routing labels by hand.
+
+**Look for new improvements** opts into UTC patrols; **Automatically build
+approved work** opts into ticket pickup independently. Turning either off stops
+its new automatic work. Explicit PM and approved Coding runs remain available
+while paused. Neither control approves a ticket or marks it Done.
 
 New Linear projects arrive with a 👾 icon, ShipGremlins green, and a readable PM
 brief: the saved mandate, repository link, owned paths and shared touchpoints,

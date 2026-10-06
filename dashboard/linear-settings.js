@@ -144,6 +144,7 @@
     let saving = false;
     let resourcesLoading = false;
     let lastBusy = false;
+    let lastWriting = false;
     const rows = new Map();
     const root = node("section", "linear-repair");
     const heading = node("div", "linear-repair-heading");
@@ -153,7 +154,7 @@
     const intro = node(
       "p",
       "linear-repair-intro",
-      "Choose the existing Linear team for this app and a project for each PM. Saving changes only local bindings; it never moves or deletes Linear resources.",
+      "PMs prepare their own Linear projects when adopted. Use these settings to connect existing projects or repair a mapping.",
     );
     heading.append(title, intro);
     const controls = node("div", "linear-repair-controls");
@@ -285,8 +286,9 @@
         : "Matches saved mappings";
       save.textContent = saving ? "Saving mappings…" : "Save Linear mappings";
       root.setAttribute("aria-busy", String(busy));
-      if (lastBusy !== busy) {
+      if (lastBusy !== busy || lastWriting !== saving) {
         lastBusy = busy;
+        lastWriting = saving;
         onBusy?.(busy);
       }
     }
@@ -341,7 +343,7 @@
         ? "This saved connection is unavailable. Restore it in Connections or explicitly choose another account; no default account will be substituted."
         : !profile.connected
           ? "Connect this account in Connections, then refresh the choices here. Your saved mappings stay unchanged."
-          : "Teams and PM projects come only from this account. Choosing another connection clears these draft selections; save after choosing its team and projects.";
+          : "Changing accounts resets the team and project choices in this draft. Save to apply.";
       connectionNote.classList.toggle(
         "linear-mapping-warning",
         !profile || !profile.connected,
@@ -654,6 +656,8 @@
           result.message ||
             "Linear mappings saved together. Other settings were kept. Unmapped PMs are paused; mapped PMs keep their prior enabled state. Verify this app before its next job.",
         );
+        saving = false;
+        updateLocks();
         try {
           await onSaved?.({
             projectName: name,
@@ -746,6 +750,7 @@
       load,
       isDirty,
       isBusy,
+      isWriting: () => saving,
       rebaseProject(document) {
         if (
           !projectFile ||
