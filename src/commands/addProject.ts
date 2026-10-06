@@ -121,8 +121,11 @@ export function addProject(
       const raw = JSON.parse(readFileSync(join(dir, f), "utf8"));
       for (const area of Object.values(raw.areas) as Array<{
         enabled: boolean;
-      }>)
+        codingEnabled?: boolean;
+      }>) {
         area.enabled = false;
+        if (area.codingEnabled !== undefined) area.codingEnabled = false;
+      }
       writeFileSync(join(dir, f), JSON.stringify(raw, null, 2) + "\n");
     }
   }

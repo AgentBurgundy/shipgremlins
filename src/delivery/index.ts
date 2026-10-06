@@ -57,7 +57,11 @@ export function deliveryConfiguration(project: Project, area: string): string {
     workflow: workflow.kind === "promotion" ? { kind: "promotion" } : workflow,
     signIn: project.config.signIn,
     tiers: project.tiers,
-    area: { ...project.areas.find((a) => a.key === area), enabled: undefined },
+    area: {
+      ...project.areas.find((a) => a.key === area),
+      enabled: undefined,
+      codingEnabled: undefined,
+    },
   });
 }
 const object = (v: unknown): v is Record<string, unknown> =>
@@ -441,6 +445,51 @@ export function createDeliveryService(options: {
       return record;
     });
   }
+  /** Read-only readiness hint for queueing; prepareReview rechecks every gate at launch. */
+  async function reviewCandidates(target: ReviewDeployment) {
+    const branches = promotionWorkflow();
+    deployment(target);
+    if (
+      target.branch !== branches.integration ||
+      (await forge.getBranchSha(repo, branches.integration)) !== target.sha ||
+      (await checksFor(target.sha)).status !== "success"
+    )
+      return [];
+    const ready: DeliveryRecord[] = [];
+    for (const record of read().records.filter(
+      (row) =>
+        currentOwner(row) &&
+        !row.promotion &&
+        ["awaiting-merge", "awaiting-deployment", "awaiting-review"].includes(
+          row.status,
+        ),
+    )) {
+      if (
+        record.configuration !== config(record.area) ||
+        !acceptanceCriteria(record.ticket.description).length ||
+        !(await approved(record))
+      )
+        continue;
+      const pull = await forge.getPull(repo, record.implementation.number);
+      if (
+        !pull ||
+        pull.state !== "merged" ||
+        !pull.mergeCommitSha ||
+        !SHA.test(pull.mergeCommitSha) ||
+        pull.headSha !== record.implementation.headSha ||
+        pull.headRef !== record.implementation.branch ||
+        pull.baseRef !== branches.integration ||
+        (await forge.compare(repo, pull.mergeCommitSha, target.sha))
+          .behindBy !== 0
+      )
+        continue;
+      ready.push(structuredClone(record));
+    }
+    // A mutable integration alias may have moved during these provider reads.
+    return (await forge.getBranchSha(repo, branches.integration)) === target.sha
+      ? ready
+      : [];
+  }
   async function prepareReview(input: {
     area: string;
     jobId: string;
@@ -481,7 +530,12 @@ export function createDeliveryService(options: {
       for (const record of state.records.filter(
         (r) => currentOwner(r) && r.area === input.area && !r.promotion,
       )) {
-        checkConfig(record);
+        if (record.configuration !== config(record.area)) {
+          record.status = "blocked";
+          record.message =
+            "This delivery's original configuration changed. Review its preserved scope separately; it cannot authorize verification under the new configuration.";
+          continue;
+        }
         if (!(await approved(record))) {
           record.status = "blocked";
           record.message =
@@ -932,6 +986,7 @@ export function createDeliveryService(options: {
     planForJob: (jobId: string) =>
       structuredClone(read().plans.find((p) => p.jobId === jobId) ?? null),
     prepareReview,
+    reviewCandidates,
     ingestReview,
     promotionOptions,
     recordPromotion,

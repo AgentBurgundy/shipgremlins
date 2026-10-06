@@ -22,6 +22,7 @@ import {
 import type { DockerJobPayload, DockerRunners } from "./docker.ts";
 import type { LocalJobInput } from "./types.ts";
 import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
+import { createUsage } from "../usage/index.ts";
 import type { JobNotificationEvent } from "../slack/messages.ts";
 import type { ActivityStore } from "../storage/activity.ts";
 
@@ -30,6 +31,67 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6eH8AAAAASUVORK5CYII=",
   "base64",
 );
+it.each(["succeeded", "failed", "canceled"])(
+  "retains measured %s run usage once across terminal polls and restart",
+  async (outcome) => {
+    const f = fixture();
+    await f.ready();
+    const metrics = Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        source: "claude-code",
+        inputTokens: 100,
+        outputTokens: outcome === "succeeded" ? 50 : null,
+        cacheReadInputTokens: 20,
+        cacheCreationInputTokens: 10,
+        complete: outcome === "succeeded",
+        reportedAt: f.options.clock().toISOString(),
+      }),
+    );
+    f.mock.readArtifact.mockImplementation(async () => metrics);
+    const job = await f.engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "core",
+    });
+    await f.engine.tick();
+    if (outcome === "canceled") await f.engine.cancel(job.id);
+    else {
+      f.finish(job.id, outcome === "succeeded" ? 0 : 1);
+      await f.engine.tick();
+    }
+    await f.engine.stop();
+    const usage = createUsage({ root: f.root, now: f.options.clock });
+    expect(usage.summary()).toMatchObject({
+      totals: { totalTokens: outcome === "succeeded" ? 180 : 130 },
+      coverage: {
+        measuredRuns: 1,
+        unavailableRuns: 0,
+        partialRecords: outcome === "succeeded" ? 0 : 1,
+      },
+    });
+    const restarted = createLocalRunners(f.options);
+    await restarted.tick();
+    await restarted.stop();
+    expect(usage.summary().coverage.measuredRuns).toBe(1);
+    expect((await restarted.job(job.id))?.status).toBe(outcome);
+  },
+);
+it("keeps a run successful when usage storage is blocked", async () => {
+  const f = fixture();
+  await f.ready();
+  writeFileSync(join(f.root, ".run", "token-usage"), "unavailable storage");
+  const job = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await f.engine.tick();
+  f.finish(job.id);
+  await f.engine.tick();
+  await f.engine.stop();
+  expect((await f.engine.job(job.id))?.status).toBe("succeeded");
+});
 it("keeps the app alive through trusted completion and retries terminal cleanup after Docker failure", async () => {
   const f = fixture();
   await f.ready();
@@ -1582,6 +1644,9 @@ describe("durable local worker engine", () => {
     expect(readdirSync(external)).toEqual([]);
   });
 
+  // This durability stress case flushes 502 real usage records in addition to
+  // history/notification files. Allow slower Windows CI disks to finish those
+  // writes; bounded capture/admission behavior has separate regression coverage.
   it("archives older terminal metadata without losing job history or retry-key deduplication", async () => {
     const f = fixture();
     const first = await f.engine.enqueue({
@@ -1647,6 +1712,16 @@ describe("durable local worker engine", () => {
     ).toBe(first.id);
     expect(f.options.notify).not.toHaveBeenCalled();
     expect(f.mock.artifacts).not.toHaveBeenCalled();
+    // Usage persistence runs in a yielding background queue; admission itself
+    // must not wait for hundreds of historical metadata fsyncs.
+    await f.engine.stop();
+    await restarted.stop();
+    // Eviction retains unavailable coverage durably without reading old Docker output.
+    expect(
+      createUsage({ root: f.root, now: f.options.clock }).summary({
+        range: "all",
+      }).coverage.unavailableRuns,
+    ).toBe(502);
     expect(JSON.parse(readFileSync(f.stateFile, "utf8")).jobs.length).toBe(500);
     expect(
       readdirSync(join(f.root, ".run", "local-runners", "history")),
@@ -1656,7 +1731,7 @@ describe("durable local worker engine", () => {
         join(f.root, ".run", "local-runners", "history", `${first.id}.json`),
       ),
     ).toBe(true);
-  });
+  }, 60_000);
 
   it("stops controller polling without stopping any running job container", async () => {
     const f = fixture();

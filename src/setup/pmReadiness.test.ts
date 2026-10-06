@@ -81,6 +81,73 @@ function fixture() {
   };
 }
 describe("PM readiness and automation controls", () => {
+  it("enables approved coding independently of an invalid PM schedule and preserves that choice when pausing PMs", async () => {
+    const f = fixture();
+    const raw = JSON.parse(readFileSync(f.areasFile, "utf8"));
+    raw.areas.core.schedule = "99 99 * * *";
+    raw.areas.core.enabled = false;
+    raw.areas.core.codingEnabled = false;
+    writeFileSync(f.areasFile, JSON.stringify(raw));
+    expect(f.inspect().areas[0]).toMatchObject({
+      canEnable: false,
+      coding: { canEnable: true, enableBlockers: [] },
+    });
+    expect(
+      await setPmAutomation(
+        f.root,
+        "demo",
+        "core",
+        { ...f.input(false), codingEnabled: true },
+        { context: async () => f.context },
+      ),
+    ).toMatchObject({ enabled: false, codingEnabled: true });
+    const result = await setPmAutomation(
+      f.root,
+      "demo",
+      "core",
+      f.input(false),
+      {
+        context: async () => {
+          throw new Error("connection offline");
+        },
+      },
+    );
+    expect(result).toMatchObject({ enabled: false, codingEnabled: true });
+    const saved = JSON.parse(readFileSync(f.areasFile, "utf8")).areas.core;
+    expect(saved).toMatchObject({ enabled: false, codingEnabled: true });
+    expect(
+      await setPmAutomation(
+        f.root,
+        "demo",
+        "core",
+        { ...f.input(false), codingEnabled: false },
+        {
+          context: async () => {
+            throw new Error("still offline");
+          },
+        },
+      ),
+    ).toMatchObject({ enabled: false, codingEnabled: false });
+  });
+  it("persists legacy effective coding pickup separately on an owner PM toggle", async () => {
+    const f = fixture();
+    const raw = JSON.parse(readFileSync(f.areasFile, "utf8"));
+    raw.areas.core.enabled = true;
+    delete raw.areas.core.codingEnabled;
+    writeFileSync(f.areasFile, JSON.stringify(raw));
+    expect(f.inspect().areas[0]!.codingEnabled).toBe(true);
+    const result = await setPmAutomation(
+      f.root,
+      "demo",
+      "core",
+      f.input(false),
+      { context: async () => f.context },
+    );
+    expect(result).toMatchObject({ enabled: false, codingEnabled: true });
+    expect(
+      JSON.parse(readFileSync(f.areasFile, "utf8")).areas.core,
+    ).toMatchObject({ enabled: false, codingEnabled: true });
+  });
   it("accepts a real mandate file but rejects missing, oversized, or linked mandate locations", () => {
     const f = fixture();
     const project = loadProject(f.root, "demo");

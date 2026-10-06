@@ -6,6 +6,7 @@ import type { LinearTicket } from "../services/types.ts";
 import { branchesOf, repoOf, type Ctx, type DigestRow } from "./context.ts";
 import { isCurrentRecoveryTicket, type RecoveryLane } from "./stopTheLine.ts";
 import { DISPATCHED_PREFIX, LABELS, runIdAfter } from "./notes.ts";
+import { codingPickupEnabled } from "../config.ts";
 
 export type DeveloperKind = "build" | "rc" | "ci" | "sync" | "port";
 
@@ -116,7 +117,7 @@ export async function runDispatch(
   const projectName = ctx.project.config.name;
 
   for (const area of ctx.project.areas) {
-    if (!area.enabled && !opts.recovery) {
+    if (!codingPickupEnabled(area) && !opts.recovery) {
       ctx.log(`dispatch ${area.key}: disabled — skipping`);
       continue;
     }

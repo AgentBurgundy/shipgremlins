@@ -17,7 +17,7 @@ Empty repository lists can mean the GitHub App has not been installed for that r
 
 ## Creating a repository for an idea
 
-The guided **I have an idea** flow creates a repository in the account or namespace
+The guided **Start from an idea · experimental** flow creates a repository in the account or namespace
 you select. **Private** is the default; public access requires an explicit choice
 and final review. Existing app onboarding continues to select an existing repository.
 

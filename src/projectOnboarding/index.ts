@@ -74,6 +74,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
     execute =
       options.execute ??
       createDockerPlanner({
+        root,
         packageRoot: options.packageRoot,
         maxInputBytes: 2 * 1024 * 1024,
       });
@@ -359,6 +360,11 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
           });
           const result = await bounded(
             execute({
+              usageContext: {
+                kind: "setup-analysis",
+                project,
+                projectInstanceId: projectConfig.config.instanceId,
+              },
               credential: saved.CLAUDE_CODE_OAUTH_TOKEN!,
               system: SETUP_SYSTEM,
               schema: SETUP_SCHEMA,

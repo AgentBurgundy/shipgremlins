@@ -417,10 +417,13 @@ function initializeLocked(
       }
       if (filename === "areas.json") {
         const config = JSON.parse(content) as {
-          areas: Record<string, { enabled: boolean }>;
+          areas: Record<string, { enabled: boolean; codingEnabled?: boolean }>;
         };
         if (input.createInitialPm === false) config.areas = {};
-        for (const item of Object.values(config.areas)) item.enabled = false;
+        for (const item of Object.values(config.areas)) {
+          item.enabled = false;
+          if (item.codingEnabled !== undefined) item.codingEnabled = false;
+        }
         content = JSON.stringify(config, null, 2) + "\n";
       }
       const path = filename.endsWith(".json")

@@ -5,6 +5,7 @@ import {
   type PmPromptInput,
 } from "../pmKnowledge/prompts.ts";
 import type { GrumblinProfileSnapshot } from "./schema.ts";
+import { IMPROVEMENT_REPORT_CONTRACT } from "../improvements/report.ts";
 
 export function buildGrumblinPrompt(
   input: PmPromptInput & {
@@ -33,6 +34,7 @@ Switch explicitly from persona voice to product-manager analysis. Investigate th
 Map each retained opportunity to the owner's ambition and this PM's owned/shared scope. Consider a competing persona who benefits from the current design, alternative workflows and the cost of simplifying it. Do not default to adding settings or controls: consider removing a step, changing the sequence, progressive guidance, or preserving the current flow. Identify the smallest testable experiment, an observable outcome, what would falsify the hypothesis, dependencies, and the owner decision still needed. For beyond-scope observations, retain a clearly unassigned handoff instead of silently expanding the mandate.
 No Linear reads or writes occur in this run. Do not create tickets/labels, modify mappings, approve/dispatch work, or claim a proposal was filed. Preserve useful findings as unfiled candidates in queue.md for normal PM followup, including persona identity/revision, actual path, screenshot evidence, competing-persona tradeoffs and next validation. A later PM must investigate and deduplicate before proposing a ticket; only the owner can approve it.`,
     `GRUMBLIN OUTPUT: Write all four required knowledge documents directly under /output as UTF-8 Markdown, each at most ${PM_KNOWLEDGE_MAX_BYTES} bytes, even if the walkthrough is blocked. Preserve relevant previous knowledge and cite the simulated profile id ${profile.id}, revision ${profile.revision}, and context revision ${profile.contextRevision} in the run journal. Add /output/summary.md with the concise goal/outcome, actual path and click/tap count, wins, friction, screenshot references, facts vs hypotheses, and PM synthesis. Do not create symlinks or nested knowledge paths. The trusted worker writes result.json and profile provenance; never write or modify it.`,
+    IMPROVEMENT_REPORT_CONTRACT,
     "FINAL CHECK: visible actions and screenshots actually happened; real user research is never claimed; facts and simulated opinions are separated; the selected persona and owner mandate were preserved; no Linear mutation, approval, code edit, publication, or production action occurred.",
   ].join("\n\n");
 }

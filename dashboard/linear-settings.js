@@ -50,6 +50,7 @@
           key,
           name: area.name || key,
           enabled: Boolean(area.enabled),
+          codingEnabled: Boolean(area.codingEnabled ?? area.enabled),
           selected,
           resource,
           warning,

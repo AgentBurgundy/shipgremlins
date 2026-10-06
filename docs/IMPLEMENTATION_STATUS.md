@@ -3,7 +3,23 @@
 Updated October 5, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
-Idea onboarding proposes a first milestone and one to four PMs from a product
+The primary workflow improves existing applications. Outcome-led missions bind
+investigations, exact owner-approved ticket plans, prerequisite merge checks,
+coding runs, review links, and explicit Grumblin followups through the existing
+runner queue. Project home prioritizes reviewable changes and blockers. PM patrol
+schedules and approved-ticket coding pickup are independent. New coding work needs
+finite acceptance criteria in either delivery mode, and drafts distinguish
+worker-run checks from model-reported product evidence and limitations. Immutable
+per-run product observations supplement latest PM knowledge. See
+[improvement missions](IMPROVEMENT_MISSIONS.md).
+
+Promotion reconciliation now queues owning-PM verification when the exact ready
+integration deployment and checks qualify; it does not need to wait for a patrol.
+Candidate hosting and trusted candidate attestation still require configuration.
+A mission or Grumblin report does not bypass those gates. Provider certification
+and measured customer impact require real pilot evidence, not synthetic tests.
+
+Experimental idea onboarding proposes a first milestone and one to four PMs from a product
 description, then creates their local briefs and shared direction together.
 It can initialize an empty GitHub/GitLab repository with a README and resume
 partial setup. The current starting stack is Node.js/npm; PM schedules start

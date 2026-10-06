@@ -4,6 +4,11 @@ Choose a project in the sidebar. Its page keeps the repository and project name
 visible while you work. Each PM has its own brief, discovery, feature inventory,
 queue, memory and activity. Coding runs are separate from PM investigations.
 
+**Your next change** brings actual coding drafts, their checks and evidence,
+blocked work, and ongoing missions into the project home. Start with **What
+should get better?** to attach an outcome to investigation and reviewed coding.
+[Follow an improvement mission →](IMPROVEMENT_MISSIONS.md)
+
 ## First useful run
 
 1. Connect source control and Claude Code, select a repository, and create a worker.
@@ -24,7 +29,7 @@ Changes to owner settings make older knowledge stale until discovery refreshes i
 ## Review
 
 The workspace inbox collects setup blockers, stale discovery and failed runs.
-Project **Review** also fetches current Linear proposals on demand. Open a ticket
+Project **Proposals** also fetches current Linear proposals on demand. Open a ticket
 to read its scope and acceptance criteria, then approve coding explicitly.
 Choose **Read proposal & evidence**, then **Approve coding**, and confirm the
 ticket identifier. You do not need to create `pm-approved` yourself: the first
@@ -48,8 +53,8 @@ that hold, re-fetches the ticket, and adds `pm-approved` only if the reviewed sc
 still matches. An interrupted approval stays unapproved. Split broad epics into
 testable milestones in Linear first. Owner-blocked tickets remain blocked.
 Approval does not run a production
-merge or set Done. Enabled automation picks up eligible approved work, or use
-**Run Coding** for one run. The button finds the next ready approved ticket
+merge or set Done. **Automatically build approved work** picks up eligible tickets, or use
+**Start coding** for one run. The button finds the next ready approved ticket
 across this project's mapped PMs, ordered by priority and then oldest first.
 You do not need to paste an identifier. **Choose a specific ticket** remains
 available in the coding form when you want an override or a reviewed retry.
@@ -62,9 +67,16 @@ Coding Gremlins implement approved work; PM patrols investigate the app and
 propose new tickets. Selection checks approval again before queuing and the worker
 rechecks it before execution.
 
-Promotion tickets need a finite bullet list under `## Acceptance criteria`.
+All new coding tickets need a finite bullet list under `## Acceptance criteria`.
 New PM prompts request this structure; the review page explains when an older
-proposal needs that checklist before it can be approved for promotion work.
+proposal needs that checklist before it can be approved for coding.
+
+PM settings have separate **Scheduled PM patrols** and **Automatic coding pickup**
+switches. The first controls recurring investigations; the second controls
+approved-ticket implementation. New PMs start with both off. Existing configurations
+without `codingEnabled` inherit `enabled` until the owner saves explicit choices.
+Pausing either one does not cancel an active job or pause an independently approved
+mission; use the mission's pause control or Activity for that work.
 
 For Slack links back to this same review surface, set
 `SHIPGREMLINS_DASHBOARD_URL` to your credential-free HTTPS dashboard URL in the

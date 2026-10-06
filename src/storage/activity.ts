@@ -433,13 +433,15 @@ export function createActivityStore(options: {
         )
           continue;
         let bytes = file.bytes;
+        const usage = file.name === "usage.json";
+        if (usage && file.size > 4096) continue;
         if (bytes) {
           if (
-            bytes.length > MAX_ARTIFACT ||
-            total + bytes.length > MAX_RUN_ARTIFACTS
+            bytes.length > (usage ? 4096 : MAX_ARTIFACT) ||
+            (!usage && total + bytes.length > MAX_RUN_ARTIFACTS)
           )
             continue;
-          total += bytes.length;
+          if (!usage) total += bytes.length;
           if (/\.(json|jsonl|md|txt|log|csv|html|ya?ml)$/i.test(file.name)) {
             const safe = bytes
               .toString("utf8")
@@ -571,14 +573,21 @@ export function createActivityStore(options: {
         const files: StoredArtifact[] = [];
         let bytes = 0;
         for (const file of artifacts.files) {
+          const usage = file.name === "usage.json";
           if (
-            file.size > MAX_ARTIFACT ||
-            bytes + file.size > MAX_RUN_ARTIFACTS ||
+            file.size > (usage ? 4096 : MAX_ARTIFACT) ||
+            (!usage && bytes + file.size > MAX_RUN_ARTIFACTS) ||
             file.name.startsWith(".")
           )
             continue;
-          const data = await docker.readArtifact(job.id, file.name);
-          bytes += data.length;
+          const data = await docker
+            .readArtifact(job.id, file.name)
+            .catch((error: unknown) => {
+              if (usage) return null;
+              throw error;
+            });
+          if (!data || (usage && data.length > 4096)) continue;
+          if (!usage) bytes += data.length;
           if (file.name === "activity.jsonl")
             await api.appendEvents(
               job.id,

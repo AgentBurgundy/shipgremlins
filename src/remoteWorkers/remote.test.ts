@@ -142,6 +142,58 @@ function fixture() {
 }
 
 describe("remote worker enrollment and scope", () => {
+  it("persists bounded usage artifacts through authenticated remote transfer and rejects replay without the lease", async () => {
+    const f = fixture();
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    await f.adapter.startJob({
+      id: "job-usage",
+      workerId: "worker-one",
+      payload,
+    });
+    const lease = f.hub.poll(f.worker.token).job!.lease;
+    const metrics = Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        source: "claude-code",
+        inputTokens: 12,
+        outputTokens: null,
+        cacheReadInputTokens: 4,
+        cacheCreationInputTokens: 0,
+        complete: false,
+        reportedAt: "2026-10-05T00:00:00.000Z",
+      }),
+    );
+    const request = {
+      id: "job-usage",
+      lease,
+      name: "usage.json",
+      content: metrics.toString("base64"),
+    };
+    f.hub.artifact(f.worker.token, request);
+    expect(() =>
+      f.hub.artifact(f.worker.token, { ...request, lease: "0".repeat(64) }),
+    ).toThrow();
+    expect(() =>
+      f.hub.artifact(f.worker.token, {
+        ...request,
+        content: Buffer.alloc(4097).toString("base64"),
+      }),
+    ).toThrow("too large");
+    f.hub.report(f.worker.token, {
+      id: "job-usage",
+      lease,
+      running: false,
+      exitCode: 1,
+      logs: "stopped",
+      result: { ok: false, kind: "pm" },
+    });
+    const restarted = createRemoteWorkers({ root: f.directory }).adapter(
+      f.local.docker,
+    );
+    expect(await restarted.readArtifact("job-usage", "usage.json")).toEqual(
+      metrics,
+    );
+  });
   it("preserves the immutable Grumblin through remote storage/restart and rejects Linear credentials", async () => {
     const f = fixture();
     await f.adapter.prepareWorker!("worker-one", f.worker.id);
@@ -686,6 +738,23 @@ describe("remote worker process", () => {
     expect(
       selectRemoteArtifacts(huge, new Set(huge.map((file) => file.name))),
     ).toMatchObject({ omittedTrusted: true });
+  });
+  it("retains bounded token metadata without displacing a full reviewed-evidence quota", () => {
+    const files = Array.from({ length: 40 }, (_, index) => ({
+      name: `review-screenshots/${index}.png`,
+      size: 800000,
+    }));
+    const result = selectRemoteArtifacts(
+      [...files, { name: "usage.json", size: 4096 }],
+      new Set(files.map((file) => file.name)),
+    );
+    expect(result.files).toHaveLength(41);
+    expect(result.files.at(-1)).toEqual({ name: "usage.json", size: 4096 });
+    expect(result.omittedTrusted).toBe(false);
+    expect(
+      selectRemoteArtifacts([{ name: "usage.json", size: 4097 }], new Set())
+        .files,
+    ).toEqual([]);
   });
   async function serverFixture() {
     const f = fixture(),

@@ -90,6 +90,22 @@
       actions.append(launchButton(project, "Finding work…", true));
       progress.setAttribute("role", "status");
       progress.textContent = "Looking through this project’s Linear queue.";
+    } else if (
+      operation?.kind === "existing" &&
+      (confirmed || operation.job)?.status === "succeeded"
+    ) {
+      const completed = confirmed || operation.job;
+      root.dataset.state = "completed";
+      title.textContent = "This ticket already has completed work";
+      description.textContent = `${completed.ticket || "Your ticket"} has a completed coding run. Review its changes and any draft pull request before requesting another implementation.`;
+      actions.append(
+        link(
+          "Review existing run",
+          `/activity?run=${encodeURIComponent(completed.id)}`,
+        ),
+        launchButton(project, "Find another ticket", locked, true),
+      );
+      progress.textContent = "No duplicate run was started.";
     } else if (operation?.kind === "empty") {
       root.dataset.state = "empty";
       title.textContent = active.length
@@ -216,7 +232,10 @@
               "The server did not confirm this run. Check Activity before trying again.",
           });
         } else {
-          Object.assign(state, { kind: "queued", job: result.job });
+          Object.assign(state, {
+            kind: result.reused ? "existing" : "queued",
+            job: result.job,
+          });
           // A status refresh failure must never turn an accepted run into a
           // failed launch or invite a duplicate dispatch.
           await Promise.resolve()

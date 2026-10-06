@@ -581,6 +581,7 @@ export function createLinearProvisioning(options: {
         if (chosen === null) {
           value.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
           value.enabled = false;
+          if (value.codingEnabled !== undefined) value.codingEnabled = false;
           nextState.areas[key] = {
             ...previousState?.areas[key],
             id: randomUUID(),
@@ -1026,10 +1027,12 @@ export function createLinearProvisioning(options: {
       "wipLimit",
       "linearProjectId",
       "mixpanelReportId",
+      "codingEnabled",
     ];
     if (
       Object.keys(input).some((key) => !allowed.includes(key)) ||
       typeof input.key !== "string" ||
+      (input.codingEnabled !== undefined && input.codingEnabled !== false) ||
       typeof input.name !== "string" ||
       !input.name.trim() ||
       input.name.length > 100 ||
@@ -1157,6 +1160,7 @@ export function createLinearProvisioning(options: {
           metric: input.metric ?? "/",
           schedule,
           enabled: false,
+          codingEnabled: false,
           ...(input.mixpanelReportId === undefined
             ? {}
             : { mixpanelReportId: input.mixpanelReportId }),

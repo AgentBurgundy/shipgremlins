@@ -54,7 +54,8 @@ function issue(name: string): LinearTicket {
     id: `${name}-issue-id`,
     identifier: "ENG-123",
     title: "Fix form",
-    description: "Approved fix",
+    description:
+      "## Acceptance criteria\n- The valid form submission persists after reload.",
     labels: ["pm:core", "pm-approved"],
     projectId: `${name}-linear-project`,
     stateType: "unstarted",

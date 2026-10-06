@@ -957,7 +957,7 @@
     $("add-project").disabled = idea && ideaCrew.busy;
     $("project-create-explanation").textContent = idea
       ? "Creates the reviewed PM crew and shared brief. Empty repositories get a README. PM schedules start paused; app code is built through approved tickets."
-      : "Adds your repository and starts a Setup Gremlin when source and Claude access are ready. No PM is created and no app changes are published.";
+      : "Adds your repository. Next, choose a user outcome and explicitly start its investigation. Coding waits for your approval of a specific change.";
     projectWizard?.update();
   }
   projectWizard = window.createProjectWizard({
@@ -969,7 +969,6 @@
   if (sessionToken) void ideaCrew.restore();
   $("project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    let adoptionProject = "";
     const fromIdea = $("project-start").value === "idea";
     if (fromIdea && !ideaCrew.ready()) {
       message(
@@ -1088,7 +1087,7 @@
         $("project-message"),
         fromIdea
           ? `${result.message} ${linearResultMessage(result.linear)}`
-          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, adopt a PM Gremlin and choose its job.`,
+          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, choose the user outcome you want to improve.`,
         result.linear?.status === "error",
       );
       try {
@@ -1097,12 +1096,6 @@
         pages.navigate(
           `/projects/${encodeURIComponent(data.project)}${fromIdea ? "?tab=environment" : ""}`,
         );
-        if (
-          !fromIdea &&
-          !currentStatus?.projects?.find((item) => item.name === data.project)
-            ?.areas?.length
-        )
-          adoptionProject = data.project;
       } catch {
         message(
           $("global-message"),
@@ -1116,7 +1109,6 @@
       lockForms(!sessionToken);
       restoreButton("add-project", "Add project", "+");
       renderStartingPoint();
-      if (adoptionProject) openPmCreation(adoptionProject);
     }
   });
 
@@ -2096,7 +2088,7 @@
     for (const area of areas)
       select.append(
         new Option(
-          `${area.name || area.key}${area.enabled ? " · automation on" : " · paused"}`,
+          `${area.name || area.key}${area.enabled ? " · investigations on" : ""}${(area.codingEnabled ?? area.enabled) ? " · coding pickup on" : ""}`,
           area.key,
         ),
       );
@@ -2521,7 +2513,9 @@
         : api("/api/jobs", body));
       message(
         $("job-message"),
-        `${type === "developer" && result.job?.ticket ? `${result.job.ticket} queued for coding.` : "Job queued."} Opening Activity so you can follow its progress. Automation is unchanged.`,
+        result.reused
+          ? `${result.job?.ticket || "This ticket"} ${result.job?.status === "succeeded" ? "already has completed work. Opening its existing run so you can review the changes and any draft pull request." : "is already queued or running. Opening its progress."} No duplicate run was started.`
+          : `${type === "developer" && result.job?.ticket ? `${result.job.ticket} queued for coding.` : "Job queued."} Opening Activity so you can follow its progress. Automation is unchanged.`,
       );
       if (type === "developer") {
         $("job-ticket").value = "";
@@ -2534,7 +2528,8 @@
         ];
         selectJob(result.job.id);
       }
-      await refreshRunners();
+      // Acceptance is durable even if the follow-up status request fails.
+      await refreshRunners().catch(() => {});
     } catch (error) {
       message($("job-message"), error.message, true);
       if (
@@ -3811,7 +3806,12 @@
       (item) => item.name === button.dataset.areaProject,
     );
     if (!project) return;
-    await pmActions.toggle(project.name, button.dataset.toggleArea, button);
+    await pmActions.toggle(
+      project.name,
+      button.dataset.toggleArea,
+      button,
+      button.dataset.automationKind,
+    );
   });
   document.addEventListener("click", async (event) => {
     const create = event.target.closest("[data-create-pm-project]");
@@ -5539,6 +5539,11 @@
     isLocked: () => formsLocked || !sessionToken || restarting,
     onRestore: (target) => openDeletion(target),
   });
+  window.createWorkspaceUsage?.($("usage"), {
+    api,
+    pages,
+    canRead: () => Boolean(sessionToken) && !restarting,
+  });
   projectOperations = window.createProjectOperations({
     getCodingAction: (name) => codingActions?.getState(name),
     getJobs: mergedJobs,
@@ -5640,14 +5645,19 @@
     onState: () => renderStatus(currentStatus),
     onFinished: (project, area, mode) => {
       if (
-        mode !== "automation" ||
+        !["automation", "coding-automation"].includes(mode) ||
         pages.current !== "project" ||
         pages.project !== project ||
         (pages.pm && pages.pm !== area)
       )
         return;
       [...$("project-workspace").querySelectorAll("[data-toggle-area]")]
-        .find((button) => button.dataset.toggleArea === area)
+        .find(
+          (button) =>
+            button.dataset.toggleArea === area &&
+            (button.dataset.automationKind === "coding") ===
+              (mode === "coding-automation"),
+        )
         ?.focus({ preventScroll: true });
     },
     onChanged: refreshStatus,

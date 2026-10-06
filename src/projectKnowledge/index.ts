@@ -292,6 +292,7 @@ export function createProjectKnowledge(options: {
     const touchpoints = state.overlaps.slice(0, 25);
     const encode = () =>
       JSON.stringify({
+        revision: state.revision,
         ownerDecisions: decisions,
         omittedOwnerDecisions: state.decisions.length - decisions.length,
         siblingObservations: siblings,

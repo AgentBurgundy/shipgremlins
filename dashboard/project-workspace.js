@@ -241,6 +241,13 @@
       timer = null,
       contextKey = "";
     let launching = false;
+    const missions = window.createProjectMissions?.({
+      api,
+      pages,
+      onJob,
+      onSaved,
+      isLocked: () => locked,
+    });
     const grumblins = window.createGrumblins?.({
       api,
       pages,
@@ -693,11 +700,12 @@
       const add = button(
         "Adopt a gremlin",
         () => onCreatePm(project.name),
-        "button button-dark",
+        "small-button",
       );
       add.setAttribute("aria-label", `Adopt a PM Gremlin for ${project.name}`);
       add.disabled = locked;
-      actions.append(settings, add);
+      actions.append(settings);
+      if (pages.tab === "crew" || pages.pm) actions.append(add);
       return actions;
     }
     function activityList(project, area, limit = 12) {
@@ -771,6 +779,7 @@
     function home(project) {
       if (project.foundation?.needed)
         root.append(window.renderFoundationLauncher(project));
+      else if (missions) missions.mount(root, project);
       else if (project.areas?.length)
         root.append(
           window.renderCodingLauncher(project, {
@@ -779,8 +788,14 @@
             operation: options.getCodingAction?.(project.name),
           }),
         );
-      if (project.areas?.length && window.renderGrumblinsLauncher)
-        root.append(window.renderGrumblinsLauncher(project));
+      const recent = node("section", "project-recent-activity");
+      recent.append(
+        node("h2", "", "Recent work"),
+        activityList(project, null, 3),
+      );
+      root.append(recent);
+    }
+    function crewWorkspace(project) {
       const crew = node("section", "project-crew-section");
       const title = node("div", "project-section-title");
       title.append(
@@ -852,12 +867,64 @@
       }
       crew.append(cards);
       root.append(crew);
-      const recent = node("section", "project-recent-activity");
-      recent.append(
-        node("h2", "", "Recent activity"),
-        activityList(project, null, 4),
-      );
-      root.append(recent);
+      const tools = node("section", "project-tools");
+      for (const [title, description, tab, label] of [
+        [
+          "What your crew knows",
+          "Saved findings, feature maps, and your product decisions.",
+          "knowledge",
+          "Open product knowledge",
+        ],
+        [
+          "Try a customer perspective",
+          "Grumblins simulate a customer journey. Their profiles are hypotheses, not actual customer research.",
+          "grumblins",
+          "Open Grumblins",
+        ],
+      ]) {
+        const card = node("article", "project-tool");
+        card.append(
+          node("h3", "", title),
+          node("p", "", description),
+          link(label, path(project.name, "", tab), "small-button"),
+        );
+        tools.append(card);
+      }
+      root.append(tools);
+      if (project.areas?.length)
+        root.append(
+          window.renderCodingLauncher(project, {
+            locked,
+            jobs: getJobs?.() || [],
+            operation: options.getCodingAction?.(project.name),
+          }),
+        );
+    }
+    function settingsWorkspace(project) {
+      const tools = node("section", "project-tools");
+      for (const [title, description, tab, label] of [
+        [
+          "Test environment",
+          "Prepare browser access only when the work needs a running app.",
+          "environment",
+          "Manage environment",
+        ],
+        [
+          "Work limits",
+          "Bound concurrent runs and the time your crew can spend.",
+          "limits",
+          "Manage run limits",
+        ],
+      ]) {
+        const card = node("article", "project-tool");
+        card.append(
+          node("h3", "", title),
+          node("p", "", description),
+          link(label, path(project.name, "", tab), "small-button"),
+        );
+        tools.append(card);
+      }
+      root.append(tools);
       const context = node("section", "project-details project-reference");
       context.append(node("h2", "", "Project details"));
       const contextBody = node("div", "project-details-body");
@@ -1239,6 +1306,7 @@
         (options.operations?.protectFocus(root) ||
           options.onboarding?.protectFocus(root) ||
           grumblins?.protectFocus() ||
+          missions?.protectFocus() ||
           setupSuggestions?.protectFocus())
       )
         return;
@@ -1273,17 +1341,23 @@
         const navigation = node("nav", "project-top-tabs");
         navigation.setAttribute("aria-label", "Project sections");
         for (const [key, label] of [
-          ["overview", "Overview"],
-          ["environment", "Environment"],
-          ["review", "Review"],
-          ["knowledge", "Knowledge"],
-          ["grumblins", "Grumblins"],
-          ["delivery", "Delivery"],
-          ["limits", "Run limits"],
+          ["overview", "Your next change"],
+          ["review", "Proposals"],
+          ["changes", "Changes"],
+          ["crew", "Your crew"],
+          ["settings", "Settings"],
         ]) {
           const item = link(label, path(project.name, "", key));
-          if ((pages.tab === "brief" ? "overview" : pages.tab) === key)
-            item.setAttribute("aria-current", "page");
+          const activeTab = ["brief", "overview"].includes(pages.tab)
+            ? "overview"
+            : ["knowledge", "grumblins"].includes(pages.tab)
+              ? "crew"
+              : ["environment", "limits"].includes(pages.tab)
+                ? "settings"
+                : pages.tab === "delivery"
+                  ? "changes"
+                  : pages.tab;
+          if (activeTab === key) item.setAttribute("aria-current", "page");
           navigation.append(item);
         }
         root.append(navigation);
@@ -1298,6 +1372,10 @@
           link("Project overview", path(project.name), "small-button"),
         );
       else if (area) pmWorkspace(project, area);
+      else if (pages.tab === "crew") crewWorkspace(project);
+      else if (pages.tab === "settings") settingsWorkspace(project);
+      else if (pages.tab === "changes")
+        missions?.mount(root, project, "changes");
       else if (pages.tab === "environment")
         options.onboarding?.mount(root, project);
       else if (pages.tab === "grumblins") grumblins?.mount(root, project);
@@ -1352,6 +1430,7 @@
       isBusy: () =>
         editor.busy ||
         launching ||
+        missions?.isBusy() ||
         setupSuggestions?.isBusy() ||
         grumblins?.isBusy(),
       refresh: refreshKnowledge,
@@ -1369,6 +1448,7 @@
         if (!area) options.onboarding?.forget(project);
         if (!area) options.operations?.forget(project);
         if (!area) grumblins?.forget(project);
+        if (!area) missions?.forget(project);
         if (editor.project === project && (!area || editor.area === area)) {
           finishClose();
           editor.original = "";

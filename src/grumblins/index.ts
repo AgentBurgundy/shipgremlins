@@ -90,7 +90,10 @@ const profileOnly = (snapshot: GrumblinProfileSnapshot): GrumblinProfile =>
 export function createGrumblins(options: GrumblinsOptions) {
   const execute =
     options.execute ??
-    createDockerPlanner({ packageRoot: options.packageRoot });
+    createDockerPlanner({
+      root: options.root,
+      packageRoot: options.packageRoot,
+    });
   const credentials = () => ({
     ...readConnections(options.root),
     ...(options.env ?? process.env),
@@ -511,6 +514,11 @@ export function createGrumblins(options: GrumblinsOptions) {
           );
         bounded.addEventListener("abort", abort, { once: true });
         execute({
+          usageContext: {
+            kind: "grumblin-generation",
+            project: name,
+            projectInstanceId: first.current.config.instanceId,
+          },
           credential,
           system: GRUMBLINS_SYSTEM,
           schema: GRUMBLINS_SCHEMA,

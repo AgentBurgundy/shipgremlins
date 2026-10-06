@@ -9,6 +9,7 @@ import {
   loadHub,
   loadProject,
   matchesPrefix,
+  codingPickupEnabled,
 } from "./config.ts";
 
 type Json = Record<string, unknown>;
@@ -102,6 +103,24 @@ it("binds recreated PM memory branches to a validated instance while retaining l
   areas.areas.core.instanceId = "../../other";
   writeProject("demo", { areas });
   expect(() => loadProject(root, "demo")).toThrow(/instanceId/);
+});
+it("preserves legacy shared automation while honoring explicit independent coding pickup", () => {
+  const areas = structuredClone(AREAS) as {
+    areas: { core: Record<string, unknown> };
+  };
+  writeProject("demo", { areas });
+  expect(codingPickupEnabled(loadProject(root, "demo").areas[0]!)).toBe(true);
+  areas.areas.core.codingEnabled = false;
+  writeProject("demo", { areas });
+  expect(loadProject(root, "demo").areas[0]!.enabled).toBe(true);
+  expect(codingPickupEnabled(loadProject(root, "demo").areas[0]!)).toBe(false);
+  areas.areas.core.enabled = false;
+  areas.areas.core.codingEnabled = true;
+  writeProject("demo", { areas });
+  expect(codingPickupEnabled(loadProject(root, "demo").areas[0]!)).toBe(true);
+  areas.areas.core.codingEnabled = "yes";
+  writeProject("demo", { areas });
+  expect(() => loadProject(root, "demo")).toThrow(/codingEnabled/);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 

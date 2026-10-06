@@ -49,6 +49,7 @@ export interface DockerJobPayload {
     base: string;
     branch: string;
     repo: string;
+    acceptanceCriteria: string[];
   };
 }
 export type LocalJobPayload = DockerJobPayload;

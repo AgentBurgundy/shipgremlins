@@ -1,3 +1,79 @@
+import { lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+/** A model-authored report is evidence to review, never an executable action. */
+export function readImplementationReport(directory, redact = (text) => text) {
+  const file = join(directory, "implementation-report.json");
+  const stat = lstatSync(file, { throwIfNoEntry: false });
+  if (
+    !stat ||
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.nlink !== 1 ||
+    stat.size > 64 * 1024
+  )
+    throw new Error(
+      "Write a regular implementation-report.json under 64 KiB before delivery.",
+    );
+  try {
+    return JSON.parse(redact(readFileSync(file, "utf8")));
+  } catch {
+    throw new Error("The implementation report must contain valid JSON.");
+  }
+}
+
+function implementationReport(value, criteria) {
+  const object = (v) => v && typeof v === "object" && !Array.isArray(v);
+  const text = (v, limit) =>
+    typeof v === "string" &&
+    !!v.trim() &&
+    v.length <= limit &&
+    !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(v);
+  if (
+    !object(value) ||
+    value.schema !== 1 ||
+    !text(value.summary, 2000) ||
+    !Array.isArray(value.acceptance) ||
+    value.acceptance.length !== criteria.length ||
+    value.acceptance.some(
+      (entry, index) =>
+        !object(entry) ||
+        entry.criterion !== index + 1 ||
+        !["verified", "not-verified"].includes(entry.status) ||
+        !text(entry.evidence, 1200),
+    ) ||
+    !object(value.ui) ||
+    typeof value.ui.changed !== "boolean" ||
+    !["candidate-browser", "repository-only", "not-verified"].includes(
+      value.ui.verification,
+    ) ||
+    !text(value.ui.evidence, 1200) ||
+    !object(value.integration) ||
+    !["real", "mocked", "not-applicable", "not-verified"].includes(
+      value.integration.status,
+    ) ||
+    !text(value.integration.evidence, 1200) ||
+    !Array.isArray(value.limitations) ||
+    value.limitations.length > 20 ||
+    value.limitations.some((entry) => !text(entry, 500))
+  )
+    throw new Error(
+      "The implementation report must summarize every acceptance criterion, UI evidence, integration evidence, and limitations before a draft can be published.",
+    );
+  return value;
+}
+// Quote all ticket/model prose; HTML, Markdown links and mentions are not authority.
+const quote = (value) =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/@/g, "&#64;")
+    .replace(/([\\`*_\[\]])/g, "\\$1")
+    .split(/\r?\n/)
+    .map((line) => `> ${line}`)
+    .join("\n");
+
 export function validateDelivery(delivery) {
   const branch = (value) =>
     typeof value === "string" &&
@@ -8,7 +84,15 @@ export function validateDelivery(delivery) {
     typeof delivery !== "object" ||
     Array.isArray(delivery) ||
     Object.keys(delivery).some(
-      (key) => !["ticket", "title", "base", "branch", "repo"].includes(key),
+      (key) =>
+        ![
+          "ticket",
+          "title",
+          "base",
+          "branch",
+          "repo",
+          "acceptanceCriteria",
+        ].includes(key),
     ) ||
     typeof delivery.ticket !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/.test(delivery.ticket) ||
@@ -28,6 +112,22 @@ export function validateDelivery(delivery) {
     throw new Error(
       "Developer jobs require a ticket, title, repository, base branch, and unique gremlins delivery branch.",
     );
+  if (
+    !Array.isArray(delivery.acceptanceCriteria) ||
+    delivery.acceptanceCriteria.length < 1 ||
+    delivery.acceptanceCriteria.length > 50 ||
+    delivery.acceptanceCriteria.some(
+      (item) =>
+        typeof item !== "string" ||
+        !item.trim() ||
+        item.length > 4000 ||
+        /[\r\n\0]/.test(item),
+    ) ||
+    JSON.stringify(delivery.acceptanceCriteria).length > 22000
+  )
+    throw new Error(
+      "Developer jobs require a finite acceptance criteria checklist before delivery.",
+    );
 }
 
 /** Source publication is reached only after every configured check succeeds. */
@@ -42,6 +142,7 @@ export async function runCheckedDelivery({
   writeBody,
   prepareRepository,
   onCheck = () => {},
+  report,
 }) {
   validateDelivery(delivery);
   if (!/^[a-f0-9]{40}$/.test(baseSha))
@@ -96,10 +197,37 @@ export async function runCheckedDelivery({
     await run("git", ["diff", "--name-only", baseSha, "HEAD"])
   ).trim();
   if (!changed) return { checks, noChanges: true };
+  const evidence = implementationReport(report, delivery.acceptanceCriteria);
   const commit = (await run("git", ["rev-parse", "HEAD"])).trim();
   if (!/^[a-f0-9]{40}$/.test(commit))
     throw new Error("Could not identify the tested commit.");
-  const body = `Implements ${delivery.ticket}.\n\nThis draft was opened by a local ShipGremlins worker after these checks passed:\n${checks.map((check) => `- ${check}`).join("\n")}\n\nTested commit: ${commit}\n\nBrowser screenshots and redacted execution logs are available in the local job dashboard. This draft requires review; it has not been merged or promoted.\n`;
+  const uiChanged =
+    evidence.ui.changed ||
+    changed
+      .split(/\r?\n/)
+      .some((file) =>
+        /\.(?:tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i.test(file),
+      );
+  const limitations = [...evidence.limitations];
+  if (uiChanged && evidence.ui.verification !== "candidate-browser")
+    limitations.push(
+      "Candidate UI appearance and interactions have not been browser-verified. Repository checks do not prove visual correctness.",
+    );
+  if (evidence.integration.status === "mocked")
+    limitations.push(
+      "Only mocked integration evidence was reported. Real provider behavior is not verified and this draft is not a completed integration.",
+    );
+  if (evidence.integration.status === "not-verified")
+    limitations.push("Integration behavior remains unverified.");
+  if (evidence.acceptance.some((entry) => entry.status !== "verified"))
+    limitations.push(
+      "One or more acceptance criteria remain unverified; this draft is incomplete.",
+    );
+  const body = `Implements ${delivery.ticket}.\n\n## Change\n${quote(evidence.summary)}\n\n## Acceptance evidence\nDeveloper-reported observations for human review; these are not independent verification.\n\n${delivery.acceptanceCriteria.map((criterion, index) => `### ${index + 1}. ${evidence.acceptance[index].status === "verified" ? "Reported verified" : "Not verified"}\n${quote(criterion)}\n\n${quote(evidence.acceptance[index].evidence)}`).join("\n\n")}\n\n## Checks rerun by the worker\n${checks.map((check) => `- ${check}: passed`).join("\n")}\n\nTested commit: ${commit}\n\n## UI and integration evidence\nUI: ${uiChanged ? evidence.ui.verification : "no UI change reported"}.\n${quote(evidence.ui.evidence)}\n\nIntegration: ${evidence.integration.status} (developer-reported).\n${quote(evidence.integration.evidence)}\n\n## Limitations\n${limitations.length ? limitations.map((item) => quote(item)).join("\n\n") : "No additional limitations reported; the implementation and its evidence still require review."}\n\nRecorded artifacts and redacted execution logs are available in the job dashboard; only actually recorded artifacts count as evidence. This draft has not been merged or promoted.\n`;
+  if (Buffer.byteLength(body) > 60 * 1024)
+    throw new Error(
+      "The implementation evidence is too large for a reviewable draft. Shorten the report without omitting acceptance criteria or limitations.",
+    );
   await writeBody(body);
   // Do not trust origin or hooks that the application/model could have edited.
   await publish("git", [

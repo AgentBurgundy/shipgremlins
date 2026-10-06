@@ -23,7 +23,7 @@ async function bytes(name) {
   if (
     info.isSymbolicLink() ||
     !info.isFile() ||
-    info.size > MAX_FILE ||
+    info.size > (name === "usage.json" ? 4096 : MAX_FILE) ||
     isAbsolute(rel) ||
     rel === ".." ||
     rel.startsWith("../")
@@ -41,9 +41,16 @@ try {
     const files = [];
     async function walk(dir = "", depth = 0) {
       if (depth > 3 || files.length >= 100) return;
-      for (const entry of await readdir(join("/output", dir), {
+      const entries = await readdir(join("/output", dir), {
         withFileTypes: true,
-      })) {
+      });
+      // Reserve room for trusted usage even when the agent writes many files.
+      if (!dir)
+        entries.sort(
+          (a, b) =>
+            Number(b.name === "usage.json") - Number(a.name === "usage.json"),
+        );
+      for (const entry of entries) {
         const name = dir ? dir + "/" + entry.name : entry.name;
         if (!safeName(name) || entry.isSymbolicLink()) continue;
         if (entry.isDirectory()) await walk(name, depth + 1);

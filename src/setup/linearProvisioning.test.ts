@@ -303,6 +303,7 @@ describe("Linear app and mandate provisioning", () => {
     writeFileSync(configFile, JSON.stringify(config));
     const areas = JSON.parse(readFileSync(areaFile, "utf8"));
     areas.areas.core.enabled = true;
+    areas.areas.core.codingEnabled = false;
     areas.areas.core.extra = "keep PM fields";
     writeFileSync(areaFile, JSON.stringify(areas));
     const state = JSON.parse(readFileSync(stateFile, "utf8"));
@@ -329,6 +330,7 @@ describe("Linear app and mandate provisioning", () => {
     expect(JSON.parse(result.areas.content).areas.core).toMatchObject({
       linearProjectId: picked.project.id,
       enabled: true,
+      codingEnabled: false,
       extra: "keep PM fields",
     });
     expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
@@ -349,6 +351,11 @@ describe("Linear app and mandate provisioning", () => {
   it("explicitly unmaps and disables a PM without touching any remote resource", async () => {
     const f = fixture();
     await f.create().provision("demo");
+    const areaFile = join(f.root, "projects/demo/areas.json");
+    const areas = JSON.parse(readFileSync(areaFile, "utf8"));
+    areas.areas.core.enabled = false;
+    areas.areas.core.codingEnabled = true;
+    writeFileSync(areaFile, JSON.stringify(areas));
     const picked = selection(f);
     picked.input.areaProjects.core = null;
     vi.mocked(f.client.createProject).mockClear();
@@ -357,6 +364,7 @@ describe("Linear app and mandate provisioning", () => {
     expect(JSON.parse(result.areas.content).areas.core).toMatchObject({
       linearProjectId: "PASTE_LINEAR_PROJECT_ID",
       enabled: false,
+      codingEnabled: false,
     });
     expect(f.client.createProject).not.toHaveBeenCalled();
     expect(f.client.createTeam).not.toHaveBeenCalled();

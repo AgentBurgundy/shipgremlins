@@ -1,7 +1,12 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { loadProject, type AreaConfig, type Project } from "../config.ts";
+import {
+  loadProject,
+  codingPickupEnabled,
+  type AreaConfig,
+  type Project,
+} from "../config.ts";
 import { effectiveVerification } from "../projectCapabilities.ts";
 import type { LocalWorker } from "../localRunners/types.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
@@ -273,6 +278,7 @@ export function inspectPmReadiness(
     return {
       key: area.key,
       enabled: area.enabled,
+      codingEnabled: codingPickupEnabled(area),
       configured: blockers.every((item) =>
         ["verification", "worker"].includes(item.id),
       ),
@@ -280,6 +286,10 @@ export function inspectPmReadiness(
       canEnable: enableBlockers.length === 0,
       blockers,
       enableBlockers,
+      coding: {
+        canEnable: blockers.filter((item) => item.id !== "worker").length === 0,
+        enableBlockers: blockers.filter((item) => item.id !== "worker"),
+      },
     };
   });
   add(
@@ -322,7 +332,12 @@ export async function setPmAutomation(
   root: string,
   projectName: string,
   areaKey: string,
-  input: { enabled: boolean; revision: string; projectRevision: string },
+  input: {
+    enabled: boolean;
+    codingEnabled?: boolean;
+    revision: string;
+    projectRevision: string;
+  },
   options: {
     context: () => Promise<ReadinessContext>;
     validate?: () => Promise<void>;
@@ -333,6 +348,8 @@ export async function setPmAutomation(
   if (
     !input ||
     typeof input.enabled !== "boolean" ||
+    (input.codingEnabled !== undefined &&
+      typeof input.codingEnabled !== "boolean") ||
     typeof input.revision !== "string" ||
     !/^[a-f0-9]{64}$/.test(input.revision) ||
     typeof input.projectRevision !== "string" ||
@@ -366,8 +383,11 @@ export async function setPmAutomation(
       "Choose an existing PM before changing its automation.",
       404,
     );
+  const codingEnabled = input.codingEnabled ?? codingPickupEnabled(area);
+  const enablingPm = input.enabled && !area.enabled;
+  const enablingCoding = codingEnabled && !codingPickupEnabled(area);
   const context = await options.context().catch((error) => {
-    if (input.enabled) throw error;
+    if (enablingPm || enablingCoding) throw error;
     // Pausing must remain possible when a saved connection or worker needs repair.
     return {
       env: {},
@@ -377,15 +397,18 @@ export async function setPmAutomation(
       localMode: true,
     } satisfies ReadinessContext;
   });
-  if (input.enabled) {
+  if (enablingPm || enablingCoding) {
     const readiness = inspectPmReadiness(project, context).areas.find(
       (item) => item.key === areaKey,
     )!;
-    if (!readiness.canEnable)
+    const blockers = enablingPm
+      ? readiness.enableBlockers
+      : readiness.coding.enableBlockers;
+    if (blockers.length)
       throw new PmControlError(
-        readiness.enableBlockers.map((item) => item.message).join(" "),
+        blockers.map((item) => item.message).join(" "),
         409,
-        readiness.enableBlockers,
+        blockers,
       );
     await options.validate?.();
   }
@@ -398,8 +421,9 @@ export async function setPmAutomation(
     throw conflict();
   const value = JSON.parse(areasDocument.content);
   value.areas[areaKey].enabled = input.enabled;
+  value.areas[areaKey].codingEnabled = codingEnabled;
   const saved =
-    area.enabled === input.enabled
+    area.enabled === input.enabled && area.codingEnabled === codingEnabled
       ? { revision: areasDocument.revision }
       : saveEditableConfig(root, {
           path: areasDocument.path,
@@ -409,10 +433,11 @@ export async function setPmAutomation(
   return {
     ok: true,
     enabled: input.enabled,
+    codingEnabled,
     revision: saved.revision,
     areasRevision: saved.revision,
     projectRevision: projectDocument.revision,
-    area: { key: areaKey, enabled: input.enabled },
+    area: { key: areaKey, enabled: input.enabled, codingEnabled },
     readiness: inspectPmReadiness(loadProject(root, projectName), context),
   };
 }

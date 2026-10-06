@@ -20,6 +20,7 @@
     <script src="/signals-settings.js" defer></script>
     <script src="/project-settings.js" defer></script>
     <script src="/pages.js" defer></script>
+    <script src="/usage.js" defer></script>
     <script src="/connections-view.js" defer></script>
     <script src="/update-banner.js" defer></script>
     <script src="/connection-profiles.js" defer></script>
@@ -41,6 +42,7 @@
     <script src="/project-onboarding.js" defer></script>
     <script src="/grumblins.js" defer></script>
     <script src="/project-workspace.js" defer></script>
+    <script src="/project-mission.js" defer></script>
     <script src="/deletion.js" defer></script>
     <script src="/deleted-resources.js" defer></script>
     <link rel="stylesheet" href="/idea-crew.css" />
@@ -59,6 +61,8 @@
     <link rel="stylesheet" href="/grumblins.css" />
     <link rel="stylesheet" href="/first-run.css" />
     <link rel="stylesheet" href="/gremlin-adoption.css" />
+    <link rel="stylesheet" href="/usage.css" />
+    <link rel="stylesheet" href="/project-mission.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -136,6 +140,12 @@
             </svg>
             Activity</a
           >
+          <a class="nav-item" href="/usage"
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 20h16M6 16v-5M12 16V4M18 16V8" />
+            </svg>
+            Usage</a
+          >
           <a class="nav-item" href="/settings"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 7h2m6 0h8M4 17h8m6 0h2" />
@@ -190,6 +200,12 @@
           <div id="global-update-banner" hidden></div>
           <div id="global-message" class="notice" role="status" hidden></div>
           <section
+            id="usage"
+            class="usage-page"
+            data-page="usage"
+            aria-labelledby="usage-title"
+          ></section>
+          <section
             class="panel review-inbox-panel"
             data-page="inbox"
             id="review-inbox"
@@ -220,12 +236,12 @@
           >
             <div class="hero-copy">
               <span class="eyebrow" id="overview-eyebrow"
-                >YOUR FIRST GREMLIN</span
+                >YOUR FIRST USEFUL CHANGE</span
               >
-              <h1 id="welcome-title">Your first gremlin starts here.</h1>
+              <h1 id="welcome-title">Make your app better.</h1>
               <p id="welcome-description">
-                A project to call home. A purpose to care about. A first mission
-                you can follow from start to finish.
+                Choose a user outcome. Get a focused investigation, a useful
+                plan, and a change you can review.
               </p>
               <a
                 id="overview-primary-action"
@@ -242,8 +258,8 @@
                 Adopt a PM Gremlin →
               </button>
               <p id="first-run-note" class="first-run-note">
-                Adoption keeps automation off. You choose the first PM or coding
-                mission.
+                Your crew investigates first. Coding begins when you approve a
+                specific change. Automatic work starts off.
               </p>
             </div>
             <div class="hero-art">
@@ -1583,9 +1599,9 @@
                   <div class="field">
                     <label for="project-start">Where are you starting?</label>
                     <select id="project-start">
-                      <option value="existing">I have an app</option>
+                      <option value="existing">Improve my app</option>
                       <option value="idea">
-                        I have an idea — assemble my crew
+                        Start from an idea · experimental
                       </option>
                     </select>
                   </div>

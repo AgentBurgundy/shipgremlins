@@ -87,7 +87,10 @@ export function createEnvironmentGuide(options: {
   const root = resolve(options.root);
   const execute =
     options.execute ??
-    createDockerPlanner({ packageRoot: options.packageRoot });
+    createDockerPlanner({
+      root: options.root,
+      packageRoot: options.packageRoot,
+    });
   const history = new Map<string, { revision: string; messages: Message[] }>();
   const active = new Map<
     string,
@@ -163,6 +166,11 @@ export function createEnvironmentGuide(options: {
           422,
         );
       const response = await execute({
+        usageContext: {
+          kind: "setup-guidance",
+          project,
+          projectInstanceId: projectConfig.instanceId,
+        },
         credential,
         system: SYSTEM,
         prompt,

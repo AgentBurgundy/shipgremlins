@@ -55,6 +55,10 @@
         readiness.blockers.every((blocker) =>
           ["linear_mapping", "verification"].includes(blocker.id),
         ));
+    const isAutomation = (mode) =>
+      ["automation", "coding-automation"].includes(mode);
+    const automationReadiness = (readiness, mode) =>
+      mode === "coding-automation" ? readiness?.coding || readiness : readiness;
     function finish() {
       if (checking) return;
       dialog.close();
@@ -78,9 +82,11 @@
     function paintSetup() {
       if (!context) return;
       const current = target(context.project, context.area);
-      const automation = context.mode === "automation";
+      const automation = isAutomation(context.mode);
       title.textContent = automation
-        ? "Turn automation on"
+        ? context.mode === "coding-automation"
+          ? "Build approved work automatically"
+          : "Look for new improvements"
         : context.mode === "exploration"
           ? "Explore product ideas"
           : "Start this PM";
@@ -89,10 +95,10 @@
       status.textContent = "";
       status.hidden = true;
       const blockers = automation
-        ? current?.readiness?.enableBlockers
+        ? automationReadiness(current?.readiness, context.mode)?.enableBlockers
         : current?.readiness?.blockers;
       const ready = automation
-        ? current?.readiness?.canEnable
+        ? automationReadiness(current?.readiness, context.mode)?.canEnable
         : canPrepareRun(current?.readiness);
       if (ready)
         content.append(
@@ -103,7 +109,7 @@
           node(
             "p",
             automation
-              ? "Finish these steps to schedule patrols and pick up approved coding tickets."
+              ? "Finish these steps to enable this recurring work. The other automation setting stays unchanged."
               : "Finish these steps, then run this PM. Automation will stay unchanged.",
           ),
         );
@@ -137,7 +143,7 @@
         ? "Checking…"
         : ready
           ? automation
-            ? "Turn automation on"
+            ? "Enable this automation"
             : "Run now"
           : "Check again";
       refresh.disabled = checking || isLocked();
@@ -170,8 +176,8 @@
       paintSetup();
       const current = target(selected.project, selected.area);
       if (
-        selected.mode === "automation"
-          ? current?.readiness?.canEnable
+        isAutomation(selected.mode)
+          ? automationReadiness(current?.readiness, selected.mode)?.canEnable
           : canPrepareRun(current?.readiness)
       ) {
         finish();
@@ -188,7 +194,11 @@
         current = target(projectName, areaKey);
       if (isLocked() || states.get(key)?.busy || !current) return;
       const { project, area, readiness } = current;
-      if (mode !== "automation") {
+      const automation = isAutomation(mode);
+      const codingEnabled = area.codingEnabled ?? area.enabled;
+      const currentlyEnabled =
+        mode === "coding-automation" ? codingEnabled : area.enabled;
+      if (!automation) {
         const jobs = getJobs() || [];
         let accepted = acceptedJobs.get(key);
         if (accepted) {
@@ -217,10 +227,10 @@
         }
       }
       if (
-        (mode !== "automation" && !canPrepareRun(readiness)) ||
-        (mode === "automation" &&
-          !area.enabled &&
-          readiness?.canEnable !== true)
+        (!automation && !canPrepareRun(readiness)) ||
+        (automation &&
+          !currentlyEnabled &&
+          automationReadiness(readiness, mode)?.canEnable !== true)
       ) {
         showSetup(projectName, areaKey, mode, trigger);
         return;
@@ -229,7 +239,7 @@
       onState();
       let confirmedMessage = null;
       try {
-        if (mode !== "automation") {
+        if (!automation) {
           const result = await api(
             "/api/jobs",
             {
@@ -256,14 +266,17 @@
           await api(
             `/api/projects/${encodeURIComponent(projectName)}/areas/${encodeURIComponent(areaKey)}/status`,
             {
-              enabled: !area.enabled,
+              enabled:
+                mode === "automation" ? !area.enabled : Boolean(area.enabled),
+              codingEnabled:
+                mode === "coding-automation"
+                  ? !codingEnabled
+                  : Boolean(codingEnabled),
               revision: project.areasRevision,
               projectRevision: project.projectRevision,
             },
           );
-          confirmedMessage = area.enabled
-            ? "Automation off. Current runs keep going."
-            : "Automation on. Scheduled patrols and approved-ticket pickup are enabled.";
+          confirmedMessage = `${mode === "coding-automation" ? "Automatic approved-work pickup" : "Scheduled investigations"} ${currentlyEnabled ? "off. Current runs keep going." : "on."} The other automation setting is unchanged.`;
           states.set(key, { busy: true, mode, message: confirmedMessage });
         }
         await onChanged();
@@ -274,7 +287,7 @@
             ? {
                 busy: true,
                 mode,
-                message: `${confirmedMessage} The dashboard could not refresh. ${mode === "automation" ? "Refresh before changing automation again." : "Open Activity to follow this run."}`,
+                message: `${confirmedMessage} The dashboard could not refresh. ${automation ? "Refresh before changing automation again." : "Open Activity to follow this run."}`,
               }
             : { busy: true, mode, error: true, message: error.message },
         );
@@ -290,8 +303,13 @@
       run: (project, area, trigger) => execute(project, area, "run", trigger),
       explore: (project, area, trigger) =>
         execute(project, area, "exploration", trigger),
-      toggle: (project, area, trigger) =>
-        execute(project, area, "automation", trigger),
+      toggle: (project, area, trigger, kind) =>
+        execute(
+          project,
+          area,
+          kind === "coding" ? "coding-automation" : "automation",
+          trigger,
+        ),
       isBusy: () =>
         checking || [...states.values()].some((value) => value.busy),
     };

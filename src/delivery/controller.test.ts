@@ -95,6 +95,7 @@ function world(realSource = false) {
       repo: TEST_REPO,
       branch: "gremlins/job-one",
       base: "pm-staging",
+      acceptanceCriteria: ["Name is visible."],
     },
   };
   const source = vi.fn(async () => ({
@@ -237,6 +238,47 @@ describe("local delivery controller integration", () => {
       "blocked",
     );
   });
+  it("queues an owning-PM review only for the exact ready integration containing approved work", async () => {
+    const w = world();
+    await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);
+    await w.controller.completeJob(w.job, w.result, noArtifacts);
+    expect(await w.controller.pendingReviews("game")).toEqual([]);
+    w.forge.seedPull(TEST_REPO, {
+      number: 1,
+      headRef: "gremlins/job-one",
+      headSha: HEAD,
+      baseRef: "pm-staging",
+      state: "merged",
+      mergeCommitSha: BASE,
+      mergedAt: "2026-10-05T10:00:00Z",
+    });
+    w.project.areas[0]!.enabled = false;
+    const jobs = await w.controller.pendingReviews("game");
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      type: "pm",
+      project: "game",
+      area: "core",
+      runOnce: true,
+      idempotencyKey: expect.stringMatching(/^delivery-review:[a-f0-9]{64}$/),
+    });
+    expect(await w.controller.pendingReviews("game")).toEqual(jobs);
+    w.project.areas[0]!.codingEnabled = false;
+    expect(await w.controller.pendingReviews("game")).toEqual(jobs);
+    w.forge.seedChecks(TEST_REPO, BASE, { status: "pending", failedJobs: [] });
+    expect(await w.controller.pendingReviews("game")).toEqual([]);
+    w.forge.seedChecks(TEST_REPO, BASE, { status: "success", failedJobs: [] });
+    w.forge.seedBranch(TEST_REPO, "pm-staging", HEAD);
+    expect(await w.controller.pendingReviews("game")).toEqual([]);
+    w.forge.seedBranch(TEST_REPO, "pm-staging", BASE);
+    w.forge.seedCompare(TEST_REPO, BASE, BASE, { aheadBy: 0, behindBy: 1 });
+    expect(await w.controller.pendingReviews("game")).toEqual([]);
+    w.forge.seedCompare(TEST_REPO, BASE, BASE, { aheadBy: 0, behindBy: 0 });
+    w.ticket.description = "## Acceptance criteria\n- Different owner scope.";
+    expect(await w.controller.pendingReviews("game")).toEqual([]);
+    expect(w.forge.merged).toEqual([]);
+    expect(w.linear.stateUpdates).toEqual([]);
+  });
   it("rejects a changed published head and mismatched provider URL", async () => {
     const w = world();
     await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);
@@ -297,6 +339,21 @@ describe("local delivery controller integration", () => {
     });
     expect(payload.reviewPlan).toBeUndefined();
     expect(payload.prompt).toContain("do not claim delivery verification");
+    await expect(
+      w.controller.beforePm(
+        {
+          ...patrol,
+          id: "job-triggered-review",
+          idempotencyKey: "delivery-review:exact-deployment",
+        },
+        {
+          kind: "pm",
+          nonce: "job-triggered-review",
+          branch: "pm-staging",
+          browserVerification: true,
+        },
+      ),
+    ).rejects.toThrow("deployment-triggered review");
   });
   it("selects a separate Railway candidate without invalidating integration approval", async () => {
     const w = world(),

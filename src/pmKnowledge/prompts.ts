@@ -1,6 +1,7 @@
 import type { AreaConfig, Project } from "../config.ts";
 import { LABELS } from "../dispatcher/notes.ts";
 import { effectiveVerification } from "../projectCapabilities.ts";
+import { IMPROVEMENT_REPORT_CONTRACT } from "../improvements/report.ts";
 
 export const PM_KNOWLEDGE_FILES = [
   "discovery.md",
@@ -294,6 +295,7 @@ Use these sections, with honest “unknown”, “not run”, or “none” wher
 9. Owner actions and release safety — decisions/access needed, human approval, rollout/flag/rollback considerations where relevant, and the production-Done rule. Never resolve an unanswered owner decision by silently choosing a risky default.`,
     KNOWLEDGE_CONTENT,
     `${exploration ? "EXPLORATION" : "PATROL"} OUTPUT: Write the four knowledge documents directly under /output as UTF-8 Markdown, each at most ${PM_KNOWLEDGE_MAX_BYTES} bytes. Do not create symlinks or nested knowledge paths. The trusted worker writes result.json; do not write or modify it.`,
+    IMPROVEMENT_REPORT_CONTRACT,
     "FINAL CHECK: claims have real evidence; uncertainty is explicit; proposals support the owner's ambition without quotas; no self-approval, product-code edits, merges, production actions or Done transitions occurred.",
   ].join("\n\n");
 }

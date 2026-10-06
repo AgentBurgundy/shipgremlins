@@ -45,13 +45,22 @@ const project = () => ({
   name: "shop",
   projectRevision: "project-v1",
   areasRevision: "areas-v1",
-  areas: [{ key: "core", name: "Core", enabled: false }],
+  areas: [
+    {
+      key: "core",
+      name: "Core",
+      enabled: false,
+      codingEnabled: undefined as boolean | undefined,
+    },
+  ],
   readiness: {
     areas: [
       {
         key: "core",
         canRun: true,
         canEnable: true,
+        coding: undefined as
+          { canEnable: boolean; enableBlockers: object[] } | undefined,
         blockers: [] as { action: string; id: string; message: string }[],
         enableBlockers: [] as { action: string; id: string; message: string }[],
       },
@@ -68,7 +77,12 @@ function fixture(
       createPmActions: (options: unknown) => {
         run: (project: string, area: string) => Promise<void>;
         explore: (project: string, area: string) => Promise<void>;
-        toggle: (project: string, area: string) => Promise<void>;
+        toggle: (
+          project: string,
+          area: string,
+          trigger?: unknown,
+          kind?: string,
+        ) => Promise<void>;
         isBusy: () => boolean;
       };
     };
@@ -167,6 +181,7 @@ describe("direct PM actions", () => {
       "/api/projects/shop/areas/core/status",
       {
         enabled: true,
+        codingEnabled: false,
         revision: "areas-v1",
         projectRevision: "project-v1",
       },
@@ -244,10 +259,17 @@ describe("direct PM actions", () => {
     await f.actions.toggle("shop", "core");
     expect(f.api).toHaveBeenCalledExactlyOnceWith(
       "/api/projects/shop/areas/core/status",
-      { enabled: true, revision: "areas-v1", projectRevision: "project-v1" },
+      {
+        enabled: true,
+        codingEnabled: false,
+        revision: "areas-v1",
+        projectRevision: "project-v1",
+      },
     );
     expect(f.states.get("shop/core")?.error).not.toBe(true);
-    expect(f.states.get("shop/core")?.message).toContain("Automation on.");
+    expect(f.states.get("shop/core")?.message).toContain(
+      "Scheduled investigations on.",
+    );
     expect(f.states.get("shop/core")?.message).toContain(
       "Refresh before changing automation again.",
     );
@@ -373,14 +395,24 @@ describe("direct PM actions", () => {
     await f.actions.toggle("shop", "core");
     expect(f.api).toHaveBeenLastCalledWith(
       "/api/projects/shop/areas/core/status",
-      { enabled: true, revision: "areas-v1", projectRevision: "project-v1" },
+      {
+        enabled: true,
+        codingEnabled: false,
+        revision: "areas-v1",
+        projectRevision: "project-v1",
+      },
     );
     f.saved.areas[0]!.enabled = true;
     f.saved.readiness.areas[0]!.canEnable = false;
     await f.actions.toggle("shop", "core");
     expect(f.api).toHaveBeenLastCalledWith(
       "/api/projects/shop/areas/core/status",
-      { enabled: false, revision: "areas-v1", projectRevision: "project-v1" },
+      {
+        enabled: false,
+        codingEnabled: true,
+        revision: "areas-v1",
+        projectRevision: "project-v1",
+      },
     );
   });
   it("does not disable automation setup merely because an on-demand worker is unavailable", async () => {
@@ -388,6 +420,49 @@ describe("direct PM actions", () => {
     f.saved.readiness.areas[0]!.canRun = false;
     await f.actions.toggle("shop", "core");
     expect(f.api).toHaveBeenCalledTimes(1);
+  });
+  it("changes coding pickup independently and preserves the legacy effective setting when stopping patrols", async () => {
+    const f = fixture();
+    f.saved.readiness.areas[0]!.canEnable = false;
+    f.saved.readiness.areas[0]!.coding = {
+      canEnable: true,
+      enableBlockers: [],
+    };
+    await f.actions.toggle("shop", "core", undefined, "coding");
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/areas/core/status",
+      {
+        enabled: false,
+        codingEnabled: true,
+        revision: "areas-v1",
+        projectRevision: "project-v1",
+      },
+    );
+    f.saved.areas[0]!.enabled = true;
+    f.saved.areas[0]!.codingEnabled = undefined;
+    await f.actions.toggle("shop", "core");
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/areas/core/status",
+      {
+        enabled: false,
+        codingEnabled: true,
+        revision: "areas-v1",
+        projectRevision: "project-v1",
+      },
+    );
+    f.saved.areas[0]!.enabled = false;
+    f.saved.areas[0]!.codingEnabled = true;
+    f.saved.readiness.areas[0]!.coding.canEnable = false;
+    await f.actions.toggle("shop", "core", undefined, "coding");
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/areas/core/status",
+      {
+        enabled: false,
+        codingEnabled: false,
+        revision: "areas-v1",
+        projectRevision: "project-v1",
+      },
+    );
   });
   it("keeps server conflicts visible without changing the displayed enabled state", async () => {
     const f = fixture(

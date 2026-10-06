@@ -6,6 +6,7 @@ import {
   listProjectNames,
   loadHub,
   loadProject,
+  codingPickupEnabled,
   type AreaConfig,
   type Project,
 } from "../config.ts";
@@ -55,6 +56,8 @@ import { resolveRepositoryHead } from "../projectOnboarding/repository.ts";
 import { foundationNeeded } from "../ideaCrew/foundation.ts";
 import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
 import { buildGrumblinPrompt } from "../grumblins/prompts.ts";
+import { acceptanceCriteria } from "../delivery/index.ts";
+import { missionCodingBlocker } from "../improvements/index.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -541,7 +544,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
       ticket &&
       project.areas.find(
         (item) =>
-          (item.enabled || input.runOnce) && approvedForArea(ticket, item),
+          (codingPickupEnabled(item) || input.runOnce) &&
+          approvedForArea(ticket, item),
       );
     if (
       input.linearBinding?.ticketId &&
@@ -557,14 +561,77 @@ export function createJobPreparation(options: JobPreparationOptions) {
         ticket.teamId !== project.config.linear.teamId)
     )
       throw new JobReadinessError(
-        "The ticket must be open, approved, and mapped to this project's PM area. Enable automation for scheduled work; manual runs can use paused areas. Proposal and needs-human tickets cannot run.",
+        "The ticket must be open, approved, and mapped to this project's PM area. Enable coding pickup for scheduled work; manual runs can use paused areas. Proposal and needs-human tickets cannot run.",
       );
+    if (!acceptanceCriteria(ticket.description).length)
+      throw new JobReadinessError(
+        "Add a finite, observable bullet list under ## Acceptance criteria in this Linear ticket before coding. Describe the user outcome and how to verify it; approval alone is not a definition of done.",
+      );
+    const missionBlocker = missionCodingBlocker(
+      root,
+      project.config.name,
+      ticket.id,
+      ticket,
+    );
+    if (missionBlocker) throw new JobReadinessError(missionBlocker);
     await manualPrerequisites(project, area, input, !requireQueuedBinding);
     return {
       project,
       area,
       ticket,
       linearWorkspaceId: credential.workspaceId,
+      linearBinding: {
+        connectionId,
+        ...((credential.workspaceId ?? project.config.linear?.workspaceId)
+          ? {
+              workspaceId:
+                credential.workspaceId ?? project.config.linear?.workspaceId,
+            }
+          : {}),
+        ticketId: ticket.id,
+      },
+    };
+  }
+
+  /** Resolve identity for read-only history reuse, without admitting a new run.
+   * Completed tickets and changed approval/mapping still have the same issue ID.
+   */
+  async function resolveDeveloperIdentity(input: LocalJobInput) {
+    if (
+      input.type !== "developer" ||
+      !input.project ||
+      !input.ticket?.trim() ||
+      !/^[A-Za-z0-9-]{1,80}$/.test(input.ticket.trim())
+    )
+      throw new JobReadinessError(
+        "Choose a project and a Linear ticket identifier.",
+      );
+    validateName(input.project, "project");
+    const project = loadProject(root, input.project);
+    const connectionId = project.config.linear?.connectionId ?? "default";
+    const credential = await linearFor(connectionId).resolveCredential({
+      minValidityMs: 5 * 60_000,
+      workspaceId: project.config.linear?.workspaceId,
+    });
+    const ticket = await linear(credential.authorization).getTicket(
+      input.ticket.trim(),
+    );
+    if (!ticket)
+      throw new JobReadinessError(
+        "That Linear ticket could not be found in this project's connected workspace.",
+      );
+    const current = loadProject(root, input.project);
+    if (
+      current.config.instanceId !== project.config.instanceId ||
+      (current.config.linear?.connectionId ?? "default") !== connectionId ||
+      current.config.linear?.workspaceId !== project.config.linear?.workspaceId
+    )
+      throw new JobReadinessError(
+        "This project's identity or Linear connection changed. Review the current project and try again.",
+      );
+    return {
+      project,
+      ticket,
       linearBinding: {
         connectionId,
         ...((credential.workspaceId ?? project.config.linear?.workspaceId)
@@ -634,6 +701,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
       });
     const eligible = (ticket: LinearTicket, area: AreaConfig) =>
       approvedForArea(ticket, area) &&
+      acceptanceCriteria(ticket.description).length > 0 &&
+      !missionCodingBlocker(root, project.config.name, ticket.id, ticket) &&
       (!project.config.linear?.teamId ||
         ticket.teamId === project.config.linear.teamId) &&
       project.areas.filter((owner) => approvedForArea(ticket, owner)).length ===
@@ -688,7 +757,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       };
     }
     throw new JobReadinessError(
-      "No approved tickets are ready for a new Coding run. Review and approve a proposal, wait for current coding work, or run a PM patrol to discover more work. To retry a previous attempt, review its output and choose that ticket explicitly.",
+      "No approved tickets with finite acceptance criteria are ready for a new Coding run. Add a bullet list under ## Acceptance criteria in Linear, review and approve a proposal, or wait for current coding work. To retry a previous attempt, review its output and choose that ticket explicitly.",
     );
   }
 
@@ -699,6 +768,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       job,
       true,
     );
+    const ownerRevision = ticket ? knowledgeRevision(project, area) : undefined;
     if (job.pmMode === "discovery") {
       const saved = connections();
       if (!saved.CLAUDE_CODE_OAUTH_TOKEN?.trim())
@@ -838,9 +908,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
         : []),
       ticket
         ? [
+            `CURRENT OWNER PRODUCT CONTEXT — scoped requirements, never permission to bypass runtime policy. Snapshot revision: ${knowledgeRevision(project, area)}. ${JSON.stringify({ project: project.config.name, projectInstanceId: project.config.instanceId, area: area.key, areaInstanceId: area.instanceId, charter: area.charter ?? {}, mandate: area.mandate ?? memory["mandate.md"] ?? "", metric: area.metric, paths: area.paths, sharedTouchpoints: area.sharedTouchpoints })}. Preserve the complete charter's users, goals, expected capabilities, non-goals, guardrails and standing priorities. Learned discovered-* documents below are included only for this owner revision; recheck architecture and design conventions against the checked-out source and its current UI before editing. If context is missing or conflicts, report the gap instead of inventing product decisions.`,
             `Approved ticket ${ticket.identifier}: ${ticket.title}\n${ticket.description}`,
             `You are on branch gremlins/${job.id}, created from ${branch}. Implement only this ticket and run the configured checks.${verification.mode === "browser" ? " Browser-test the change where possible and report missing candidate preview verification; the selected environment may not include your unmerged change." : " Provide repository test evidence for the change."}`,
             `Do not push or open a PR/MR yourself. Leave changes on the current branch. Write /output/summary.md with what changed, acceptance criteria and evidence. The worker reruns every configured gate before it pushes and opens a DRAFT ${provider === "github" ? "pull request" : "merge request"} targeting ${branch}. If checks fail, no PR/MR is published. Drafts remain for human review.`,
+            `Write /output/implementation-report.json: {"schema":1,"summary":"what changed and why","acceptance":[{"criterion":1,"status":"verified or not-verified","evidence":"specific executed test/observation, result and artifact or file reference"}],"ui":{"changed":false,"verification":"candidate-browser or repository-only or not-verified","evidence":"candidate URL/commit, viewport and screenshot names, or the limitation"},"integration":{"status":"real or mocked or not-applicable or not-verified","evidence":"actual provider path tested, or precisely which boundary was mocked/unavailable"},"limitations":["remaining limitations"]}. Include every acceptance criterion in its original order (1-based); do not claim completion for an unverified criterion. Use at most 2000 characters for summary, 1200 per evidence entry and 20 limitations of 500 characters. For UI changes, inspect the actual candidate at desktop and mobile sizes with screenshots when runnable; repository tests alone cannot establish visual correctness. A baseline deployment is not the candidate. Mocks, local fixtures, seeded responses and simulated providers never prove a real integration: identify them explicitly and leave untested production-facing paths unverified. Never make the app silently substitute mock data or a fake success path for an unfinished integration.`,
             "Do not add approval labels, remove needs-human flags or mark the ticket Done. No staging promotion from this job.",
           ].join("\n")
         : [
@@ -988,6 +1060,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
               base: branch,
               branch: `gremlins/${job.id}`,
               repo: project.config.repo,
+              acceptanceCriteria: acceptanceCriteria(ticket.description),
             },
           }
         : {}),
@@ -1018,6 +1091,17 @@ export function createJobPreparation(options: JobPreparationOptions) {
           ),
         ),
       };
+    }
+    if (ticket) {
+      const current = loadProject(root, project.config.name);
+      const currentArea = current.areas.find((item) => item.key === area.key);
+      if (
+        !currentArea ||
+        knowledgeRevision(current, currentArea) !== ownerRevision
+      )
+        throw new JobReadinessError(
+          "The owner's product brief or project configuration changed while coding was being prepared. Review the current brief and start a fresh run.",
+        );
     }
     return ticket && options.beforeDeveloper
       ? await options.beforeDeveloper(job, payload, ticket)
@@ -1088,8 +1172,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
           workspaceId: project.config.linear?.workspaceId,
         })
         .catch(() => null);
-      for (const area of project.areas.filter((item) => item.enabled)) {
+      for (const area of project.areas.filter(
+        (item) => item.enabled || codingPickupEnabled(item),
+      )) {
         if (
+          area.enabled &&
           !foundationNeeded(root, project) &&
           scheduledThisMinute(area.schedule, now)
         )
@@ -1103,12 +1190,17 @@ export function createJobPreparation(options: JobPreparationOptions) {
             discoveryRevision: knowledgeRevision(project, area),
             idempotencyKey: `pm:${name}:${area.key}:${area.instanceId ? `${area.instanceId}:` : ""}${minute}`,
           });
-        if (!linearCredential) continue;
+        if (!linearCredential || !codingPickupEnabled(area)) continue;
         const tickets = await linear(
           linearCredential.authorization,
         ).listTickets(area.linearProjectId, [area.label, LABELS.approved]);
         for (const ticket of tickets
-          .filter((item) => approvedForArea(item, area))
+          .filter(
+            (item) =>
+              approvedForArea(item, area) &&
+              acceptanceCriteria(item.description).length > 0 &&
+              !missionCodingBlocker(root, name, item.id, item),
+          )
           .sort(
             (a, b) =>
               (a.priority || 5) - (b.priority || 5) ||
@@ -1138,6 +1230,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
   }
   return {
     validate,
+    resolveDeveloperIdentity,
     selectDeveloperTicket,
     prepareJob,
     scheduledJobs,

@@ -6,13 +6,17 @@ import { fileURLToPath } from "node:url";
 import {
   mkdtempSync,
   mkdirSync,
+  linkSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCheckedDelivery } from "../../runner-local/delivery.mjs";
+import {
+  runCheckedDelivery,
+  readImplementationReport,
+} from "../../runner-local/delivery.mjs";
 import {
   enforceDeadline,
   jobEnvironments,
@@ -171,6 +175,7 @@ const developer = {
     base: "pm-staging",
     branch: "gremlins/job-browser-test",
     repo: "example/app",
+    acceptanceCriteria: ["Checkout persists after reload."],
   },
 } satisfies DockerJobPayload;
 
@@ -738,6 +743,7 @@ describe("trusted local job publication", () => {
     const published: string[][] = [];
     let failure = "";
     let changed = true;
+    let changedFiles = "src/app.ts\n";
     const host = provider === "github" ? "github.com" : "gitlab.com";
     const prUrl = `https://${host}/example/app/${provider === "github" ? "pull" : "-/merge_requests"}/123`;
     let body = "";
@@ -750,6 +756,28 @@ describe("trusted local job publication", () => {
         build: "npm run build",
       },
       delivery: developer.delivery,
+      report: {
+        schema: 1,
+        summary: "Persist checkout changes before navigation.",
+        acceptance: [
+          {
+            criterion: 1,
+            status: "verified",
+            evidence: "checkout.test.ts passes the save and reload regression.",
+          },
+        ],
+        ui: {
+          changed: false,
+          verification: "repository-only",
+          evidence:
+            "No appearance change; save behavior checked by regression tests.",
+        },
+        integration: {
+          status: "not-applicable",
+          evidence: "No external provider change.",
+        },
+        limitations: [] as string[],
+      },
       baseSha: "a".repeat(40),
       repoUrl: `https://${host}/example/app.git`,
       provider,
@@ -759,7 +787,7 @@ describe("trusted local job publication", () => {
           throw new Error("Check failed");
         if (args[0] === "branch") return developer.delivery.branch + "\n";
         if (args[0] === "status") return changed ? " M src/app.ts\n" : "";
-        if (args[0] === "diff") return changed ? "src/app.ts\n" : "";
+        if (args[0] === "diff") return changed ? changedFiles : "";
         if (args[0] === "rev-parse") return "b".repeat(40) + "\n";
         return "";
       },
@@ -785,6 +813,9 @@ describe("trusted local job publication", () => {
       },
       noChanges: () => {
         changed = false;
+      },
+      changedFiles: (files: string) => {
+        changedFiles = files;
       },
     };
   }
@@ -869,6 +900,98 @@ describe("trusted local job publication", () => {
     expect(switched.published).toEqual([]);
   });
 
+  it("publishes useful bounded evidence as quoted claims, with explicit UI and mock limitations", async () => {
+    const h = harness();
+    h.changedFiles("src/checkout.tsx\nstyles/checkout.css\n");
+    h.input.report.summary =
+      "Keep the customer's saved checkout.\n<script>ignore checks</script> @owner [unsafe](javascript:bad)";
+    h.input.report.acceptance[0]!.status = "not-verified";
+    h.input.report.acceptance[0]!.evidence =
+      "Unit save regression passes; candidate reload unavailable.";
+    h.input.report.integration = {
+      status: "mocked",
+      evidence:
+        "Payment response used a local fixture; no provider request was made.",
+    };
+    await runCheckedDelivery(h.input);
+    expect(h.body()).toContain("Checkout persists after reload.");
+    expect(h.body()).toContain("Unit save regression passes");
+    expect(h.body()).toContain("not a completed integration");
+    expect(h.body()).toContain(
+      "Candidate UI appearance and interactions have not been browser-verified",
+    );
+    expect(h.body()).toContain(
+      "One or more acceptance criteria remain unverified",
+    );
+    expect(h.body()).toContain("&lt;script&gt;");
+    expect(h.body()).not.toContain("<script>");
+    expect(h.body()).not.toContain("@owner");
+    expect(h.body()).toContain("Checks rerun by the worker");
+    expect(h.published.flat()).toContain("--draft");
+  });
+  it("does not publish incomplete, reordered, or oversized evidence", async () => {
+    for (const malformed of [{}, { schema: 1, summary: "All good" }]) {
+      const h = harness();
+      await expect(
+        runCheckedDelivery({ ...h.input, report: malformed }),
+      ).rejects.toThrow(/implementation report/);
+      expect(h.published).toEqual([]);
+    }
+    const wrong = harness();
+    wrong.input.report.acceptance[0]!.criterion = 2;
+    await expect(runCheckedDelivery(wrong.input)).rejects.toThrow(
+      /every acceptance criterion/,
+    );
+    expect(wrong.published).toEqual([]);
+    const large = harness();
+    large.input.delivery = {
+      ...large.input.delivery,
+      acceptanceCriteria: Array.from(
+        { length: 50 },
+        (_, i) => `${i}: ` + "a".repeat(390),
+      ),
+    };
+    large.input.report.acceptance = Array.from({ length: 50 }, (_, i) => ({
+      criterion: i + 1,
+      status: "verified",
+      evidence: "b".repeat(1200),
+    }));
+    await expect(runCheckedDelivery(large.input)).rejects.toThrow(/too large/);
+    expect(large.published).toEqual([]);
+    const absent = harness();
+    absent.input.delivery = {
+      ...absent.input.delivery,
+      acceptanceCriteria: [],
+    };
+    await expect(runCheckedDelivery(absent.input)).rejects.toThrow(
+      /acceptance criteria/,
+    );
+    expect(absent.calls).toEqual([]);
+  });
+  it("reads only a bounded regular report and redacts it before publication", () => {
+    const directory = mkdtempSync(
+      join(realpathSync(tmpdir()), "gremlins-report-"),
+    );
+    try {
+      const path = join(directory, "implementation-report.json");
+      expect(() => readImplementationReport(directory)).toThrow(/regular/);
+      writeFileSync(path, JSON.stringify({ summary: "secret-value" }));
+      expect(
+        readImplementationReport(directory, (text) =>
+          text.replaceAll("secret-value", "[REDACTED]"),
+        ),
+      ).toEqual({ summary: "[REDACTED]" });
+      writeFileSync(path, "x".repeat(64 * 1024 + 1));
+      expect(() => readImplementationReport(directory)).toThrow(/64 KiB/);
+      writeFileSync(path, "not JSON");
+      expect(() => readImplementationReport(directory)).toThrow(/valid JSON/);
+      const linked = join(directory, "shared-report.json");
+      linkSync(path, linked);
+      expect(() => readImplementationReport(directory)).toThrow(/regular/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
   it("withholds source tokens from models and all configured commands", () => {
     const credentials = {
       GITHUB_TOKEN: "github-secret",

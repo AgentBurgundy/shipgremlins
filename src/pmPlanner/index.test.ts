@@ -532,7 +532,7 @@ describe("isolated Docker planner", () => {
     await f.execute({ ...execution(), prompt: "x".repeat(210000) });
     const start = f.run.mock.calls.find(([args]) => args[0] === "start")!;
     expect(JSON.parse(start[1]!.stdin!).prompt).toHaveLength(210000);
-    expect(start[1]!.maxBytes).toBe(65536);
+    expect(start[1]!.maxBytes).toBe(65536 + 4096);
     f.run.mockClear();
     await expect(
       f.execute({ ...execution(), prompt: "x".repeat(512 * 1024) }),

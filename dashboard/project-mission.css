@@ -1,0 +1,207 @@
+.project-missions {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.mission-current,
+.mission-form,
+.mission-changes {
+  min-width: 0;
+  padding: clamp(20px, 3vw, 32px);
+  border: 1px solid #dbe5dd;
+  border-radius: 16px;
+  background: #fff;
+}
+.mission-form {
+  background: linear-gradient(140deg, #f4f8ef, #fff 70%);
+}
+.mission-heading {
+  max-width: 760px;
+  margin-bottom: 20px;
+}
+.mission-heading h2 {
+  margin: 8px 0 10px;
+  font-size: clamp(23px, 2.7vw, 30px);
+  letter-spacing: -0.8px;
+  line-height: 1.2;
+  color: #203d2d;
+}
+.mission-heading p,
+.mission-current > p,
+.mission-change-card > p {
+  margin: 0;
+  color: #536b5b;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.mission-form label,
+.mission-history label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #304b3b;
+  margin: 18px 0 8px;
+}
+.mission-form textarea,
+.mission-form select,
+.mission-history select {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid #bdcfc1;
+  border-radius: 9px;
+  background: #fff;
+  color: #203d2d;
+  font: inherit;
+  font-size: 14px;
+  padding: 13px;
+}
+.mission-form textarea {
+  resize: vertical;
+  min-height: 110px;
+  line-height: 1.6;
+}
+.mission-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+.mission-actions > *,
+.mission-proposal > button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.mission-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #607767;
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+.mission-change-card,
+.mission-plan-step,
+.mission-proposal {
+  min-width: 0;
+  border-top: 1px solid #e0e8e1;
+  padding: 20px 0 4px;
+  margin-top: 18px;
+}
+.mission-change-card h3,
+.mission-plan-step h3,
+.mission-proposal h3 {
+  font-size: 17px;
+  line-height: 1.45;
+  color: #274733;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.mission-proposal .eyebrow {
+  display: block;
+  margin-bottom: 7px;
+}
+.mission-proposal > button {
+  margin-top: 16px;
+}
+.mission-proposal .knowledge-document {
+  margin: 18px 0;
+  font-size: 13px;
+}
+.mission-proposal li,
+.mission-checks li {
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.mission-proposal pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mission-error {
+  padding: 18px;
+  border: 1px solid #e8c8a9;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #704321;
+}
+.mission-error > p {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+.mission-error > button,
+.mission-error > a {
+  margin: 0 10px 6px 0;
+}
+.mission-history {
+  max-width: 650px;
+}
+.pm-automation-controls {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+.pm-automation-controls .pm-automation-switch {
+  justify-content: flex-start;
+  font-size: 11px;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.4;
+}
+.pm-automation-controls .pm-switch-track {
+  flex: 0 0 auto;
+}
+.project-tools {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 14px;
+  margin: 24px 0;
+}
+.project-tool {
+  border: 1px solid #dbe5dd;
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 0;
+}
+.project-tool h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.project-tool p {
+  font-size: 13px;
+  color: #607767;
+  line-height: 1.6;
+}
+.wizard-choice-secondary {
+  background: #fafbf8 !important;
+  box-shadow: none !important;
+}
+.wizard-choice-secondary strong {
+  font-size: 15px;
+}
+@media (max-width: 600px) {
+  .mission-current,
+  .mission-form,
+  .mission-changes {
+    padding: 20px 17px;
+    border-radius: 12px;
+  }
+  .mission-actions {
+    align-items: stretch;
+  }
+  .mission-actions > .button {
+    width: 100%;
+  }
+  .mission-form textarea,
+  .mission-form select,
+  .mission-history select {
+    font-size: 16px;
+  }
+  .pm-automation-controls .pm-automation-switch {
+    min-height: 40px;
+  }
+}

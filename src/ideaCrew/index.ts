@@ -91,7 +91,7 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
   const { root, packageRoot } = options;
   const source =
     options.sourceControl ?? createSourceControl({ root, env: options.env });
-  const execute = options.execute ?? createDockerPlanner({ packageRoot });
+  const execute = options.execute ?? createDockerPlanner({ root, packageRoot });
   const addArea =
     options.addArea ??
     createLinearProvisioning({
@@ -413,6 +413,7 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
       ]);
       try {
         const output = await execute({
+          usageContext: { kind: "idea-planning" },
           credential,
           prompt: JSON.stringify({ idea }),
           system: SYSTEM,

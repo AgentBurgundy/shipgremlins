@@ -1,9 +1,8 @@
 # Set up ShipGremlins
 
-**Bring an idea or an app.** Describe a new product to plan its first milestone
-and assemble a PM crew, or connect an existing codebase and investigate one
-area. A public launch is not required. Start with a small supervised assignment.
-[Start an app from an idea →](IDEA_TO_APP.md)
+**Bring the app you already build.** Connect its codebase and give one product
+area sustained attention. A public launch is not required. Start with a small,
+supervised improvement. [Experimental idea builds →](IDEA_TO_APP.md)
 [When to use ShipGremlins and what to try first →](WHEN_TO_USE.md)
 
 Install the global CLI with Node.js **22.12+**, npm, and Git. Workers also need Docker Desktop or Docker Engine running **Linux containers**.
@@ -22,10 +21,9 @@ This installs from the official GitHub repository; an npm registry package is no
 The browser that opens is your private dashboard. Start with **Projects → Add
 project**, then choose the path that fits your app:
 
-1. **Give your gremlin a home.** For an existing app, connect GitHub or GitLab and
-   choose its repository. For a new idea, describe the first useful version and
-   review the proposed crew. New repositories are private unless you explicitly
-   choose public.
+1. **Give your gremlin a home.** Choose **Improve my app**, connect GitHub or
+   GitLab, and select its repository. The secondary experimental idea path can
+   create a new private-by-default repository and a reviewed foundation assignment.
 2. **Choose its job.** On an existing project, choose **Adopt a PM Gremlin**. Explain
    who it helps, what should get better, and what it should leave alone. Review
    its proposed name and product brief with **Meet my gremlin** before adopting. One focused gremlin is
@@ -37,6 +35,9 @@ project**, then choose the path that fits your app:
    initial app and tests. Review and merge that work before asking PMs to explore.
 
 Adoption saves the PM and its brief. It does not start a job or turn on automation.
+When ready, use **What should get better?** on the project home to start an
+[improvement mission](IMPROVEMENT_MISSIONS.md). This explicitly starts investigation
+and asks you to review a bounded proposal before coding begins.
 Connect only what the next assignment needs. Linear is needed for proposals and
 approved coding work; a browser environment is needed for a runnable app's browser
 walkthroughs. Slack and product signals can wait.
@@ -46,14 +47,21 @@ walkthroughs. Slack and product signals can wait.
 ## Your setup dashboard
 
 The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your gremlins**,
-**Activity**, and **Settings** pages. Each page has its own address and supports
+**Activity**, **Usage**, and **Settings** pages. Each page has its own address and supports
 browser Back/Forward and reload. Moving between pages keeps unfinished forms in
 memory; save them before closing or restarting the dashboard.
 
-Projects appear individually in the sidebar. Each project leads with its next
-useful action and crew; focused pages keep Environment, Review, Knowledge,
-Delivery, and Run limits separate. Open a PM for its brief, Learning, Features,
-Queue, Memory, and run history. **Learning** contains the discovery controls.
+**Usage** shows workspace token totals, a trend, and project breakdowns. Filter
+by period or project, and read reporting coverage alongside the totals: missing
+reports are unknown, not zero. Counts update after runs and AI setup actions finish.
+[Understand token usage →](TOKEN_USAGE.md)
+
+Projects appear individually in the sidebar. **Your next change** leads with
+ready drafts, blocked work, current progress, and an outcome for the next mission.
+**Proposals** holds owner decisions; **Changes** collects coding results and links to advanced staged delivery; **Your
+crew** keeps PMs, Grumblins, and shared knowledge; **Settings** includes environment
+and run-limit setup. Existing direct links remain available. Open a PM for its
+brief, Learning, Features, Queue, Memory, and run history.
 
 Overview shows your projects, PM mandates, verified workers, and active jobs.
 Connections has category tabs; mobile navigation opens from the menu button.
@@ -74,7 +82,7 @@ dashboard checks periodically for new releases; updates are never installed
 automatically.
 
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Claude Code in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
-2. In **Projects → Add project**, choose **I have an idea** or **I have an app**. Idea setup proposes a crew and creates a private-by-default repository. Its next action is the reviewed foundation build, before environment setup or repository analysis. Existing apps connect their repository and can adopt a PM immediately; adding the repository itself creates no PM. Source access and Claude Code may trigger a bounded Setup Gremlin analysis on import, but no PM or coding job starts and automation stays off. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
+2. In **Projects → Add project**, choose **Improve my app** to connect an existing repository. The secondary experimental idea path proposes a crew and creates a private-by-default repository. Its next action is the reviewed foundation build, before environment setup or repository analysis. Existing apps connect their repository and can adopt a PM immediately; adding the repository itself creates no PM. Source access and Claude Code may trigger a bounded Setup Gremlin analysis on import, but no PM or coding job starts and automation stays off. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
 3. **When browser testing is useful**, open Environment. Choose **hosted staging** or a **disposable Docker app**, review proposed settings, then **Test environment**. Repository-only projects can skip this step. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
 4. Choose **Create local worker**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
 5. Adopt a PM with a focused **Product brief**. When application code exists, choose **Discovery** to build its context. New PMs start with automation paused; you do not need to edit JSON or configure hosting to try repository discovery.
@@ -105,14 +113,15 @@ see which tests actually ran.
 A PM is a saved product mandate. A worker is the Docker capacity that executes
 it. Creating one does not implicitly create or enable the other.
 
-| Action             | Result                                                                                                                                                               |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Discovery**      | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change. |
-| **Run now**        | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                  |
-| **Run Coding**     | Queues work on one open ticket with `pm-approved`, the matching area label, and the PM's Linear project. Manual coding does not require automation to be enabled.    |
-| **Automation on**  | Allows that PM's UTC patrol schedule and background pickup of its approved tickets while the controller runs.                                                        |
-| **Automation off** | Stops new scheduled patrols and automatic approved-ticket pickup. It does not cancel an already-running job.                                                         |
-| **Pause worker**   | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                      |
+| Action                                | Result                                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Discovery**                         | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change.            |
+| **Run now**                           | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                             |
+| **Start coding**                      | Queues work on one open ticket with `pm-approved`, finite acceptance criteria, the matching area label, and the PM's Linear project. Manual coding does not require automation. |
+| **Look for new improvements**         | Enables that PM's UTC patrol schedule. This is independent of approved-ticket pickup.                                                                                           |
+| **Automatically build approved work** | Enables background pickup of eligible approved tickets while the controller runs. This is independent of patrols.                                                               |
+| **Turn either control off**           | Stops new work for that automation. It does not cancel already-running jobs; use Activity to cancel a run.                                                                      |
+| **Pause worker**                      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                                 |
 
 Use the guided setup actions beside the selected project when something is
 missing. Connect source control and Claude Code in Connections; repair the
@@ -358,6 +367,6 @@ For an older installation without `update`, stop its dashboard once, repeat the 
 
 Existing `self-hosted`/`gce` GitHub Actions workflows remain available. They still need an automation repository, CI secrets, provider registration, and reviewed schedules. Do not schedule the same project through both CI and the local controller. See [the advanced runner reference](runners.md#advanced-github-actions-and-gce-reference).
 
-Promotion projects have a [Delivery page](DELIVERY_WORKFLOW.md): reviewed drafts can advance to integration, the owning PM tests fixes on its next patrol, and verified fixes become selective candidates. Configure a candidate deployment and trusted verification before expecting a staging PR. Keep private signing keys out of PM/developer containers. Production remains an owner merge; automatic reconciliation checks only complete scopes the owner explicitly confirmed. See [verification](VERIFICATION.md) and [Linear lifecycle](LINEAR_LIFECYCLE.md).
+Promotion projects have a [Delivery page](DELIVERY_WORKFLOW.md): reviewed drafts can advance to integration, a ready integration deployment triggers owning-PM verification, and verified fixes become selective candidates. Configure a candidate deployment and trusted verification before expecting a staging PR. Keep private signing keys out of PM/developer containers. Production remains an owner merge; automatic reconciliation checks only complete scopes the owner explicitly confirmed. See [verification](VERIFICATION.md) and [Linear lifecycle](LINEAR_LIFECYCLE.md).
 
 Source contributors can use `npm ci` and `node bin/shipgremlins.mjs`. Package-install and helper tests run on Windows, macOS, and Linux CI. These checks do not certify Docker Desktop on every host or a complete live GitHub/GitLab/Vercel/Linear application workflow.

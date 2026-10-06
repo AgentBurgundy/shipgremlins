@@ -435,6 +435,8 @@ export function createRemoteWorkers(options: {
           throw new RemoteWorkerError("Remote artifact is too large.");
         const name = String(input.name),
           path = filePath(job.id, name);
+        if (name === "usage.json" && content.length > 4096)
+          throw new RemoteWorkerError("Remote usage metadata is too large.");
         const protectedReview =
           name === "pm-review-proof.json" ||
           name.startsWith("review-screenshots/");
@@ -447,14 +449,19 @@ export function createRemoteWorkers(options: {
           throw new RemoteWorkerError(
             "Private or unauthenticated review artifacts cannot be uploaded.",
           );
-        if (!job.files.some((f) => f.name === name) && job.files.length >= 40)
+        if (
+          name !== "usage.json" &&
+          !job.files.some((f) => f.name === name) &&
+          job.files.filter((file) => file.name !== "usage.json").length >= 40
+        )
           throw new RemoteWorkerError("Remote artifact limit reached.");
         if (
+          name !== "usage.json" &&
           job.files
-            .filter((f) => f.name !== name)
+            .filter((f) => f.name !== name && f.name !== "usage.json")
             .reduce((total, f) => total + f.size, 0) +
             content.length >
-          32 * 1024 * 1024
+            32 * 1024 * 1024
         )
           throw new RemoteWorkerError("Remote artifact total is too large.");
         if (!/\.(png|jpe?g|webp)$/i.test(name))
