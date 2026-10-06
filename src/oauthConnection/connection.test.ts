@@ -412,7 +412,9 @@ describe("Linear and Vercel dashboard OAuth", () => {
       token: "vercel-access-secret",
       authorization: "Bearer vercel-access-secret",
       teamId: "team_123",
+      configurationId: "icfg_123",
     });
+    expect(await f.connection.status()).not.toHaveProperty("configurationId");
     const project = f.calls.find((call) =>
       call.url.includes("/v9/projects/prj_123"),
     )!;
@@ -428,6 +430,14 @@ describe("Linear and Vercel dashboard OAuth", () => {
     await expect(
       f.connection.resolveCredential({ projectId: "../user" }),
     ).rejects.toThrow("Invalid Vercel");
+  });
+  it("does not invent a Vercel installation identity for a manual token", async () => {
+    const f = fixture("vercel", { VERCEL_TOKEN: "manual-vercel-secret" });
+    expect(await f.connection.resolveCredential()).toEqual({
+      token: "manual-vercel-secret",
+      authorization: "Bearer manual-vercel-secret",
+      method: "token",
+    });
   });
   it("reports a revoked Vercel installation without using a manual token", async () => {
     const f = fixture("vercel", { VERCEL_TOKEN: "legacy" });

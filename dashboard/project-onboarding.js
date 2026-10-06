@@ -211,6 +211,27 @@
     const dirty = (s) =>
       Boolean(s.draft && JSON.stringify(s.draft) !== s.baseline);
     const disabled = (s) => isLocked() || s.busy || ongoing(s.data);
+    const vercelTargetIdentity = (target) =>
+      target?.kind === "vercel"
+        ? JSON.stringify([
+            target.projectId,
+            target.connectionId || "default",
+            target.teamId ?? null,
+            target.branch ?? null,
+            target.customEnvironmentId ?? null,
+            target.role,
+          ])
+        : null;
+    const projectIdentity = (project) =>
+      JSON.stringify([
+        project.name,
+        project.instanceId ?? null,
+        project.provider || "github",
+        project.serverUrl ?? null,
+        project.repo,
+      ]);
+    const previewNeedsSave = (s) =>
+      dirty(s) || s.draft?.suggestedEnvironment || !s.data?.environment;
     function paintConnections(s) {
       if (!s.connectionLinks) return;
       const status = getStatus(),
@@ -393,6 +414,17 @@
       };
     }
     function entry(project) {
+      const previous = entries.get(project.name);
+      if (
+        previous &&
+        projectIdentity(previous.project) !== projectIdentity(project)
+      ) {
+        clearTimeout(previous.timer);
+        previous.vercelSetup?.destroy();
+        if (previous.imageUrl) URL.revokeObjectURL(previous.imageUrl);
+        previous.generation++;
+        entries.delete(project.name);
+      }
       if (!entries.has(project.name)) {
         const s = {
           project,
@@ -532,6 +564,110 @@
         s.busy = false;
         paint(s);
         schedule(s);
+      }
+    }
+    async function connectPreviewAccess(s) {
+      if (disabled(s) || s.loading || !s.data || !s.draft) return;
+      const identity = projectIdentity(s.project),
+        current = () =>
+          !destroyed &&
+          entries.get(s.project.name) === s &&
+          projectIdentity(s.project) === identity;
+      let changed = false;
+      try {
+        const input = window.readOnboardingTarget(s.draft),
+          targetIdentity = vercelTargetIdentity(input.target);
+        if (!targetIdentity || input.target.role === "production")
+          throw new Error("Choose a Vercel preview before connecting access.");
+        const acceptState = (data) => {
+          if (
+            !data ||
+            data.project !== s.project.name ||
+            typeof data.configurationRevision !== "string" ||
+            !data.configurationRevision ||
+            data.environment?.profile !== "hosted" ||
+            vercelTargetIdentity(data.environment?.target) !== targetIdentity
+          )
+            throw new Error(
+              "Preview access returned an unexpected environment. Refresh status before retrying; your draft is kept.",
+            );
+        };
+        clearTimeout(s.timer);
+        s.busy = s.accessPending = true;
+        s.error = s.notice = "";
+        paint(s);
+        let revision = s.draftRevision;
+        if (previewNeedsSave(s)) {
+          const draftBeforeSave = JSON.stringify(s.draft),
+            data = await api(endpoint(s, "configure"), {
+              configurationRevision: revision,
+              ...input,
+            });
+          if (!current()) return;
+          acceptState(data);
+          changed = true;
+          s.data = data;
+          s.loaded = true;
+          s.draftRevision = revision = data.configurationRevision;
+          const savedDraft = initialDraft(s);
+          s.baseline = JSON.stringify(savedDraft);
+          if (JSON.stringify(s.draft) !== draftBeforeSave)
+            throw new Error(
+              "Environment saved. Your newer edits are kept; save them before connecting preview access.",
+            );
+          s.draft = savedDraft;
+          s.formSignature = "";
+          paint(s);
+        }
+        const draftBeforeAccess = JSON.stringify(s.draft),
+          data = await api(endpoint(s, "vercel/access"), {
+            configurationRevision: revision,
+          });
+        if (!current()) return;
+        acceptState(data);
+        if (
+          !["connected", "not_required"].includes(data.previewAccess?.status) ||
+          typeof data.previewAccess?.message !== "string" ||
+          !data.previewAccess.message.trim()
+        )
+          throw new Error(
+            "Preview access did not return a connection result. Refresh status before retrying; your draft is kept.",
+          );
+        changed = true;
+        s.data = data;
+        s.loaded = true;
+        s.draftRevision = data.configurationRevision;
+        const savedDraft = initialDraft(s);
+        s.baseline = JSON.stringify(savedDraft);
+        if (JSON.stringify(s.draft) === draftBeforeAccess) {
+          s.draft = savedDraft;
+          s.showForm = false;
+        }
+        s.formSignature = "";
+        s.notice =
+          "Preview access updated. Test the environment to verify browser access.";
+      } catch (error) {
+        if (current())
+          s.error =
+            error.message ||
+            "Preview access could not be connected. Your environment settings are kept.";
+      } finally {
+        if (current()) {
+          s.busy = s.accessPending = false;
+          paint(s);
+          schedule(s);
+          if (changed) {
+            try {
+              await onSaved(s.project.name);
+            } catch {
+              if (current()) {
+                s.notice =
+                  "Environment settings were saved. Refresh project status to reload the latest details, then test access.";
+                paint(s);
+              }
+            }
+          }
+        }
       }
     }
     async function runFoundation(s, action) {
@@ -759,6 +895,11 @@
       return wrap;
     }
     function updateFormActions(s) {
+      if (!s.accessPending && s.accessLockedControls) {
+        for (const [control, wasDisabled] of s.accessLockedControls)
+          control.disabled = wasDisabled;
+        s.accessLockedControls.clear();
+      }
       const choosingPreview =
         s.draft?.profile === "hosted" &&
         s.showVercel &&
@@ -769,6 +910,31 @@
       if (s.test)
         s.test.disabled = disabled(s) || dirty(s) || !s.data?.environment;
       if (s.create) s.create.disabled = isLocked() || s.busy || dirty(s);
+      const accessConnected =
+        !previewNeedsSave(s) &&
+        s.draft?.profile === "hosted" &&
+        ["connected", "not_required"].includes(s.data?.previewAccess?.status) &&
+        vercelTargetIdentity(
+          s.draft.providerTarget || s.draft.existingTarget,
+        ) === vercelTargetIdentity(s.data?.environment?.target);
+      for (const action of [s.formPreviewAccess, s.savedPreviewAccess]) {
+        if (!action) continue;
+        action.textContent = s.accessPending
+          ? accessConnected
+            ? "Checking preview access…"
+            : "Connecting preview access…"
+          : previewNeedsSave(s)
+            ? "Save & connect preview access"
+            : accessConnected
+              ? "Check preview access"
+              : "Connect preview access";
+        action.className = accessConnected
+          ? "small-button"
+          : "button button-dark";
+        action.disabled = Boolean(
+          disabled(s) || s.loading || !s.data || choosingPreview,
+        );
+      }
       if (s.draftNotice)
         s.draftNotice.textContent = choosingPreview
           ? "Choose a ready Vercel preview before saving, or enter a test URL instead."
@@ -777,6 +943,93 @@
             : dirty(s)
               ? "Unsaved changes · save this choice before testing."
               : "Credentials stay in Connections. Saving does not start a PM or enable automation.";
+      s.form.inert = Boolean(s.accessPending);
+      if (s.accessPending) {
+        s.accessLockedControls ||= new Map();
+        for (const control of s.form.querySelectorAll?.(
+          "button,input,select,textarea",
+        ) || []) {
+          if (!s.accessLockedControls.has(control))
+            s.accessLockedControls.set(control, control.disabled);
+          control.disabled = true;
+        }
+      }
+    }
+    function previewAccessCard(s, target, manual = false) {
+      const card = node("section", undefined, "onboarding-vercel-protection"),
+        result =
+          vercelTargetIdentity(target) ===
+          vercelTargetIdentity(s.data?.environment?.target)
+            ? s.data?.previewAccess
+            : null,
+        action = button(
+          "Connect preview access",
+          () => connectPreviewAccess(s),
+          true,
+        );
+      if (manual) s.formPreviewAccess = action;
+      else s.savedPreviewAccess = action;
+      card.append(
+        node("h4", "Vercel preview access"),
+        node(
+          "p",
+          result?.status === "connected"
+            ? "Access connected. Test the environment next."
+            : result?.status === "not_required"
+              ? "No deployment protection detected. Test the environment next."
+              : target.bypassSecret
+                ? "A bypass reference is saved. Connect to check the setup, then test browser access."
+                : "Let ShipGremlins check preview protection and connect automation access when needed.",
+          "onboarding-help",
+        ),
+        action,
+        node(
+          "p",
+          "The automation credential works across this Vercel project’s deployments. Protection stays on. Your app’s own sign-in is separate.",
+          "onboarding-help",
+        ),
+      );
+      if (manual) {
+        const advanced = settingsSheet("Advanced preview access"),
+          label = node("label", undefined, "onboarding-confirm"),
+          enabled = node("input");
+        enabled.type = "checkbox";
+        enabled.checked = s.draft.vercelBypassEnabled;
+        enabled.addEventListener("change", () => {
+          s.draft.vercelBypassEnabled = enabled.checked;
+          s.notice = "";
+          updateFormActions(s);
+        });
+        label.append(enabled, node("span", "Use a saved bypass credential"));
+        const credentials = node("a", "Open project access in Connections →");
+        credentials.href = "/connections#project-access";
+        advanced.content.append(
+          node(
+            "p",
+            "Use this option to manage your own Vercel automation credential. Enter only its reference name here; save the token privately in Connections. Save environment to apply manual changes.",
+          ),
+          label,
+          field(
+            s,
+            "vercelBypassSecret",
+            "Secret name",
+            "A saved reference, never the token itself.",
+          ),
+          credentials,
+        );
+        card.append(advanced.section);
+      } else {
+        card.append(
+          button("Manage preview access settings", () => {
+            if (disabled(s)) return;
+            s.showForm = true;
+            paint(s);
+            s.formPreviewAccess?.focus({ preventScroll: true });
+            s.form.scrollIntoView?.({ block: "start" });
+          }),
+        );
+      }
+      return card;
     }
     function paintForm(s) {
       if (!s.draft) return;
@@ -985,60 +1238,8 @@
         const vercelTarget =
           s.draft.providerTarget ||
           (s.draft.existing && s.draft.existingTarget);
-        if (vercelTarget?.kind === "vercel") {
-          const protection = node(
-              "div",
-              undefined,
-              "onboarding-vercel-protection",
-            ),
-            label = node("label", undefined, "onboarding-confirm"),
-            enabled = node("input");
-          enabled.type = "checkbox";
-          enabled.checked = s.draft.vercelBypassEnabled;
-          enabled.addEventListener("change", () => {
-            s.draft.vercelBypassEnabled = enabled.checked;
-            s.formSignature = "";
-            paintForm(s);
-          });
-          label.append(
-            enabled,
-            node("span", "This preview has Vercel deployment protection"),
-          );
-          protection.append(
-            label,
-            node(
-              "p",
-              "Use a Vercel automation bypass when the preview shows a Vercel login wall. Your app’s own sign-in is configured below.",
-              "onboarding-help",
-            ),
-          );
-          if (s.draft.vercelBypassEnabled) {
-            protection.append(
-              node(
-                "p",
-                "Save this environment, then add its automation bypass token in Connections. Keep the token out of chat.",
-                "onboarding-help",
-              ),
-            );
-            const advanced = settingsSheet("Saved bypass secret name");
-            advanced.content.append(
-              field(
-                s,
-                "vercelBypassSecret",
-                "Secret name",
-                "A reference to the token in Connections, not the token itself.",
-              ),
-            );
-            protection.append(advanced.section);
-            const credentials = node(
-              "a",
-              "Open project access in Connections →",
-            );
-            credentials.href = "/connections#project-access";
-            protection.append(credentials);
-          }
-          s.form.append(protection);
-        }
+        if (vercelTarget?.kind === "vercel")
+          s.form.append(previewAccessCard(s, vercelTarget, true));
         const advanced = settingsSheet("Hosting provider settings");
         advanced.content.append(
           node(
@@ -1567,6 +1768,9 @@
           "onboarding-help",
         );
         s.verification.append(detail);
+        s.savedPreviewAccess = null;
+        if (environment.target.kind === "vercel" && !s.showForm)
+          s.verification.append(previewAccessCard(s, environment.target));
         if (result?.checks?.length) {
           const checks = node("ul", undefined, "onboarding-checks");
           for (const item of result.checks)

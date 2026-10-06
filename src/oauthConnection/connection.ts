@@ -593,6 +593,9 @@ export function createOAuthConnection(
           ? { expiresAt: new Date(connection.expiresAt).toISOString() }
           : {}),
         ...(provider === "vercel" ? { teamId: connection.teamId ?? null } : {}),
+        ...(provider === "vercel" && connection.configurationId
+          ? { configurationId: connection.configurationId }
+          : {}),
         ...(provider === "linear"
           ? { workspaceId: connection.workspace.id }
           : {}),

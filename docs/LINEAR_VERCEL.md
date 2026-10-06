@@ -120,12 +120,20 @@ Choose the Vercel account/team and projects available to the integration. Open *
 
 Connecting Vercel alone creates nothing. If there is no test deployment, **Create a test preview** prepares a reviewed branch and commit, then explicitly creates a Preview using a connection with deployment write access. Existing branches are preserved. Preview variables must already point to safe test services; ShipGremlins does not copy production secrets or create test accounts. Ask the Setup Gremlin for contextual guidance. [Vercel environment flow and limits →](VERCEL_ENVIRONMENTS.md)
 
-**Vercel preview access is a separate credential from the account token.** If your
-preview uses Deployment Protection, generate a secret in that Vercel project's
-**Settings → Deployment Protection → Protection Bypass for Automation**. In
-ShipGremlins, select its secret name in the browser target settings, then save the
-value in the project's Vercel preview access field in Connections. Public previews
-need no bypass secret. See [Vercel's automation bypass guide](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation).
+**Vercel preview access is a separate credential from the account token.** Choose
+**Connect preview access** in the project's Environment page. ShipGremlins checks
+Deployment Protection, creates or reuses its dedicated automation bypass via the
+selected Vercel connection, and stores the value privately. If the environment
+has unsaved changes, **Save & connect preview access** saves them first. Public
+previews need no new secret. Then choose **Test environment** to verify access.
+
+Vercel's bypass grants access across the Vercel project's deployments until
+revoked; protection remains enabled. Your application's own sign-in is separate.
+If the connection cannot manage protection, reconnect with the needed permission
+or use **Advanced preview access**: generate a secret under Vercel's **Settings →
+Deployment Protection → Protection Bypass for Automation**, select its secret
+reference, and save the value in **Connections → Project access → Vercel preview
+access**. See [Vercel's automation bypass guide](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation).
 
 ## Credentials and recovery
 

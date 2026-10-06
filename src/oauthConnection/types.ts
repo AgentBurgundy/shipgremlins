@@ -16,6 +16,8 @@ export interface OAuthCredential {
   method: "oauth" | "token";
   expiresAt?: string;
   teamId?: string | null;
+  /** Vercel integration installation identity; never a credential or public status field. */
+  configurationId?: string;
   workspaceId?: string;
 }
 export interface CredentialRequest {
