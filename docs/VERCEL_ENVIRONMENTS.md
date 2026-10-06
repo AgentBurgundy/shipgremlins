@@ -16,8 +16,9 @@ connection and Docker to explain your actual setup and next steps.
 3. Choose a ready Preview deployment or an existing custom staging environment.
    The card shows the branch, environment, deployment state and commit. Production
    deployments are visible for context and cannot be selected as previews.
-4. Save the chosen environment, add preview access and app test accounts if
-   necessary, and choose **Test environment**. A successful Vercel build is not
+4. Choose **Save & connect preview access** to save the selected environment and
+   let ShipGremlins check its Vercel protection. Add app test accounts if
+   necessary, then choose **Test environment**. A successful Vercel build is not
    proof that a PM can reach the app or sign in.
 
 The saved provider target contains the connection, team, project, branch and
@@ -65,10 +66,31 @@ Vercel state and any saved repository analysis. The conversation can explain wha
 to do; provider writes and environment saves still happen through their explicit
 reviewed actions. Do not paste secrets in chat. Save them in **Connections**.
 
-For protected previews, create a **Protection Bypass for Automation** secret in
-Vercel and save it through a named preview-access credential in ShipGremlins.
-That bypass is separate from logging into your application. Configure dedicated
-app test accounts and verify both steps in the browser check.
+## Connect protected preview access
+
+Choose **Connect preview access** on the saved Vercel environment. ShipGremlins
+checks the project using its selected Vercel connection, creates or reuses a
+dedicated **Protection Bypass for Automation** secret when needed, and saves it
+privately in Connections. Project settings contain only a secret reference;
+the credential is never sent to the dashboard or chat. Public previews need no
+new secret. Opening the page does not create credentials.
+
+Vercel grants a bypass secret access across **all deployments of that Vercel
+project** until revoked. ShipGremlins keeps deployment protection enabled and
+uses the credential with the selected test environment. It does not replace or
+revoke other tools' bypass secrets. A connected credential is not evidence of a
+successful browser test: choose **Test environment** afterward.
+
+If Vercel denies permission, reconnect an account with permission to manage
+deployment protection, or use **Advanced preview access** to reference a
+manually created secret and save its value in **Connections → Project access**.
+Vercel requires a team member role or a Project Administrator project role to
+manage automation bypasses. Keep secret values out of chat and URLs.
+
+The bypass is separate from logging into your application. Configure dedicated
+app test accounts and verify both steps in the browser check. An email OTP,
+magic link, or SSO login is not converted into a password login by connecting
+preview access.
 
 Conversation history is bounded and held in controller memory only. It resets
 when the controller restarts or project configuration changes. Discovery and
@@ -83,4 +105,5 @@ remain available through the [project onboarding flow](PROJECT_ONBOARDING.md).
 
 Provider references: [Preview environments](https://vercel.com/docs/deployments/environments),
 [deployment API](https://vercel.com/docs/rest-api/deployments/create-a-new-deployment),
-and [automation bypass](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation).
+and [automation bypass](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation),
+including the [automation bypass API](https://vercel.com/docs/rest-api/projects/update-protection-bypass-for-automation).

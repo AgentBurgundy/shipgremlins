@@ -22,6 +22,7 @@ import {
 import { createOnboardingStore } from "../projectOnboarding/store.ts";
 import { validateSetupAnalysis } from "../projectOnboarding/analysis.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
+import { VercelSetupError } from "../vercelSetup/types.ts";
 
 interface SetupResponse extends OnboardingState {
   environment: null | {
@@ -139,6 +140,113 @@ const target = {
 };
 
 describe("authenticated project onboarding", () => {
+  it("connects access only for the saved Vercel environment through an authenticated revision-bound action", async () => {
+    const vercelAccess = {
+      connect: vi.fn(async () => ({
+        status: "connected" as const,
+        message: "Preview access connected. Test the environment next.",
+      })),
+      busy: vi.fn(() => false),
+      close: async () => {},
+    } as unknown as NonNullable<DashboardOptions["vercelAccess"]>;
+    const f = await fixture({ vercelAccess });
+    const path = "/api/projects/app/onboarding/vercel/access";
+    const initial = await f.state();
+    const input = { configurationRevision: initial.configurationRevision };
+    expect((await f.call(path, input, false)).status).toBe(401);
+    expect((await f.call(path)).status).toBe(405);
+    expect((await f.call(path + "?token=no", input)).status).toBe(400);
+    expect((await f.call(path, {})).status).toBe(400);
+    expect((await f.call(path, { configurationRevision: "old" })).status).toBe(
+      400,
+    );
+    expect((await f.call(path, { ...input, token: "raw-value" })).status).toBe(
+      400,
+    );
+    expect((await f.call(path, { ...input, projectId: "other" })).status).toBe(
+      400,
+    );
+    expect((await f.call(path, input)).status).toBe(400);
+    expect(vercelAccess.connect).not.toHaveBeenCalled();
+    const configured = await f.call("/api/projects/app/onboarding/configure", {
+      ...input,
+      profile: "hosted",
+      environment: "preview",
+      target: {
+        kind: "vercel",
+        role: "preview",
+        projectId: "prj_test",
+        connectionId: "default",
+        teamId: "team_test",
+        branch: "pm-staging",
+      },
+    });
+    expect(configured.status).toBe(200);
+    const current = await f.state();
+    const savedInput = { configurationRevision: current.configurationRevision };
+    const response = await f.call(path, savedInput);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      project: "app",
+      environment: { name: "preview", target: { projectId: "prj_test" } },
+      previewAccess: { status: "connected" },
+    });
+    expect(vercelAccess.connect).toHaveBeenCalledWith("app", savedInput);
+    expect(f.environmentAccess.verify).not.toHaveBeenCalled();
+    expect(await f.runners.jobs()).toEqual([]);
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((done) => {
+      release = done;
+    });
+    const started = new Promise<void>((done) => {
+      entered = done;
+    });
+    vi.mocked(vercelAccess.connect).mockImplementationOnce(async () => {
+      entered();
+      await waiting;
+      return { status: "connected", message: "Preview access connected." };
+    });
+    const pending = f.call(path, savedInput);
+    await started;
+    try {
+      for (const route of [
+        "/api/connections",
+        "/api/vercel/connect",
+        "/api/vercel/complete",
+        "/api/service-connections",
+      ]) {
+        expect((await f.call(route, {})).status).toBe(409);
+      }
+      expect((await f.call("/api/vercel", {}, true, "DELETE")).status).toBe(
+        409,
+      );
+      expect((await f.call(path, savedInput)).status).toBe(409);
+    } finally {
+      release();
+    }
+    expect((await pending).status).toBe(200);
+    vi.mocked(vercelAccess.connect).mockRejectedValueOnce(
+      new VercelSetupError(
+        "Reconnect Vercel with access to deployment protection.",
+        403,
+      ),
+    );
+    const denied = await f.call(path, savedInput);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({
+      error: "Reconnect Vercel with access to deployment protection.",
+    });
+    vi.mocked(vercelAccess.busy).mockReturnValue(true);
+    expect((await f.call(path, savedInput)).status).toBe(409);
+    expect(
+      (await f.call("/api/projects/app/onboarding/verify", {})).status,
+    ).toBe(409);
+    expect(
+      (await f.call("/api/projects/app/onboarding/discover", {})).status,
+    ).toBe(409);
+    expect(f.environmentAccess.verify).not.toHaveBeenCalled();
+  });
   it("authenticates reviewed command confirmation and returns durable setup state without adopting or running", async () => {
     const sha = "a".repeat(40),
       fetcher = vi.fn(

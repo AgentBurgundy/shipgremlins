@@ -44,6 +44,10 @@ class Element {
   contains(value: Element) {
     return walk(this).includes(value);
   }
+  querySelectorAll(selector: string) {
+    const tags = selector.split(",").map((value) => value.trim().toUpperCase());
+    return walk(this).filter((element) => tags.includes(element.tagName));
+  }
   fire(name: string) {
     if (name === "click" && this.disabled) return;
     return this.listeners.get(name)?.();
@@ -158,6 +162,489 @@ const docker = (): Draft => ({
   advanced:
     '{"services":[{"kind":"postgres","name":"db","env":"DATABASE_URL"}],"seed":["npm","run","seed"]}',
   accessKind: "public",
+});
+const vercelState = (target: Record<string, unknown> = {}) => ({
+  ...state(),
+  environment: {
+    name: "preview",
+    profile: "hosted",
+    target: {
+      kind: "vercel",
+      role: "preview",
+      projectId: "prj_test",
+      branch: "pm-staging",
+      access: { kind: "public" },
+      ...target,
+    },
+  },
+});
+
+describe("Vercel preview access", () => {
+  it.each(["connected", "not_required"])(
+    "connects an existing target explicitly and reports %s without claiming browser verification",
+    async (status) => {
+      const current = vercelState({ bypassSecret: "EXISTING_BYPASS" });
+      const api = vi.fn(async (_path: string, body?: unknown) =>
+        body
+          ? {
+              ...current,
+              configurationRevision: "config-2",
+              previewAccess: { status, message: `Provider result: ${status}` },
+            }
+          : current,
+      );
+      const f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+      await settle();
+      expect(api).toHaveBeenCalledTimes(1);
+      expect(walk(root).some((item) => item.id === "onboarding-shop-url")).toBe(
+        false,
+      );
+      const verification = walk(root).find(
+        (item) => item.className === "onboarding-verification",
+      )!;
+      expect(text(verification)).toContain("A bypass reference is saved");
+      await walk(verification)
+        .find((item) => item.textContent === "Connect preview access")!
+        .fire("click");
+      expect(api).toHaveBeenLastCalledWith(
+        "/api/projects/shop/onboarding/vercel/access",
+        { configurationRevision: "config-1" },
+      );
+      expect(api).toHaveBeenCalledTimes(2);
+      expect(f.saved).toHaveBeenCalledWith("shop");
+      expect(text(root)).not.toContain("Provider result:");
+      expect(text(root)).toContain(
+        status === "connected"
+          ? "Access connected. Test the environment next."
+          : "No deployment protection detected. Test the environment next.",
+      );
+      expect(
+        walk(verification).find(
+          (item) => item.textContent === "Check preview access",
+        )?.className,
+      ).toBe("small-button");
+      expect(
+        walk(verification)
+          .filter(
+            (item) =>
+              item.tagName === "BUTTON" &&
+              item.className.includes("button-dark"),
+          )
+          .map((item) => item.textContent),
+      ).toEqual(["Test environment"]);
+      expect(text(root)).toContain(
+        "Test the environment to verify browser access",
+      );
+      expect(text(root)).toContain("Protection stays on");
+      expect(text(root)).not.toContain("Your crew can explore");
+      expect(f.panel.isDirty()).toBe(false);
+      const reference = walk(root).find(
+        (item) => item.id === "onboarding-shop-vercelBypassSecret",
+      )!;
+      reference.value = "CHANGED_REFERENCE";
+      reference.fire("input");
+      expect(
+        walk(root).find(
+          (item) => item.textContent === "Save & connect preview access",
+        )?.className,
+      ).toBe("button button-dark");
+      f.panel.destroy();
+    },
+  );
+  it("saves a suggested target and its edited login inputs before connecting with the returned revision", async () => {
+    let savedTarget: Record<string, unknown> = vercelState().environment.target;
+    const api = vi.fn(async (path: string, body?: unknown) => {
+      if (path.endsWith("/configure")) {
+        savedTarget = (body as { target: Record<string, unknown> }).target;
+        return {
+          ...vercelState(savedTarget),
+          configurationRevision: "saved-2",
+        };
+      }
+      if (path.endsWith("/vercel/access"))
+        return {
+          ...vercelState({ ...savedTarget, bypassSecret: "MANAGED_BYPASS" }),
+          configurationRevision: "access-3",
+          previewAccess: {
+            status: "connected",
+            message: "Preview access connected.",
+          },
+        };
+      return state();
+    });
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: { preview: savedTarget },
+    });
+    await settle();
+    const select = walk(root).find(
+      (item) => item.id === "onboarding-shop-access",
+    )!;
+    select.value = "password";
+    select.fire("change");
+    for (const [id, value] of [
+      ["onboarding-shop-loginPath", "/sign-in"],
+      ["onboarding-shop-successSelector", '[data-testid="account-menu"]'],
+      ["onboarding-shop-account-0-name", "Test member"],
+    ]) {
+      const input = walk(root).find((item) => item.id === id)!;
+      input.value = value!;
+      input.fire("input");
+    }
+    await walk(root)
+      .find((item) => item.textContent === "Save & connect preview access")!
+      .fire("click");
+    expect(api.mock.calls.map(([path]) => path)).toEqual([
+      "/api/projects/shop/onboarding",
+      "/api/projects/shop/onboarding/configure",
+      "/api/projects/shop/onboarding/vercel/access",
+    ]);
+    expect(api.mock.calls[1]![1]).toMatchObject({
+      configurationRevision: "config-1",
+      target: {
+        kind: "vercel",
+        access: {
+          kind: "password",
+          loginPath: "/sign-in",
+          successSelector: '[data-testid="account-menu"]',
+          accounts: [{ name: "Test member" }],
+        },
+      },
+    });
+    expect(api.mock.calls[2]![1]).toEqual({ configurationRevision: "saved-2" });
+    expect(f.panel.isDirty()).toBe(false);
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-loginPath")?.value,
+    ).toBe("/sign-in");
+    expect(walk(root).some((item) => item.id === "onboarding-shop-url")).toBe(
+      false,
+    );
+    f.panel.destroy();
+  });
+  it("keeps incomplete login edits and does not save or connect them", async () => {
+    const f = fixture(vi.fn(async () => vercelState())),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const select = walk(root).find(
+      (item) => item.id === "onboarding-shop-access",
+    )!;
+    select.value = "password";
+    select.fire("change");
+    await walk(root)
+      .find((item) => item.textContent === "Save & connect preview access")!
+      .fire("click");
+    expect(f.api).toHaveBeenCalledTimes(1);
+    expect(f.panel.isDirty()).toBe(true);
+    expect(text(root)).toContain(
+      "Set a login path and a signed-in success selector",
+    );
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-access")?.value,
+    ).toBe("password");
+    f.panel.destroy();
+  });
+  it("keeps a stale draft and stops when saving conflicts", async () => {
+    let revision = "config-1";
+    const api = vi.fn(async (path: string, _body?: unknown) => {
+      if (path.endsWith("/configure"))
+        throw new Error("Configuration changed. Review your saved settings.");
+      return { ...vercelState(), configurationRevision: revision };
+    });
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const input = walk(root).find(
+      (item) => item.id === "onboarding-shop-vercelBypassSecret",
+    )!;
+    input.value = "MY_MANUAL_REFERENCE";
+    input.fire("input");
+    revision = "config-2";
+    await f.panel.refresh("shop");
+    await walk(root)
+      .find((item) => item.textContent === "Save & connect preview access")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      expect.objectContaining({ configurationRevision: "config-1" }),
+    );
+    expect(
+      api.mock.calls.some(([path]) => path.endsWith("/vercel/access")),
+    ).toBe(false);
+    expect(input.value).toBe("MY_MANUAL_REFERENCE");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(text(root)).toContain(
+      "Configuration changed. Review your saved settings.",
+    );
+    f.panel.destroy();
+  });
+  it.each(["failure", "malformed", "wrong-target"])(
+    "retains the saved environment after an access %s and restores controls",
+    async (kind) => {
+      const initial = vercelState();
+      const api = vi.fn(async (path: string, _body?: unknown) => {
+        if (!path.endsWith("/vercel/access")) return initial;
+        if (kind === "failure")
+          throw new Error("Reconnect Vercel with project write access.");
+        return {
+          ...vercelState(
+            kind === "wrong-target" ? { projectId: "different-project" } : {},
+          ),
+          previewAccess: {
+            status: kind === "malformed" ? "unknown" : "connected",
+            message: "unexpected success",
+          },
+        };
+      });
+      const f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+      await settle();
+      await walk(root)
+        .find((item) => item.textContent === "Connect preview access")!
+        .fire("click");
+      expect(text(root)).not.toContain("unexpected success");
+      expect(text(root)).toContain(
+        kind === "failure"
+          ? "Reconnect Vercel with project write access"
+          : kind === "malformed"
+            ? "did not return a connection result"
+            : "returned an unexpected environment",
+      );
+      expect(
+        walk(root).find((item) => item.textContent === "Connect preview access")
+          ?.disabled,
+      ).toBe(false);
+      expect(f.saved).not.toHaveBeenCalled();
+      f.panel.destroy();
+    },
+  );
+  it("keeps a successful save after access fails and retries only access", async () => {
+    let attempts = 0;
+    const initial = vercelState();
+    const api = vi.fn(async (path: string, _body?: unknown) => {
+      if (path.endsWith("/configure"))
+        return { ...initial, configurationRevision: "saved-2" };
+      if (path.endsWith("/vercel/access")) {
+        if (++attempts === 1)
+          throw new Error("Vercel is unavailable. Retry later.");
+        return {
+          ...initial,
+          configurationRevision: "access-3",
+          previewAccess: {
+            status: "connected",
+            message: "Preview access connected.",
+          },
+        };
+      }
+      return state();
+    });
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: { preview: initial.environment.target },
+    });
+    await settle();
+    await walk(root)
+      .find((item) => item.textContent === "Save & connect preview access")!
+      .fire("click");
+    expect(text(root)).toContain("Vercel is unavailable");
+    expect(f.saved).toHaveBeenCalledTimes(1);
+    await walk(root)
+      .find((item) => item.textContent === "Connect preview access")!
+      .fire("click");
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/configure")),
+    ).toHaveLength(1);
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/vercel/access",
+      { configurationRevision: "saved-2" },
+    );
+    f.panel.destroy();
+  });
+  it.each(["destroy", "forget", "replace"])(
+    "ignores late access responses after %s and prevents duplicate clicks while busy",
+    async (operation) => {
+      let resolve!: (
+        value: ReturnType<typeof vercelState> & { previewAccess: object },
+      ) => void;
+      const api = vi.fn(async (path: string, _body?: unknown) => {
+        if (path.endsWith("/vercel/access"))
+          return new Promise<
+            ReturnType<typeof vercelState> & { previewAccess: object }
+          >((done) => {
+            resolve = done;
+          });
+        return vercelState();
+      });
+      const f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, {
+        name: "shop",
+        repo: "owner/shop",
+        instanceId: "first",
+      });
+      await settle();
+      const action = walk(root).find(
+        (item) => item.textContent === "Connect preview access",
+      )!;
+      const pending = action.fire("click");
+      await settle();
+      expect(action.disabled).toBe(true);
+      await action.fire("click");
+      expect(
+        api.mock.calls.filter(([path]) => path.endsWith("/vercel/access")),
+      ).toHaveLength(1);
+      expect(
+        walk(root).find((item) => item.id === "onboarding-shop-access")
+          ?.disabled,
+      ).toBe(true);
+      if (operation === "destroy") f.panel.destroy();
+      else if (operation === "forget") f.panel.forget("shop");
+      else {
+        root.replaceChildren();
+        f.panel.mount(root, {
+          name: "shop",
+          repo: "owner/replacement",
+          instanceId: "second",
+        });
+        await settle();
+      }
+      const before = text(root);
+      resolve({
+        ...vercelState({ bypassSecret: "LATE_REFERENCE" }),
+        previewAccess: {
+          status: "connected",
+          message: "Late connection result",
+        },
+      });
+      await pending;
+      expect(text(root)).toBe(before);
+      expect(f.saved).not.toHaveBeenCalled();
+      if (operation === "replace")
+        expect(
+          walk(root).find(
+            (item) => item.textContent === "Connect preview access",
+          )?.disabled,
+        ).toBe(false);
+      f.panel.destroy();
+    },
+  );
+  it("does not connect after a late save response for a removed project", async () => {
+    let resolve!: (value: ReturnType<typeof vercelState>) => void;
+    const initial = vercelState();
+    const api = vi.fn(async (path: string, _body?: unknown) => {
+      if (path.endsWith("/configure"))
+        return new Promise<ReturnType<typeof vercelState>>((done) => {
+          resolve = done;
+        });
+      return state();
+    });
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: { preview: initial.environment.target },
+    });
+    await settle();
+    const pending = walk(root)
+      .find((item) => item.textContent === "Save & connect preview access")!
+      .fire("click");
+    f.panel.forget("shop");
+    resolve({ ...initial, configurationRevision: "saved-2" });
+    await pending;
+    expect(
+      api.mock.calls.some(([path]) => path.endsWith("/vercel/access")),
+    ).toBe(false);
+    expect(f.saved).not.toHaveBeenCalled();
+    f.panel.destroy();
+  });
+  it("stops after a malformed save response and keeps the selected target", async () => {
+    const initial = vercelState();
+    const api = vi.fn(async (_path: string, _body?: unknown) => state());
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: { preview: initial.environment.target },
+    });
+    await settle();
+    await walk(root)
+      .find((item) => item.textContent === "Save & connect preview access")!
+      .fire("click");
+    expect(
+      api.mock.calls.some(([path]) => path.endsWith("/vercel/access")),
+    ).toBe(false);
+    expect(text(root)).toContain("returned an unexpected environment");
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-existing")?.value,
+    ).toBe("preview");
+    expect(
+      walk(root).find(
+        (item) => item.textContent === "Save & connect preview access",
+      )?.disabled,
+    ).toBe(false);
+    f.panel.destroy();
+  });
+  it("keeps manual bypass configuration in a focused sheet and saves only a secret reference", async () => {
+    const initial = vercelState();
+    const api = vi.fn(async (_path: string, body?: unknown) =>
+      body
+        ? vercelState((body as { target: Record<string, unknown> }).target)
+        : initial,
+    );
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const dialog = walk(root).find(
+      (item) =>
+        item.tagName === "DIALOG" &&
+        item.attributes.get("aria-label") === "Advanced preview access",
+    )!;
+    expect(dialog.open).toBe(false);
+    await walk(root)
+      .find(
+        (item) =>
+          item.tagName === "BUTTON" &&
+          item.textContent === "Advanced preview access",
+      )!
+      .fire("click");
+    expect(dialog.open).toBe(true);
+    const checkbox = walk(dialog).find(
+      (item) => item.tagName === "INPUT" && !item.id,
+    )!;
+    Object.assign(checkbox, { checked: true });
+    checkbox.fire("change");
+    const input = walk(dialog).find(
+      (item) => item.id === "onboarding-shop-vercelBypassSecret",
+    )!;
+    input.value = "MY_MANUAL_BYPASS";
+    input.fire("input");
+    await walk(root)
+      .find((item) => item.textContent === "Save environment")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      expect.objectContaining({
+        target: expect.objectContaining({ bypassSecret: "MY_MANUAL_BYPASS" }),
+      }),
+    );
+    expect(
+      api.mock.calls.some(([path]) => path.endsWith("/vercel/access")),
+    ).toBe(false);
+    f.panel.destroy();
+  });
 });
 
 describe("guided environment target review", () => {

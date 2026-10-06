@@ -63,6 +63,7 @@ import {
   compactVercelGuideContext,
 } from "../setup/environmentGuide.ts";
 import { createVercelSetup, VercelSetupError } from "../vercelSetup/index.ts";
+import { createVercelAccess } from "../vercelSetup/access.ts";
 import type {
   VercelDiscoverInput,
   VercelPrepareInput,
@@ -350,6 +351,7 @@ export interface DashboardOptions {
   projectOnboarding?: ProjectOnboarding;
   environmentAccess?: ReturnType<typeof createEnvironmentAccess>;
   vercelSetup?: ReturnType<typeof createVercelSetup>;
+  vercelAccess?: ReturnType<typeof createVercelAccess>;
   environmentGuide?: ReturnType<typeof createEnvironmentGuide>;
   delivery?: ReturnType<typeof createDeliveryController>;
   remote?: ReturnType<typeof createRemoteWorkers>;
@@ -398,6 +400,7 @@ export function createDashboardServer(
   const activeProjectOperations = new Map<string, number>();
   let configurationMutation = false;
   let activeMutationRequests = 0;
+  let vercelCredentialMutation = false;
   function trackProject(name: string): () => void {
     activeProjectOperations.set(
       name,
@@ -474,6 +477,8 @@ export function createDashboardServer(
       sourceControl,
       vercelConnectionFor,
     });
+  const vercelAccess =
+    options.vercelAccess ?? createVercelAccess({ root, vercelConnectionFor });
   const environmentGuide =
     options.environmentGuide ??
     createEnvironmentGuide({
@@ -525,6 +530,7 @@ export function createDashboardServer(
     projectOnboarding.busy(name) ||
     environmentAccess.busy(name) ||
     vercelSetup.busy(name) ||
+    vercelAccess.busy(name) ||
     environmentGuide.busy(name);
   async function requireProfile(provider: OAuthProvider, id: string) {
     if (
@@ -1548,6 +1554,7 @@ export function createDashboardServer(
   const server = createServer(async (req, res) => {
     let finishProjectRequest: (() => void) | undefined;
     let countedMutation = false;
+    let ownsVercelCredentialMutation = false;
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
@@ -1599,6 +1606,26 @@ export function createDashboardServer(
             401,
             "Open the dashboard link printed by your CLI.",
           );
+        // Keep account replacement and preview credential setup mutually exclusive.
+        // Reserve before reading request bodies so neither operation can slip in
+        // while the other awaits configuration or provider access.
+        if (
+          req.method !== "GET" &&
+          req.method !== "HEAD" &&
+          (/^\/api\/(?:connections(?:\/clear)?|service-connections|vercel(?:\/.*)?)$/.test(
+            url.pathname,
+          ) ||
+            /^\/api\/projects\/[a-z][a-z0-9-]{0,62}\/onboarding\/vercel\/access$/.test(
+              url.pathname,
+            ))
+        ) {
+          if (vercelCredentialMutation || vercelAccess.busy())
+            throw new RequestError(
+              409,
+              "Wait for the current connection or preview access setup to finish before changing credentials.",
+            );
+          vercelCredentialMutation = ownsVercelCredentialMutation = true;
+        }
         const scopedProject =
           /^\/api\/projects\/([a-z][a-z0-9-]{0,62})(?:\/|$)/.exec(url.pathname);
         const resourceDelete =
@@ -3302,7 +3329,7 @@ export function createDashboardServer(
           return;
         }
         const vercelSetupRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding\/vercel(?:\/(discover|prepare|deploy|chat))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding\/vercel(?:\/(discover|prepare|deploy|chat|access))?$/.exec(
             url.pathname,
           );
         if (vercelSetupRoute) {
@@ -3335,7 +3362,9 @@ export function createDashboardServer(
                   ? ["revision", "branch", "baseBranch", "customEnvironmentId"]
                   : action === "deploy"
                     ? ["revision", "confirmTestData"]
-                    : ["message"];
+                    : action === "access"
+                      ? ["configurationRevision"]
+                      : ["message"];
             if (
               Object.keys(input).some((key) => !allowed.includes(key)) ||
               Object.entries(input).some(([key, value]) =>
@@ -3358,7 +3387,50 @@ export function createDashboardServer(
                 400,
                 "Review the latest Vercel setup before continuing.",
               );
-            if (action === "discover") {
+            if (action === "access") {
+              if (
+                typeof input.configurationRevision !== "string" ||
+                !/^[a-f0-9]{64}$/.test(input.configurationRevision)
+              )
+                throw new RequestError(
+                  400,
+                  "Save the selected environment before connecting preview access.",
+                );
+              const verification = effectiveVerification(
+                loadProject(root, name).config,
+              );
+              if (
+                verification.mode !== "browser" ||
+                verification.target.kind !== "vercel" ||
+                verification.target.role === "production"
+              )
+                throw new RequestError(
+                  400,
+                  "Choose and save a Vercel test environment first.",
+                );
+              await requireProfile(
+                "vercel",
+                verification.target.connectionId ?? "default",
+              );
+              const configurationRevision = input.configurationRevision;
+              const previewAccess = await runners().withConfigurationMutation(
+                { project: name },
+                async () => {
+                  const result = await vercelAccess.connect(name, {
+                    configurationRevision,
+                  });
+                  await projectOnboarding.recordConfigured(name, {
+                    previousConfigurationRevision: configurationRevision,
+                    profile: "hosted",
+                  });
+                  return result;
+                },
+              );
+              json(res, 200, {
+                ...(await onboardingState(name)),
+                previewAccess,
+              });
+            } else if (action === "discover") {
               if (typeof input.connectionId === "string")
                 await requireProfile("vercel", input.connectionId);
               json(
@@ -3626,6 +3698,7 @@ export function createDashboardServer(
                 if (
                   environmentAccess.busy(name) ||
                   vercelSetup.busy(name) ||
+                  vercelAccess.busy(name) ||
                   environmentGuide.busy(name)
                 )
                   throw new RequestError(
@@ -3644,6 +3717,7 @@ export function createDashboardServer(
                 if (
                   environmentAccess.busy(name) ||
                   vercelSetup.busy(name) ||
+                  vercelAccess.busy(name) ||
                   environmentGuide.busy(name)
                 )
                   throw new RequestError(
@@ -3664,6 +3738,7 @@ export function createDashboardServer(
                 if (
                   projectOnboarding.busy(name) ||
                   vercelSetup.busy(name) ||
+                  vercelAccess.busy(name) ||
                   environmentGuide.busy(name)
                 )
                   throw new RequestError(
@@ -4752,6 +4827,7 @@ export function createDashboardServer(
     } finally {
       finishProjectRequest?.();
       if (countedMutation) activeMutationRequests--;
+      if (ownsVercelCredentialMutation) vercelCredentialMutation = false;
     }
   });
   server.requestTimeout = 15_000;
@@ -4773,6 +4849,7 @@ export function createDashboardServer(
       projectOnboarding.close(),
       environmentAccess.close(),
       vercelSetup.close(),
+      vercelAccess.close(),
       environmentGuide.close(),
       Promise.resolve(manager?.stop()),
     ]).finally(() => activityStore.close());
