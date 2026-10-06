@@ -27,6 +27,7 @@ import {
   resolveRepositoryHead,
 } from "./repository.ts";
 import { publishSetupDraft } from "./publish.ts";
+import { confirmationState, confirmSetup } from "./confirmation.ts";
 import {
   createOnboardingStore,
   dead,
@@ -39,6 +40,7 @@ import {
   type OnboardingState,
   type ProjectOnboardingOptions,
   type ApplyProfileInput,
+  type ConfirmProjectSetupInput,
 } from "./types.ts";
 export * from "./types.ts";
 export { resolveRepositoryHead } from "./repository.ts";
@@ -126,6 +128,11 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
         return { state: next, result: next };
       });
     }
+    const setupConfirmation = confirmationState(
+      state,
+      loadProject(root, project),
+      configurationRevision,
+    );
     return {
       project,
       revision: revision(state),
@@ -140,7 +147,10 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
           : state.message,
       updatedAt: state.updatedAt,
       ...(state.failure ? { failure: state.failure } : {}),
-      stale: state.configurationRevision !== configurationRevision,
+      stale:
+        state.configurationRevision !== configurationRevision &&
+        !setupConfirmation.confirmed,
+      setupConfirmation,
       ...(state.report ? { report: state.report } : {}),
       ...(state.setupPull ? { setupPull: state.setupPull } : {}),
       ...(state.appliedProfile ? { appliedProfile: state.appliedProfile } : {}),
@@ -391,6 +401,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
             );
           await update(project, id, (next) => {
             next.report = report;
+            delete next.setupAcknowledgement;
             delete next.setupPull;
             delete next.appliedProfile;
             next.status = "analyzed";
@@ -502,6 +513,46 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
     status,
     busy,
     apply,
+    async confirm(project: string, input: ConfirmProjectSetupInput) {
+      if (busy(project))
+        throw new ProjectOnboardingError(
+          "Wait for repository analysis before confirming its setup.",
+          409,
+          "busy",
+        );
+      await confirmSetup({
+        root,
+        store,
+        project,
+        input,
+        checkHead: async (project, branch) => {
+          const signal = AbortSignal.timeout(15000);
+          const credential = await bounded(
+            source().resolveCredential({
+              provider: project.config.provider ?? "github",
+              serverUrl: project.config.serverUrl,
+              repository: project.config.repo,
+              write: false,
+              minValidityMs: 60000,
+            }),
+            signal,
+          );
+          return (
+            await bounded(
+              resolveRepositoryHead({
+                project,
+                branch,
+                credential,
+                fetch: fetcher,
+                signal,
+              }),
+              signal,
+            )
+          ).sha;
+        },
+      });
+      return status(project);
+    },
     async recordConfigured(
       project: string,
       input: {

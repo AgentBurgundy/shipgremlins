@@ -230,6 +230,7 @@
       onSelect({
         target: structuredClone(candidate.target),
         label: `${state.inventory?.selectedProject?.name || "Vercel"} · ${candidate.branch || candidate.environment}`,
+        url: candidate.url,
       });
       message.textContent =
         "Selected. Review app sign-in below, save the environment, then test access before the crew uses it.";
@@ -507,7 +508,7 @@
         stage.append(
           node(
             "p",
-            "This is a bounded list. If your environment is missing, choose its exact Vercel project or add its test URL below.",
+            "This is a bounded list. If your environment is missing, choose its exact Vercel project or switch to entering a test URL.",
             "vercel-setup-note",
           ),
         );

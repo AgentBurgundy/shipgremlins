@@ -43,7 +43,7 @@
       source: "Connect source control",
       ai: "Connect Claude",
       linear: "Connect Linear",
-      mapping: "Fix this PM’s Linear mapping",
+      mapping: "Prepare Linear",
       verify: "Verify project",
       worker: "Set up a worker",
       mandate: "Edit PM brief",

@@ -182,7 +182,7 @@ import {
   createDashboardOutputReader,
   dashboardOutputDeadline,
 } from "./dashboardOutput.ts";
-import { createPmKnowledge } from "../pmKnowledge/index.ts";
+import { createPmKnowledge, knowledgeRevision } from "../pmKnowledge/index.ts";
 import { readPmBrief, savePmBrief, PmBriefError } from "../setup/pmBrief.ts";
 import {
   createProjectKnowledge,
@@ -3084,6 +3084,10 @@ export function createDashboardServer(
                 foundation: foundationSummary(root, project, foundationJobs),
                 firstReviewableChange:
                   improvements.firstReviewableChange?.(project),
+                onboardingProgress: {
+                  ...knowledge.onboardingProgress(project),
+                  hasMissions: improvements.hasMissions?.(project) ?? false,
+                },
                 provider: project.config.provider ?? "github",
                 serverUrl: project.config.serverUrl,
                 workflow: effectiveWorkflow(project.config),
@@ -3103,23 +3107,32 @@ export function createDashboardServer(
                 linear: linearProvisioning.status(name),
                 ...snapshot,
                 areas: project.areas.map(
-                  ({
+                  (
+                    {
+                      key,
+                      name: areaName,
+                      instanceId: areaInstanceId,
+                      enabled,
+                      codingEnabled,
+                      linearProjectId,
+                      mandate,
+                      charter,
+                      paths,
+                      sharedTouchpoints,
+                      metric,
+                      schedule,
+                      wipLimit,
+                      mixpanelReportId,
+                    },
+                    areaIndex,
+                  ) => ({
                     key,
                     name: areaName,
-                    enabled,
-                    codingEnabled,
-                    linearProjectId,
-                    mandate,
-                    charter,
-                    paths,
-                    sharedTouchpoints,
-                    metric,
-                    schedule,
-                    wipLimit,
-                    mixpanelReportId,
-                  }) => ({
-                    key,
-                    name: areaName,
+                    instanceId: areaInstanceId,
+                    discoveryRevision: knowledgeRevision(
+                      project,
+                      project.areas[areaIndex]!,
+                    ),
                     enabled,
                     codingEnabled: codingEnabled ?? enabled,
                     linearProjectId,
@@ -3454,7 +3467,7 @@ export function createDashboardServer(
           return;
         }
         const onboardingRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|configure|verify|setup-pr|cancel|screenshot))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|setup-pr|cancel|screenshot))?$/.exec(
             url.pathname,
           );
         if (onboardingRoute) {
@@ -3492,7 +3505,22 @@ export function createDashboardServer(
                 "Wait for the controller update before starting setup work.",
               );
             const input = await body(req);
-            if (action === "configure") {
+            if (action === "confirm") {
+              if (setupBusy(name))
+                throw new RequestError(
+                  409,
+                  "Wait for this project's setup or environment test before confirming project settings.",
+                );
+              await runners().withConfigurationMutation({ project: name }, () =>
+                projectOnboarding.confirm(
+                  name,
+                  input as unknown as Parameters<
+                    ProjectOnboarding["confirm"]
+                  >[1],
+                ),
+              );
+              json(res, 200, await onboardingState(name));
+            } else if (action === "configure") {
               if (
                 Object.keys(input).some(
                   (key) =>
@@ -4558,6 +4586,10 @@ export function createDashboardServer(
               ),
             });
           } else {
+            let adopted: {
+              projectInstanceId: string | null;
+              areaInstanceId: string | null;
+            };
             try {
               if (
                 typeof input.key !== "string" ||
@@ -4567,9 +4599,22 @@ export function createDashboardServer(
                   400,
                   "Choose a lowercase PM ID using letters, numbers, and hyphens.",
                 );
-              await runners().withConfigurationMutation(
+              adopted = await runners().withConfigurationMutation(
                 { project, area: input.key },
-                () => linearProvisioning.addArea(project, input),
+                async () => {
+                  await linearProvisioning.addArea(project, input);
+                  const saved = loadProject(root, project),
+                    area = saved.areas.find((item) => item.key === input.key);
+                  if (!area)
+                    throw new RequestError(
+                      500,
+                      "The saved PM could not be read. Refresh this project's crew before trying again.",
+                    );
+                  return {
+                    projectInstanceId: saved.config.instanceId ?? null,
+                    areaInstanceId: area.instanceId ?? null,
+                  };
+                },
               );
             } catch (error) {
               if (error instanceof RequestError) throw error;
@@ -4583,16 +4628,14 @@ export function createDashboardServer(
                 "PM settings could not be saved. Check the mandate, key, and configuration.",
               );
             }
-            const configured = loadProject(root, project).config.linear;
             json(res, 200, {
               ok: true,
-              linear: configured
-                ? await provisionLinear(project)
-                : {
-                    status: "skipped",
-                    message:
-                      "PM saved and disabled. Set up this app's Linear team to create its project.",
-                  },
+              ...adopted,
+              linear: await provisionLinear(
+                project,
+                undefined,
+                String(input.key),
+              ),
             });
           }
           return;

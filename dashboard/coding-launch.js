@@ -10,7 +10,7 @@
     source: "Connect source control",
     ai: "Connect Claude",
     linear: "Connect Linear",
-    mapping: "Set up Linear",
+    mapping: "Prepare Linear",
     verify: "Verify connections",
     worker: "Set up a runner",
     mandate: "Review PM brief",

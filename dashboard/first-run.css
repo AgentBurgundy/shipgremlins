@@ -102,3 +102,31 @@ body.is-first-run .first-run-path:not([hidden]) {
     object-fit: contain;
   }
 }
+.project-first-investigation {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: linear-gradient(140deg, #f4f8ef, #fff 70%);
+}
+.project-first-investigation .mission-heading {
+  margin-right: 132px;
+}
+.first-investigation-creature {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 110px;
+  height: 130px;
+  object-fit: contain;
+}
+@media (max-width: 540px) {
+  .project-first-investigation .mission-heading {
+    margin-right: 0;
+  }
+  .first-investigation-creature {
+    position: static;
+    width: 78px;
+    height: 84px;
+    margin-bottom: 8px;
+  }
+}

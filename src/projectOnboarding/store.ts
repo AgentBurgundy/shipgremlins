@@ -18,12 +18,14 @@ import { loadProject, listProjectNames } from "../config.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import {
   ProjectOnboardingError,
+  PROJECT_COMMAND_KEYS,
   type OnboardingReport,
   type SetupPull,
   type OnboardingState,
 } from "./types.ts";
 
 export interface StoredOnboarding {
+  setupAcknowledgement?: SetupAcknowledgement;
   schema: 1;
   project: string;
   configurationRevision: string;
@@ -37,6 +39,22 @@ export interface StoredOnboarding {
   report?: OnboardingReport;
   setupPull?: SetupPull;
   appliedProfile?: "hosted" | "docker";
+}
+export interface SetupAcknowledgement {
+  requestRevision: string;
+  previousConfigurationRevision: string;
+  configurationRevision: string;
+  reportRevision: string;
+  projectInstanceId?: string;
+  repository: {
+    repo: string;
+    provider: string;
+    serverUrl?: string;
+    branch: string;
+    sha: string;
+  };
+  confirmedAt: string;
+  commandKeys: import("./types.ts").ProjectCommandKey[];
 }
 export const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -135,6 +153,32 @@ export function createOnboardingStore(root: string) {
         ].includes(value.status) ||
         typeof value.stage !== "string" ||
         typeof value.message !== "string" ||
+        (value.setupAcknowledgement &&
+          (![
+            value.setupAcknowledgement.requestRevision,
+            value.setupAcknowledgement.previousConfigurationRevision,
+            value.setupAcknowledgement.configurationRevision,
+            value.setupAcknowledgement.reportRevision,
+          ].every(
+            (item) => typeof item === "string" && /^[a-f0-9]{64}$/.test(item),
+          ) ||
+            !value.setupAcknowledgement.repository ||
+            typeof value.setupAcknowledgement.repository.repo !== "string" ||
+            !["github", "gitlab"].includes(
+              value.setupAcknowledgement.repository.provider,
+            ) ||
+            typeof value.setupAcknowledgement.repository.branch !== "string" ||
+            !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(
+              value.setupAcknowledgement.repository.sha,
+            ) ||
+            !Number.isFinite(
+              Date.parse(value.setupAcknowledgement.confirmedAt),
+            ) ||
+            !Array.isArray(value.setupAcknowledgement.commandKeys) ||
+            value.setupAcknowledgement.commandKeys.length > 5 ||
+            value.setupAcknowledgement.commandKeys.some(
+              (key) => !PROJECT_COMMAND_KEYS.includes(key),
+            ))) ||
         !Number.isFinite(Date.parse(value.updatedAt)) ||
         (value.operation &&
           (!Number.isSafeInteger(value.operation.pid) ||

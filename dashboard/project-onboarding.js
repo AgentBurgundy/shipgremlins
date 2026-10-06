@@ -316,13 +316,39 @@
       };
     }
     function initialDraft(s) {
-      const target = s.data?.environment?.target;
+      const savedVercel = Object.entries(s.project.environments || {}).filter(
+        ([, target]) =>
+          target.kind === "vercel" && target.role !== "production",
+      );
+      const suggestedEnvironment =
+        !s.data?.environment && savedVercel.length === 1
+          ? {
+              name: savedVercel[0][0],
+              target: savedVercel[0][1],
+              profile: "hosted",
+            }
+          : null;
+      const environment = s.data?.environment || suggestedEnvironment;
+      const target = environment?.target;
+      const vercelIdentity = (value) =>
+        value?.kind === "vercel"
+          ? JSON.stringify([
+              value.projectId,
+              value.connectionId || "default",
+              value.teamId === undefined ? "saved-team" : value.teamId,
+              value.branch || null,
+              value.customEnvironmentId || null,
+            ])
+          : null;
+      const observedPreview =
+        target?.kind === "vercel" &&
+        vercelIdentity(target) === vercelIdentity(s.observedPreview?.target)
+          ? s.observedPreview?.url
+          : undefined;
       const proposed = s.data?.stale ? null : s.data?.report?.docker;
       const local = target?.kind === "docker" ? target : proposed;
       const profile =
-        s.data?.environment?.profile ||
-        s.data?.report?.recommendation ||
-        "hosted";
+        environment?.profile || s.data?.report?.recommendation || "hosted";
       const advanced = {};
       for (const key of ["start", "env", "services", "migrate", "seed"])
         if (local?.[key] !== undefined) advanced[key] = local[key];
@@ -338,9 +364,11 @@
         profile,
         existing:
           target && target.kind !== "url" && target.kind !== "docker"
-            ? s.data.environment.name
+            ? environment.name
             : "",
+        suggestedEnvironment: Boolean(suggestedEnvironment),
         url: target?.kind === "url" ? target.url : "",
+        ...(observedPreview ? { providerUrl: observedPreview } : {}),
         recipeKind: local?.recipe?.kind || "dockerfile",
         dockerfile: local?.recipe?.dockerfile || "Dockerfile",
         context: local?.recipe?.context || ".",
@@ -731,14 +759,24 @@
       return wrap;
     }
     function updateFormActions(s) {
-      if (s.save) s.save.disabled = disabled(s) || !s.data || !s.draft;
+      const choosingPreview =
+        s.draft?.profile === "hosted" &&
+        s.showVercel &&
+        !s.draft.providerTarget &&
+        !s.draft.existing;
+      if (s.save)
+        s.save.disabled = disabled(s) || !s.data || !s.draft || choosingPreview;
       if (s.test)
         s.test.disabled = disabled(s) || dirty(s) || !s.data?.environment;
       if (s.create) s.create.disabled = isLocked() || s.busy || dirty(s);
       if (s.draftNotice)
-        s.draftNotice.textContent = dirty(s)
-          ? "Unsaved changes · save this choice before testing."
-          : "Credentials stay in Connections. Saving does not start a PM or enable automation.";
+        s.draftNotice.textContent = choosingPreview
+          ? "Choose a ready Vercel preview before saving, or enter a test URL instead."
+          : s.draft?.suggestedEnvironment
+            ? "Suggested from your saved Vercel settings · save this choice, then test access. It is not verified yet."
+            : dirty(s)
+              ? "Unsaved changes · save this choice before testing."
+              : "Credentials stay in Connections. Saving does not start a PM or enable automation.";
     }
     function paintForm(s) {
       if (!s.draft) return;
@@ -783,12 +821,29 @@
       s.form.append(choices);
       if (s.draft.profile === "hosted") {
         if (!s.showVercel) s.vercelSetup?.setActive(false);
+        const hostedTarget =
+          s.draft.providerTarget ||
+          (s.draft.existing && s.draft.existingTarget);
+        const useManualUrl = () => {
+          delete s.draft.providerTarget;
+          delete s.draft.providerLabel;
+          delete s.draft.providerUrl;
+          s.draft.existing = "";
+          s.draft.existingTarget = undefined;
+          s.draft.suggestedEnvironment = false;
+          s.showVercel = false;
+          s.formSignature = "";
+          paintForm(s);
+        };
         const chooseVercel = button(
           s.showVercel
-            ? "Use a test URL instead"
-            : "Find a preview with Vercel",
+            ? "Enter a test URL instead"
+            : hostedTarget?.kind === "vercel"
+              ? "Change Vercel preview"
+              : "Find a preview with Vercel",
           () => {
-            s.showVercel = !s.showVercel;
+            if (s.showVercel) return useManualUrl();
+            s.showVercel = true;
             s.formSignature = "";
             paintForm(s);
           },
@@ -801,7 +856,7 @@
               project: s.project,
               getStatus,
               isLocked: () => disabled(s),
-              onSelect: ({ target, label }) => {
+              onSelect: ({ target, label, url }) => {
                 const previous =
                   s.draft.providerTarget || s.draft.existingTarget;
                 const sameProject =
@@ -814,29 +869,61 @@
                   Object.assign(s.draft, protectionDraft(target, s.project));
                 s.draft.providerTarget = target;
                 s.draft.providerLabel = label;
+                s.draft.providerUrl = url;
+                s.observedPreview = { target: structuredClone(target), url };
                 s.draft.existing = "";
                 s.draft.existingTarget = undefined;
+                s.draft.suggestedEnvironment = false;
+                s.showVercel = false;
                 s.formSignature = "";
                 paintForm(s);
               },
             });
           s.vercelSetup.mount(s.form);
         }
-        if (s.draft.providerTarget) {
+        if (hostedTarget?.kind === "vercel") {
           const selected = node("div", undefined, "vercel-selected-target");
           selected.append(
-            node("strong", `Selected environment · ${s.draft.providerLabel}`),
+            node(
+              "strong",
+              s.draft.providerLabel
+                ? `Selected Vercel preview · ${s.draft.providerLabel}`
+                : `${s.draft.suggestedEnvironment ? "Suggested Vercel environment" : "Saved Vercel environment"} · ${s.draft.existing}`,
+            ),
             node(
               "p",
-              "Review sign-in below, then save and test this environment.",
+              "The worker gets the test address from Vercel. You don’t need to enter a separate Test URL.",
               "onboarding-help",
             ),
-            button("Use a different URL instead", () => {
-              delete s.draft.providerTarget;
-              delete s.draft.providerLabel;
-              s.formSignature = "";
-              paintForm(s);
-            }),
+          );
+          let previewUrl = "";
+          try {
+            const url = new URL(s.draft.providerUrl);
+            if (
+              ["https:", "http:"].includes(url.protocol) &&
+              !url.username &&
+              !url.password &&
+              !url.search &&
+              !url.hash
+            )
+              previewUrl = url.href;
+          } catch {
+            /* Saved provider targets resolve their address during testing. */
+          }
+          if (previewUrl) {
+            const address = node("a", previewUrl, "vercel-environment-url");
+            address.href = previewUrl;
+            address.target = "_blank";
+            address.rel = "noopener noreferrer";
+            selected.append(address);
+          }
+          selected.append(
+            node(
+              "p",
+              `${hostedTarget.branch ? `Branch ${hostedTarget.branch}. ` : ""}${previewUrl ? "This is the preview found during selection. " : ""}Each test resolves the latest matching deployment; save this choice and test access to check it.`,
+              "onboarding-help",
+            ),
+            button("Enter a test URL instead", useManualUrl),
           );
           s.form.append(selected);
         }
@@ -856,6 +943,10 @@
           select.addEventListener("change", () => {
             s.draft.existing = select.value;
             s.draft.existingTarget = s.project.environments?.[select.value];
+            s.draft.suggestedEnvironment = Boolean(
+              select.value && !s.data?.environment,
+            );
+            delete s.draft.providerUrl;
             Object.assign(
               s.draft,
               protectionDraft(s.draft.existingTarget, s.project),
@@ -873,7 +964,7 @@
           wrap.append(label, select);
           s.form.append(wrap);
         }
-        if (!s.draft.existing && !s.draft.providerTarget)
+        if (!s.draft.existing && !s.draft.providerTarget && !s.showVercel)
           s.form.append(
             field(
               s,
@@ -881,6 +972,14 @@
               "Test URL",
               "Use a dedicated preview or staging app. It must be reachable from the worker; localhost refers to the worker itself.",
               "url",
+            ),
+          );
+        else if (s.showVercel && !hostedTarget)
+          s.form.append(
+            node(
+              "p",
+              "Choose a ready deployment with ‘Use this preview’. Selecting an account or project alone does not attach a test environment.",
+              "onboarding-help",
             ),
           );
         const vercelTarget =
@@ -1082,7 +1181,7 @@
         access.append(
           node(
             "p",
-            "Use isolated test identities with known roles. Add their username and password values in Connections after saving; only secret references belong here.",
+            "Create a dedicated test user in your app first. This form does not create accounts or assign roles. After saving, add its username and password values in Connections using the secret names below. Email codes, magic links, and SSO are not supported by this password check.",
           ),
         );
         for (const [index, account] of s.draft.accounts.entries()) {
@@ -1164,7 +1263,7 @@
         access.append(
           node(
             "p",
-            "Browser verification checks the public app. If important flows require a login, configure test accounts first. SSO-only flows need a supported test login method.",
+            "This checks only the public app. Password login can check a dedicated test account. Email codes, magic links, and SSO need a login method this verifier does not yet support; a public check does not verify signed-in flows.",
           ),
         );
       s.form.append(access);

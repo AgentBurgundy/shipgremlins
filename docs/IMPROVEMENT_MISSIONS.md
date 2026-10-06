@@ -10,6 +10,14 @@ Use **What should get better?** on a project's home page. For example:
 The mission uses the existing PM and runner queue. It does not introduce a second
 scheduler or grant a model permission to approve work.
 
+For your first mission, finish the project introduction first: inspect the
+existing source, confirm selected command suggestions, adopt a PM, and run
+**Explore the codebase**. Read what it learned before choosing an outcome.
+Sentry, Mixpanel, and Datadog are optional context for later investigations.
+Save the project's Linear connection when ready for proposals; the PM prepares
+missing mappings and labels rather than asking you to assemble them manually.
+[First-run setup →](SETUP.md#your-first-adoption)
+
 ## From a goal to a reviewed change
 
 1. **Investigate.** Select an owning PM and start the mission. If the project has

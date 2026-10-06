@@ -125,17 +125,14 @@ cron), copy the four markdown seeds from `projects/_templates/` into
 
 ## When the app needs a sign-in
 
-If the target signs users in with emailed one-time codes on Neon Auth, give
-the PM a test account instead of an inbox:
+Use [test-account setup](TEST_ACCOUNTS.md) for the supported same-origin password
+form. Configuration stores secret references; Connections stores their values.
+Creating a recipe does not create an account or grant its role.
 
-1. Add to `project.json`:
-   `"signIn": { "kind": "neon-auth-otp", "email": "pm-agent@example.com", "path": "/sign-in", "databaseUrlSecret": "PM_DATABASE_URL_<NAME>" }`
-2. Add the hub secret it names — the **preview** database URL (the Neon
-   branch the integration branch's preview uses), never production:
-   `gh secret set PM_DATABASE_URL_<NAME> -R <owner>/pm-hub`
-3. Run the `pm-signin` workflow once for the project. It signs the test
-   account in on the preview and prints its owner hash, for targets that gate
-   test-mode features per owner.
-
-Each PM run then calls `signin-code --project <name>`, which seeds a fresh
-code in `neon_auth.verification` and prints `{email, code, path}`.
+Older projects may retain `signIn.kind: "neon-auth-otp"`, with a dedicated test
+email, sign-in path, and preview database secret reference. The legacy
+`signin-code` helper seeds a temporary code in that test database. It does not
+establish a browser session, exercise the app's email-delivery flow, or prove
+the current UI can use the code. The guided environment checker does not run
+this recipe, and Grumblins do not receive its database credential. Do not save
+a one-time code as a password or treat this legacy path as verified end to end.

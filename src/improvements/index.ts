@@ -1220,6 +1220,15 @@ export function createImprovements(options: ImprovementOptions) {
     context,
     captureResult,
     firstReviewableChange,
+    hasMissions(project: Project) {
+      try {
+        return readState(options.root, project).missions.length > 0;
+      } catch {
+        // Keep the mission repair view reachable instead of replacing saved work
+        // with the new-project introduction when its journal cannot be read.
+        return true;
+      }
+    },
     reconcile,
   };
 }

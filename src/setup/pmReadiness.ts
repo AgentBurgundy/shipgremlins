@@ -252,7 +252,7 @@ export function inspectPmReadiness(
         id: "linear_mapping",
         action: "mapping",
         message:
-          "Map this PM to a Linear project in Edit project → Linear mappings.",
+          "Prepare Linear and this PM will create its own project in the app's team. Existing mappings are preserved.",
       });
     if (!hasPmMandate(project, area))
       blockers.push({
@@ -297,7 +297,7 @@ export function inspectPmReadiness(
     "PM project mapping",
     project.areas.some(hasPmMapping),
     "mapping",
-    "Choose a Linear project for at least one PM in Edit project → Linear mappings.",
+    "Prepare Linear to create this app's team and a project for each unmapped PM.",
     "At least one PM has a Linear project mapping.",
   );
   add(

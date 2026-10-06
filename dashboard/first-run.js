@@ -6,8 +6,24 @@
     `/projects/${encodeURIComponent(project.name)}`;
   const belongs = (job, project) =>
     job.project === project.name &&
-    job.projectInstanceId === project.instanceId;
+    (job.projectInstanceId ?? null) === (project.instanceId ?? null);
   const actualWork = (job) => ["pm", "developer"].includes(job.type);
+
+  // Server summaries come from identity-scoped knowledge and mission journals.
+  // A generic successful PM run is not evidence that the first Discovery saved.
+  window.projectFirstStep = (project, jobs = []) => {
+    if (project.foundation?.needed) return "foundation";
+    if (
+      project.firstReviewableChange?.url ||
+      project.onboardingProgress?.hasMissions ||
+      project.onboardingProgress?.investigated ||
+      list(jobs).some(
+        (job) => belongs(job, project) && job.type === "developer",
+      )
+    )
+      return "mission";
+    return project.areas?.length ? "discovery" : "welcome";
+  };
 
   // Read-only guidance. Opening Overview never creates a resource or starts work.
   window.firstRunNextStep = (status, runners) => {
@@ -135,7 +151,7 @@
       return step(
         2,
         "What are we working on?",
-        "Connect an app you already have. Choose one user outcome and let your crew work toward a useful, reviewable change.",
+        "Connect an app you already have. Review what the Setup Gremlin finds, then adopt a PM to learn the app.",
         "Improve my app",
         "/projects#project-form",
       );
@@ -161,12 +177,21 @@
           : "Review foundation plan",
         `${projectPath(project)}?tab=environment`,
       );
-    if (!project.areas.length)
+    const firstStep = window.projectFirstStep(project, jobs);
+    if (firstStep === "welcome")
       return step(
         3,
-        "Choose the first useful improvement.",
-        "Describe what should get better for your users. We’ll prepare a focused gremlin to investigate and propose a change for your review.",
-        "Choose a user outcome",
+        "Let’s get to know your app.",
+        "Review the repository analysis and suggested setup. Then meet a gremlin with a job grounded in your code.",
+        "Review your app setup",
+        projectPath(project),
+      );
+    if (firstStep === "mission")
+      return step(
+        4,
+        "Choose the next useful improvement.",
+        "Your crew has context to work from. Choose a user outcome, review its proposed change, and approve the exact work before coding.",
+        "Open your next change",
         projectPath(project),
       );
     const previous = work?.[0];
@@ -178,7 +203,10 @@
         "Review the last run",
         `/activity?run=${encodeURIComponent(previous.id)}`,
       );
-    const area = project.areas[0];
+    const area =
+      project.areas.find(
+        (item) => item.key === project.onboardingProgress?.area,
+      ) || project.areas[0];
     const readiness = list(project.readiness.areas).find(
       (item) => item.key === area.key,
     )?.discovery;
@@ -212,13 +240,11 @@
     }
     return step(
       4,
+      "Let your first gremlin learn the app.",
+      "Their first Discovery maps the code, the product, and its gaps. Review what they learn before deciding what should improve. It does not create tickets or start coding.",
       readiness?.canRun
-        ? "Turn your direction into a useful change."
-        : "Choose the next useful improvement.",
-      readiness?.canRun
-        ? "Choose a user outcome. Your crew investigates, proposes a bounded improvement, and waits for approval before coding. Automatic work stays off."
-        : "Choose a user outcome on the project page. Saved discovery informs the investigation; a report alone is not the first win.",
-      "Choose a user outcome",
+        ? "Start the first investigation"
+        : "Prepare the first investigation",
       projectPath(project),
     );
   };
@@ -255,7 +281,7 @@
       "Connect source",
       "Connect Claude",
       "Add a project",
-      "Choose an outcome",
+      "Meet your gremlin",
       "Review a change",
     ];
     if (state.active)

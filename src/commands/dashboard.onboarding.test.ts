@@ -17,7 +17,10 @@ import { createLocalRunners } from "../localRunners/engine.ts";
 import {
   createProjectOnboarding,
   type OnboardingState,
+  type ProjectOnboardingOptions,
 } from "../projectOnboarding/index.ts";
+import { createOnboardingStore } from "../projectOnboarding/store.ts";
+import { validateSetupAnalysis } from "../projectOnboarding/analysis.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 
 interface SetupResponse extends OnboardingState {
@@ -42,7 +45,10 @@ afterEach(async () => {
     rmSync(root, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
-async function fixture(extra: DashboardOptions = {}) {
+async function fixture(
+  extra: DashboardOptions = {},
+  setupOptions: Partial<ProjectOnboardingOptions> = {},
+) {
   const root = mkdtempSync(
     join(realpathSync(tmpdir()), "gremlins-onboarding-api-"),
   );
@@ -67,6 +73,7 @@ async function fixture(extra: DashboardOptions = {}) {
     packageRoot,
     sourceControl: source,
     env: {},
+    ...setupOptions,
   });
   const runners = createLocalRunners({ root, packageRoot });
   vi.spyOn(runners, "start").mockImplementation(() => {});
@@ -132,6 +139,111 @@ const target = {
 };
 
 describe("authenticated project onboarding", () => {
+  it("authenticates reviewed command confirmation and returns durable setup state without adopting or running", async () => {
+    const sha = "a".repeat(40),
+      fetcher = vi.fn(
+        async () => new Response(JSON.stringify({ sha }), { status: 200 }),
+      );
+    const f = await fixture({}, { fetch: fetcher });
+    vi.mocked(f.source.resolveCredential).mockResolvedValue({
+      token: "read-only-fixture",
+      method: "oauth",
+    });
+    const path = "/api/projects/app/onboarding/confirm",
+      current = await f.state();
+    const report = validateSetupAnalysis(
+      {
+        summary: "Inspected unit test script.",
+        recommendation: "hosted",
+        rationale:
+          "Existing source defines tests; no environment was verified.",
+        stack: [],
+        missingInputs: [],
+        hosted: { provider: "url", instructions: [] },
+        docker: null,
+        proposedFiles: [],
+        warnings: [],
+        projectSetup: {
+          commands: {
+            test: {
+              command: "npm run test:unit",
+              rationale: "Existing package script.",
+              evidence: [
+                { path: "package.json", quote: '"test:unit":"vitest"' },
+              ],
+            },
+          },
+          firstPm: {
+            name: "App investigator",
+            mandate:
+              "Understand actual application behavior before proposing changes.",
+            evidence: [{ path: "package.json", quote: '"test:unit":"vitest"' }],
+          },
+        },
+      },
+      {
+        repository: {
+          provider: "github",
+          repo: "owner/app",
+          branch: "main",
+          sha,
+          filesRead: ["package.json"],
+          truncated: false,
+        },
+        files: [
+          {
+            path: "package.json",
+            content: '{"scripts":{"test:unit":"vitest"}}',
+          },
+        ],
+        paths: ["package.json"],
+      },
+      [],
+    );
+    await createOnboardingStore(f.root).change("app", () => ({
+      state: {
+        schema: 1,
+        project: "app",
+        configurationRevision: current.configurationRevision,
+        status: "analyzed",
+        stage: "review-report",
+        message: "Review",
+        updatedAt: new Date().toISOString(),
+        report,
+      },
+      result: undefined,
+    }));
+    const reviewed = await f.state(),
+      input = {
+        revision: reviewed.revision,
+        configurationRevision: reviewed.configurationRevision,
+        repositorySha: sha,
+        commandKeys: ["test"],
+      };
+    expect((await f.call(path, input, false)).status).toBe(401);
+    expect(
+      (await f.call(path, { ...input, commands: { test: "unreviewed" } }))
+        .status,
+    ).toBe(400);
+    expect(fetcher).not.toHaveBeenCalled();
+    const response = await f.call(path, input);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      stale: false,
+      setupConfirmation: { confirmed: true, commandKeys: ["test"] },
+    });
+    expect(JSON.parse(readFileSync(f.projectFile, "utf8")).commands.test).toBe(
+      "npm run test:unit",
+    );
+    expect(
+      JSON.parse(readFileSync(join(f.root, "projects/app/areas.json"), "utf8"))
+        .areas,
+    ).toEqual({});
+    expect(await f.runners.jobs()).toEqual([]);
+    expect(f.environmentAccess.verify).not.toHaveBeenCalled();
+    expect((await f.call(path, input)).status).toBe(200);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it("protects Vercel setup actions, binds review revisions, and routes chat without deploying", async () => {
     const status = {
       project: "app",

@@ -24,11 +24,22 @@ project**, then choose the path that fits your app:
 1. **Give your gremlin a home.** Choose **Improve my app**, connect GitHub or
    GitLab, and select its repository. The secondary experimental idea path can
    create a new private-by-default repository and a reviewed foundation assignment.
-2. **Choose its job.** On an existing project, choose **Adopt a PM Gremlin**. Explain
-   who it helps, what should get better, and what it should leave alone. Review
-   its proposed name and product brief with **Meet my gremlin** before adopting. One focused gremlin is
-   a good start; you can grow the crew later.
-3. **Give it a first assignment.** Choose **Explore the codebase** to run
+2. **Inspect the existing app.** The project introduction offers **Inspect my
+   app** and may already be analyzing when source access and Claude Code are
+   ready. The Setup Gremlin reads bounded source at an exact commit and suggests
+   checks and a first investigator. Review its evidence and open questions.
+3. **Confirm the setup you reviewed.** Select the suggested install, test, lint,
+   typecheck, or build commands you want to save, then choose **Confirm setup**.
+   Unselected settings stay as they were. This does not execute commands or prove
+   the app runs. If the source changed, inspect it again before confirming.
+4. **Meet and adopt your gremlin.** Choose **Meet [name]**, review its job and
+   brief, and adopt it. You can choose a different gremlin or write your own brief.
+   Explain who it helps, what should get better, and what it should leave alone.
+5. **Offer optional context.** The welcome screen has Sentry, Mixpanel, and
+   Datadog choices for this project. Configure only the signals you need, or
+   continue with code alone. These are used by later investigations; read-only
+   Discovery does not receive telemetry credentials.
+6. **Give it a first assignment.** Choose **Explore the codebase** to run
    **Discovery**, or **Prepare first mission** if source access, Claude Code, or
    a ready worker is missing. Linear and a browser environment are not required. A new idea instead
    starts with the reviewed **foundation build**: a Coding Gremlin creates the
@@ -38,9 +49,12 @@ Adoption saves the PM and its brief. It does not start a job or turn on automati
 When ready, use **What should get better?** on the project home to start an
 [improvement mission](IMPROVEMENT_MISSIONS.md). This explicitly starts investigation
 and asks you to review a bounded proposal before coding begins.
-Connect only what the next assignment needs. Linear is needed for proposals and
-approved coding work; a browser environment is needed for a runnable app's browser
-walkthroughs. Slack and product signals can wait.
+Connect only what the next assignment needs. Save a Linear connection for
+proposals and approved coding work; adoption or a later PM run prepares missing
+team/project mappings and routing labels using the selected account. Existing
+mappings are kept. Missing permissions are shown without losing the adopted PM.
+A browser environment is needed for a runnable app's browser walkthroughs.
+Slack and product signals can wait.
 
 [Build from an idea →](IDEA_TO_APP.md) · [Prepare a browser environment →](PROJECT_ONBOARDING.md)
 
@@ -82,17 +96,22 @@ dashboard checks periodically for new releases; updates are never installed
 automatically.
 
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Claude Code in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
-2. In **Projects → Add project**, choose **Improve my app** to connect an existing repository. The secondary experimental idea path proposes a crew and creates a private-by-default repository. Its next action is the reviewed foundation build, before environment setup or repository analysis. Existing apps connect their repository and can adopt a PM immediately; adding the repository itself creates no PM. Source access and Claude Code may trigger a bounded Setup Gremlin analysis on import, but no PM or coding job starts and automation stays off. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
-3. **When browser testing is useful**, open Environment. Choose **hosted staging** or a **disposable Docker app**, review proposed settings, then **Test environment**. Repository-only projects can skip this step. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
-4. Choose **Create local worker**. The machine is the CLI/dashboard server. The first image build can take time; Ready requires a real Chromium screenshot with verified evidence.
-5. Adopt a PM with a focused **Product brief**. When application code exists, choose **Discovery** to build its context. New PMs start with automation paused; you do not need to edit JSON or configure hosting to try repository discovery.
-6. Choose **Run now** for one investigation. The action explains missing prerequisites and can complete missing Linear setup and required connection verification using your selected accounts. It preserves existing mappings and repairs missing PM labels. Inspect Activity and its evidence. Choose **Automation** only when you want recurring patrols and automatic pickup of approved tickets. Manual Coding can find the next ready approved ticket without turning automation on.
+2. In **Projects → Add project**, choose **Improve my app**. Follow **Inspect your app → Review setup → Meet your gremlin**. Importing can start bounded source analysis, but creates no PM or coding job; confirming saves only the selected commands. Manual adoption remains available if you already know the setup. The experimental idea path creates a private-by-default repository and starts with the reviewed foundation build before source discovery. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
+3. Adopt the suggested PM or choose another with a focused **Product brief**. Its welcome offers optional project-scoped Sentry, Mixpanel, and Datadog setup. New PMs start with both automation controls off.
+4. Choose **Create local worker**, then **Explore the codebase** for Discovery. The worker runs on the CLI/dashboard server; its first image build can take time. Worker readiness requires actual Chromium evidence, but the PM's source-only Discovery needs no app hosting or Linear mapping.
+5. **When browser testing is useful**, open Environment. Choose **hosted staging** or a **disposable Docker app**, review proposed settings, then **Test environment**. Repository-only projects can skip this step. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
+6. After reviewing Discovery, use **What should get better?** for a mission tied to one outcome, or **Run now** for one normal patrol. Required Linear setup uses your saved connection and preserves existing mappings. Inspect the proposals and evidence before approving coding. Enable **Look for new improvements** and **Automatically build approved work** independently when ready. Manual Coding can find the next ready approved ticket without turning either on.
 
 Approval uses `pm-approved`; proposals use `pm-proposal`. Area labels remain `pm:core`, `pm:security`, and similar. Project Review lets you inspect a proposal and explicitly approve its bounded scope. The controller removes the proposal hold and re-checks the current scope before approving. After configured checks, the worker publishes its unique branch as a **draft** PR/MR. Repository-only projects leave merges to you. Explicit promotion projects target their integration branch and can advance eligible fixes for owning-PM verification; see [selective delivery](DELIVERY_WORKFLOW.md).
 
 The dashboard provides pause/resume, browser verification, repair, idle-worker removal, and job logs/artifacts. Pausing lets the current job finish. Removing a busy worker is refused. Multiple PMs share capacity: each worker runs one job at a time. One click creates one worker; the local pool is capped at four.
 
 Optional [project telemetry](TELEMETRY.md) lets PMs read scoped Sentry logs/errors, Datadog logs, and Mixpanel Insights reports. Provider accounts still require live validation.
+
+For browser work, configure [test accounts](TEST_ACCOUNTS.md) after choosing the
+test environment. Password values go in Connections, never the secret-reference
+fields. The current guided checker does not complete email-code, magic-link,
+MFA, or external SSO flows.
 
 Connect an optional [Slack channel](SLACK.md) once for PM patrol results, coding drafts ready for review, and blockers from every project. Choose Add to Slack in Connections, or save an incoming webhook when the OAuth broker is unavailable. Projects inherit that channel; leave optional project overrides empty unless a project needs a different channel. Slack is not required to run gremlins. Browser readiness checks do not post messages.
 

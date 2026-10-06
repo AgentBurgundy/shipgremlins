@@ -7,6 +7,12 @@ already sends to the providers; they do not install SDKs or ingest events.
 
 ## Connect a project
 
+After adoption, the welcome screen offers Sentry, Mixpanel, and Datadog under
+**Give them more to go on**. Each choice opens that provider's settings for the
+project you just adopted into, then returns you to its gremlin. These connections
+are optional; the first read-only Discovery uses repository source and receives
+no telemetry credentials. Signals inform later PM investigations.
+
 1. Open **Connections** and find Sentry, Datadog, or Mixpanel under product signals.
 2. Choose your project and open its configuration from that card. Enable the
    provider and enter its project/service scope, environment, or region. The form

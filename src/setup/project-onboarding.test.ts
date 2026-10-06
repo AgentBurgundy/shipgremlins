@@ -90,6 +90,7 @@ function fixture(
           onSelect(input: {
             target: Record<string, unknown>;
             label: string;
+            url?: string;
           }): void;
         }) => {
           mount(root: Element): void;
@@ -160,6 +161,196 @@ const docker = (): Draft => ({
 });
 
 describe("guided environment target review", () => {
+  it("shows the chosen Vercel address instead of a duplicate URL input and switches to manual URL only explicitly", async () => {
+    const target = {
+      kind: "vercel",
+      role: "preview",
+      projectId: "prj_test",
+      connectionId: "test",
+      branch: "pm-staging",
+    };
+    const api = vi.fn(async (_path: string, body?: unknown) => ({
+      ...state(),
+      ...(body
+        ? {
+            environment: {
+              name: "pm-test",
+              profile: "hosted",
+              target: (body as { target: object }).target,
+            },
+          }
+        : {}),
+    }));
+    const f = fixture(api),
+      root = new Element();
+    let select!: (input: {
+      target: Record<string, unknown>;
+      label: string;
+      url?: string;
+    }) => void;
+    f.window.createVercelSetup = (options) => {
+      select = options.onSelect;
+      return {
+        mount() {},
+        setActive() {},
+        destroy() {},
+        syncConnections() {},
+        isBusy: () => false,
+      };
+    };
+    f.panel.mount(root, { name: "shop", repo: "owner/shop", environments: {} });
+    await settle();
+    expect(walk(root).some((item) => item.id === "onboarding-shop-url")).toBe(
+      true,
+    );
+    await walk(root)
+      .find((item) => item.textContent === "Find a preview with Vercel")!
+      .fire("click");
+    expect(walk(root).some((item) => item.id === "onboarding-shop-url")).toBe(
+      false,
+    );
+    expect(text(root)).toContain(
+      "Selecting an account or project alone does not attach",
+    );
+    expect(
+      walk(root).find((item) => item.textContent === "Save environment")
+        ?.disabled,
+    ).toBe(true);
+    select({
+      target,
+      label: "Test app · pm-staging",
+      url: "https://test-app.vercel.app",
+    });
+    expect(walk(root).some((item) => item.id === "onboarding-shop-url")).toBe(
+      false,
+    );
+    expect(text(root)).toContain("https://test-app.vercel.app/");
+    expect(text(root)).toContain("don’t need to enter a separate Test URL");
+    expect(api).toHaveBeenCalledTimes(1);
+    await walk(root)
+      .find((item) => item.textContent === "Save environment")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      expect.objectContaining({
+        target: { ...target, access: { kind: "public" } },
+      }),
+    );
+    expect(text(root)).toContain("https://test-app.vercel.app/");
+    await walk(root)
+      .find((item) => item.textContent === "Enter a test URL instead")!
+      .fire("click");
+    const input = walk(root).find((item) => item.id === "onboarding-shop-url")!;
+    input.value = "https://manual.example.test/";
+    input.fire("input");
+    await walk(root)
+      .find((item) => item.textContent === "Save environment")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      expect.objectContaining({
+        target: {
+          kind: "url",
+          role: "staging",
+          url: "https://manual.example.test/",
+          access: { kind: "public" },
+        },
+      }),
+    );
+    f.panel.destroy();
+  });
+
+  it("keeps saved Vercel targets automatic without inventing a resolved address", async () => {
+    const target = {
+      kind: "vercel",
+      role: "preview",
+      projectId: "prj_test",
+      branch: "pm-staging",
+    };
+    const f = fixture(
+        vi.fn(async () => ({
+          ...state(),
+          environment: { name: "preview", profile: "hosted", target },
+        })),
+      ),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: { preview: target },
+    });
+    await settle();
+    expect(walk(root).some((item) => item.id === "onboarding-shop-url")).toBe(
+      false,
+    );
+    expect(text(root)).toContain("Saved Vercel environment · preview");
+    expect(text(root)).toContain(
+      "Each test resolves the latest matching deployment",
+    );
+    expect(text(root)).not.toContain("https://prj_test");
+    expect(
+      walk(root).some((item) => item.textContent === "Change Vercel preview"),
+    ).toBe(true);
+    f.panel.destroy();
+  });
+
+  it("suggests one saved nonproduction Vercel target without attaching or verifying it, and preserves ambiguity", async () => {
+    const target = {
+      kind: "vercel",
+      role: "preview",
+      projectId: "prj_test",
+      branch: "pm-staging",
+    };
+    const f = fixture(),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: {
+        preview: target,
+        production: { ...target, role: "production" },
+      },
+    });
+    await settle();
+    expect(text(root)).toContain("Suggested Vercel environment · preview");
+    expect(text(root)).toContain(
+      "save this choice, then test access. It is not verified yet.",
+    );
+    expect(walk(root).some((item) => item.id === "onboarding-shop-url")).toBe(
+      false,
+    );
+    expect(f.api).toHaveBeenCalledTimes(1);
+    expect(f.api.mock.calls[0]?.[1]).toBeUndefined();
+    await walk(root)
+      .find((item) => item.textContent === "Save environment")!
+      .fire("click");
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      expect.objectContaining({
+        environment: "preview",
+        target: { ...target, access: { kind: "public" } },
+      }),
+    );
+    f.panel.destroy();
+    const multiple = fixture(),
+      other = new Element();
+    multiple.panel.mount(other, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: {
+        first: target,
+        second: { ...target, projectId: "prj_another" },
+      },
+    });
+    await settle();
+    expect(text(other)).not.toContain("Suggested Vercel environment");
+    expect(
+      walk(other).find((item) => item.id === "onboarding-shop-existing")?.value,
+    ).toBe("");
+    expect(multiple.api).toHaveBeenCalledTimes(1);
+    multiple.panel.destroy();
+  });
+
   it("returns an existing crew to its project after environment verification", async () => {
     const target = {
       kind: "url",
@@ -369,7 +560,7 @@ describe("guided environment target review", () => {
     });
     await settle();
     await walk(root)
-      .find((element) => element.textContent === "Find a preview with Vercel")!
+      .find((element) => element.textContent === "Change Vercel preview")!
       .fire("click");
     select({
       target: {

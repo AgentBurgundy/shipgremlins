@@ -148,6 +148,24 @@ function fixture() {
   };
 }
 describe("durable improvement missions", () => {
+  it("preserves the mission workspace across restart and damaged journals while isolating replacement projects", async () => {
+    const f = fixture(),
+      project = loadProject(root, "app");
+    expect(f.service.hasMissions(project)).toBe(false);
+    await f.start();
+    const restarted = createImprovements(f.options);
+    expect(restarted.hasMissions(project)).toBe(true);
+    const file = join(root, ".run", "improvements", "app", "missions.json");
+    writeFileSync(file, "{ repair required");
+    expect(restarted.hasMissions(project)).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe("{ repair required");
+    expect(
+      restarted.hasMissions({
+        ...project,
+        config: { ...project.config, instanceId: randomUUID() },
+      }),
+    ).toBe(false);
+  });
   it("recovers an accepted approval with a lost response without approving twice", async () => {
     const f = fixture(),
       mission = await f.start();

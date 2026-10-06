@@ -173,6 +173,7 @@
   const pmCreateDialog = $("pm-create-drawer");
   document.body.append(pmCreateDialog);
   let pmCreateTrigger = null;
+  let adoptionSignalReturn = null;
   let pendingPmCreate = location.hash === "#pm-create-drawer";
   const areaActions = new Map();
   let pmActions;
@@ -194,6 +195,8 @@
     config: null,
     form: null,
     busy: false,
+    loading: false,
+    generation: 0,
     pending: null,
     trigger: null,
   };
@@ -318,8 +321,10 @@
       await refreshRunners();
     },
     onConfigure: async (provider, project, trigger) => {
-      await openProjectSettings(project, trigger);
-      projectEditor.form?.focusProvider(provider);
+      await openProjectSettings(project, trigger, {
+        section: "signals",
+        provider,
+      });
     },
   });
   const updateBanner = window.createUpdateBanner($("global-update-banner"), {
@@ -957,7 +962,7 @@
     $("add-project").disabled = idea && ideaCrew.busy;
     $("project-create-explanation").textContent = idea
       ? "Creates the reviewed PM crew and shared brief. Empty repositories get a README. PM schedules start paused; app code is built through approved tickets."
-      : "Adds your repository. Next, choose a user outcome and explicitly start its investigation. Coding waits for your approval of a specific change.";
+      : "A Setup Gremlin reads the repository and suggests a setup for your review. Then adopt your first PM and let it learn the app. Coding waits for your approval of a specific change.";
     projectWizard?.update();
   }
   projectWizard = window.createProjectWizard({
@@ -1087,7 +1092,7 @@
         $("project-message"),
         fromIdea
           ? `${result.message} ${linearResultMessage(result.linear)}`
-          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Next, choose the user outcome you want to improve.`,
+          : `${data.project} is configured on your server.${created === 0 ? " Existing files were kept." : ""} ${linearResultMessage(result.linear)} Review the repository setup, then meet your first gremlin.`,
         result.linear?.status === "error",
       );
       try {
@@ -3505,13 +3510,27 @@
     pmAdoption?.contextChanged();
     message($("pm-create-message"), "");
   }
-  function openPmCreation(project = "", trigger = document.activeElement) {
+  function openPmCreation(
+    project = "",
+    trigger = document.activeElement,
+    suggestion,
+  ) {
     if (formsLocked || pmCreating) return;
     if (!currentStatus?.projects?.length) {
       pages.navigate("/projects#new-project-drawer");
       return;
     }
     changePmCreationProject(project || $("pm-project").value);
+    if (suggestion?.name && suggestion?.mandate) {
+      pmAdoption?.contextChanged();
+      pmDraft?.reset();
+      pmGeneratedValues = null;
+      $("pm-name").value = suggestion.name;
+      $("pm-mandate").value = suggestion.mandate;
+      pmKeyEdited = false;
+      $("pm-name").dispatchEvent(new Event("input", { bubbles: true }));
+      pmEditedFields.add("name");
+    }
     pmCreateTrigger = trigger;
     pendingPmCreate = false;
     if (!pmCreateDialog.open) pmCreateDialog.showModal();
@@ -3678,11 +3697,31 @@
         `/projects/${encodeURIComponent(adopted.project)}?pm=${encodeURIComponent(adopted.key)}`,
       );
     },
+    onOpenSignals: async (adopted, provider, trigger) => {
+      const project = currentStatus?.projects?.find(
+        (item) => item.name === adopted.project,
+      );
+      if (!window.isCurrentGremlinAdoption(adopted, project))
+        throw new Error("Refresh the project before choosing its signals.");
+      adoptionSignalReturn = {
+        project: adopted.project,
+        key: adopted.key,
+        instanceId: project.instanceId ?? null,
+        areaInstanceId:
+          project.areas.find((area) => area.key === adopted.key)?.instanceId ??
+          null,
+      };
+      closePmCreation();
+      await openProjectSettings(adopted.project, trigger, {
+        section: "signals",
+        provider,
+      });
+    },
     onFirstTask: async (adopted, trigger) => {
       const project = currentStatus?.projects?.find(
         (item) => item.name === adopted.project,
       );
-      if (!project?.areas?.some((area) => area.key === adopted.key)) {
+      if (!window.isCurrentGremlinAdoption(adopted, project)) {
         await refreshStatus();
         return;
       }
@@ -3769,6 +3808,8 @@
         !project.areas?.length
       ) {
         openPmCreation(project.name, button);
+      } else if (action === "mapping") {
+        await prepareProjectLinear(project.name);
       } else if (
         action === "mandate" ||
         button.dataset.setupStep === "schedule" ||
@@ -3793,7 +3834,6 @@
         );
       } else {
         await openProjectSettings(project.name, button);
-        if (action === "mapping") focusProjectSection("linear");
       }
     } catch (error) {
       message($("global-message"), error.message, true);
@@ -3822,7 +3862,10 @@
     }
     const button = event.target.closest("[data-setup-linear-project]");
     if (!button || button.disabled || formsLocked) return;
-    const name = button.dataset.setupLinearProject;
+    await prepareProjectLinear(button.dataset.setupLinearProject);
+  });
+  async function prepareProjectLinear(name) {
+    if (formsLocked || mappingBusy.has(name)) return;
     mappingBusy.add(name);
     mappingMessages.set(name, {
       text: "Finishing this app’s Linear team and missing PM projects…",
@@ -3840,16 +3883,22 @@
         text: linearResultMessage(result.linear),
         error: result.linear?.status === "error",
       });
+      message(
+        $("global-message"),
+        linearResultMessage(result.linear),
+        result.linear?.status === "error",
+      );
       await refreshStatus();
       await refreshConfigFiles();
       await refreshLinearResources();
     } catch (error) {
       mappingMessages.set(name, { text: error.message, error: true });
+      message($("global-message"), error.message, true);
     } finally {
       mappingBusy.delete(name);
       renderStatus(currentStatus);
     }
-  });
+  }
   $("pm-create-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (pmCreating || pmPlanning || formsLocked) return;
@@ -3917,6 +3966,8 @@
       pmAdoption?.adopted({
         ...input,
         project,
+        projectInstanceId: result.projectInstanceId ?? null,
+        areaInstanceId: result.areaInstanceId ?? null,
         setupMessage: ["needs-connection", "skipped"].includes(
           result.linear?.status,
         )
@@ -5000,13 +5051,21 @@
     true,
   );
 
-  async function openProjectSettings(name, trigger) {
+  async function openProjectSettings(
+    name,
+    trigger,
+    { section = "project", provider } = {},
+  ) {
     if (projectEditor.busy || projectLinearSettings?.isBusy()) return;
+    const generation = ++projectEditor.generation;
     projectLinearSettings?.reset();
     projectEditor.name = name;
     projectEditor.path = `projects/${name}/project.json`;
     projectEditor.trigger = trigger || projectEditor.trigger;
     projectEditor.busy = true;
+    projectEditor.loading = true;
+    projectEditor.pending = null;
+    $("project-settings-discard").hidden = true;
     projectEditor.form = null;
     $("edit-project-settings").replaceChildren();
     $("edit-signals-settings").replaceChildren();
@@ -5025,6 +5084,7 @@
       const file = await api(
         `/api/config?path=${encodeURIComponent(projectEditor.path)}`,
       );
+      if (generation !== projectEditor.generation) return;
       projectEditor.config = JSON.parse(file.content);
       projectEditor.revision = file.revision;
       projectEditor.form = window.createProjectSettings(
@@ -5041,7 +5101,9 @@
             ),
         },
       );
-      prepareProjectSections();
+      prepareProjectSections(section);
+      if (section === "signals" && provider)
+        projectEditor.form.focusProvider(provider);
       $("project-settings-repo").textContent =
         projectEditor.config.repo || "Project configuration";
       if ($("project-settings-provider"))
@@ -5050,6 +5112,7 @@
       message($("project-settings-message"), "");
       await projectLinearSettings?.load(name);
     } catch (error) {
+      if (generation !== projectEditor.generation) return;
       projectEditor.form = null;
       $("edit-project-settings").replaceChildren();
       $("edit-signals-settings").replaceChildren();
@@ -5063,8 +5126,11 @@
         true,
       );
     } finally {
-      projectEditor.busy = false;
-      updateProjectEditorControls();
+      if (generation === projectEditor.generation) {
+        projectEditor.loading = false;
+        projectEditor.busy = false;
+        updateProjectEditorControls();
+      }
     }
   }
   function isProjectEditorDirty() {
@@ -5077,7 +5143,10 @@
     $("edit-project-fields").disabled = Boolean(
       formsLocked || busy || !projectEditor.form,
     );
-    $("close-project-settings").disabled = Boolean(busy);
+    $("close-project-settings").disabled = Boolean(
+      (projectEditor.busy && !projectEditor.loading) ||
+      projectLinearSettings?.isWriting?.(),
+    );
     $("reload-project-settings").disabled = Boolean(formsLocked || busy);
     $("advanced-project-settings").disabled = Boolean(formsLocked || busy);
     $("delete-project").disabled = Boolean(
@@ -5086,10 +5155,17 @@
     projectLinearSettings?.setLocked(formsLocked || projectEditor.busy);
   }
   async function projectSettingsAction(action, discard = false) {
-    if (projectEditor.busy || projectLinearSettings?.isBusy()) return;
+    if (
+      (projectEditor.busy && !projectEditor.loading) ||
+      projectLinearSettings?.isWriting?.() ||
+      (action !== "close" &&
+        (projectEditor.busy || projectLinearSettings?.isBusy()))
+    )
+      return;
     if (!discard && isProjectEditorDirty()) {
       projectEditor.pending = action;
       $("project-settings-discard").hidden = false;
+      $("project-settings-discard").scrollIntoView?.({ block: "nearest" });
       $("keep-project-settings").focus();
       return;
     }
@@ -5100,6 +5176,9 @@
       return;
     }
     $("project-settings-dialog").close();
+    ++projectEditor.generation;
+    projectEditor.busy = false;
+    projectEditor.loading = false;
     projectLinearSettings?.reset();
     if (action === "delete") {
       openDeletion({
@@ -5115,6 +5194,29 @@
     if (action === "advanced") {
       pages.navigate("/settings#configuration");
       await requestEditorAction("switch", projectEditor.path);
+      return;
+    }
+    const resume = adoptionSignalReturn;
+    adoptionSignalReturn = null;
+    if (
+      action === "close" &&
+      resume?.project === projectEditor.name &&
+      pmAdoption?.accepted?.project === resume.project &&
+      pmAdoption.accepted.key === resume.key &&
+      (pmAdoption.accepted.projectInstanceId ?? null) === resume.instanceId &&
+      (pmAdoption.accepted.areaInstanceId ?? null) === resume.areaInstanceId &&
+      currentStatus?.projects?.some(
+        (project) =>
+          project.name === resume.project &&
+          (project.instanceId ?? null) === resume.instanceId &&
+          project.areas?.some(
+            (area) =>
+              area.key === resume.key &&
+              (area.instanceId ?? null) === resume.areaInstanceId,
+          ),
+      )
+    ) {
+      openPmCreation(resume.project);
       return;
     }
     const trigger = [...document.querySelectorAll("[data-edit-project]")].find(
@@ -5147,7 +5249,7 @@
   $("keep-project-settings").addEventListener("click", () => {
     $("project-settings-discard").hidden = true;
     projectEditor.pending = null;
-    $("save-project-settings").focus();
+    $("close-project-settings").focus();
   });
   $("discard-project-settings").addEventListener("click", () =>
     projectSettingsAction(projectEditor.pending || "close", true),
@@ -5180,6 +5282,7 @@
     projectEditor.busy = true;
     updateProjectEditorControls();
     message($("project-settings-message"), "Saving project settings…");
+    const generation = ++projectEditor.generation;
     try {
       const result = await api(
         "/api/config",
@@ -5203,6 +5306,8 @@
         },
       );
       prepareProjectSections(projectEditor.section);
+      projectEditor.loading = true;
+      updateProjectEditorControls();
       if (projectLinearSettings?.isDirty()) {
         // Rebase only against this save's exact content/revision. A later GET
         // could adopt another operator's edit without refreshing our form.
@@ -5212,6 +5317,7 @@
           revision: result.revision,
         });
       } else await projectLinearSettings?.load(projectEditor.name);
+      if (generation !== projectEditor.generation) return;
       $("project-settings-discard").hidden = true;
       projectChecks.delete(projectEditor.name);
       message(
@@ -5224,6 +5330,7 @@
         /* The saved revision remains authoritative. */
       }
     } catch (error) {
+      if (generation !== projectEditor.generation) return;
       message(
         $("project-settings-message"),
         error.status === 409
@@ -5232,8 +5339,11 @@
         true,
       );
     } finally {
-      projectEditor.busy = false;
-      updateProjectEditorControls();
+      if (generation === projectEditor.generation) {
+        projectEditor.loading = false;
+        projectEditor.busy = false;
+        updateProjectEditorControls();
+      }
     }
   });
   $("reveal-gcp-credentials").addEventListener("click", () => {
@@ -5623,8 +5733,8 @@
     getAreaAction: (project, area) => areaActions.get(`${project}/${area}`),
     getCodingAction: (project) => codingActions?.getState(project),
     onSaved: refreshStatus,
-    onCreatePm: (project) => {
-      openPmCreation(project);
+    onCreatePm: (project, suggestion) => {
+      openPmCreation(project, document.activeElement, suggestion);
     },
     onJob: (job) => {
       jobHistory = [...jobHistory.filter((item) => item.id !== job.id), job];

@@ -1,0 +1,233 @@
+.project-welcome {
+  padding: clamp(22px, 3.5vw, 38px);
+  background: #fff;
+  border: 1px solid #dbe5dd;
+  border-radius: 20px;
+  min-width: 0;
+}
+.welcome-progress {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  padding: 0;
+  margin: 0 0 30px;
+  color: #6d7b72;
+  counter-reset: welcome;
+  font-size: 12px;
+}
+.welcome-progress li::before {
+  counter-increment: welcome;
+  content: counter(welcome) ". ";
+}
+.welcome-progress [aria-current] {
+  color: #24573e;
+  font-weight: 700;
+}
+.welcome-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 24px;
+  align-items: center;
+}
+.welcome-hero h2 {
+  color: #203d2d;
+  font-size: clamp(26px, 3vw, 34px);
+  line-height: 1.18;
+  letter-spacing: -1px;
+  margin: 10px 0 14px;
+}
+.welcome-hero p,
+.welcome-summary,
+.welcome-recommendation p {
+  color: #536b5b;
+  line-height: 1.7;
+  font-size: 14px;
+  margin: 0;
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+.welcome-gremlin {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+}
+.welcome-summary {
+  margin-top: 26px;
+  white-space: pre-line;
+}
+.welcome-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 18px 0 24px;
+  padding: 0;
+}
+.welcome-stack li {
+  padding: 5px 10px;
+  border: 1px solid #dce6df;
+  border-radius: 6px;
+  background: #f6f9f4;
+  color: #3c5b45;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.welcome-commands {
+  margin-top: 28px;
+}
+.welcome-commands h3,
+.welcome-recommendation h3,
+.welcome-open-questions h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: #284734;
+  overflow-wrap: anywhere;
+}
+.welcome-command {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 0;
+  border-bottom: 1px solid #e4ebe5;
+  cursor: pointer;
+  min-width: 0;
+}
+.welcome-command > input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: #24573e;
+}
+.welcome-command-body {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  color: #536b5b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.welcome-command-body strong {
+  color: #314e3b;
+  font-size: 13px;
+}
+.welcome-command-body > code {
+  display: block;
+  background: #f5f7f4;
+  border-radius: 6px;
+  padding: 9px 12px;
+  color: #243c2e;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.welcome-evidence {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #617469;
+}
+.welcome-evidence li {
+  display: grid;
+  gap: 3px;
+  margin-top: 6px;
+}
+.welcome-evidence code,
+.welcome-evidence span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.welcome-recommendation {
+  margin: 26px 0;
+  padding: 22px;
+  border: 1px solid #d9e5d8;
+  border-radius: 12px;
+  background: #f5f8f0;
+}
+.welcome-recommendation h3 {
+  margin-top: 10px;
+}
+.welcome-recommendation .welcome-evidence {
+  margin-top: 12px;
+}
+.welcome-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+.welcome-actions > * {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.welcome-note,
+.welcome-provenance {
+  color: #62776a;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+.welcome-provenance {
+  margin-top: 24px;
+  font-size: 11px;
+}
+.welcome-inspecting {
+  background: #f1f6ed;
+  color: #3c5b45;
+  border-radius: 10px;
+  padding: 18px;
+  margin: 24px 0;
+  line-height: 1.7;
+}
+.welcome-error {
+  margin: 22px 0;
+  padding: 18px;
+  border: 1px solid #edcfc3;
+  border-radius: 10px;
+  background: #fff5ef;
+  color: #8b4532;
+  overflow-wrap: anywhere;
+}
+.welcome-error p {
+  margin: 0 0 12px;
+}
+.welcome-open-questions {
+  margin-top: 22px;
+}
+.welcome-open-questions ul {
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #62776a;
+  overflow-wrap: anywhere;
+}
+.project-welcome button:focus-visible,
+.welcome-command:has(input:focus-visible) {
+  outline: 2px solid #4b784e;
+  outline-offset: 4px;
+}
+@media (max-width: 600px) {
+  .welcome-hero {
+    grid-template-columns: minmax(0, 1fr) 64px;
+    gap: 12px;
+  }
+  .welcome-gremlin {
+    width: 64px;
+    height: 82px;
+  }
+  .welcome-progress {
+    gap: 8px 14px;
+    font-size: 11px;
+    margin-bottom: 24px;
+  }
+  .welcome-recommendation {
+    padding: 18px;
+  }
+}
