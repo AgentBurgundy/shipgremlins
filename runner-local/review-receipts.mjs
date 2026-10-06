@@ -10,6 +10,7 @@ import {
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 import { URL } from "node:url";
+import { installBrowserAccess } from "./browser-access.mjs";
 
 const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -225,45 +226,18 @@ export async function runReviewReceipts({
           let context;
           try {
             const state = storageState(check.session ?? draft.session);
-            context = await browser.newContext(
-              state ? { storageState: state } : {},
-            );
-            // Block cross-origin document redirects. Never send bypass headers to another origin.
-            await context.route("**/*", async (route) => {
-              const url = new URL(route.request().url());
-              if (
-                route.request().isNavigationRequest() &&
-                url.origin !== target.origin
-              )
-                return route.abort();
-              const headers = { ...route.request().headers() };
-              delete headers["x-vercel-protection-bypass"];
-              if (
-                url.origin === target.origin &&
-                (bypass || route.request().isNavigationRequest())
-              ) {
-                if (bypass) headers["x-vercel-protection-bypass"] = bypass;
-                // Playwright continue header overrides survive redirects. Fetch exactly one hop instead.
-                const response = await route.fetch({
-                  headers,
-                  maxRedirects: 0,
-                  timeout: 15_000,
-                });
-                const location = response.headers().location;
-                if (
-                  location &&
-                  new URL(location, url).origin !== target.origin
-                ) {
-                  await response.dispose();
-                  return route.abort();
-                }
-                await route.fulfill({ response });
-                await response.dispose();
-                return;
-              }
-              return route.continue({ headers });
+            context = await browser.newContext({
+              serviceWorkers: "block",
+              ...(state ? { storageState: state } : {}),
             });
             const page = await context.newPage();
+            // The shared CDP guard intercepts every redirect hop, including
+            // public reviews that have no bypass credential or private session.
+            await installBrowserAccess(page, {
+              url: target.href,
+              bypass: bypass || "",
+              restrictLogin: true,
+            });
             page.setDefaultTimeout(10_000);
             const response = await page.goto(new URL(check.path, target).href, {
               waitUntil: "domcontentloaded",
