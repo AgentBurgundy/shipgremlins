@@ -166,7 +166,7 @@
       input.autocomplete = autocomplete;
       input.maxLength = 256;
       input.spellcheck = false;
-      if (autocomplete === "new-password") input.minLength = 15;
+      if (autocomplete === "new-password") input.minLength = 8;
       label.append(node("span", "", labelText), input);
       return { label, input };
     }
@@ -230,7 +230,7 @@
           node(
             "p",
             "auth-hint",
-            "Use at least 15 characters. A few memorable words work well.",
+            "Use at least 8 characters. A few memorable words work well.",
           ),
         );
       if (confirmation) fields.append(confirmation.label);

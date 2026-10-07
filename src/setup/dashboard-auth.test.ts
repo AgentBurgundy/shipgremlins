@@ -9,6 +9,7 @@ class Element {
   id = "";
   value = "";
   type = "";
+  minLength = 0;
   hidden = false;
   checked = false;
   disabled = false;
@@ -302,8 +303,11 @@ describe("dashboard password sign-in", () => {
     expect(submit.disabled).toBe(true);
     expect(f.byId("auth-allow-lan").checked).toBe(false);
     expect(f.screen.text()).toContain("not encrypted");
-    f.byId("auth-password").value = "long synthetic password";
-    f.byId("auth-confirm-password").value = "long synthetic password";
+    expect(f.byId("auth-password").minLength).toBe(8);
+    expect(f.byId("auth-confirm-password").minLength).toBe(8);
+    expect(f.screen.text()).toContain("Use at least 8 characters.");
+    f.byId("auth-password").value = "eight888";
+    f.byId("auth-confirm-password").value = "eight888";
     await f.screen.querySelector("form")!.emit("submit");
     expect(f.fetch).toHaveBeenCalledTimes(2);
     f.byId("auth-allow-lan").checked = true;
@@ -322,7 +326,7 @@ describe("dashboard password sign-in", () => {
       "Bearer owner-bootstrap",
     );
     expect(JSON.parse(init!.body as string)).toEqual({
-      password: "long synthetic password",
+      password: "eight888",
       remember: false,
       allowInsecureLan: true,
     });
@@ -420,6 +424,8 @@ describe("dashboard password sign-in", () => {
     const f = fixture({ initial: cookie });
     await f.auth.start();
     await f.button("Change password").emit("click");
+    expect(f.byId("auth-password").minLength).toBe(8);
+    expect(f.byId("auth-confirm-password").minLength).toBe(8);
     f.byId("auth-current-password").value = "current synthetic password";
     f.byId("auth-password").value = "next synthetic password";
     f.byId("auth-confirm-password").value = "next synthetic password";
