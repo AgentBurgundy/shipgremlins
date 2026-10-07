@@ -1068,20 +1068,51 @@ export function createVercelSetup(options: VercelSetupOptions) {
             );
         });
         const { inventory, project: chosen } = selected(state);
-        const { api } = await apiFor(
+        const context = await apiFor(
           { ...inventory, projectId: chosen.id },
           signal,
         );
-        const freshProject = projectSummary(
-          await api(`/v9/projects/${encodeURIComponent(chosen.id)}`),
-          config.config,
+        const { api } = context;
+        const projectDetail = await api(
+          `/v9/projects/${encodeURIComponent(chosen.id)}`,
         );
+        const freshProject = projectSummary(projectDetail, config.config);
         if (
           !freshProject?.matchesRepository ||
+          freshProject.id !== chosen.id ||
+          freshProject.id !== state.target.projectId ||
+          freshProject.id !== plan.projectId ||
           freshProject.productionBranch !== plan.workflowBranches.production
         )
           throw new VercelSetupError(
             "Vercel's production or repository mapping changed. Prepare a fresh repair plan.",
+            409,
+          );
+        const accountId = projectDetail.accountId;
+        if (
+          (accountId !== undefined && !resource(accountId)) ||
+          (context.teamId &&
+            accountId !== undefined &&
+            context.teamId !== accountId)
+        )
+          throw new VercelSetupError(
+            "Vercel's project account changed. Review the matching connection and prepare a fresh repair plan.",
+            409,
+          );
+        // An omitted team means the saved connection's scope, not an arbitrary
+        // team. Project account metadata also identifies token-based team scope.
+        const resolvedTeam =
+          context.teamId ??
+          (typeof accountId === "string" && accountId.startsWith("team_")
+            ? accountId
+            : undefined);
+        if (
+          state.target.teamId &&
+          ((resolvedTeam && state.target.teamId !== resolvedTeam) ||
+            (accountId !== undefined && state.target.teamId !== accountId))
+        )
+          throw new VercelSetupError(
+            "Vercel's selected team changed. Prepare a fresh repair plan.",
             409,
           );
         const detail = await api(
@@ -1114,11 +1145,13 @@ export function createVercelSetup(options: VercelSetupOptions) {
         const same =
           oldTarget?.kind === "vercel" &&
           oldTarget.projectId === state.target.projectId &&
-          (oldTarget.teamId ?? null) === (state.target.teamId ?? null) &&
+          (oldTarget.teamId ?? resolvedTeam ?? null) ===
+            (state.target.teamId ?? resolvedTeam ?? null) &&
           (oldTarget.connectionId ?? "default") ===
             (state.target.connectionId ?? "default");
         const target = {
           ...state.target,
+          ...(resolvedTeam !== undefined ? { teamId: resolvedTeam } : {}),
           ...(same && oldTarget.access ? { access: oldTarget.access } : {}),
           ...(same && oldTarget.bypassSecret
             ? { bypassSecret: oldTarget.bypassSecret }

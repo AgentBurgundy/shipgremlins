@@ -164,7 +164,9 @@
       progress.textContent =
         active.length > 1
           ? `${active.length} coding runs in progress`
-          : "You’ll get a draft pull request to review.";
+          : promotion
+            ? "Your PM tests the change. You review the promotion batch."
+            : "You’ll get a draft pull request to review.";
     } else if (!project.readiness) {
       root.dataset.state = "loading";
       title.textContent = "Checking your runners";

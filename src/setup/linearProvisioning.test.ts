@@ -96,6 +96,44 @@ function fixture() {
 }
 
 describe("Linear app and mandate provisioning", () => {
+  it.each(["promotion", "pull-request"] as const)(
+    "creates a %s brief with the matching ticket and review handoff",
+    async (kind) => {
+      const f = fixture();
+      const file = join(f.root, "projects/demo/project.json");
+      const config = JSON.parse(readFileSync(file, "utf8"));
+      config.workflow =
+        kind === "promotion" ? { kind } : { kind, baseBranch: "main" };
+      writeFileSync(file, JSON.stringify(config));
+      await f.create().provision("demo");
+      const content = vi.mocked(f.client.createProject).mock.calls[0]![0]
+        .content;
+      if (kind === "promotion") {
+        expect(content).toContain("Self-approve ordinary in-mandate work");
+        expect(content).toContain("one combined promotion PR");
+        expect(content).toContain("Failed QA returns to coding");
+        expect(content).toContain(
+          "preserve explicit owner review-only instructions",
+        );
+        expect(content).not.toContain("**Human owner:** review scope");
+        expect(content).not.toContain("Do not self-approve tickets");
+      } else {
+        expect(content).toContain("**Human owner:** review scope");
+        expect(content).toContain("Do not self-approve tickets");
+        expect(content).not.toContain("Self-approve ordinary");
+      }
+    },
+  );
+  it("defaults only CI execution configuration to an integration boundary and highlights application prompts at promotion", () => {
+    const f = fixture();
+    const project = loadProject(f.root, "demo");
+    expect(project.tiers.hubOwnerOnly).toEqual([
+      ".github/workflows/",
+      ".gitlab-ci.yml",
+      ".gitlab/",
+    ]);
+    expect(project.tiers.ownerOnlyPrefixes).toContain("prompts/");
+  });
   it("prepares only the requested PM and leaves another paused PM unmapped", async () => {
     const f = fixture(),
       service = f.create();

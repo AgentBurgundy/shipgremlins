@@ -65,6 +65,39 @@ function fixture(): PmPromptInput {
 }
 
 describe("PM prompt policy and knowledge contracts", () => {
+  it.each(["patrol", "exploration"] as const)(
+    "allows scoped approval in promotion %s but keeps discovery and knowledge contexts read-only",
+    (focus) => {
+      const input = fixture();
+      input.project.config.workflow = { kind: "promotion" };
+      input.area.charter!.guardrails!.push(
+        "Review-only: do not implement payment changes.",
+      );
+      const prompt = buildPmPatrolPrompt({ ...input, focus });
+      expect(prompt).toContain(
+        "you may self-approve ordinary implementation tickets",
+      );
+      expect(prompt).toContain("do not also add pm-proposal");
+      expect(prompt).toContain("never remove pm-needs-human");
+      expect(prompt).toContain(
+        "Review-only: do not implement payment changes.",
+      );
+      expect(prompt).toContain(
+        "Preserve explicit owner review-only instructions",
+      );
+      expect(prompt).toContain(
+        "label repair alone never authorizes implementation",
+      );
+      expect(prompt).toContain("one combined promotion PR");
+      expect(prompt).not.toContain(
+        "Never self-approve tickets, add pm-approved",
+      );
+      expect(prompt).not.toContain("never pm-approved");
+      expect(buildPmDiscoveryPrompt(input)).toContain(
+        "Never self-approve tickets, add pm-approved",
+      );
+    },
+  );
   it("gives explicit product exploration a creative workflow with honest hypotheses and review gates", () => {
     const prompt = buildPmPatrolPrompt({ ...fixture(), focus: "exploration" });
     expect(prompt).toContain("PRODUCT EXPLORATION");
@@ -390,7 +423,7 @@ describe("PM prompt policy and knowledge contracts", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("ships portable templates without self-approval, auto-merge or filing quotas", () => {
+  it("ships portable templates with workflow-specific approval, owner holds and no filing quotas", () => {
     const names = ["mandate", "features", "memory", "queue"];
     const templates = names.map((name) =>
       readFileSync(
@@ -406,7 +439,12 @@ describe("PM prompt policy and knowledge contracts", () => {
     );
     expect(all).not.toContain("pm-staging");
     expect(all).not.toContain("Vercel Analytics");
-    expect(all).toContain("human approves work");
+    expect(all).toContain("PM may approve ordinary in-mandate tickets");
+    expect(all).toContain("until the owner approves implementation");
+    expect(all).toContain(
+      "Preserve explicit owner holds and review-only mandates",
+    );
+    expect(all).not.toContain("New tickets require human approval");
     expect(all).toContain("no minimum ticket or epic count");
     expect(all).toContain("merged into production");
     expect(all).toContain("code-only");

@@ -831,7 +831,7 @@ describe("local job preparation", () => {
       queueTicket("1", { labels: ["pm:core", "pm-proposal"] }),
     ]);
     await expect(f.selectDeveloperTicket(codingRequest, [])).rejects.toThrow(
-      "review and approve a proposal",
+      "Run the PM to investigate and prepare scoped work",
     );
     expect(f.getTicket).not.toHaveBeenCalled();
   });
@@ -1541,6 +1541,84 @@ describe("local job preparation", () => {
       });
     },
   );
+  it("prepares promotion approval labels and hands ordinary scoped work to coding without an owner step", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "promotion" };
+      raw.verification = { mode: "repository" };
+    });
+    const ensureLabels = vi.fn(async () => {});
+    const getTicket = vi.fn(async () => ({
+      ...ticket,
+      labels: ["pm:core", "pm-tier-b", "pm-approved"],
+    }));
+    const prepared = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket,
+        listTickets: async () => [await getTicket()],
+        getProject: async () => ({
+          id: "linear-project",
+          name: "Core",
+          url: "https://linear.app/core",
+          teamIds: ["team-1"],
+        }),
+        ensureLabels,
+      }),
+    });
+    const payload = await prepared.prepareJob({
+      ...job,
+      type: "pm",
+      area: "core",
+      ticket: undefined,
+    });
+    expect(ensureLabels).toHaveBeenCalledExactlyOnceWith("team-1", [
+      "pm:core",
+      "pm-proposal",
+      "pm-approved",
+      "pm-tier-a",
+      "pm-tier-b",
+      "pm-tier-c",
+      "pm-needs-human",
+    ]);
+    for (const instruction of [
+      "you may self-approve ordinary implementation tickets",
+      'exact Markdown heading "## Acceptance criteria" and a finite bullet list',
+      "do not also add pm-proposal",
+      "never remove pm-needs-human",
+      "Preserve explicit owner review-only instructions",
+      "tiers.hubOwnerOnly",
+      "size alone does not require per-ticket human approval",
+      "one combined promotion PR",
+      "Do not ask the owner to review ordinary coding drafts",
+    ])
+      expect(payload.prompt).toContain(instruction);
+    expect(payload.prompt).not.toContain("Never self-approve tickets.");
+    expect(
+      (await prepared.validate({ ...job, runOnce: true })).ticket?.id,
+    ).toBe(ticket.id);
+    getTicket.mockResolvedValueOnce({
+      ...ticket,
+      labels: ["pm:core", "pm-tier-b", "pm-approved", "pm-needs-human"],
+    });
+    await expect(prepared.validate({ ...job, runOnce: true })).rejects.toThrow(
+      "needs-human tickets cannot run",
+    );
+  });
+  it("keeps owner ticket approval in explicit direct-PR PM instructions", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "repository" };
+    });
+    const payload = await setup().prepareJob({
+      ...job,
+      type: "pm",
+      area: "core",
+      ticket: undefined,
+    });
+    expect(payload.prompt).toContain("Never self-approve tickets.");
+    expect(payload.prompt).not.toContain("you may self-approve");
+  });
   it("does not automatically relabel proposals when another app shares the Linear project", async () => {
     initializeSetup(root, packageRoot, {
       project: "second-app",

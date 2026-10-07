@@ -224,6 +224,31 @@ describe("progressive PM product brief", () => {
 });
 
 describe("focused project crew workspace", () => {
+  it("keeps active promotion coding hands-off while ordinary PR projects retain draft review", () => {
+    const api = fixture(),
+      job = {
+        id: "coding-active",
+        type: "developer",
+        project: "app",
+        ticket: "APP-1",
+        status: "running",
+      };
+    const staged = api.renderCodingLauncher(
+      { name: "app", workflow: { kind: "promotion" } },
+      { jobs: [job] },
+    );
+    expect(text(staged)).toContain(
+      "Your PM tests the change. You review the promotion batch.",
+    );
+    expect(text(staged)).not.toContain("draft pull request to review");
+    const ordinary = api.renderCodingLauncher(
+      { name: "app", workflow: { kind: "pull-request" } },
+      { jobs: [job] },
+    );
+    expect(text(ordinary)).toContain(
+      "You’ll get a draft pull request to review.",
+    );
+  });
   it("routes completed promotion coding to delivery while preserving explicit draft review", () => {
     const api = fixture(),
       job = { id: "coding-1", ticket: "APP-1", status: "succeeded" };

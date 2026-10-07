@@ -1,4 +1,5 @@
 import { loadProject } from "../config.ts";
+import { effectiveWorkflow } from "../projectCapabilities.ts";
 import type { LocalJob } from "../localRunners/types.ts";
 import { readConnections } from "../setup/connections.ts";
 import { getSlackConnection, validSlackWebhook } from "./connection.ts";
@@ -10,6 +11,8 @@ export interface JobNotificationEvent {
   workerName?: string;
   /** Credential-free owner dashboard origin; never a session link. */
   dashboardUrl?: string;
+  /** Controller-selected workflow, never taken from the worker's report. */
+  workflow?: "promotion" | "pull-request";
   result?: {
     summary?: string;
     findingsCount?: number;
@@ -135,6 +138,8 @@ export function buildJobNotification(event: JobNotificationEvent): {
 } {
   const job = event.job;
   const coding = job.type === "developer";
+  const automatic = coding && event.workflow === "promotion";
+  const directReview = coding && event.workflow === "pull-request";
   const role = coding ? "Coding Gremlin" : "PM Gremlin";
   const result = notificationResult(event.result);
   const prUrl = safeHttpsLink(result?.prUrl);
@@ -143,13 +148,21 @@ export function buildJobNotification(event: JobNotificationEvent): {
     event.type === "started"
       ? "On the job"
       : event.type === "failed"
-        ? "Needs a human"
+        ? automatic
+          ? "Run stopped"
+          : "Needs a human"
         : coding
           ? prUrl
-            ? "Draft ready for review"
+            ? automatic
+              ? "Ready for automatic integration"
+              : directReview
+                ? "Draft ready for review"
+                : "Coding draft published"
             : result?.noChanges
               ? "No code changes needed"
-              : "Run complete · review results"
+              : automatic
+                ? "Run complete"
+                : "Run complete · review results"
           : "Patrol finished";
   const title = `{g} ${coding ? "🛠️" : "🔎"} ${role} · ${state}`;
   const context = [
@@ -169,10 +182,16 @@ export function buildJobNotification(event: JobNotificationEvent): {
           "The run hit a blocker. Open the dashboard for redacted logs and evidence before retrying."
         : coding
           ? prUrl
-            ? "Configured checks passed. The draft is ready for human review; the ticket is not Done. Done means merged into production."
+            ? automatic
+              ? job.developerKind === "sync"
+                ? "Worker checks passed. The controller will check and merge this staging repair, then wait for the updated preview. No individual draft review is needed."
+                : "Worker checks passed. Automatic integration and independent PM QA come next. You review the combined promotion PR after QA; this coding draft does not need your review."
+              : directReview
+                ? "Configured checks passed. The draft is ready for human review; the ticket is not Done. Done means merged into production."
+                : "Worker checks passed and a coding draft was published. Follow its delivery status in the project; publication alone does not mean QA or release is complete."
             : result?.noChanges
-              ? "The run finished without code changes. Review its logs before changing ticket status."
-              : "The worker completed this run. Review the dashboard artifacts; no draft link was reported."
+              ? "The run finished without code changes. Its logs and evidence are available in Activity; no release is claimed."
+              : "The worker completed this run. Its artifacts are available in Activity; no draft link was reported."
           : result?.summary ||
             "The PM completed its patrol. Open the dashboard for findings, visible activity, and evidence.";
   const fields = [
@@ -226,14 +245,20 @@ export function buildJobNotification(event: JobNotificationEvent): {
         {
           type: "button",
           action_id: "open_gremlin_draft",
-          text: { type: "plain_text", text: "Review draft", emoji: true },
+          text: {
+            type: "plain_text",
+            text: directReview ? "Review draft" : "View coding draft",
+            emoji: true,
+          },
           url: prUrl,
         },
       ],
     });
   if (dashboard) {
     const review = new URL(
-      job.project ? `/projects/${encodeURIComponent(job.project)}` : "/inbox",
+      job.project
+        ? `/projects/${encodeURIComponent(job.project)}${automatic ? "?tab=changes" : ""}`
+        : "/inbox",
       dashboard,
     ).href;
     blocks.push({
@@ -244,7 +269,7 @@ export function buildJobNotification(event: JobNotificationEvent): {
           action_id: "open_gremlin_review",
           text: {
             type: "plain_text",
-            text: "Open project review",
+            text: automatic ? "Follow crew progress" : "Open project",
             emoji: true,
           },
           url: review,
@@ -267,7 +292,14 @@ export function buildJobNotification(event: JobNotificationEvent): {
   return {
     text: boundedText(
       escapeSlack(
-        [title, context, description, prUrl ? `Review draft: ${prUrl}` : ""]
+        [
+          title,
+          context,
+          description,
+          prUrl
+            ? `${directReview ? "Review draft" : "View coding draft"}: ${prUrl}`
+            : "",
+        ]
           .filter(Boolean)
           .join("\n"),
       ),
@@ -293,7 +325,17 @@ export async function sendJobNotification(
   const env = options.env ?? process.env;
   let webhook: string | undefined;
   let secrets: string[] = [];
+  let workflow: JobNotificationEvent["workflow"];
   try {
+    if (event.job.project) {
+      try {
+        workflow = effectiveWorkflow(
+          loadProject(root, event.job.project).config,
+        ).kind;
+      } catch {
+        /* Missing project context must not invent a human approval request. */
+      }
+    }
     if (event.job.project) {
       if (options.projectWebhook)
         webhook = options.projectWebhook(root, event.job.project);
@@ -332,6 +374,7 @@ export async function sendJobNotification(
     );
     let encoded = JSON.stringify({
       ...event,
+      workflow,
       dashboardUrl: safeHttpsLink(env.SHIPGREMLINS_DASHBOARD_URL),
     });
     // Replace JSON-escaped credential bytes, preserving a valid JSON payload.

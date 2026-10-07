@@ -92,6 +92,7 @@ function fixture(
     createVercelSetup: undefined as
       | undefined
       | ((options: {
+          onConfigured(): Promise<void>;
           onSelect(input: {
             target: Record<string, unknown>;
             label: string;
@@ -172,6 +173,56 @@ describe("environment diagnosis and recovery", () => {
           item.tagName === "BUTTON" && item.className.includes("button-dark"),
       )
       .map((item) => item.textContent);
+
+  it("uses the newly saved password access and revision after Vercel workflow repair without sending a public target", async () => {
+    let current = vercelState({ ...passwordTarget, branch: "staging" });
+    const api = vi.fn(async (_path: string, _body?: unknown) => current),
+      f = fixture(api),
+      root = new Element();
+    let configured!: () => Promise<void>;
+    f.window.createVercelSetup = (options) => {
+      configured = options.onConfigured;
+      return {
+        mount() {},
+        setActive() {},
+        destroy() {},
+        syncConnections() {},
+        isBusy: () => false,
+      };
+    };
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      environments: {
+        preview: { ...current.environment.target, access: { kind: "public" } },
+      },
+    });
+    await settle();
+    await walk(root)
+      .find((item) => item.textContent === "Change Vercel preview")!
+      .fire("click");
+    current = {
+      ...vercelState(passwordTarget),
+      configurationRevision: "config-after-workflow",
+    };
+    api.mockClear();
+    await configured();
+    expect(api.mock.calls).toEqual([
+      ["/api/projects/shop/onboarding"],
+      [
+        "/api/projects/shop/onboarding/prepare-environment",
+        { configurationRevision: "config-after-workflow", force: true },
+      ],
+    ]);
+    expect(f.saved).toHaveBeenCalledWith("shop");
+    expect(text(resultPanel(root))).toContain(
+      "1 test account · /sign-in/password",
+    );
+    expect(text(resultPanel(root))).not.toContain("Public app");
+    expect(current.environment.target.access).toEqual(passwordTarget.access);
+    expect(f.panel.isDirty()).toBe(false);
+    f.panel.destroy();
+  });
 
   it("explains a missing bypass value separately from a saved reference and offers one repair", async () => {
     const data = {

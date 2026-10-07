@@ -770,7 +770,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
       };
     }
     throw new JobReadinessError(
-      "No approved tickets with finite acceptance criteria are ready for a new Coding run. Add a bullet list under ## Acceptance criteria in Linear, review and approve a proposal, or wait for current coding work. To retry a previous attempt, review its output and choose that ticket explicitly.",
+      effectiveWorkflow(project.config).kind === "promotion"
+        ? "No approved tickets with finite acceptance criteria are ready for a new Coding run. Run the PM to investigate and prepare scoped work, or wait for current coding and PM verification. Tickets outside its mandate or on an explicit hold need owner direction. To retry a previous attempt, review its output and choose that ticket explicitly."
+        : "No approved tickets with finite acceptance criteria are ready for a new Coding run. Add a bullet list under ## Acceptance criteria in Linear, review and approve a proposal, or wait for current coding work. To retry a previous attempt, review its output and choose that ticket explicitly.",
     );
   }
 
@@ -941,7 +943,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
           ].join("\n")
         : [
             `Read the supplied mandate and memory. Thoroughly review ${area.name} using ${verification.mode === "browser" ? "the selected browser environment" : "repository code, documentation, and tests"}. Do not change app code or open PRs.`,
-            `Search existing Linear issues first. Propose specific, reproducible gaps in Linear project ${area.linearProjectId} with labels ${LABELS.proposal} and ${area.label}, ${verification.mode === "browser" ? "actual screenshots" : "file references and test output"} and expected/actual behavior. Never self-approve tickets.`,
+            `Search existing Linear issues first. File specific, reproducible improvements in Linear project ${area.linearProjectId} with label ${area.label}, ${verification.mode === "browser" ? "actual screenshots" : "file references and test output"}, expected/actual behavior, affected code paths and a finite bullet list under ## Acceptance criteria. Reuse an existing matching ticket instead of creating duplicates.`,
+            workflow.kind === "promotion"
+              ? `Promotion workflow: you may self-approve ordinary implementation tickets within the current owner mandate and charter. Classify ${LABELS.tierA} for owned paths plus tests/docs, ${LABELS.tierB} for necessary shared application changes within the mandate. Add ${LABELS.approved}; do not also add ${LABELS.proposal} to an executable ticket. Decompose larger in-mandate product ideas into finite, independently testable tickets; size alone does not require per-ticket human approval. Reassess your own earlier ordinary proposals against the current mandate before replacing ${LABELS.proposal} with ${LABELS.approved}. Preserve explicit owner review-only instructions and holds: never remove ${LABELS.needsHuman}, override an owner decision, or approve work outside the mandate. Keep new product direction or unresolved scope as ${LABELS.proposal}. Work touching tiers.hubOwnerOnly is ${LABELS.tierC} plus ${LABELS.proposal}; report the automation boundary without requesting a manual integration merge. tiers.ownerOnlyPrefixes alone does not require per-ticket approval: sensitive application changes are highlighted for the owner's promotion review. The controller picks up eligible approved tickets, checks and merges implementation drafts into ${branch}, then requests independent PM QA on the exact deployed revision. Failed QA returns to coding within bounded retries; passing changes accumulate automatically in one combined promotion PR for the owner to merge. Do not ask the owner to review ordinary coding drafts or merge ${branch}; never merge, dispatch coding jobs, or change pipeline policy yourself.`
+              : `Direct pull-request workflow: use ${LABELS.proposal} until the owner approves implementation. Never self-approve tickets. The owner removes ${LABELS.proposal} and adds ${LABELS.approved}; coding produces a draft for human review.`,
           ].join("\n"),
       `Mandate and memory:\n${JSON.stringify({ ...memory, ...(area.mandate ? { "dashboard-mandate.md": area.mandate } : {}) })}`,
       ...(telemetry ? [telemetry] : []),
@@ -981,7 +986,19 @@ export function createJobPreparation(options: JobPreparationOptions) {
                 "Choose this project's Linear team in Edit project before creating PM labels.",
               );
             try {
-              await client.ensureLabels(teamId, [area.label, LABELS.proposal]);
+              await client.ensureLabels(teamId, [
+                area.label,
+                LABELS.proposal,
+                ...(workflow.kind === "promotion"
+                  ? [
+                      LABELS.approved,
+                      LABELS.tierA,
+                      LABELS.tierB,
+                      LABELS.tierC,
+                      LABELS.needsHuman,
+                    ]
+                  : []),
+              ]);
               if (mapping && uniquelyMappedPmProject(area))
                 await client.repairProposalAreaLabels?.({
                   teamId,

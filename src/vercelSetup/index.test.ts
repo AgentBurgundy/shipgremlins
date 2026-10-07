@@ -40,6 +40,7 @@ afterEach(() => {
 function fixture() {
   const project = {
     id: "prj_app",
+    accountId: undefined as string | undefined,
     name: "app",
     rootDirectory: "apps/web",
     link: {
@@ -71,6 +72,8 @@ function fixture() {
   let hideCreated = false;
   let createStatus = 200;
   let branchStatus = 201;
+  let credentialTeam: string | undefined = "team_test";
+  let requestTeam: string | null = "team_test";
   const calls: { url: URL; method: string; body: Record<string, unknown> }[] =
     [];
   const fetcher = vi.fn(
@@ -84,7 +87,7 @@ function fixture() {
         authorization: `Bearer ${url.hostname === "api.vercel.com" ? VERCEL : SOURCE}`,
       });
       if (url.hostname === "api.vercel.com") {
-        expect(url.searchParams.get("teamId")).toBe("team_test");
+        expect(url.searchParams.get("teamId")).toBe(requestTeam);
         if (url.pathname === "/v9/projects")
           return response({
             projects: [
@@ -135,7 +138,7 @@ function fixture() {
     token: VERCEL,
     authorization: `Bearer ${VERCEL}`,
     method: "token" as const,
-    teamId: "team_test",
+    teamId: credentialTeam,
   }));
   const source = vi.fn(async () => ({
     token: SOURCE,
@@ -170,6 +173,12 @@ function fixture() {
     source,
     connection,
     fetcher,
+    setCredentialTeam(team: string | undefined) {
+      credentialTeam = team;
+    },
+    expectRequestTeam(team: string | null) {
+      requestTeam = team;
+    },
     setListed(value: unknown[]) {
       listed = value;
     },
@@ -188,6 +197,165 @@ function fixture() {
   };
 }
 describe("Vercel setup", () => {
+  const savedAccess = {
+    kind: "password",
+    loginPath: "/sign-in/password",
+    usernameSelector: "#email",
+    passwordSelector: "#password",
+    submitSelector: "#sign-in",
+    successSelector: "#account",
+    accounts: [
+      {
+        name: "PM tester",
+        usernameSecret: "PM_TEST_EMAIL",
+        passwordSecret: "PM_TEST_PASSWORD",
+      },
+    ],
+  };
+  async function readyRepairWithSavedLogin(
+    priorTeam = "team_test",
+    priorConnection = "default",
+  ) {
+    const f = fixture();
+    const path = join(root, "projects/app/project.json");
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    raw.environments = {
+      "pm-test": {
+        kind: "vercel",
+        role: "preview",
+        projectId: "prj_app",
+        teamId: priorTeam,
+        connectionId: priorConnection,
+        branch: "main",
+        bypassSecret: "VERCEL_SAVED_BYPASS",
+        access: savedAccess,
+      },
+    };
+    raw.verification = { mode: "browser", environment: "pm-test" };
+    writeFileSync(path, JSON.stringify(raw));
+    const discovery = await f.service.discover("app", {
+      connectionId: "default",
+      projectId: "prj_app",
+    });
+    const plan = await f.service.prepare("app", {
+      revision: discovery.revision,
+      repairWorkflow: true,
+    });
+    await f.service.deploy("app", {
+      revision: plan.revision,
+      confirmTestData: true,
+    });
+    // A persisted plan from token discovery may omit team even though the
+    // current saved credential or authenticated project response identifies it.
+    await createVercelSetupStore(root).change("app", (state) => {
+      delete state!.target!.teamId;
+      delete state!.inventory!.teamId;
+      return { state: state!, result: undefined };
+    });
+    return {
+      ...f,
+      apply: async () =>
+        f.service.applyWorkflow(
+          "app",
+          (await f.service.status("app")).revision,
+        ),
+    };
+  }
+  it("keeps the saved environment name and private login when an omitted team resolves through the saved credential", async () => {
+    const f = await readyRepairWithSavedLogin();
+    await f.apply();
+    const config = loadProject(root, "app").config;
+    expect(config.verification).toEqual({
+      mode: "browser",
+      environment: "pm-test",
+    });
+    expect(Object.keys(config.environments!)).toEqual(["pm-test"]);
+    expect(config.environments!["pm-test"]).toMatchObject({
+      teamId: "team_test",
+      connectionId: "default",
+      branch: "pm-staging",
+      access: savedAccess,
+      bypassSecret: "VERCEL_SAVED_BYPASS",
+    });
+    expect(f.connection).toHaveBeenLastCalledWith(
+      expect.objectContaining({ teamId: undefined, projectId: "prj_app" }),
+    );
+  });
+  it("uses authenticated project account evidence when a token has no default team", async () => {
+    const f = await readyRepairWithSavedLogin();
+    f.setCredentialTeam(undefined);
+    f.expectRequestTeam(null);
+    f.project.accountId = "team_test";
+    await f.apply();
+    const config = loadProject(root, "app").config;
+    expect(config.verification).toEqual({
+      mode: "browser",
+      environment: "pm-test",
+    });
+    expect(config.environments!["pm-test"]).toMatchObject({
+      teamId: "team_test",
+      access: savedAccess,
+      bypassSecret: "VERCEL_SAVED_BYPASS",
+    });
+  });
+  it.each(["different team", "different connection", "unresolved team"])(
+    "does not copy login references across %s",
+    async (difference) => {
+      const f = await readyRepairWithSavedLogin(
+        difference === "different team" ? "team_other" : "team_test",
+        difference === "different connection" ? "other-account" : "default",
+      );
+      if (difference === "unresolved team") {
+        f.setCredentialTeam(undefined);
+        f.expectRequestTeam(null);
+      }
+      await f.apply();
+      const config = loadProject(root, "app").config;
+      expect(config.verification).toEqual({
+        mode: "browser",
+        environment: "pm-staging",
+      });
+      expect(config.environments!["pm-staging"]).not.toHaveProperty("access");
+      expect(config.environments!["pm-staging"]).not.toHaveProperty(
+        "bypassSecret",
+      );
+      expect(config.environments!["pm-test"]).toMatchObject({
+        access: savedAccess,
+        bypassSecret: "VERCEL_SAVED_BYPASS",
+      });
+    },
+  );
+  it("rejects conflicting credential and actual project account evidence without changing saved access", async () => {
+    const f = await readyRepairWithSavedLogin();
+    f.project.accountId = "team_other";
+    await expect(f.apply()).rejects.toThrow("project account changed");
+    expect(loadProject(root, "app").config.verification).toEqual({
+      mode: "browser",
+      environment: "pm-test",
+    });
+    expect(
+      loadProject(root, "app").config.environments!["pm-test"],
+    ).toMatchObject({ access: savedAccess });
+  });
+  it("retains an explicitly matching team when optional credential and account metadata are absent", async () => {
+    const f = await readyRepairWithSavedLogin();
+    f.setCredentialTeam(undefined);
+    f.expectRequestTeam(null);
+    await createVercelSetupStore(root).change("app", (state) => {
+      state!.target!.teamId = "team_test";
+      return { state: state!, result: undefined };
+    });
+    await f.apply();
+    const config = loadProject(root, "app").config;
+    expect(config.verification).toEqual({
+      mode: "browser",
+      environment: "pm-test",
+    });
+    expect(config.environments!["pm-test"]).toMatchObject({
+      teamId: "team_test",
+      access: savedAccess,
+    });
+  });
   it("repairs an existing direct-PR project into isolated staging, preserving commands and schedules", async () => {
     const f = fixture();
     const path = join(root, "projects/app/project.json");

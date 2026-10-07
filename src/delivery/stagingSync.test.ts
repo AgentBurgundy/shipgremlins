@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -7,6 +7,8 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  renameSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +18,10 @@ import { projectRuntimeKey } from "../projectIdentity.ts";
 import type { LocalJob, LocalJobInput } from "../localRunners/types.ts";
 import type { ReviewDeployment } from "./types.ts";
 import { createStagingSync, stagingSyncScope } from "./stagingSync.ts";
+import {
+  effectiveVerification,
+  effectiveWorkflow,
+} from "../projectCapabilities.ts";
 
 const STAGING = "a".repeat(40),
   INTEGRATION = "b".repeat(40),
@@ -197,6 +203,260 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+async function legacyRepair(w: ReturnType<typeof world>, attempt = 1) {
+  w.dirty();
+  await w.service.reconcile();
+  const config = w.project.config;
+  const legacyScope = createHash("sha256")
+    .update(
+      JSON.stringify({
+        identity: projectRuntimeKey(config),
+        provider: config.provider,
+        server: config.serverUrl,
+        repo: config.repo,
+        branches: config.branches,
+        workflow: effectiveWorkflow(config),
+        verification: effectiveVerification(config),
+        commands: config.commands,
+      }),
+    )
+    .digest("hex");
+  const stableFile = join(w.directory, `${stagingSyncScope(w.project)}.json`);
+  const state = w.state();
+  state.scope = legacyScope;
+  state.repairs[0].attempt = attempt;
+  state.repairs[0].key = `staging-sync:${legacyScope}:${STAGING}:${attempt}`;
+  w.jobs[0]!.idempotencyKey = state.repairs[0].key;
+  w.jobs[0]!.attempt = attempt;
+  // Cached checks from an older verification configuration cannot authorize the repair.
+  state.checkedMerge = {
+    key: "f".repeat(64),
+    ok: true,
+    at: "2026-10-06T12:00:00Z",
+  };
+  writeFileSync(stableFile, JSON.stringify(state));
+  renameSync(stableFile, join(w.directory, `${legacyScope}.json`));
+  w.change((project) => {
+    project.config.environments!.password = {
+      kind: "url",
+      role: "preview",
+      url: "https://new-preview.example.test",
+    };
+    project.config.verification = { mode: "browser", environment: "password" };
+  });
+  return { legacyScope, key: state.repairs[0].key as string };
+}
+
+describe("stable sync identity and bounded v0.21 recovery", () => {
+  it("keeps Git identity stable across target/access changes but changes it for commands", () => {
+    const w = world();
+    const before = stagingSyncScope(w.project);
+    const changed = structuredClone(w.project);
+    changed.config.environments!.integration = {
+      kind: "url",
+      role: "preview",
+      url: "https://other.example.test",
+    };
+    expect(stagingSyncScope(changed)).toBe(before);
+    changed.config.commands.test = "npm run new-test";
+    expect(stagingSyncScope(changed)).not.toBe(before);
+  });
+  it.each(["queued", "running", "succeeded"] as const)(
+    "recovers a %s prior-scope repair after restart without another job or snapshot",
+    async (status) => {
+      const w = world();
+      const previous = await legacyRepair(w);
+      w.jobs[0]!.status = status;
+      if (status === "succeeded") w.resolution(w.jobs[0]!);
+      const branchesBefore = w.createBranch.mock.calls.length;
+      const result = await w.restart().reconcile();
+      expect(result.phase).toBe(
+        status === "succeeded" ? "current" : "repairing",
+      );
+      expect(w.enqueue).toHaveBeenCalledTimes(1);
+      expect(w.createBranch).toHaveBeenCalledTimes(branchesBefore);
+      expect(w.createPull).not.toHaveBeenCalled();
+      expect(w.state().repairs).toEqual([
+        expect.objectContaining({
+          key: previous.key,
+          legacyScope: previous.legacyScope,
+          jobId: w.jobs[0]!.id,
+        }),
+      ]);
+      if (status === "succeeded")
+        expect(w.checkMerge).toHaveBeenCalledExactlyOnceWith(
+          INTEGRATION,
+          REPAIRED,
+        );
+      else expect(w.merge).not.toHaveBeenCalled();
+    },
+  );
+  it("admits a queued legacy job before the reconciliation timer without rewriting its intent", async () => {
+    const w = world();
+    const previous = await legacyRepair(w);
+    expect(await w.restart().repairIntent(w.jobs[0]!)).toMatchObject({
+      key: previous.key,
+      legacyScope: previous.legacyScope,
+    });
+    expect(
+      existsSync(join(w.directory, `${stagingSyncScope(w.project)}.json`)),
+    ).toBe(false);
+    expect(w.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it("does not reset a prior second attempt when its earlier job has been pruned", async () => {
+    const w = world();
+    await legacyRepair(w, 2);
+    w.jobs[0]!.status = "failed";
+    expect((await w.restart().reconcile()).phase).toBe("blocked");
+    expect(w.state().status.message).toContain("Two Coding Gremlin attempts");
+    expect(w.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it.each(["commands", "head", "foreign job", "ambiguous"])(
+    "does not adopt %s or queue a duplicate",
+    async (reason) => {
+      const w = world();
+      await legacyRepair(w);
+      if (reason === "commands") {
+        w.project.config.commands.test = "changed";
+        w.change((p) => {
+          p.config.commands.test = "changed";
+        });
+      }
+      if (reason === "head") w.forge.seedBranch(TEST_REPO, "pm-staging", MOVED);
+      if (reason === "foreign job") w.jobs[0]!.projectInstanceId = randomUUID();
+      if (reason === "ambiguous")
+        w.jobs.push({ ...w.jobs[0]!, id: `job-${randomUUID()}` });
+      if (reason === "head") w.compare(MOVED, STAGING, 2, 1);
+      if (reason === "foreign job") {
+        await expect(w.restart().repairIntent(w.jobs[0]!)).rejects.toThrow(
+          "no matching",
+        );
+        expect(
+          existsSync(join(w.directory, `${stagingSyncScope(w.project)}.json`)),
+        ).toBe(false);
+      } else {
+        expect((await w.restart().reconcile()).phase).toBe("blocked");
+        expect(w.enqueue).toHaveBeenCalledTimes(1);
+        expect(w.merge).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it("respects cancellation requested before completed legacy work is recovered", async () => {
+    const w = world();
+    await legacyRepair(w);
+    w.jobs[0]!.status = "succeeded";
+    w.jobs[0]!.cancelRequestedAt = "2026-10-06T12:00:01Z";
+    w.resolution(w.jobs[0]!);
+    expect((await w.restart().reconcile()).phase).toBe("blocked");
+    expect(w.merge).not.toHaveBeenCalled();
+  });
+  it.each(["provider", "repository", "branch"])(
+    "rejects prior repair scope after %s identity changes even with identical heads",
+    async (kind) => {
+      const w = world();
+      await legacyRepair(w);
+      const change = (p: typeof w.project) => {
+        if (kind === "provider") p.config.provider = "gitlab";
+        if (kind === "repository") p.config.repo = "other/project";
+        if (kind === "branch")
+          p.config.branches.integration = "other-integration";
+      };
+      change(w.project);
+      w.change(change);
+      w.forge.seedBranch(w.project.config.repo, "staging", STAGING);
+      w.forge.seedBranch(
+        w.project.config.repo,
+        w.project.config.branches.integration,
+        INTEGRATION,
+      );
+      vi.mocked(w.forge.compare).mockImplementation(
+        async (repo, base, head) => {
+          expect(repo).toBe(w.project.config.repo);
+          expect([base, head]).toEqual([INTEGRATION, STAGING]);
+          return { aheadBy: 2, behindBy: 1 };
+        },
+      );
+      const result = await w.restart().reconcile();
+      expect(result).toMatchObject({
+        phase: "blocked",
+        message: expect.stringContaining(
+          "different or ambiguous controller configuration",
+        ),
+      });
+      expect(w.enqueue).toHaveBeenCalledTimes(1);
+      expect(w.merge).not.toHaveBeenCalled();
+      await expect(w.restart().repairIntent(w.jobs[0]!)).rejects.toThrow(
+        "no matching controller admission",
+      );
+    },
+  );
+  it("rechecks selected deployment readiness and rejects target changes during lookup", async () => {
+    const w = world();
+    w.compare(INTEGRATION, STAGING, 0, 2);
+    w.deployment.mockImplementationOnce(async () => {
+      w.change((p) => {
+        p.config.environments!.integration = {
+          kind: "url",
+          role: "preview",
+          url: "https://new.example.test",
+        };
+      });
+      return {
+        id: "old",
+        url: "https://preview.example.test",
+        sha: INTEGRATION,
+        branch: "pm-staging",
+        provider: "vercel",
+        state: "READY",
+      };
+    });
+    expect((await w.restart().reconcile()).phase).toBe("waiting-deployment");
+    w.deployment.mockResolvedValue({
+      id: "new",
+      url: "https://new.example.test",
+      sha: INTEGRATION,
+      branch: "pm-staging",
+      provider: "vercel",
+      state: "READY",
+    });
+    expect((await w.restart().reconcile()).phase).toBe("current");
+    w.change((p) => {
+      p.config.environments!.integration = {
+        kind: "url",
+        role: "preview",
+        url: "https://third.example.test",
+      };
+    });
+    expect(w.restart().status().phase).toBe("waiting-deployment");
+  });
+  it("rejects target changes during the final branch reread", async () => {
+    const w = world();
+    w.compare(INTEGRATION, STAGING, 0, 2);
+    w.deployment.mockResolvedValue({
+      id: "old",
+      url: "https://preview.example.test",
+      sha: INTEGRATION,
+      branch: "pm-staging",
+      provider: "vercel",
+      state: "READY",
+    });
+    const branch = w.forge.getBranchSha.bind(w.forge);
+    let reads = 0;
+    vi.spyOn(w.forge, "getBranchSha").mockImplementation(async (repo, name) => {
+      if (++reads === 3)
+        w.change((p) => {
+          p.config.environments!.integration = {
+            kind: "url",
+            role: "preview",
+            url: "https://new.example.test",
+          };
+        });
+      return branch(repo, name);
+    });
+    expect((await w.restart().reconcile()).phase).toBe("waiting-deployment");
+  });
+});
 
 describe("durable local staging synchronization", () => {
   it("merges an immutable snapshot with both histories, keeps staging, and uses no coding agent", async () => {
