@@ -258,6 +258,14 @@
       onSaved,
       isLocked: () => locked,
     });
+    const crewRecommendations = window.createCrewRecommendations?.({
+      api,
+      getProject: (name) =>
+        status?.projects?.find((project) => project.name === name),
+      onAdopt: (name, suggestion) => onCreatePm?.(name, suggestion),
+      onSaved,
+      isLocked: () => locked,
+    });
     const missions = window.createProjectMissions?.({
       api,
       pages,
@@ -735,12 +743,15 @@
       add.setAttribute("aria-label", `Adopt a PM Gremlin for ${project.name}`);
       add.disabled = locked;
       actions.append(settings);
-      if (pages.tab === "crew" || pages.pm) actions.append(add);
+      if (
+        (pages.tab === "crew" || pages.pm) &&
+        (project.areas?.length || !crewRecommendations)
+      )
+        actions.append(add);
       return actions;
     }
-    function activityList(project, area, limit = 12) {
-      const list = node("div");
-      const jobs = (getJobs?.() || [])
+    function projectJobs(project, area) {
+      return (getJobs?.() || [])
         .filter(
           (job) =>
             job.project === project.name &&
@@ -748,8 +759,37 @@
             (!area || job.area === area.key),
         )
         .slice()
-        .sort((a, b) => b.runId - a.runId)
-        .slice(0, limit);
+        .sort((a, b) => b.runId - a.runId);
+    }
+    const activeJob = (job) => ["running", "queued"].includes(job.status);
+    const runLabel = (job) =>
+      job.grumblin
+        ? `Customer simulation · ${job.grumblin.name}`
+        : job.pmMode === "discovery"
+          ? "Discovery"
+          : job.pmMode === "exploration"
+            ? "Product exploration"
+            : job.type === "pm"
+              ? "PM patrol"
+              : "Coding run";
+    const runState = (job) =>
+      ({
+        running: "Working",
+        queued: "Queued",
+        succeeded: "Run finished",
+        failed: "Stopped",
+        canceled: "Canceled",
+      })[job?.status] ||
+      job?.status ||
+      "Not run yet";
+    function statusChip(label, status = "idle") {
+      const chip = node("span", "workspace-status", label);
+      chip.dataset.state = status;
+      return chip;
+    }
+    function activityList(project, area, limit = 12) {
+      const list = node("div", "workspace-activity-list");
+      const jobs = projectJobs(project, area).slice(0, limit);
       if (!jobs.length)
         list.append(
           node(
@@ -765,20 +805,100 @@
           "project-run-row",
         );
         row.append(
+          statusChip(runState(job), job.status),
           node(
             "strong",
             "",
-            `${job.grumblin ? `Customer simulation · ${job.grumblin.name}` : job.pmMode === "discovery" ? "Discovery" : job.pmMode === "exploration" ? "Product exploration" : job.type === "pm" ? "PM patrol" : "Coding run"} · ${job.type === "developer" ? job.ticket || job.area || "" : job.area || ""}`,
+            `${runLabel(job)}${job.ticket ? ` · ${job.ticket}` : ""}`,
           ),
           node(
             "span",
-            "",
-            `Run ${job.runId} · ${job.status} · ${when(job.createdAt)}`,
+            "project-run-meta",
+            `Run ${job.runId} · ${when(job.createdAt)}`,
           ),
         );
         list.append(row);
       }
       return list;
+    }
+    function crewPulse(project) {
+      const jobs = projectJobs(project),
+        active = jobs.filter(activeJob),
+        running = active.filter((job) => job.status === "running"),
+        pulse = node("section", "crew-pulse"),
+        copy = node("div", "crew-pulse-copy"),
+        title = node(
+          "h2",
+          "",
+          running.length
+            ? `${running.length} ${running.length === 1 ? "gremlin is" : "gremlins are"} working`
+            : active.length
+              ? "Your crew has work queued"
+              : "Your crew at a glance",
+        );
+      pulse.setAttribute("aria-label", "Current crew activity");
+      copy.append(
+        title,
+        node(
+          "p",
+          "",
+          running.length || active.length
+            ? "Open a run to follow its recorded activity, output, and evidence."
+            : "See each PM’s assignment, latest run, and automation below.",
+        ),
+      );
+      const counts = node("div", "crew-pulse-counts");
+      for (const [value, label] of [
+        [project.areas?.length || 0, "PMs"],
+        [running.length, "Working"],
+        [active.length - running.length, "Queued"],
+      ]) {
+        const item = node("div");
+        item.append(node("strong", "", String(value)), node("span", "", label));
+        counts.append(item);
+      }
+      pulse.append(copy, counts);
+      return pulse;
+    }
+    function pmLiveState(project, area, { compact = false } = {}) {
+      const jobs = projectJobs(project, area),
+        current =
+          jobs.find((job) => job.status === "running") || jobs.find(activeJob),
+        latest = current || jobs[0],
+        panel = node("div", compact ? "pm-run-snapshot" : "pm-current-run"),
+        copy = node("div", "pm-current-run-copy");
+      panel.dataset.state = latest?.status || "idle";
+      if (!compact)
+        copy.append(
+          node("span", "eyebrow muted", current ? "CURRENT RUN" : "LATEST RUN"),
+        );
+      copy.append(
+        statusChip(
+          latest ? `${runLabel(latest)} · ${runState(latest)}` : "No runs yet",
+          latest?.status,
+        ),
+      );
+      copy.append(
+        node(
+          "p",
+          "",
+          latest
+            ? `${latest.ticket ? `${latest.ticket} · ` : ""}Run ${latest.runId} · ${when(latest.startedAt || latest.createdAt)}`
+            : area.enabled
+              ? "Daily patrols are enabled. A run will appear here when it is queued."
+              : "Start a patrol when you’re ready, or enable daily investigations.",
+        ),
+      );
+      panel.append(copy);
+      if (latest && (!current || current.type !== "pm"))
+        panel.append(
+          button(
+            current ? "Follow run →" : "View last run →",
+            () => options.onActivity?.(latest.id),
+            "workspace-run-link",
+          ),
+        );
+      return panel;
     }
     function renderSidebar() {
       if (!sidebar) return;
@@ -904,9 +1024,13 @@
       const step =
         window.projectFirstStep?.(project, getJobs?.() || []) ||
         (project.foundation?.needed ? "foundation" : "mission");
+      if (project.areas?.length) root.append(crewPulse(project));
       if (step === "foundation")
         root.append(window.renderFoundationLauncher(project));
-      else if (step === "welcome" && welcome) welcome.mount(root, project);
+      else if (step === "welcome" && crewRecommendations) {
+        welcome?.deactivate?.();
+        crewRecommendations.mount(root, project);
+      } else if (step === "welcome" && welcome) welcome.mount(root, project);
       else if (step === "discovery") firstInvestigation(project);
       else if (missions) missions.mount(root, project);
       else if (project.areas?.length)
@@ -1085,6 +1209,12 @@
       root.append(card);
     }
     function crewWorkspace(project) {
+      if (!project.areas?.length && crewRecommendations) {
+        welcome?.deactivate?.();
+        crewRecommendations.mount(root, project);
+        return;
+      }
+      if (project.areas?.length) root.append(crewPulse(project));
       const setupIncomplete =
         !project.areas?.length ||
         project.areas.some((area) => {
@@ -1100,7 +1230,10 @@
           );
         });
       if (setupIncomplete)
-        welcome?.mount(root, project, { suggestionsOnly: true });
+        welcome?.mount(root, project, {
+          suggestionsOnly: true,
+          setupOnly: Boolean(crewRecommendations),
+        });
       const crew = node("section", "project-crew-section");
       const title = node("div", "project-section-title");
       title.append(
@@ -1136,6 +1269,7 @@
         card.append(
           image,
           copy,
+          pmLiveState(project, area, { compact: true }),
           window.renderPmControls(project, area, {
             locked,
             jobs: getJobs?.() || [],
@@ -1175,7 +1309,11 @@
       crew.append(cards);
       root.append(crew);
       if (!setupIncomplete)
-        welcome?.mount(root, project, { suggestionsOnly: true });
+        welcome?.mount(root, project, {
+          suggestionsOnly: true,
+          setupOnly: Boolean(crewRecommendations),
+        });
+      crewRecommendations?.mount(root, project, { hideWhenEmpty: true });
       const tools = node("section", "project-tools");
       for (const [title, description, tab, label] of [
         [
@@ -1316,17 +1454,7 @@
       root.append(context);
     }
     function pmWorkspace(project, area) {
-      const layout = node("div", "pm-workspace-layout"),
-        navigation = node("nav", "pm-workspace-nav");
-      navigation.setAttribute("aria-label", "Project PMs");
-      navigation.append(
-        link("← Project overview", path(project.name), "pm-back"),
-      );
-      for (const pm of project.areas?.length > 1 ? project.areas : []) {
-        const item = link(pm.name || pm.key, path(project.name, pm.key));
-        if (pm.key === area.key) item.setAttribute("aria-current", "page");
-        navigation.append(item);
-      }
+      const layout = node("div", "pm-workspace-layout");
       const main = node("div", "pm-workspace-body"),
         heading = node("div", "pm-workspace-heading"),
         image = node("img");
@@ -1336,10 +1464,28 @@
       const title = node("div");
       title.append(
         node("span", "eyebrow muted", "PM GREMLIN"),
-        node("h2", "", area.name || area.key),
+        node("h1", "", area.name || area.key),
+        node(
+          "p",
+          "pm-heading-purpose",
+          area.charter?.goal ||
+            area.mandate ||
+            "Give this gremlin a focused product area.",
+        ),
       );
-      heading.append(image, title);
+      heading.append(image, title, projectActions(project));
       main.append(heading);
+      if (project.areas?.length > 1) {
+        const navigation = node("nav", "pm-crew-switcher");
+        navigation.setAttribute("aria-label", "Project PMs");
+        for (const pm of project.areas) {
+          const item = link(pm.name || pm.key, path(project.name, pm.key));
+          if (pm.key === area.key) item.setAttribute("aria-current", "page");
+          navigation.append(item);
+        }
+        main.append(navigation);
+      }
+      main.append(pmLiveState(project, area));
       if (window.renderPatrolPlan)
         main.append(window.renderPatrolPlan(project, { compact: true }));
       main.append(
@@ -1350,6 +1496,7 @@
         }),
       );
       const tab = tabs.some(([key]) => key === pages.tab) ? pages.tab : "brief";
+      let exploration;
       if (tab === "brief" && !project.foundation?.needed) {
         const explore = node("section", "product-exploration-card"),
           copy = node("div");
@@ -1371,7 +1518,7 @@
           locked ||
           Boolean(options.getAreaAction?.(project.name, area.key)?.busy);
         explore.append(copy, launch);
-        main.append(explore);
+        exploration = explore;
       }
       const nav = node("nav", "pm-workspace-tabs");
       nav.setAttribute("aria-label", "PM workspace sections");
@@ -1565,6 +1712,7 @@
           );
       }
       main.append(content);
+      if (exploration) main.append(exploration);
       const deletion = disclosure(
         "manage-pm",
         "Manage PM",
@@ -1583,7 +1731,7 @@
       remove.disabled = locked;
       deletion.append(remove);
       main.append(deletion);
-      layout.append(navigation, main);
+      layout.append(main);
       root.append(layout);
     }
     function render() {
@@ -1622,11 +1770,18 @@
           grumblins?.protectFocus() ||
           missions?.protectFocus() ||
           welcome?.protectFocus() ||
+          crewRecommendations?.protectFocus?.() ||
           setupSuggestions?.protectFocus())
       )
         return;
       renderedRoute = currentRoute;
       signature = next;
+      // Live job and knowledge updates replace this subtree. Preserve route
+      // focus only if its heading already owned focus; polling must not take
+      // focus away from inputs, controls, or another part of the dashboard.
+      const restoreHeadingFocus =
+        document.activeElement?.tagName === "H1" &&
+        root.contains?.(document.activeElement);
       root.replaceChildren();
       if (!status) {
         root.append(node("p", "runner-guidance", "Loading project…"));
@@ -1647,16 +1802,21 @@
       const header = node("header", "workspace-project-header"),
         identity = node("div");
       identity.append(
-        link("← All projects", "/projects", "project-back"),
+        node("span", "eyebrow muted", "PROJECT"),
         node("h1", "", project.name),
+        node(
+          "p",
+          "project-repository",
+          project.repo || "Repository not connected",
+        ),
       );
       header.append(identity, projectActions(project));
-      root.append(header);
+      if (!area) root.append(header);
       if (!pages.pm) {
         const navigation = node("nav", "project-top-tabs");
         navigation.setAttribute("aria-label", "Project sections");
         for (const [key, label] of [
-          ["overview", "Your next change"],
+          ["overview", "Overview"],
           ["review", "Proposals"],
           ["changes", "Changes"],
           ["crew", "Your crew"],
@@ -1700,8 +1860,22 @@
       )
         options.operations?.mount(root, project, pages.tab);
       else home(project);
+      if (restoreHeadingFocus) {
+        const heading = root.querySelector("h1");
+        heading?.setAttribute("tabindex", "-1");
+        heading?.focus({ preventScroll: true });
+      }
     }
     function routeChanged() {
+      const project = selected().project;
+      const recommendationsVisible =
+        pages.current === "project" &&
+        !pages.pm &&
+        project &&
+        (pages.tab === "crew" ||
+          (["", "brief", "overview"].includes(pages.tab || "") &&
+            !project.areas?.length));
+      if (!recommendationsVisible) crewRecommendations?.deactivate?.();
       setupSuggestions?.setActive(
         pages.current === "project" && pages.tab === "discovery"
           ? `${pages.project}/${pages.pm}`
@@ -1715,6 +1889,7 @@
       render();
       grumblins?.resume(status?.projects || []);
       welcome?.resume(status?.projects || []);
+      crewRecommendations?.resume?.(status?.projects || []);
       if (key) refreshKnowledge();
     }
     window.addEventListener("dashboard:pagechange", routeChanged);
@@ -1723,6 +1898,9 @@
       else routeChanged();
     });
     window.addEventListener("pagehide", stopKnowledge);
+    window.addEventListener("pagehide", () =>
+      crewRecommendations?.deactivate?.(),
+    );
     return {
       setStatus(value, disabled) {
         for (const previous of status?.projects || []) {
@@ -1749,6 +1927,7 @@
         launching ||
         missions?.isBusy() ||
         welcome?.isBusy() ||
+        crewRecommendations?.isBusy?.() ||
         setupSuggestions?.isBusy() ||
         grumblins?.isBusy(),
       refresh: refreshKnowledge,
@@ -1768,6 +1947,7 @@
         if (!area) grumblins?.forget(project);
         if (!area) missions?.forget(project);
         if (!area) welcome?.forget(project);
+        if (!area) crewRecommendations?.forget?.(project);
         if (editor.project === project && (!area || editor.area === area)) {
           finishClose();
           editor.original = "";

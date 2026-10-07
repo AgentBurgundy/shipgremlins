@@ -24,17 +24,18 @@ project**, then choose the path that fits your app:
 1. **Give your gremlin a home.** Choose **Improve my app**, connect GitHub or
    GitLab, and select its repository. The secondary experimental idea path can
    create a new private-by-default repository and a reviewed foundation assignment.
-2. **Inspect the existing app.** The project introduction offers **Inspect my
-   app** and may already be analyzing when source access and Claude Code are
-   ready. The Setup Gremlin reads bounded source at an exact commit and suggests
-   checks and a first investigator. Review its evidence and open questions.
-3. **Confirm the setup you reviewed.** Select the suggested install, test, lint,
+2. **Find your crew.** Choose **Find my gremlins**. An investigation may already
+   be running when source access and Claude Code are ready. AI reads bounded
+   source at an exact commit and suggests one to five PMs with distinct product
+   responsibilities, evidence and complete briefs. Review what each would own.
+3. **Review the app's setup.** In project setup, select the suggested install, test, lint,
    typecheck, or build commands you want to save, then choose **Confirm setup**.
    Unselected settings stay as they were. This does not execute commands or prove
    the app runs. If the source changed, inspect it again before confirming.
-4. **Meet and adopt your gremlin.** Choose **Meet [name]**, review its job and
-   brief, and adopt it. You can choose a different gremlin or write your own brief.
-   Explain who it helps, what should get better, and what it should leave alone.
+4. **Adopt the gremlins you want.** Choose **Adopt** on a recommendation, review
+   its filled-in brief, and confirm. Remaining recommendations stay available
+   after adoption and reload. You can also choose a gremlin yourself and write
+   its brief. No generic Product Understanding PM is created automatically.
 5. **Give the crew a place to work.** The welcome screen offers **Connect Linear**
    when the account is missing, or **Set up Linear** when it is already connected.
    Choose an existing team when there is more than one; ShipGremlins creates the
@@ -76,16 +77,17 @@ by period or project, and read reporting coverage alongside the totals: missing
 reports are unknown, not zero. Counts update after runs and AI setup actions finish.
 [Understand token usage →](TOKEN_USAGE.md)
 
-Projects appear individually in the sidebar. **Your next change** leads with
-ready drafts, blocked work, current progress, and an outcome for the next mission.
+Projects appear individually in the sidebar. **Overview** leads with current
+work and the next setup or product decision. Projects without PMs offer crew discovery.
 **Proposals** holds owner decisions; **Changes** collects coding results and links to advanced staged delivery; **Your
 crew** keeps PMs, Grumblins, and shared knowledge; **Settings** includes environment
 and run-limit setup. Existing direct links remain available. Open a PM for its
 brief, Learning, Features, Queue, Memory, and run history.
 
-Overview shows your projects, PM mandates, verified workers, and active jobs.
-Connections has category tabs; mobile navigation opens from the menu button.
-Your gremlins starts with the launch form, with worker management below. Settings
+Overview shows your projects, live and recent work, verified workers, and active jobs.
+Connections has a searchable provider directory; mobile navigation opens from the menu button.
+Your gremlins starts with a searchable PM directory, with separate tabs to start
+a run or manage runners. Use **Ctrl/Cmd K** to jump to a project, PM or page. Settings
 puts software updates first and keeps files and JSON under advanced configuration.
 
 Projects and PMs have **Delete** controls in their workspace/settings. The preview
@@ -102,8 +104,8 @@ dashboard checks periodically for new releases; updates are never installed
 automatically.
 
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Claude Code in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
-2. In **Projects → Add project**, choose **Improve my app**. Follow **Inspect your app → Review setup → Meet your gremlin**. Importing can start bounded source analysis, but creates no PM or coding job; confirming saves only the selected commands. Manual adoption remains available if you already know the setup. The experimental idea path creates a private-by-default repository and starts with the reviewed foundation build before source discovery. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
-3. Adopt the suggested PM or choose another with a focused **Product brief**. Its welcome guides you through connecting Linear, creating missing PM projects and labels, and connecting a test environment. These steps also remain on the project home if you close the welcome. New PMs start with both automation controls off.
+2. In **Projects → Add project**, choose **Improve my app**. Follow **Investigate → Choose your crew → Adopt**. Importing can start bounded source analysis, but creates no PM or coding job. Review suggested commands separately in project setup. Manual adoption remains available. The experimental idea path creates a private-by-default repository and starts with the reviewed foundation build before source discovery. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
+3. Adopt one or more suggested PMs with focused **Product briefs**, or choose your own. Their welcome and project setup guide you through connecting Linear, creating missing PM projects and labels, and connecting a test environment. These steps remain available if you close the welcome. New PMs start with both automation controls off.
 4. Choose **Create local worker**, then **Explore the codebase** for Discovery. The worker runs on the CLI/dashboard server; its first image build can take time. Worker readiness requires actual Chromium evidence, but the PM's source-only Discovery needs no app hosting or Linear mapping.
 5. **Connect a test environment** for browser walkthroughs. Environment offers **Connect Vercel** even on a fresh installation, then resumes automatic preview setup after authorization. You can also choose another hosted target or a disposable Docker app. Code-only Discovery remains available while setup is incomplete. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
 6. Finish the visible setup checklist, including a real browser login test when the app needs one. **Activate ready crew** validates every adopted PM and enables daily patrols plus eligible coding pickup together. An incomplete crew stays paused with its next missing step. You can still manage patrols and coding independently or run one job manually. Activation does not approve work: in the new managed workflow, review the PM's bounded epic once, then the crew handles its child tickets through QA and per-PM promotion.

@@ -8,12 +8,12 @@ body.is-first-run .first-run-path:not([hidden]) {
   background: transparent;
   border: 0;
   padding: 0;
-  margin: 18px 0 28px;
+  margin: 16px 0 22px;
 }
 .first-run-progress {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -23,15 +23,15 @@ body.is-first-run .first-run-path:not([hidden]) {
   align-items: center;
   gap: 9px;
   min-width: 0;
-  padding: 12px 10px;
+  padding: 10px;
   color: var(--muted);
-  border-radius: 12px;
+  border-radius: 8px;
   font-size: 12px;
   line-height: 1.4;
 }
 .first-run-progress li[aria-current="step"] {
   color: var(--ink);
-  background: #e9f0e4;
+  background: #e9f3df;
   font-weight: 700;
 }
 .first-run-step-marker {
@@ -46,9 +46,9 @@ body.is-first-run .first-run-path:not([hidden]) {
   font-size: 11px;
 }
 .first-run-progress .complete .first-run-step-marker {
-  color: #345d24;
-  background: #e5eedf;
-  border-color: #d6e2cd;
+  color: #286448;
+  background: #e9f3df;
+  border-color: #cadcba;
 }
 #overview .first-run-note {
   margin: 14px 0 0;

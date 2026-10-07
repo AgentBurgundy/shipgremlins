@@ -17,6 +17,7 @@ class Element {
   rel = "";
   target = "";
   dataset: Record<string, string> = {};
+  focus = (_options?: object) => {};
   constructor(public tagName: string) {}
   append(...children: Element[]) {
     for (const child of children) child.parentElement = this;
@@ -33,6 +34,14 @@ class Element {
   }
   fire(name: string) {
     return this.listeners.get(name)?.();
+  }
+  contains(item: Element): boolean {
+    return this === item || this.children.some((child) => child.contains(item));
+  }
+  querySelector(selector: string) {
+    return (
+      all(this).find((item) => item.tagName === selector.toUpperCase()) || null
+    );
   }
 }
 function fixture() {
@@ -52,6 +61,7 @@ function fixture() {
       initial: object,
     ) => { read(): object; reset(): void };
     createProjectWelcome?: (options: object) => object;
+    createCrewRecommendations?: (options: object) => object;
     createProjectMissions?: (options: object) => object;
     renderCodingLauncher(project: object, options: object): Element;
     renderProjectCrew(project: object): Element;
@@ -60,10 +70,17 @@ function fixture() {
   window.addEventListener = () => {};
   const document = {
     body: new Element("BODY"),
+    activeElement: null as Element | null,
     hidden: true,
     getElementById: () => null,
     addEventListener() {},
-    createElement: (name: string) => new Element(name.toUpperCase()),
+    createElement: (name: string) => {
+      const element = new Element(name.toUpperCase());
+      element.focus = () => {
+        document.activeElement = element;
+      };
+      return element;
+    },
     createTextNode: (value: string) =>
       Object.assign(new Element("#TEXT"), { textContent: value }),
   };
@@ -91,7 +108,7 @@ function fixture() {
       ),
       context,
     );
-  return window;
+  return Object.assign(window, { testDocument: document });
 }
 const all = (root: Element): Element[] => [root, ...root.children.flatMap(all)];
 const text = (root: Element): string =>
@@ -390,7 +407,7 @@ describe("focused project crew workspace", () => {
       getJobs: () => jobs,
     });
     view.setStatus(state, false);
-    return { root, pages, project, state, view, jobs };
+    return { root, pages, project, state, view, jobs, ui };
   }
   it("puts incomplete setup before PM cards and moves optional growth suggestions below an active crew", () => {
     const f = workspace(true),
@@ -440,6 +457,7 @@ describe("focused project crew workspace", () => {
     expect(row.children.map((item) => item.className)).toEqual([
       "",
       "project-pm-copy",
+      "pm-run-snapshot",
       "pm-simple-controls",
     ]);
     expect(all(row).find((item) => item.tagName === "A")?.href).toBe(
@@ -481,6 +499,128 @@ describe("focused project crew workspace", () => {
     )!;
     expect(details.tagName).toBe("SECTION");
     expect(text(details)).toContain("AgentBurgundy/shipgremlins");
+  });
+  it("uses one PM heading without a second back button or an empty navigation column", () => {
+    const f = workspace();
+    f.pages.pm = f.project.areas[0]!.key;
+    f.pages.tab = "brief";
+    f.view.render();
+    expect(
+      all(f.root)
+        .filter((item) => item.tagName === "H1")
+        .map((item) => item.textContent),
+    ).toEqual(["Security gremlin v2"]);
+    expect(
+      all(f.root).some((item) => item.className === "workspace-project-header"),
+    ).toBe(false);
+    expect(
+      all(f.root).some((item) =>
+        [
+          "pm-workspace-nav",
+          "pm-back",
+          "project-back",
+          "pm-crew-switcher",
+        ].includes(item.className),
+      ),
+    ).toBe(false);
+    expect(text(f.root)).not.toContain("← All projects");
+    expect(text(f.root)).not.toContain("← Project overview");
+    const tabs = all(f.root).find(
+      (item) => item.className === "pm-workspace-tabs",
+    )!;
+    expect(tabs.attributes.get("aria-label")).toBe("PM workspace sections");
+    expect(
+      tabs.children.find((item) => item.textContent === "Activity")?.href,
+    ).toBe("/projects/shipgremlins?pm=security-gremlin-v2&tab=activity");
+    expect(
+      tabs.children.filter(
+        (item) => item.attributes.get("aria-current") === "page",
+      ),
+    ).toHaveLength(1);
+  });
+  it("preserves heading focus through live updates without stealing focus during passive polling", () => {
+    const f = workspace();
+    f.pages.pm = f.project.areas[0]!.key;
+    f.pages.tab = "brief";
+    f.view.render();
+    const original = f.root.querySelector("h1")!;
+    original.focus();
+    f.jobs.push({
+      id: "working",
+      runId: 1,
+      project: "shipgremlins",
+      area: f.pages.pm,
+      type: "pm",
+      status: "running",
+    });
+    f.view.setStatus(f.state, false);
+    const replacement = f.root.querySelector("h1")!;
+    expect(replacement).not.toBe(original);
+    expect(f.ui.testDocument.activeElement).toBe(replacement);
+    expect(replacement.attributes.get("tabindex")).toBe("-1");
+    const outsideControl = new Element("INPUT");
+    f.ui.testDocument.activeElement = outsideControl;
+    Object.assign(f.jobs[0]!, { status: "succeeded" });
+    f.view.setStatus(f.state, false);
+    expect(f.ui.testDocument.activeElement).toBe(outsideControl);
+  });
+  it("prioritizes real active work over newer completed runs and excludes recreated-project history", () => {
+    const f = workspace();
+    Object.assign(f.project, { instanceId: "current" });
+    f.jobs.push(
+      {
+        id: "old-instance",
+        runId: 10,
+        project: "shipgremlins",
+        projectInstanceId: "previous",
+        area: f.project.areas[0]!.key,
+        type: "pm",
+        status: "running",
+      },
+      {
+        id: "completed",
+        runId: 9,
+        project: "shipgremlins",
+        projectInstanceId: "current",
+        area: f.project.areas[0]!.key,
+        type: "pm",
+        status: "succeeded",
+      },
+      {
+        id: "current",
+        runId: 8,
+        project: "shipgremlins",
+        projectInstanceId: "current",
+        area: f.project.areas[0]!.key,
+        type: "pm",
+        status: "running",
+      },
+    );
+    f.view.setStatus(f.state, false);
+    expect(text(f.root)).toContain("1 gremlin is working");
+    const snapshot = all(f.root).find(
+      (item) => item.className === "pm-run-snapshot",
+    )!;
+    expect(text(snapshot)).toContain("PM patrol · Working");
+    expect(text(snapshot)).toContain("Run 8");
+    expect(text(snapshot)).not.toContain("Run 9");
+    expect(text(snapshot)).not.toContain("Run 10");
+    f.pages.pm = f.project.areas[0]!.key;
+    f.pages.tab = "brief";
+    f.view.render();
+    expect(
+      all(f.root).find((item) => item.className === "pm-current-run")?.dataset
+        .state,
+    ).toBe("running");
+    Object.assign(f.jobs[2]!, { status: "succeeded" });
+    f.view.setStatus(f.state, false);
+    const completed = all(f.root).find(
+      (item) => item.className === "pm-current-run",
+    )!;
+    expect(completed.dataset.state).toBe("succeeded");
+    expect(text(completed)).toContain("Run 9");
+    expect(text(completed)).not.toContain("CURRENT RUN");
+    expect(text(completed)).not.toContain("QA passed");
   });
   it("keeps project reference visible across polling and labels an active PM action View run", () => {
     const { root, state, view, jobs, pages } = workspace();
@@ -549,10 +689,10 @@ describe("focused project crew workspace", () => {
     pages.tab = "brief";
     view.render();
     const navigation = all(root).find(
-      (item) => item.className === "pm-workspace-nav",
+      (item) => item.className === "pm-crew-switcher",
     )!;
     expect(all(navigation).filter((item) => item.tagName === "A")).toHaveLength(
-      3,
+      2,
     );
     expect(
       all(navigation).find((item) => item.textContent === "Import quality")
@@ -566,13 +706,12 @@ describe("focused project crew workspace", () => {
     view.render();
     expect(text(root)).not.toContain("Run discovery");
     expect(text(root)).toContain("Find reproducible RBAC gaps");
-    const navigation = all(root).find(
-      (item) => item.className === "pm-workspace-nav",
-    )!;
-    expect(all(navigation).filter((item) => item.tagName === "A")).toHaveLength(
-      1,
-    );
-    expect(text(navigation)).toContain("Project overview");
+    expect(
+      all(root).some((item) => item.className === "pm-crew-switcher"),
+    ).toBe(false);
+    expect(
+      all(root).some((item) => item.dataset.editProject === "shipgremlins"),
+    ).toBe(true);
     expect(
       text(
         all(root).find((item) => item.className === "pm-workspace-heading")!,
@@ -603,7 +742,7 @@ describe("focused project crew workspace", () => {
 });
 
 describe("project-first investigation", () => {
-  function onboarding(linear = false) {
+  function onboarding(linear = false, withRecommendations = false) {
     const ui = fixture(),
       root = new Element("MAIN"),
       jobs: Record<string, unknown>[] = [];
@@ -622,6 +761,17 @@ describe("project-first investigation", () => {
     };
     ui.createProjectWelcome = () => welcome;
     ui.createProjectMissions = () => missions;
+    const recommendations = {
+      mount: vi.fn(),
+      resume: vi.fn(),
+      forget: vi.fn(),
+      deactivate: vi.fn(),
+      hasSuggestions: vi.fn(() => false),
+      protectFocus: () => false,
+      isBusy: () => false,
+    };
+    if (withRecommendations)
+      ui.createCrewRecommendations = () => recommendations;
     const project = {
       name: "shop",
       instanceId: "current",
@@ -653,8 +803,14 @@ describe("project-first investigation", () => {
     const activity = vi.fn(),
       setupHosting = vi.fn(),
       setupLinear = vi.fn();
+    const pages = {
+      current: "project",
+      project: "shop",
+      pm: "",
+      tab: "overview",
+    };
     const view = ui.createProjectWorkspace(root, {
-      pages: { current: "project", project: "shop", pm: "", tab: "overview" },
+      pages,
       api,
       getJobs: () => jobs,
       onJob: (job: Record<string, unknown>) => jobs.push(job),
@@ -684,8 +840,58 @@ describe("project-first investigation", () => {
       adopt,
       welcome,
       missions,
+      recommendations,
+      pages,
+      view,
     };
   }
+  it("prioritizes source-grounded recommendations on empty overview and crew without duplicate adoption cards", () => {
+    const f = onboarding(false, true);
+    expect(f.recommendations.mount).toHaveBeenCalledWith(f.root, f.project);
+    expect(f.welcome.mount).not.toHaveBeenCalled();
+    expect(f.missions.mount).not.toHaveBeenCalled();
+    expect(f.api).not.toHaveBeenCalled();
+    f.pages.tab = "crew";
+    f.view.render();
+    expect(f.recommendations.mount).toHaveBeenCalledTimes(2);
+    expect(text(f.root)).not.toContain("Who will be your first gremlin?");
+    expect(
+      all(f.root).some(
+        (item) =>
+          item.className === "project-crew-empty adoption-project-empty",
+      ),
+    ).toBe(false);
+    expect(text(f.root)).not.toContain("Adopt a gremlin");
+    f.pages.tab = "setup";
+    f.refresh();
+    expect(f.welcome.mount).toHaveBeenCalledWith(f.root, f.project);
+    expect(f.recommendations.deactivate).toHaveBeenCalled();
+  });
+  it("retains remaining suggestions after adoption while rendering readiness without duplicate suggestion cards", () => {
+    const f = onboarding(false, true);
+    f.pages.tab = "crew";
+    // The first load after adoption has no recommendation cache yet.
+    f.recommendations.hasSuggestions.mockReturnValue(false);
+    f.adopt();
+    expect(f.recommendations.mount).toHaveBeenLastCalledWith(
+      f.root,
+      f.project,
+      {
+        hideWhenEmpty: true,
+      },
+    );
+    expect(f.welcome.mount).toHaveBeenLastCalledWith(f.root, f.project, {
+      suggestionsOnly: true,
+      setupOnly: true,
+    });
+    expect(text(f.root)).toContain("PM Gremlins");
+    expect(text(f.root)).toContain("Moss");
+    f.view.setStatus(
+      { projects: [{ ...f.project, instanceId: "replacement" }] },
+      false,
+    );
+    expect(f.recommendations.forget).toHaveBeenCalledWith("shop");
+  });
   it("shows reviewed repository welcome before adoption, then explicitly starts Discovery rather than an outcome mission", async () => {
     const f = onboarding();
     expect(f.welcome.mount).toHaveBeenCalledTimes(1);

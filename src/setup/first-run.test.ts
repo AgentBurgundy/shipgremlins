@@ -17,6 +17,7 @@ interface Step {
 }
 const window: {
   firstRunNextStep?: (status: unknown, runners: unknown) => Step | null;
+  projectFirstStep?: (project: unknown, jobs?: unknown[]) => string;
 } = {};
 runInNewContext(source, { window });
 const next = (status: unknown, jobs: unknown[] = []) =>
@@ -213,12 +214,12 @@ describe("first useful mission guidance", () => {
       href: "/connections#source-control",
     });
   });
-  it("reviews repository setup before adoption and learns the app before asking for an outcome", () => {
+  it("finds a suggested crew before adoption and learns the app before asking for an outcome", () => {
     const status = { ...connected(), projects: [project()] };
     expect(next(status)).toMatchObject({
       index: 3,
       href: "/projects/my-app",
-      label: "Review your app setup",
+      label: "Find my gremlins",
     });
     const adopted = next({ ...status, projects: [withPm()] });
     expect(adopted).toMatchObject({
@@ -237,6 +238,22 @@ describe("first useful mission guidance", () => {
       active: true,
       label: "Open your next change",
     });
+  });
+  it("keeps a fresh connected repository on crew recommendations after its source inspection", () => {
+    const fresh = project({
+      onboardingProgress: { investigated: false, hasMissions: false },
+      setupConfirmation: { confirmed: true },
+    });
+    const value = next({ ...connected(), projects: [fresh] });
+    expect(window.projectFirstStep!(fresh)).toBe("welcome");
+    expect(value).toMatchObject({
+      index: 3,
+      label: "Find my gremlins",
+      href: "/projects/my-app",
+    });
+    expect(value.adoptProject).toBeUndefined();
+    expect(fresh.areas).toEqual([]);
+    expect(value.description).toContain("choose which gremlins to adopt");
   });
   it("prioritizes the reviewed foundation before adoption or empty-repository PM discovery", () => {
     for (const areas of [[], [{ key: "foundation", name: "Foundation" }]]) {

@@ -2,70 +2,88 @@
 #pm-create-drawer {
   width: min(700px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
-  padding: 28px;
+  margin: auto;
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: 16px;
   background: #fff;
   color: var(--ink);
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
+}
+#pm-create-drawer[open] {
+  display: flex;
+  flex-direction: column;
 }
 #pm-create-drawer::backdrop {
   background: rgb(13 32 23 / 50%);
 }
 #pm-create-drawer .pm-create-dialog-header {
-  position: static;
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  padding: 0 0 20px;
+  padding: 20px 24px 16px;
   margin: 0;
-  border: 0;
-  background: transparent;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
 }
 #pm-create-drawer .pm-create-dialog-header > div {
   min-width: 0;
 }
 #pm-create-title {
-  margin: 8px 0;
-  font-size: clamp(1.6rem, 4vw, 2rem);
-  line-height: 1.15;
+  margin: 5px 0 8px;
+  font-size: clamp(22px, 4vw, 27px);
+  line-height: 1.2;
   overflow-wrap: anywhere;
 }
 #pm-adoption-subtitle {
   margin: 0;
   max-width: 48ch;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.55;
 }
 #pm-create-drawer #close-pm-create {
   flex-shrink: 0;
 }
 #pm-create-drawer #pm-create-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 0;
   margin: 0;
   border: 0;
   background: transparent;
 }
 #pm-create-drawer #pm-create-fields {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 0;
   margin: 0;
   border: 0;
   min-width: 0;
 }
 .adoption-progress {
-  margin: 0 0 22px;
-  font-size: 10px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 24px 0;
+  font-size: 11px;
   letter-spacing: 0.14em;
   font-weight: 700;
   color: var(--muted);
 }
 .adoption-stage {
   min-width: 0;
+  min-height: 0;
   display: grid;
-  gap: 18px;
+  gap: 16px;
+  padding: 18px 24px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .adoption-stage .field {
   min-width: 0;
@@ -95,13 +113,13 @@
   gap: 8px;
 }
 .adoption-starters .small-button {
-  min-height: 46px;
+  min-height: 42px;
   white-space: normal;
   text-align: left;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fafcfb;
+  border-radius: 8px;
+  background: #fff;
   color: var(--ink);
 }
 .adoption-starters .small-button[aria-pressed="true"] {
@@ -134,17 +152,17 @@
 }
 .adoption-creature-card {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 16px;
   align-items: center;
-  padding: 22px;
-  border-radius: 20px;
-  background: radial-gradient(ellipse at 20% 20%, #eef7e0, #f7f9f5 75%);
-  border: 1px solid #e3ecdc;
+  padding: 18px;
+  border-radius: 12px;
+  background: #f4f8ee;
+  border: 1px solid var(--line);
 }
 .adoption-creature {
   width: 100%;
-  height: 155px;
+  height: 126px;
   object-fit: contain;
   filter: drop-shadow(0 9px 10px rgb(52 77 25 / 10%));
 }
@@ -167,8 +185,8 @@
 }
 .adoption-job-summary {
   margin: -8px 0 0;
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.6;
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
@@ -198,17 +216,22 @@
   color: var(--muted);
 }
 #pm-create-drawer .form-bottom {
-  position: static;
+  flex: 0 0 auto;
   display: flex;
+  flex-direction: row;
+  position: static;
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
-  margin: 24px 0 0;
-  padding: 20px 0 0;
+  margin: 0;
+  padding: 14px 24px;
   border-top: 1px solid var(--line);
+  background: #fafbf9;
 }
 #pm-create-drawer .form-bottom > p {
   flex: 1 1 180px;
+  min-width: 0;
+  max-width: none;
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
@@ -252,12 +275,15 @@
   justify-items: center;
   gap: 16px;
   text-align: center;
-  padding: 0 8px 8px;
+  padding: 20px 24px 24px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .adoption-welcome-creature {
-  width: 190px;
-  height: 180px;
+  width: 150px;
+  height: 140px;
   object-fit: contain;
   filter: drop-shadow(0 14px 14px rgb(52 77 25 / 12%));
 }
@@ -346,11 +372,21 @@
   #pm-create-drawer {
     width: calc(100vw - 20px);
     max-height: calc(100dvh - 20px);
-    padding: 22px 18px;
-    border-radius: 20px;
+    padding: 0;
+    border-radius: 14px;
   }
   #pm-create-drawer .pm-create-dialog-header {
     gap: 12px;
+    padding: 18px;
+  }
+  .adoption-progress {
+    padding: 12px 18px 0;
+  }
+  .adoption-stage {
+    padding: 16px 18px 20px;
+  }
+  #pm-create-drawer .form-bottom {
+    padding: 12px 18px;
   }
   #pm-create-drawer #close-pm-create {
     padding-inline: 8px;
@@ -378,7 +414,7 @@
     flex: 1;
   }
   .adoption-welcome {
-    padding-inline: 0;
+    padding: 18px;
   }
   .adoption-welcome-actions {
     width: 100%;

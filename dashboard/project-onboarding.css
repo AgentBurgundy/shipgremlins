@@ -1,32 +1,32 @@
 .project-onboarding {
-  max-width: 900px;
+  max-width: 1060px;
   padding-bottom: 24px;
   min-width: 0;
 }
 .foundation-card {
-  margin: 28px 0;
+  margin: 20px 0;
   border: 1px solid #dce5dc;
-  border-radius: 20px;
-  padding: 28px 32px;
+  border-radius: 14px;
+  padding: 22px 24px;
   background: #fff;
   box-shadow: 0 8px 30px #173e2905;
 }
 .foundation-card > h3 {
-  font-size: clamp(21px, 3vw, 28px);
+  font-size: clamp(20px, 3vw, 24px);
   line-height: 1.3;
   max-width: 650px;
   margin: 10px 0 14px;
 }
 .foundation-card .foundation-lead {
-  font-size: 15px;
+  font-size: 14px;
   color: #415747;
   max-width: 660px;
 }
 .foundation-progress {
   display: flex;
   gap: 18px;
-  margin: 0 0 28px;
-  padding: 0 0 18px;
+  margin: 0 0 22px;
+  padding: 0 0 16px;
   list-style: none;
   border-bottom: 1px solid #e8ede6;
   counter-reset: foundation-step;
@@ -85,14 +85,17 @@
   font-size: 12px;
 }
 .foundation-brief-dialog {
-  --brief-dialog-padding: 28px;
+  --brief-dialog-padding: 22px;
   width: min(760px, calc(100vw - 40px));
-  max-height: 85vh;
+  max-height: calc(100dvh - 40px);
   box-sizing: border-box;
   padding: var(--brief-dialog-padding);
   border: 1px solid #dce5dc;
   border-radius: 16px;
-  color: #263e2e;
+  color: var(--ink, #18342a);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .foundation-dialog-header {
   position: sticky;
@@ -267,15 +270,15 @@
   }
 }
 .onboarding-heading h2 {
-  margin: 7px 0 10px;
-  font-size: 27px;
-  letter-spacing: -0.8px;
+  margin: 5px 0 8px;
+  font-size: 24px;
+  letter-spacing: -0.6px;
 }
 .onboarding-heading > p {
   max-width: 570px;
   color: #637467;
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 1.6;
   margin: 0;
 }
 .onboarding-steps {
@@ -283,13 +286,13 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   list-style: none;
   padding: 0;
-  margin: 24px 0;
-  gap: 8px;
+  margin: 18px 0;
+  gap: 6px;
 }
 .onboarding-steps li {
-  padding: 11px 12px;
+  padding: 9px 12px;
   border-bottom: 2px solid #e1e7e2;
-  color: #87938b;
+  color: var(--muted, #65756c);
   font-size: 12px;
   font-weight: 650;
 }
@@ -311,7 +314,7 @@
 .project-onboarding p,
 .project-onboarding li {
   font-size: 13px;
-  line-height: 1.7;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .onboarding-analysis,
@@ -319,21 +322,21 @@
 .onboarding-automatic,
 .onboarding-verification:not(:empty),
 .onboarding-proposal:not(:empty) {
-  padding: 24px;
-  margin-bottom: 18px;
-  border: 1px solid #dfe7df;
-  border-radius: 13px;
+  padding: 20px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line, #dce5dd);
+  border-radius: 12px;
   background: #fff;
 }
 .onboarding-automatic[hidden] {
   display: none;
 }
 .onboarding-app-access {
-  padding: 26px 28px;
-  margin: 22px 0 18px;
-  border: 1px solid #cfdcc8;
-  border-radius: 16px;
-  background: linear-gradient(140deg, #f4f8ee, #fff 70%);
+  padding: 20px;
+  margin: 18px 0 14px;
+  border: 1px solid var(--line, #dce5dd);
+  border-radius: 12px;
+  background: #fff;
   min-width: 0;
 }
 .onboarding-app-access[hidden] {
@@ -344,7 +347,7 @@
   margin-bottom: 10px;
 }
 .project-onboarding .onboarding-app-access > h3 {
-  font-size: clamp(20px, 3vw, 25px);
+  font-size: clamp(19px, 3vw, 22px);
   line-height: 1.3;
   margin-bottom: 10px;
 }
@@ -357,12 +360,12 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin: 22px 0;
+  margin: 18px 0;
 }
 .onboarding-access-choice {
   min-width: 0;
   text-align: left;
-  padding: 17px 18px;
+  padding: 14px 16px;
   border: 1px solid #d5e0d1;
   border-radius: 10px;
   background: #fff;
@@ -421,15 +424,15 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 24px;
   list-style: none;
-  padding: 22px 0 6px;
-  margin: 20px 0 0;
+  padding: 18px 0 2px;
+  margin: 18px 0 0;
   border-top: 1px solid #e7ece5;
 }
 .environment-setup-progress li {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #8a968c;
+  color: var(--muted, #65756c);
 }
 .environment-setup-progress li span {
   display: grid;
@@ -497,7 +500,7 @@
   margin-top: 20px;
 }
 .onboarding-analysis {
-  background: #f7f9f3;
+  background: #fff;
 }
 .onboarding-analysis-heading {
   display: flex;
@@ -582,22 +585,22 @@
 }
 .project-onboarding .field label {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .project-onboarding .field input,
 .project-onboarding .field select,
 .project-onboarding .field textarea {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #d6e0d9;
-  background: #fbfdf9;
-  border-radius: 7px;
-  padding: 11px 12px;
+  border: 1px solid #d0ddd2;
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
   font: inherit;
   font-size: 13px;
-  color: #193925;
+  color: var(--ink, #18342a);
 }
 .project-onboarding .field textarea {
   font-family: var(--font-mono, monospace);
@@ -605,8 +608,8 @@
   resize: vertical;
 }
 .project-onboarding .field p {
-  font-size: 11px;
-  color: #728075;
+  font-size: 12px;
+  color: var(--muted, #65756c);
   margin: 6px 0 0;
 }
 .onboarding-advanced {
@@ -663,7 +666,7 @@
 }
 .project-onboarding .environment-result-heading h3 {
   margin: 0 0 8px;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.3;
   letter-spacing: -0.6px;
 }
@@ -697,9 +700,9 @@
 .environment-target-summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px 28px;
-  margin: 24px 0;
-  padding: 17px 0;
+  gap: 12px 24px;
+  margin: 18px 0;
+  padding: 14px 0;
   border-block: 1px solid #e7ece5;
 }
 .environment-target-summary > div {
@@ -748,8 +751,8 @@
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 13px 0;
+  gap: 10px;
+  padding: 10px 0;
 }
 .environment-check + .environment-check {
   border-top: 1px solid #edf0e9;
@@ -787,8 +790,8 @@
   font-weight: 600;
 }
 .environment-check > div span {
-  color: #6c7c70;
-  font-size: 11px;
+  color: var(--muted, #65756c);
+  font-size: 12px;
   margin-top: 2px;
 }
 .environment-check-status {
@@ -910,8 +913,9 @@
   color: #4b6a42;
 }
 .onboarding-account {
-  padding: 14px;
-  background: #f7f9f4;
+  padding: 16px;
+  border: 1px solid var(--line, #dce5dd);
+  background: #f8faf7;
   border-radius: 8px;
   margin: 14px 0;
 }

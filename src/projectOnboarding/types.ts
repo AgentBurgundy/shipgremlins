@@ -4,6 +4,7 @@ import type {
 } from "../pmPlanner/docker.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 import type { EnvironmentTarget } from "../projectCapabilities.ts";
+import type { PmDraft } from "../pmPlanner/index.ts";
 
 export class ProjectOnboardingError extends Error {
   constructor(
@@ -95,6 +96,14 @@ export interface SetupEvidence {
   path: string;
   quote: string;
 }
+export interface SuggestedPm {
+  name: string;
+  mandate: string;
+  evidence: SetupEvidence[];
+  /** Complete editable adoption proposal; absent in older saved inspections. */
+  draft?: PmDraft;
+  rationale?: string;
+}
 export interface ProjectSetupProposal {
   commands: Partial<
     Record<
@@ -104,7 +113,7 @@ export interface ProjectSetupProposal {
   >;
   firstPm: { name: string; mandate: string; evidence: SetupEvidence[] };
   /** Additional source-grounded responsibilities retained for later adoption. */
-  suggestedPms?: { name: string; mandate: string; evidence: SetupEvidence[] }[];
+  suggestedPms?: SuggestedPm[];
   /** Source observations only; applying a recipe still requires a live login check. */
   appAccess?: {
     kind: "password" | "email-code" | "sso" | "public" | "unknown";
@@ -148,6 +157,8 @@ export interface OnboardingState {
   failure?: { code: PlannerFailureCode; stage: string };
   updatedAt?: string;
   stale: boolean;
+  /** Source identity still matches; setup edits do not discard adoptable drafts. */
+  recommendationsReviewable?: boolean;
   report?: OnboardingReport;
   setupPull?: SetupPull;
   appliedProfile?: "hosted" | "docker";

@@ -1,9 +1,9 @@
 .vercel-setup {
-  margin: 0 0 24px;
-  padding: 20px;
-  border: 1px solid #d9e3d4;
+  margin: 0 0 18px;
+  padding: 18px;
+  border: 1px solid var(--line, #dce5dd);
   border-radius: 12px;
-  background: linear-gradient(135deg, #f8faf4, #fff 65%);
+  background: #f8faf7;
   min-width: 0;
 }
 .vercel-setup-heading,
@@ -15,7 +15,7 @@
   gap: 12px;
 }
 .vercel-setup-heading {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 .vercel-setup-heading img {
   flex: 0 0 20px;
@@ -24,8 +24,8 @@
   margin: 0 0 4px;
 }
 .vercel-setup-kicker {
-  color: #7c8879;
-  font-size: 10px;
+  color: var(--muted, #65756c);
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.8px;
 }
@@ -40,8 +40,8 @@
   background: #e9f0de;
 }
 .vercel-gremlin-greeting strong {
-  font-size: 11px;
-  color: #506443;
+  font-size: 12px;
+  color: #286448;
 }
 .project-onboarding .vercel-setup-message {
   margin: 4px 0 0;
@@ -60,13 +60,13 @@
   margin: 8px 0 12px;
 }
 .vercel-setup-toolbar > a {
-  color: #5e6e58;
-  font-size: 11px;
+  color: var(--muted, #65756c);
+  font-size: 12px;
   text-underline-offset: 3px;
 }
 .project-onboarding .vercel-setup-note {
-  color: #70806c;
-  font-size: 11px;
+  color: var(--muted, #65756c);
+  font-size: 12px;
   line-height: 1.65;
   margin: 9px 0;
 }
@@ -102,9 +102,9 @@
 .vercel-environment-meta,
 .vercel-environment-url {
   display: block;
-  color: #7b8778;
-  font-size: 10px;
-  line-height: 1.7;
+  color: var(--muted, #65756c);
+  font-size: 12px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 .vercel-environment .small-button {
@@ -130,10 +130,10 @@
 }
 .vercel-preview-review {
   margin-top: 18px;
-  padding: 18px;
+  padding: 16px;
   border: 1px solid #d9e4d0;
   border-radius: 10px;
-  background: #f0f5e9;
+  background: #f4f8ee;
 }
 .vercel-preview-review h4 {
   margin: 8px 0 12px;

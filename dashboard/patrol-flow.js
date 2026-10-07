@@ -71,7 +71,11 @@
     root.setAttribute("aria-label", "Patrol plan");
     root.dataset.compact = String(compact);
     copy.append(
-      node("span", "patrol-plan-kicker", "PATROL PLAN"),
+      node(
+        "span",
+        "patrol-plan-kicker",
+        compact ? "TEST ACCESS" : "PATROL PLAN",
+      ),
       node(
         "h3",
         "",
@@ -141,16 +145,20 @@
         node(
           "p",
           "patrol-plan-access",
-          legacySignIn
-            ? "Your gremlin will attempt the saved email-code login. Check browser evidence to confirm sign-in and signed-in features actually work."
-            : signedIn
-              ? `Test accounts: ${accounts.join(" · ")}. The gremlin will attempt sign-in. Saved accounts do not prove that login or signed-in features work.`
-              : publicOnly
-                ? "Your gremlin can explore public pages. To test anything behind a login, add a dedicated test account."
-                : "Tell us whether your app needs sign-in before starting a browser patrol. Signed-in features need a dedicated test account.",
+          compact && signedIn
+            ? legacySignIn
+              ? "Email-code recipe saved. Check each run’s evidence for successful sign-in."
+              : `${accounts.length} saved test ${accounts.length === 1 ? "account" : "accounts"} · Sign-in is confirmed by each run’s evidence.`
+            : legacySignIn
+              ? "Your gremlin will attempt the saved email-code login. Check browser evidence to confirm sign-in and signed-in features actually work."
+              : signedIn
+                ? `Test accounts: ${accounts.join(" · ")}. The gremlin will attempt sign-in. Saved accounts do not prove that login or signed-in features work.`
+                : publicOnly
+                  ? "Your gremlin can explore public pages. To test anything behind a login, add a dedicated test account."
+                  : "Tell us whether your app needs sign-in before starting a browser patrol. Signed-in features need a dedicated test account.",
         ),
       );
-      if (target.kind === "vercel")
+      if (target.kind === "vercel" && !compact)
         coverage.append(
           node(
             "p",
@@ -257,19 +265,34 @@
       counts = window.patrolEvidence({ ...activity, files: artifacts }),
       active = ["queued", "running"].includes(job?.status),
       readable = ["ready", "partial"].includes(activityState),
+      // A run_code tool can perform interactions inside one opaque script.
+      // Do not mistake missing individual action events for no interaction.
+      scriptedBrowser = activity?.events?.some(
+        (event) =>
+          event.type === "tool" &&
+          /^(?:mcp__playwright__)?browser_run_code$/.test(event.title),
+      ),
+      noInteractions =
+        counts.calls > 0 && counts.interactions === 0 && !scriptedBrowser,
       title = discovery
         ? "Discovery reads code, not the running app"
-        : counts.calls
-          ? "Browser activity recorded"
-          : activityState === "error"
-            ? "Browser activity unavailable"
-            : !readable
-              ? "Loading browser activity…"
-              : activityState === "partial"
-                ? "Browser activity is incomplete"
-                : active
-                  ? "Waiting for browser activity"
-                  : "No browser calls recorded",
+        : noInteractions
+          ? active
+            ? "Waiting for browser interactions"
+            : activityState === "ready"
+              ? "No browser interactions recorded"
+              : "No interactions in the available browser activity"
+          : counts.calls
+            ? "Browser activity recorded"
+            : activityState === "error"
+              ? "Browser activity unavailable"
+              : !readable
+                ? "Loading browser activity…"
+                : activityState === "partial"
+                  ? "Browser activity is incomplete"
+                  : active
+                    ? "Waiting for browser activity"
+                    : "No browser calls recorded",
       header = node("div", "patrol-evidence-heading");
     root.setAttribute("aria-label", "Run evidence");
     if (
@@ -304,7 +327,10 @@
       return root;
     }
     root.dataset.tone =
-      !discovery && !counts.calls && !active && activityState === "ready"
+      !discovery &&
+      (!counts.calls || noInteractions) &&
+      !active &&
+      activityState === "ready"
         ? "attention"
         : "neutral";
     header.append(node("h3", "", title));
@@ -352,16 +378,32 @@
       "artifacts",
     );
     metric(
-      "Reported checks",
-      readable || activity?.checks?.length ? `${counts.passed} passed` : "—",
+      "Recorded checks",
+      readable || activity?.checks?.length
+        ? counts.passed || counts.failed || counts.running
+          ? `${counts.passed} passed`
+          : "None recorded"
+        : "—",
       counts.failed
         ? `${counts.failed} failed${counts.running ? ` · ${counts.running} running` : ""}`
         : counts.running
           ? `${counts.running} running`
-          : "View checks in Activity →",
+          : !counts.passed
+            ? "A written summary is not a recorded check result."
+            : "View checks in Activity →",
       "activity",
     );
     root.append(metrics);
+    if (noInteractions && !active)
+      root.append(
+        node(
+          "p",
+          "patrol-evidence-note patrol-evidence-warning",
+          activityState === "ready"
+            ? "No clicks, typing, form submissions, or other UI interactions were recorded. Sign-in and user workflows remain unverified by this browser activity. A finished run and screenshots do not prove the investigation was completed."
+            : "The available activity contains no UI interactions. Missing records do not prove that sign-in failed or that the app was fully tested.",
+        ),
+      );
     root.append(
       node(
         "p",

@@ -629,6 +629,9 @@
           choice.disabled = firstBusy || busy || isLocked() || !currentAdoption;
         firstTask.disabled =
           firstBusy || busy || isLocked() || !currentAdoption;
+        openHome.textContent = accepted.returnToCrew
+          ? "Back to your crew"
+          : "Visit their home";
         openHome.disabled = firstBusy || busy || !currentAdoption;
         adoptAnother.disabled = firstBusy || busy || isLocked();
         retryReadiness.hidden = !welcomeWarning && currentAdoption;

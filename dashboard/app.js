@@ -73,6 +73,7 @@
         : undefined,
   });
   let currentStatus = null;
+  const crewConsole = window.createCrewConsole?.({ pages });
   let projectOperations = null;
   let projectOnboarding = null;
   let remoteWorkers = null;
@@ -522,7 +523,13 @@
         worker.verifiedAt && ["ready", "busy"].includes(worker.status),
     );
     const busy = verified.filter((worker) => worker.status === "busy").length;
-    const jobs = Array.isArray(runnerStatus?.jobs) ? runnerStatus.jobs : [];
+    const jobs = (
+      Array.isArray(runnerStatus?.jobs) ? runnerStatus.jobs : []
+    ).filter((job) =>
+      projects.some(
+        (project) => window.dashboardCrewModel.scoped(project, [job]).length,
+      ),
+    );
     const queued = jobs.filter((job) => job.status === "queued").length;
     const running = jobs.filter((job) => job.status === "running").length;
     const text = (id, value) => {
@@ -566,6 +573,11 @@
     );
     window.renderFirstRunOverview?.(currentStatus, runnerStatus, {
       locked: formsLocked,
+    });
+    crewConsole?.update({
+      status: currentStatus,
+      runners: runnerStatus,
+      jobs: mergedJobs(),
     });
   }
   function renderStatus(status) {
@@ -739,6 +751,15 @@
     const exampleProject = projects.find((project) =>
       /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(project.name),
     );
+    crewConsole?.enhanceProjects();
+    if (focusedProject && focusedControl?.startsWith("pm:")) {
+      const card = [...list.querySelectorAll("[data-project-name]")].find(
+        (item) => item.dataset.projectName === focusedProject,
+      );
+      [...(card?.querySelectorAll("[data-project-control]") || [])]
+        .find((item) => item.dataset.projectControl === focusedControl)
+        ?.focus({ preventScroll: true });
+    }
     $("doctor-command").textContent =
       `gremlins doctor ${exampleProject ? exampleProject.name : "PROJECT"}`;
     renderJobProjects();
@@ -2139,7 +2160,12 @@
         runner.status === "ready" ||
         (runner.status === "busy" && runner.verifiedAt),
     );
-    $("runner-count").textContent = String(runners.length);
+    $("runner-count").textContent = String(
+      (currentStatus?.projects || []).reduce(
+        (total, project) => total + (project.areas?.length || 0),
+        0,
+      ),
+    );
     $("runners-summary").textContent = ready.length
       ? `${ready.length} verified ${ready.length === 1 ? "worker" : "workers"}`
       : runners.length
@@ -2282,6 +2308,12 @@
           ? "Saved history is unavailable. Recent worker activity is still shown; check your server’s history service."
           : "Activity includes saved runs and current worker jobs.";
       renderJobs(runnerStatus?.jobs || []);
+      crewConsole?.update({
+        status: currentStatus,
+        runners: runnerStatus,
+        jobs: mergedJobs(),
+      });
+      projectWorkspace?.render();
     } catch (error) {
       $("history-message").textContent =
         `Saved history could not load. ${error.message}`;
@@ -2308,6 +2340,9 @@
     ]);
     if (list.dataset.signature === signature) return;
     list.dataset.signature = signature;
+    const focusedJob = list.contains(document.activeElement)
+      ? document.activeElement?.dataset.jobId
+      : null;
     list.replaceChildren();
     const visible = jobs.filter((job) => {
       const active = ["queued", "running"].includes(job.status);
@@ -2328,14 +2363,14 @@
             : "No matching activity yet. Start a run from a project or Your gremlins to see its progress here.",
         ),
       );
-    for (const job of [...visible].reverse()) {
+    for (const job of window.dashboardCrewModel.recent(visible)) {
       const row = element("article", "job-row");
       const text = element("div", "job-row-copy");
       text.append(
         element(
           "h4",
           "",
-          `${job.grumblin ? `AI customer simulation · ${job.grumblin.name}` : job.type === "pm" ? (job.pmMode === "discovery" ? "PM Gremlin · Discovery" : job.pmMode === "exploration" ? "PM Gremlin · Product exploration" : "PM Gremlin · Patrol") : job.type === "developer" ? "Coding Gremlin" : "Browser verification"}${job.project ? ` · ${job.project}` : ""}`,
+          window.dashboardCrewModel.jobName(job, currentStatus?.projects || []),
         ),
       );
       text.append(
@@ -2343,19 +2378,21 @@
           "p",
           "",
           [
+            job.project,
             job.type === "developer" ? job.ticket || job.area : job.area,
             timestamp(job.createdAt),
-            job.message,
           ]
             .filter(Boolean)
             .join(" · "),
         ),
       );
+      if (job.message)
+        text.append(element("p", "job-row-message", job.message));
       const action = element("div", "job-row-action");
       const badge = element(
         "span",
         `runtime-badge state-${job.status}`,
-        job.status,
+        window.dashboardCrewModel.statusLabel(job),
       );
       const button = element(
         "button",
@@ -2384,6 +2421,10 @@
       row.append(text, action);
       list.append(row);
     }
+    if (focusedJob)
+      [...list.querySelectorAll("[data-job-id]")]
+        .find((node) => node.dataset.jobId === focusedJob)
+        ?.focus({ preventScroll: true });
   }
   function scheduleRunnerPoll() {
     clearTimeout(runnerPollTimer);
@@ -2404,6 +2445,7 @@
     updateRunnerControls();
     try {
       renderRunners(await api("/api/runners"));
+      crewConsole?.connectionRestored();
       await refreshHistory();
       message($("runner-message"), "");
     } catch (error) {
@@ -2412,6 +2454,7 @@
         `${error.message} Your other dashboard settings are still available. Use Refresh to try again.`,
         true,
       );
+      crewConsole?.connectionFailed();
       // Do not silently retry forever if the worker service is unavailable.
       clearTimeout(runnerPollTimer);
       return;
@@ -3030,7 +3073,9 @@
     $("job-detail-status").textContent =
       status === "succeeded" ? "Finished" : status;
     $("run-summary-state").textContent =
-      job?.message ||
+      (status === "succeeded" && job?.type === "pm"
+        ? "The PM process finished. Its testing coverage and investigation outcome are shown below."
+        : job?.message) ||
       {
         queued: "Queued. Waiting for an eligible worker.",
         running:
@@ -3525,24 +3570,122 @@
       return;
     }
     changePmCreationProject(project || $("pm-project").value);
-    if (suggestion?.name && suggestion?.mandate) {
+    const launch = (review = false) => {
+      pmCreateDialog.dataset.recommendationAdoption =
+        suggestion?.review === true && review ? "true" : "false";
+      pmCreateTrigger = trigger;
+      pendingPmCreate = false;
+      if (!pmCreateDialog.open) pmCreateDialog.showModal();
+      renderLinearSetup();
+      updatePmCreationReview();
+      if (pmAdoption) {
+        pmAdoption.open({ preselected: Boolean(project) });
+        if (review) pmAdoption.review();
+      } else $("pm-mandate").focus();
+      refreshLinearResources();
+    };
+    const applySuggestion = () => {
       pmAdoption?.contextChanged();
       pmDraft?.reset();
-      pmGeneratedValues = null;
+      pmEditedFields.clear();
+      const draft = suggestion.draft || {};
+      for (const [id, key] of Object.entries(pmInputKeys)) {
+        const value =
+          draft[key] ??
+          ({ schedule: "0 13 * * *", metric: "/", wipLimit: "3" }[key] || "");
+        $(id).value = Array.isArray(value) ? value.join("\n") : String(value);
+      }
       $("pm-name").value = suggestion.name;
       $("pm-mandate").value = suggestion.mandate;
-      pmKeyEdited = false;
+      $("pm-mixpanel-report").value = "";
+      $("pm-linear-project").value = "";
+      pmCharter.fill(draft.charter || {});
+      pmKeyEdited = Boolean(draft.key);
       $("pm-name").dispatchEvent(new Event("input", { bubbles: true }));
-      pmEditedFields.add("name");
+      pmEditedFields.clear();
+      pmGeneratedValues = readPmDraft();
+      message($("pm-create-message"), "");
+      launch(suggestion.review === true);
+    };
+    if (suggestion?.name && suggestion?.mandate) {
+      const saved = readPmDraft();
+      const hasDraft = Boolean(
+        saved.name.trim() || saved.mandate.trim() || saved.editedFields.length,
+      );
+      // Reopening the same recommendation keeps the owner's current edits.
+      const sameDraft = suggestion.draft?.key
+        ? saved.key === suggestion.draft.key
+        : saved.name === suggestion.name &&
+          saved.mandate === suggestion.mandate;
+      if (hasDraft && sameDraft) {
+        launch(suggestion.review === true);
+        return;
+      }
+      if (hasDraft) {
+        document.getElementById("pm-recommendation-confirm")?.remove();
+        const confirmation = document.createElement("dialog");
+        confirmation.id = "pm-recommendation-confirm";
+        confirmation.className = "pm-recommendation-confirm";
+        confirmation.setAttribute(
+          "aria-labelledby",
+          "pm-recommendation-confirm-title",
+        );
+        const title = document.createElement("h2");
+        title.id = "pm-recommendation-confirm-title";
+        title.textContent = "Keep your unfinished gremlin?";
+        const heading = document.createElement("div");
+        heading.className = "pm-recommendation-confirm-heading";
+        const dismiss = document.createElement("button");
+        dismiss.type = "button";
+        dismiss.className = "small-button";
+        dismiss.textContent = "×";
+        dismiss.setAttribute("aria-label", "Close draft choice");
+        dismiss.addEventListener("click", () => confirmation.close());
+        heading.append(title, dismiss);
+        const detail = document.createElement("p");
+        detail.textContent = `You have a saved draft${saved.name ? ` for ${saved.name}` : ""}. Keep editing it, or replace it with the suggested brief for ${suggestion.name}.`;
+        const controls = document.createElement("div");
+        controls.className = "pm-recommendation-confirm-actions";
+        const keep = document.createElement("button");
+        keep.type = "button";
+        keep.className = "button button-dark";
+        keep.textContent = "Keep my draft";
+        keep.addEventListener("click", () => {
+          confirmation.close();
+          launch();
+        });
+        const replace = document.createElement("button");
+        replace.type = "button";
+        replace.className = "small-button";
+        replace.textContent = "Use suggested brief";
+        replace.addEventListener("click", () => {
+          if (formsLocked || pmCreating) return;
+          confirmation.close();
+          applySuggestion();
+        });
+        controls.append(keep, replace);
+        confirmation.append(heading, detail, controls);
+        confirmation.addEventListener("close", () => confirmation.remove());
+        confirmation.addEventListener("click", (event) => {
+          if (event.target !== confirmation) return;
+          const bounds = confirmation.getBoundingClientRect();
+          if (
+            event.clientX < bounds.left ||
+            event.clientX > bounds.right ||
+            event.clientY < bounds.top ||
+            event.clientY > bounds.bottom
+          )
+            confirmation.close();
+        });
+        document.body.append(confirmation);
+        confirmation.showModal();
+        keep.focus();
+        return;
+      }
+      applySuggestion();
+      return;
     }
-    pmCreateTrigger = trigger;
-    pendingPmCreate = false;
-    if (!pmCreateDialog.open) pmCreateDialog.showModal();
-    renderLinearSetup();
-    updatePmCreationReview();
-    if (pmAdoption) pmAdoption.open({ preselected: Boolean(project) });
-    else $("pm-mandate").focus();
-    refreshLinearResources();
+    launch();
   }
   window.openGremlinAdoption = openPmCreation;
   function closePmCreation() {
@@ -3616,7 +3759,7 @@
       : "The area label is generated from this ID.";
     $("pm-creation-readiness").textContent = missing.length
       ? `Still needed: ${missing.join(", ")}. AI can help turn your goal into a working brief.`
-      : "Their brief is ready to review. Daily patrols and approved coding pickup start when project setup is ready.";
+      : "Their brief is ready to review. Patrols and coding stay paused until you enable them.";
     pmAdoption?.refresh();
   }
   const readPmDraft = () => ({
@@ -3708,7 +3851,9 @@
     onOpenHome: (adopted) => {
       closePmCreation();
       pages.navigate(
-        `/projects/${encodeURIComponent(adopted.project)}?pm=${encodeURIComponent(adopted.key)}`,
+        adopted.returnToCrew
+          ? `/projects/${encodeURIComponent(adopted.project)}?tab=crew`
+          : `/projects/${encodeURIComponent(adopted.project)}?pm=${encodeURIComponent(adopted.key)}`,
       );
     },
     onOpenSignals: async (adopted, provider, trigger) => {
@@ -3984,6 +4129,7 @@
       pmAdoption?.adopted({
         ...input,
         project,
+        returnToCrew: pmCreateDialog.dataset.recommendationAdoption === "true",
         projectInstanceId: result.projectInstanceId ?? null,
         areaInstanceId: result.areaInstanceId ?? null,
         setupMessage: ["needs-connection", "skipped"].includes(

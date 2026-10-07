@@ -10,6 +10,7 @@ class Element {
   textContent = "";
   disabled = false;
   checked = false;
+  href = "";
   attributes = new Map<string, string>();
   listeners = new Map<string, () => unknown>();
   constructor(tag: string) {
@@ -123,7 +124,7 @@ function fixture(api: Api, onSaved = vi.fn(async () => {})) {
       mount(
         root: Element,
         project: object,
-        options?: { suggestionsOnly?: boolean },
+        options?: { suggestionsOnly?: boolean; setupOnly?: boolean },
       ): void;
       refresh(name: string): Promise<void>;
       resume(projects: object[]): void;
@@ -199,12 +200,19 @@ describe("repository-first project welcome", () => {
       ],
     },
   });
-  it("retains remaining source-grounded crew suggestions after adoption without another inspection", async () => {
+  it("routes reviewed recommendations into the same crew picker without creating or regenerating a PM", async () => {
     const source = setup(true),
       second = {
         name: "Lock",
         mandate: "Investigate authorization boundaries in checkout.",
         evidence: [{ path: "src/auth.ts", quote: "authorize" }],
+        draft: {
+          key: "trust",
+          charter: {
+            goal: "Improve account recovery and authorization",
+            expectedToBuild: ["Clear recovery flows"],
+          },
+        },
       },
       response = {
         ...source,
@@ -219,7 +227,11 @@ describe("repository-first project welcome", () => {
       api = vi.fn(async () => response),
       f = fixture(api);
     await settle();
-    byText(f.root, "Meet Pip").fire("click");
+    expect(byText(f.root, "Review your crew").href).toBe(
+      "/projects/app?tab=crew",
+    );
+    expect(byText(f.root, "Meet Pip")).toBeUndefined();
+    expect(byText(f.root, "Meet Lock")).toBeUndefined();
     f.view.mount(
       f.root,
       {
@@ -235,14 +247,102 @@ describe("repository-first project welcome", () => {
     );
     await settle();
     expect(byText(f.root, "Meet Pip")).toBeUndefined();
-    expect(text(f.root)).toContain("Already in your crew");
-    byText(f.root, "Meet Lock").fire("click");
-    expect(f.onCreatePm).toHaveBeenLastCalledWith("app", {
-      name: second.name,
-      mandate: second.mandate,
-    });
+    expect(byText(f.root, "Review your crew").href).toBe(
+      "/projects/app?tab=crew",
+    );
+    expect(f.onCreatePm).not.toHaveBeenCalled();
     expect(api).toHaveBeenCalledExactlyOnceWith("/api/projects/app/onboarding");
     expect(text(f.root)).toContain("does not start daily patrols");
+    f.view.destroy();
+  });
+  it("shows complete source recommendations before command confirmation as read-only context", async () => {
+    const source = setup();
+    const suggestion = {
+      name: "Checkout Pip",
+      mandate: "Own checkout",
+      evidence: [{ path: "src/checkout.ts", quote: "completeCheckout" }],
+      draft: {
+        key: "checkout",
+        charter: {
+          goal: "Improve checkout completion",
+          expectedToBuild: ["Checkout recovery"],
+        },
+      },
+    };
+    const api = vi.fn(async () => ({
+      ...source,
+      report: {
+        ...source.report,
+        projectSetup: {
+          ...source.report.projectSetup,
+          suggestedPms: [suggestion],
+        },
+      },
+    }));
+    const f = fixture(api);
+    await settle();
+    expect(text(f.root)).toContain("Improve checkout completion");
+    expect(text(f.root)).toContain("src/checkout.ts");
+    expect(byText(f.root, "Review your crew").href).toBe(
+      "/projects/app?tab=crew",
+    );
+    expect(byText(f.root, "Confirm setup")).toBeDefined();
+    expect(byText(f.root, "Meet Checkout Pip")).toBeUndefined();
+    expect(f.onCreatePm).not.toHaveBeenCalled();
+    expect(api).toHaveBeenCalledOnce();
+    f.view.destroy();
+  });
+  it.each(["firstPm", "partial"])(
+    "routes a legacy %s report to a fresh crew investigation without offering generic adoption",
+    async (kind) => {
+      const source = setup(true);
+      const api = vi.fn(async () => ({
+        ...source,
+        report: {
+          ...source.report,
+          projectSetup: {
+            ...source.report.projectSetup,
+            ...(kind === "partial"
+              ? { suggestedPms: [source.report.projectSetup.firstPm] }
+              : {}),
+          },
+        },
+      }));
+      const f = fixture(api);
+      await settle();
+      expect(text(f.root)).toContain("no complete PM briefs");
+      expect(byText(f.root, "Find my gremlins").href).toBe(
+        "/projects/app?tab=crew",
+      );
+      expect(byText(f.root, "Meet Pip")).toBeUndefined();
+      expect(text(f.root)).not.toContain(
+        source.report.projectSetup.firstPm.mandate,
+      );
+      expect(f.onCreatePm).not.toHaveBeenCalled();
+      expect(api).toHaveBeenCalledOnce();
+      byText(f.root, "Choose a different gremlin").fire("click");
+      expect(f.onCreatePm).toHaveBeenCalledExactlyOnceWith("app");
+      f.view.destroy();
+    },
+  );
+  it("respects an explicit empty crew recommendation instead of falling back to firstPm", async () => {
+    const source = setup(true);
+    const f = fixture(async () => ({
+      ...source,
+      report: {
+        ...source.report,
+        projectSetup: { ...source.report.projectSetup, suggestedPms: [] },
+      },
+    }));
+    await settle();
+    f.view.mount(f.root, { ...f.project, areas: [{ key: "journey" }] });
+    expect(text(f.root)).toContain("No additional PMs were recommended.");
+    expect(byText(f.root, "Your crew").href).toBe("/projects/app?tab=crew");
+    expect(byText(f.root, "Meet Pip")).toBeUndefined();
+    expect(text(f.root)).not.toContain(
+      source.report.projectSetup.firstPm.mandate,
+    );
+    expect(f.onCreatePm).not.toHaveBeenCalled();
     f.view.destroy();
   });
   it("activates only a ready crew using fresh configuration revisions and refreshes the saved status", async () => {
@@ -256,6 +356,16 @@ describe("repository-first project welcome", () => {
       f = fixture(api);
     await settle();
     f.view.mount(f.root, readyProject(), { suggestionsOnly: true });
+    const completion = walk(f.root).find(
+      (item) => item.attributes.get("role") === "progressbar",
+    )!;
+    expect(completion.attributes.get("aria-valuenow")).toBe("6");
+    expect(completion.attributes.get("aria-valuemax")).toBe("7");
+    const current = walk(f.root).filter(
+      (item) => item.attributes.get("aria-current") === "step",
+    );
+    expect(current).toHaveLength(1);
+    expect(text(current[0]!)).toContain("Activate daily patrols");
     await byText(f.root, "Activate ready crew").fire("click");
     expect(api).toHaveBeenLastCalledWith("/api/projects/app/crew/activate", {
       projectRevision: "fresh-project",
@@ -265,6 +375,19 @@ describe("repository-first project welcome", () => {
     expect(text(f.root)).toContain("Crew enabled.");
     expect(text(f.root)).toContain("Activation does not approve any epic.");
     expect(f.onCreatePm).not.toHaveBeenCalled();
+    f.view.destroy();
+  });
+  it("can show only readiness while a dedicated crew picker owns the remaining suggestions", async () => {
+    const f = fixture(vi.fn(async () => setup(true)));
+    await settle();
+    f.view.mount(f.root, readyProject(), {
+      suggestionsOnly: true,
+      setupOnly: true,
+    });
+    expect(text(f.root)).toContain("Your crew is ready.");
+    expect(text(f.root)).toContain("Activate ready crew");
+    expect(text(f.root)).not.toContain("Grow your crew");
+    expect(text(f.root)).not.toContain("Meet Pip");
     f.view.destroy();
   });
   it("surfaces a failed activation without a retry or a claimed active crew", async () => {
@@ -476,7 +599,7 @@ describe("repository-first project welcome", () => {
       },
     );
     expect(f.onCreatePm).not.toHaveBeenCalled();
-    expect(text(f.root)).toContain("Meet your first investigator.");
+    expect(text(f.root)).toContain("Your setup is saved.");
     f.view.destroy();
   });
   it("keeps accepted confirmation and adoption available if only dashboard refresh fails", async () => {
@@ -493,12 +616,11 @@ describe("repository-first project welcome", () => {
     expect(text(f.root)).toContain(
       "Setup saved. The dashboard could not refresh",
     );
-    expect(byText(f.root, "Meet Pip").disabled).toBe(false);
-    byText(f.root, "Meet Pip").fire("click");
-    expect(f.onCreatePm).toHaveBeenCalledWith("app", {
-      name: "Pip",
-      mandate: setup().report.projectSetup.firstPm.mandate,
-    });
+    expect(byText(f.root, "Find my gremlins").href).toBe(
+      "/projects/app?tab=crew",
+    );
+    expect(byText(f.root, "Meet Pip")).toBeUndefined();
+    expect(f.onCreatePm).not.toHaveBeenCalled();
     expect(
       api.mock.calls.filter(([, body]) => body !== undefined),
     ).toHaveLength(1);
@@ -524,7 +646,7 @@ describe("repository-first project welcome", () => {
     release({ ...setup(), stale: true });
     await refresh;
     await settle();
-    expect(text(f.root)).toContain("Meet your first investigator.");
+    expect(text(f.root)).toContain("Your setup is saved.");
     expect(text(f.root)).not.toContain("project has changed since");
     expect(
       api.mock.calls.filter(([, body]) => body !== undefined),
@@ -552,7 +674,7 @@ describe("repository-first project welcome", () => {
     release(setup(true));
     await settle();
     expect(text(replacement)).toContain("Replacement application");
-    expect(text(replacement)).not.toContain("Meet your first investigator.");
+    expect(text(replacement)).not.toContain("Your setup is saved.");
     expect(byText(replacement, "Confirm setup")).toBeDefined();
     expect(f.onCreatePm).not.toHaveBeenCalled();
     f.view.destroy();

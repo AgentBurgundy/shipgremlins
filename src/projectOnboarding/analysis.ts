@@ -44,6 +44,7 @@ export const SETUP_SCHEMA: Record<string, unknown> = {
     "docker",
     "proposedFiles",
     "warnings",
+    "projectSetup",
   ],
   properties: {
     projectSetup: PROJECT_SETUP_SCHEMA,
@@ -143,6 +144,34 @@ export const SETUP_SCHEMA: Record<string, unknown> = {
     },
   },
 };
+/** Existing crews can investigate environment setup without inventing another PM. */
+export function setupAnalysisSchema(
+  allowEmptyCrew = false,
+): Record<string, unknown> {
+  if (!allowEmptyCrew) return SETUP_SCHEMA;
+  return {
+    ...SETUP_SCHEMA,
+    required: (SETUP_SCHEMA.required as string[]).filter(
+      (field) => field !== "projectSetup",
+    ),
+    properties: {
+      ...(SETUP_SCHEMA.properties as Record<string, unknown>),
+      projectSetup: {
+        ...PROJECT_SETUP_SCHEMA,
+        required: PROJECT_SETUP_SCHEMA.required.filter(
+          (field) => field !== "suggestedPms",
+        ),
+        properties: {
+          ...PROJECT_SETUP_SCHEMA.properties,
+          suggestedPms: {
+            ...PROJECT_SETUP_SCHEMA.properties.suggestedPms,
+            minItems: 0,
+          },
+        },
+      },
+    },
+  };
+}
 export const SETUP_SYSTEM =
   PROJECT_SETUP_PROMPT +
   "\n\n" +
@@ -175,6 +204,11 @@ export function validateSetupAnalysis(
   value: unknown,
   snapshot: RepositorySnapshot,
   secrets: string[],
+  options: {
+    requireCrewDrafts?: boolean;
+    allowEmptyCrew?: boolean;
+    existingKeys?: string[];
+  } = {},
 ): OnboardingReport {
   const invalid = () =>
     new ProjectOnboardingError(
@@ -187,6 +221,9 @@ export function validateSetupAnalysis(
     !only(value, Object.keys(SETUP_SCHEMA.properties as object)) ||
     Buffer.byteLength(JSON.stringify(value)) > 64000 ||
     containsSecret(JSON.stringify(value), secrets) ||
+    (options.requireCrewDrafts &&
+      !options.allowEmptyCrew &&
+      value.projectSetup === undefined) ||
     !text(value.summary, 2000, true) ||
     !["hosted", "docker"].includes(String(value.recommendation)) ||
     !text(value.rationale, 2000, true) ||
@@ -290,7 +327,13 @@ export function validateSetupAnalysis(
     repository: snapshot.repository,
     ...(value.projectSetup === undefined
       ? {}
-      : { projectSetup: validateProjectSetup(value.projectSetup, snapshot) }),
+      : {
+          projectSetup: validateProjectSetup(
+            value.projectSetup,
+            snapshot,
+            options,
+          ),
+        }),
   };
   if (snapshot.repository.inspection?.criticalMissing.length)
     result.warnings = [

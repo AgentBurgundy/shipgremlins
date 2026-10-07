@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 
 type UiEvent = {
   target: Element;
+  clientX?: number;
+  clientY?: number;
   detail?: { page: string; path: string };
   preventDefault(): void;
 };
@@ -152,6 +154,9 @@ class Element extends Events {
     this.onFocus(this);
   }
   scrollIntoView() {}
+  getBoundingClientRect() {
+    return { left: 100, right: 800, top: 50, bottom: 650 };
+  }
   showModal() {
     this.open = true;
   }
@@ -169,7 +174,7 @@ const app = readFileSync(
   "utf8",
 );
 
-function fixture(path = "/overview") {
+function fixture(path = "/overview", withCrew = false) {
   let focused: Element | null = null;
   const node = (tag: string, id = "", className = "") =>
     Object.assign(
@@ -234,6 +239,7 @@ function fixture(path = "/overview") {
   const jobForm = add(runners, "form", "job-form");
   add(jobForm, "input", "job-ticket").value = "APP-12";
   add(runners, "section", "workers");
+  if (withCrew) add(runners, "section", "crew-roster");
   const pmDialog = add(body, "dialog", "pm-create-drawer");
   const pmForm = add(pmDialog, "form", "pm-create-form");
   const pmFields = add(pmForm, "fieldset", "pm-create-fields");
@@ -494,6 +500,48 @@ function settingsLifecycleFixture(
 }
 
 describe("dashboard interface surfaces", () => {
+  it("shows every connection initially and filters without replacing saved drafts", async () => {
+    const f = fixture("/connections");
+    const tiles = f.body.querySelectorAll(".connection-tile");
+    expect(tiles).toHaveLength(11);
+    expect(tiles.every((tile) => !tile.hidden)).toBe(true);
+    const search = f.nav("Find a connection");
+    const draft = f.get("vercel-connection-draft");
+    draft.value = "unfinished connection";
+    search.value = "vercel";
+    await search.emit("input");
+    expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(1);
+    expect(
+      tiles.find((tile) => !tile.hidden)?.querySelector("h3")?.textContent,
+    ).toBe("Vercel");
+    search.value = "no-such-provider";
+    await search.emit("input");
+    expect(f.body.querySelector(".connection-library-empty")?.hidden).toBe(
+      false,
+    );
+    search.value = "";
+    await search.emit("input");
+    await f.button(f.nav("Connection categories"), "Hosting").emit("click");
+    expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(3);
+    expect(f.get("vercel-connection-draft")).toBe(draft);
+    expect(draft.value).toBe("unfinished connection");
+  });
+
+  it("dismisses a provider only for backdrop clicks and keeps the input draft", async () => {
+    const f = fixture("/connections#vercel-connection");
+    const dialog = f.body.querySelector(".connection-detail-dialog")!;
+    const draft = f.get("vercel-connection-draft");
+    draft.value = "keep this draft";
+    await dialog.emit("click", { clientX: 120, clientY: 60 });
+    expect(dialog.open).toBe(true);
+    await dialog.emit("click", { target: draft, clientX: 10, clientY: 10 });
+    expect(dialog.open).toBe(true);
+    await dialog.emit("click", { clientX: 20, clientY: 20 });
+    expect(dialog.open).toBe(false);
+    expect(f.focused()?.getAttribute("aria-label")).toBe("Manage Vercel");
+    expect(draft.value).toBe("keep this draft");
+  });
+
   it("takes ownership from legacy category tabs before adopting provider controls", () => {
     const f = fixture();
     expect(f.window.dashboardShell.releaseConnections).toHaveBeenCalledTimes(1);
@@ -565,6 +613,26 @@ describe("dashboard interface surfaces", () => {
     expect(f.get("job-ticket").value).toBe("APP-12");
     f.button(f.nav("Runner workspace"), "Runners").emit("click");
     expect(f.get("workers").hidden).toBe(false);
+  });
+
+  it("opens the crew roster by default while preserving runner and launch deep links", () => {
+    const f = fixture("/runners", true);
+    const children = f.get("runners").children;
+    const navIndex = children.indexOf(f.nav("Runner workspace"));
+    expect(navIndex).toBeGreaterThan(0);
+    for (const id of ["crew-roster", "workers", "runner-workbench"])
+      expect(navIndex).toBeLessThan(children.indexOf(f.get(id)));
+    expect(f.get("crew-roster").hidden).toBe(false);
+    expect(f.get("workers").hidden).toBe(true);
+    expect(f.get("runner-workbench").hidden).toBe(true);
+    f.navigate("/runners#job-form");
+    expect(f.get("crew-roster").hidden).toBe(true);
+    expect(f.get("runner-workbench").hidden).toBe(false);
+    f.navigate("/runners#crew-roster");
+    expect(f.get("crew-roster").hidden).toBe(false);
+    f.navigate("/runners#workers");
+    expect(f.get("workers").hidden).toBe(false);
+    expect(f.get("job-ticket").value).toBe("APP-12");
   });
 
   it("leaves PM control ownership to adoption and delegates hidden field reveal", () => {

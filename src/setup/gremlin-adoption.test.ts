@@ -141,6 +141,7 @@ type Adopted = {
   charter?: { goal: string };
   projectInstanceId?: string | null;
   areaInstanceId?: string | null;
+  returnToCrew?: boolean;
 };
 const identityWindow = {} as {
   isCurrentGremlinAdoption(adopted: Adopted, project: unknown): boolean;
@@ -763,6 +764,36 @@ describe("gremlin adoption", () => {
 });
 
 describe("adoption creation transaction", () => {
+  it("returns recommendation adoptions to the crew while manual adoptions keep their PM home", async () => {
+    const f = fixture();
+    const accepted = {
+      project: "shop",
+      key: "pip",
+      name: "Pip",
+      mandate: "Own checkout",
+      returnToCrew: true,
+    };
+    f.project.areas.push({ key: "pip" });
+    f.helper.adopted(accepted);
+    await f.button("Back to your crew").click();
+    expect(f.openHome).toHaveBeenLastCalledWith(accepted);
+    f.helper.adopted({ ...accepted, returnToCrew: false });
+    expect(f.button("Visit their home")).toBeDefined();
+    const normalized = app.replaceAll("\r\n", "\n");
+    const start = normalized.indexOf("    onOpenHome: (adopted) => {");
+    const end = normalized.indexOf("    onOpenSignals:", start);
+    const navigate = vi.fn(),
+      close = vi.fn();
+    const callbacks = runInNewContext(`({${normalized.slice(start, end)}})`, {
+      closePmCreation: close,
+      pages: { navigate },
+    });
+    callbacks.onOpenHome(accepted);
+    expect(navigate).toHaveBeenLastCalledWith("/projects/shop?tab=crew");
+    callbacks.onOpenHome({ ...accepted, returnToCrew: false });
+    expect(navigate).toHaveBeenLastCalledWith("/projects/shop?pm=pip");
+    expect(close).toHaveBeenCalledTimes(2);
+  });
   it("prefills the reviewed setup suggestion without drafting, adopting, or starting work", () => {
     const f = fixture();
     const normalized = app.replaceAll("\r\n", "\n");
@@ -771,7 +802,7 @@ describe("adoption creation transaction", () => {
     const showModal = vi.fn(),
       reset = vi.fn();
     const context = {
-      $: f.get,
+      $: (id: string) => f.get(id) || { value: "" },
       document: { activeElement: f.get("pm-name") },
       formsLocked: false,
       pmCreating: false,
@@ -780,11 +811,15 @@ describe("adoption creation transaction", () => {
       pmAdoption: f.helper,
       pmDraft: { reset },
       pmGeneratedValues: {},
+      readPmDraft: () => ({ ...f.input(), editedFields: [] }),
+      pmCharter: { fill: vi.fn() },
+      pmInputKeys: { "pm-name": "name", "pm-key": "key" },
+      message: vi.fn(),
       pmEditedFields: new Set(),
       pmKeyEdited: true,
       pmCreateTrigger: null,
       pendingPmCreate: false,
-      pmCreateDialog: { open: false, showModal },
+      pmCreateDialog: { open: false, showModal, dataset: {} },
       renderLinearSetup: vi.fn(),
       updatePmCreationReview: vi.fn(),
       refreshLinearResources: vi.fn(),
@@ -1150,7 +1185,7 @@ describe("adoption creation transaction", () => {
       refreshConfigFiles: vi.fn(async () => {}),
       refreshLinearResources: vi.fn(async () => {}),
       areaActions: new Map(),
-      pmCreateDialog: { close() {} },
+      pmCreateDialog: { close() {}, dataset: {} },
       pages: { navigate },
       projectWorkspace: { discover },
     });

@@ -187,22 +187,22 @@
 .mission-form,
 .mission-changes {
   min-width: 0;
-  padding: clamp(20px, 3vw, 32px);
+  padding: clamp(20px, 2.4vw, 26px);
   border: 1px solid #dbe5dd;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #fff;
 }
 .mission-form {
-  background: linear-gradient(140deg, #f4f8ef, #fff 70%);
+  background: #fff;
 }
 .mission-heading {
   max-width: 760px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 .mission-heading h2 {
-  margin: 8px 0 10px;
-  font-size: clamp(23px, 2.7vw, 30px);
-  letter-spacing: -0.8px;
+  margin: 6px 0 9px;
+  font-size: clamp(21px, 2.2vw, 26px);
+  letter-spacing: -0.6px;
   line-height: 1.2;
   color: #203d2d;
 }
@@ -211,7 +211,7 @@
 .mission-change-card > p {
   margin: 0;
   color: #536b5b;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
@@ -269,8 +269,8 @@
 .mission-proposal {
   min-width: 0;
   border-top: 1px solid #e0e8e1;
-  padding: 20px 0 4px;
-  margin-top: 18px;
+  padding: 16px 0 4px;
+  margin-top: 14px;
 }
 .mission-change-card h3,
 .mission-plan-step h3,
@@ -339,7 +339,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 14px;
-  margin: 24px 0;
+  margin: 18px 0;
 }
 .promotion-pm-batches {
   display: grid;
@@ -372,7 +372,8 @@
 .project-tool {
   border: 1px solid #dbe5dd;
   border-radius: 12px;
-  padding: 20px;
+  padding: 18px;
+  background: #fff;
   min-width: 0;
 }
 .project-tool h3 {

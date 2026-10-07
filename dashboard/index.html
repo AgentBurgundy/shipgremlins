@@ -45,6 +45,7 @@
     <script src="/project-onboarding.js" defer></script>
     <script src="/project-welcome.js" defer></script>
     <script src="/grumblins.js" defer></script>
+    <script src="/crew-recommendations.js" defer></script>
     <script src="/project-workspace.js" defer></script>
     <script src="/project-mission.js" defer></script>
     <script src="/deletion.js" defer></script>
@@ -55,6 +56,8 @@
     <script src="/project-wizard.js" defer></script>
     <script src="/first-run.js" defer></script>
     <script src="/auth.js" defer></script>
+    <script src="/crew-console.js" defer></script>
+    <script src="/motion.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
     <script src="/interface.js" defer></script>
@@ -71,6 +74,8 @@
     <link rel="stylesheet" href="/project-welcome.css" />
     <link rel="stylesheet" href="/project-settings-dialog.css" />
     <link rel="stylesheet" href="/auth.css" />
+    <link rel="stylesheet" href="/crew-console.css" />
+    <link rel="stylesheet" href="/crew-recommendations.css" />
   </head>
   <body class="auth-pending">
     <div id="dashboard-sign-in" aria-live="polite">
@@ -204,10 +209,22 @@
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <span class="breadcrumbs"
-            >Workspace <span class="topbar-separator">/</span>
-            <strong data-page-title>Overview</strong></span
-          ><a class="auth-account-link" href="/settings#account-access"
+          <nav
+            id="workspace-breadcrumbs"
+            class="breadcrumbs"
+            aria-label="Breadcrumb"
+          >
+            <span aria-current="page">Overview</span>
+          </nav>
+          <button
+            id="quick-jump-trigger"
+            class="quick-jump-trigger"
+            type="button"
+            aria-haspopup="dialog"
+          >
+            <span>Find anything</span><kbd>⌘ / Ctrl K</kbd>
+          </button>
+          <a class="auth-account-link" href="/settings#account-access"
             >Account</a
           ><span class="local-pill"
             ><span aria-hidden="true"></span> Self-hosted</span
@@ -310,8 +327,9 @@
                 <span aria-hidden="true">↗</span></small
               ></a
             >
-            <a class="metric-card" href="/projects#pm-create-drawer"
-              ><span>PM mandates</span><strong id="overview-pm-count">—</strong
+            <a class="metric-card" href="/runners"
+              ><span>Product managers</span
+              ><strong id="overview-pm-count">—</strong
               ><small
                 >Your crew’s areas of focus
                 <span aria-hidden="true">↗</span></small
@@ -328,6 +346,31 @@
               ><span>Active jobs</span><strong id="overview-job-count">—</strong
               ><small id="overview-job-note">Checking current work…</small></a
             >
+          </section>
+          <section
+            class="workspace-pulse"
+            data-page="overview"
+            aria-label="Current crew activity"
+          >
+            <div class="crew-working">
+              <div class="crew-section-heading">
+                <h2>
+                  Working now
+                  <span id="crew-working-count" class="crew-count">0</span>
+                </h2>
+                <span id="crew-freshness" class="crew-freshness" role="status"
+                  >Loading activity…</span
+                >
+              </div>
+              <div id="crew-working-list"></div>
+            </div>
+            <div class="crew-recent">
+              <div class="crew-section-heading">
+                <h2>Recent work</h2>
+                <a href="/activity">All activity →</a>
+              </div>
+              <div id="crew-recent-list"></div>
+            </div>
           </section>
           <section
             class="setup-status first-run-path"
@@ -392,7 +435,7 @@
           >
             <div class="panel-heading">
               <div>
-                <h2 id="connections-title">Connections</h2>
+                <h1 id="connections-title">Connections</h1>
                 <p>
                   Connect once. Choose what each project can use. Your
                   credentials stay on your server.
@@ -1584,7 +1627,7 @@
           >
             <div class="panel-heading">
               <div>
-                <h2 id="projects-title">Projects</h2>
+                <h1 id="projects-title">Projects</h1>
                 <p>
                   Manage your repositories, PM mandates, and delivery settings.
                 </p>
@@ -1594,7 +1637,7 @@
                   class="small-button"
                   href="#pm-create-drawer"
                   data-open-disclosure
-                  >Create PM</a
+                  >Adopt a gremlin</a
                 ><a
                   class="button button-dark"
                   href="#new-project-drawer"
@@ -2047,7 +2090,7 @@
           >
             <div class="panel-heading">
               <div>
-                <h2 id="runners-title">Your gremlins</h2>
+                <h1 id="runners-title">Your gremlins</h1>
                 <p>
                   Send a PM to investigate, or a Coding Gremlin to work on an
                   approved ticket.
@@ -2276,7 +2319,7 @@
           >
             <div class="panel-heading">
               <div>
-                <h2 id="activity-title">Activity</h2>
+                <h1 id="activity-title">Activity</h1>
                 <p>
                   Visible tool calls, progress, checks, and evidence from
                   running and past jobs.
@@ -2562,7 +2605,7 @@
           >
             <div class="panel-heading">
               <div>
-                <h2 id="configuration-title">Settings</h2>
+                <h1 id="configuration-title">Settings</h1>
                 <p>
                   Keep your installation current and manage workspace
                   configuration.

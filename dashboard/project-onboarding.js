@@ -591,10 +591,10 @@
           node: node("section", undefined, "project-onboarding"),
         };
         s.heading = node("header", undefined, "onboarding-heading");
-        s.title = node("h2", "A safe place to test.");
+        s.title = node("h2", "Your test environment.");
         s.description = node(
           "p",
-          "Choose where your crew can explore. Test access before using a browser environment.",
+          "Connect a preview, add any test account, then verify browser access.",
         );
         s.heading.append(
           node("span", "ENVIRONMENT", "eyebrow muted"),
@@ -1836,7 +1836,7 @@
         node("h3", "Does your app have a sign-in?"),
         node(
           "p",
-          "Give your gremlins a dedicated test account to explore what your customers see after signing in. Connecting Vercel opens the preview; it does not sign them into your app.",
+          "Use a dedicated account for signed-in testing. Vercel access opens the preview; it does not sign into your app.",
           "onboarding-access-intro",
         ),
       );
@@ -1929,7 +1929,7 @@
         access.append(
           node(
             "p",
-            "Let Setup Gremlin inspect the login before entering browser details.",
+            "Detect login controls from code, then verify with your test account.",
             "onboarding-help",
           ),
           inspect,
@@ -2519,7 +2519,7 @@
             : needsConnection
               ? setup?.action === "connect_vercel"
                 ? setup.message
-                : "Connect Vercel once. We’ll find this app’s preview, prepare private access and verify it from your runner so your gremlins can test real changes."
+                : "Connect Vercel. We’ll find the preview, prepare private access and verify it from your runner."
               : suggested
                 ? "Your Vercel account is connected. We’ll match this repository to a preview and check that your gremlins can use it."
                 : diagnosis?.detail ||
@@ -2776,12 +2776,12 @@
         ? "First, let's build your app."
         : canPrepareEnvironment(s)
           ? "Your crew’s test environment."
-          : "A safe place to test.";
+          : "Your test environment.";
       s.description.textContent = buildFirst
         ? "Your plan is ready. A Coding Gremlin can turn it into a working first version before you need a test environment."
         : canPrepareEnvironment(s)
           ? "We handle preview access and check it from the runner. We’ll ask only when a choice or test account is needed."
-          : "Choose where your crew can explore. Test access before using a browser environment.";
+          : "Connect a preview, add any test account, then verify browser access.";
       if (buildFirst) {
         s.analysis.hidden = s.form.hidden = true;
         s.vercelSetup?.setActive(false);

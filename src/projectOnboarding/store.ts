@@ -37,6 +37,8 @@ export interface StoredOnboarding {
   updatedAt: string;
   operation?: { id: string; pid: number };
   report?: OnboardingReport;
+  /** Source configuration when these suggestions were generated, before later setup edits. */
+  recommendationSourceRevision?: string;
   setupPull?: SetupPull;
   appliedProfile?: "hosted" | "docker";
 }

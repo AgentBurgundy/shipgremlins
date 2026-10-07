@@ -14,31 +14,37 @@
   max-height: calc(100dvh - 40px);
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 16px;
   color: var(--ink);
   background: #fff;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .deletion-dialog::backdrop {
   background: #10281f80;
   backdrop-filter: blur(3px);
 }
 .deletion-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 20px;
-  padding: 26px 28px 18px;
+  padding: 20px 22px 16px;
   border-bottom: 1px solid var(--line);
 }
 .deletion-heading > div {
   min-width: 0;
 }
 .deletion-heading h2 {
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.3;
   letter-spacing: -0.6px;
-  margin: 10px 0;
+  margin: 6px 0;
   overflow-wrap: anywhere;
 }
 .deletion-heading p {
@@ -51,11 +57,11 @@
   flex-shrink: 0;
 }
 .deletion-content {
-  padding: 8px 28px;
+  padding: 6px 22px;
 }
 .deletion-content section {
-  margin: 18px 0;
-  padding: 16px 18px;
+  margin: 14px 0;
+  padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
 }
@@ -78,7 +84,7 @@
   border-color: #e3c6a0 !important;
 }
 .deletion-retained {
-  background: #f4f8ef;
+  background: #f8faf7;
 }
 .deletion-recovery-note {
   font-size: 13px;
@@ -86,7 +92,7 @@
   color: var(--muted);
 }
 .deletion-confirmation {
-  padding: 18px 28px;
+  padding: 16px 22px;
 }
 .deletion-confirmation label {
   display: block;
@@ -99,14 +105,18 @@
   width: 100%;
 }
 .deletion-dialog > .form-message {
-  margin: 10px 28px;
+  margin: 10px 22px;
   overflow-wrap: anywhere;
 }
 .deletion-controls {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: #fafbf9;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 18px 28px 24px;
+  padding: 14px 22px;
   border-top: 1px solid var(--line);
 }
 .settings-dialog-footer .danger-button {
@@ -128,7 +138,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 20px;
-  padding: 18px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
 }
 .deleted-resource-row > div {

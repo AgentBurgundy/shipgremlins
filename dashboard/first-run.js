@@ -159,7 +159,7 @@
       return step(
         2,
         "What are we working on?",
-        "Connect an app you already have. Review what the Setup Gremlin finds, then adopt a PM to learn the app.",
+        "Connect an app you already have. AI can investigate its code and recommend a crew with focused responsibilities.",
         "Improve my app",
         "/projects#project-form",
       );
@@ -189,9 +189,9 @@
     if (firstStep === "welcome")
       return step(
         3,
-        "Let’s get to know your app.",
-        "Review the repository analysis and suggested setup. Then meet a gremlin with a job grounded in your code.",
-        "Review your app setup",
+        "Find the right crew for your app.",
+        "Let AI investigate your code and suggest focused product managers. Review their responsibilities and choose which gremlins to adopt.",
+        "Find my gremlins",
         projectPath(project),
       );
     if (firstStep === "mission")
@@ -293,7 +293,7 @@
       "Connect source",
       "Connect Claude",
       "Add a project",
-      "Meet your gremlin",
+      "Find your crew",
       "Review scope",
     ];
     if (state.active)

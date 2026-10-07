@@ -1688,7 +1688,7 @@ describe("explicit app sign-in onboarding", () => {
     expect(access.hidden).toBe(false);
     expect(text(access)).toContain("Does your app have a sign-in?");
     expect(text(access)).toContain(
-      "Connecting Vercel opens the preview; it does not sign them into your app.",
+      "Vercel access opens the preview; it does not sign into your app.",
     );
     const choices = walk(access).filter(
       (item) =>

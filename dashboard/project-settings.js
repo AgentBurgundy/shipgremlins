@@ -134,11 +134,11 @@
     };
     const heading = node("div", "settings-heading");
     heading.append(
-      node("h3", "", "Where should this project be checked?"),
+      node("h3", "", "Test environment"),
       node(
         "p",
         "runner-guidance",
-        "Start with code and checks. Add a browser target when your project has a web interface.",
+        "Choose where gremlins verify changes. Web apps need a reachable preview and any required test account.",
       ),
     );
     sections.get("environment").append(heading);
@@ -146,7 +146,7 @@
       sections.get("environment"),
       "target",
       "Verification target",
-      "Repository-only work uses your source and configured commands. Browser work visits a preview or staging environment.",
+      "Choose repository checks or a browser environment. Managed promotions require a verified browser environment.",
       Object.values(environments).some((target) => target.kind === "docker")
         ? [
             ...targetKinds,
@@ -307,10 +307,10 @@
     field(
       workflowGrid,
       "workflow",
-      "How changes are reviewed",
+      "Delivery workflow",
       "Managed delivery handles internal PRs automatically. Pull-request-only projects use your chosen review branch.",
       [
-        ["promotion", "PM staging → staging → production (recommended)"],
+        ["promotion", "Managed promotions (recommended)"],
         ["pull-request", "Pull request / merge request only"],
       ],
     );
@@ -326,7 +326,7 @@
       node(
         "p",
         "runner-guidance",
-        "Coders work in pm-staging. Each PM tests its tickets and collects a separate promotion PR to staging. You review each PM's completed batch; ordinary staging and production development can continue.",
+        "Coding → pm-staging → PM verification → promotion to staging. Your normal development can continue independently.",
       ),
     );
     const branches = node("div", "project-form-grid");
@@ -334,7 +334,7 @@
       promotion,
       "approvalPolicy",
       "Approve work before coding",
-      "Approve an epic once, then let the crew implement and QA its child tickets. Existing projects retain their saved ticket policy until changed.",
+      "Approve each epic’s scope once. The crew handles its child tickets and QA. Changing this setting updates the project’s policy.",
       [
         ["epic", "Approve epics (recommended)"],
         ["ticket", "Legacy ticket policy"],
@@ -345,7 +345,7 @@
       promotion,
       "promotionBatchSize",
       "Tested tickets per PM promotion",
-      "Each PM opens a promotion after this many distinct tickets pass QA. A PM can override this target in its full configuration. You can also prepare a smaller batch explicitly.",
+      "Distinct tickets that must pass QA before a PM opens a promotion. Override per PM in its brief, or explicitly prepare a smaller batch.",
     );
     fields.promotionBatchSize.type = "number";
     fields.promotionBatchSize.min = "1";
@@ -392,7 +392,7 @@
     const advanced = node(
       "p",
       "runner-guidance settings-advanced-note",
-      "Other saved environments are kept. Manage additional production targets, remove environments, or edit advanced sign-in settings in Configuration.",
+      "For additional targets or advanced sign-in settings, open full configuration. Other saved environments are kept.",
     );
     sections.get("environment").append(advanced);
     container.replaceChildren(root);

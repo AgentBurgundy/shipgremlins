@@ -17,7 +17,11 @@ import {
   createProjectOnboarding,
   type ProjectOnboardingOptions,
 } from "./index.ts";
-import { SETUP_SYSTEM, validateSetupAnalysis } from "./analysis.ts";
+import {
+  SETUP_SYSTEM,
+  validateSetupAnalysis,
+  setupAnalysisSchema,
+} from "./analysis.ts";
 import {
   readRepository,
   resolveRepositoryHead,
@@ -26,6 +30,7 @@ import {
 import { publishSetupDraft } from "./publish.ts";
 import { createOnboardingStore } from "./store.ts";
 import { PlannerExecutionError } from "../pmPlanner/docker.ts";
+import { suggestedPm } from "./crew.test-support.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const SHA = "a".repeat(40),
@@ -40,7 +45,19 @@ const sourceFile = {
   content:
     '{"scripts":{"start":"node server.js"},"dependencies":{"express":"4.0.0"}}',
 };
+const crewSuggestion = () => {
+  const pm = suggestedPm("app-journey", "Sprout", "package.json");
+  pm.evidence[0]!.quote = '"dependencies":{"express":"4.0.0"}';
+  return pm;
+};
 const suggestion = () => ({
+  projectSetup: {
+    commands: {},
+    firstPm: (({ name, mandate, evidence }) => ({ name, mandate, evidence }))(
+      crewSuggestion(),
+    ),
+    suggestedPms: [crewSuggestion()],
+  },
   summary: "An Express application with a start command.",
   recommendation: "docker",
   rationale:
@@ -214,6 +231,15 @@ describe("project Setup Gremlin", () => {
     expect(result.status).toBe("analyzed");
     expect(result.report?.repository.sha).toBe(SHA);
     expect(result.report?.repository.filesRead).toEqual(["package.json"]);
+    expect(result.recommendationsReviewable).toBe(true);
+    expect(result.report?.projectSetup?.suggestedPms?.[0]?.draft).toMatchObject(
+      {
+        key: "app-journey",
+        label: "pm:app-journey",
+        wipLimit: 2,
+      },
+    );
+    expect(loadProject(root, "app").areas).toHaveLength(0);
     const execution = (
       f.execute.mock.calls as unknown as {
         prompt: string;
@@ -224,6 +250,11 @@ describe("project Setup Gremlin", () => {
     expect(JSON.parse(execution.prompt).workflow).toMatchObject({
       kind: "pull-request",
     });
+    expect(JSON.parse(execution.prompt).configuredTesting).toMatchObject({
+      mode: "repository",
+      browserPerformed: false,
+    });
+    expect(JSON.parse(execution.prompt).existingPms).toEqual([]);
     expect(execution.prompt).not.toContain(TOKEN);
     expect(execution.credential).toBe(CLAUDE);
     expect(JSON.stringify(result)).not.toContain(CLAUDE);
@@ -234,6 +265,188 @@ describe("project Setup Gremlin", () => {
     expect(result.message).toContain("has not been verified");
     expect(f.sourceControl.resolveCredential).toHaveBeenCalledWith(
       expect.objectContaining({ write: false, repository: "owner/app" }),
+    );
+    await f.service.confirm("app", {
+      revision: result.revision,
+      configurationRevision: result.configurationRevision,
+      repositorySha: SHA,
+      commandKeys: [],
+    });
+    expect(loadProject(root, "app").areas).toHaveLength(0);
+    expect((await f.service.status("app")).recommendationsReviewable).toBe(
+      true,
+    );
+  });
+  it("requires usable editable crew drafts from a new investigation, while preserving legacy reports", async () => {
+    writeFileSync(join(root, "projects/app/areas.json"), '{"areas":{}}\n');
+    const f = fixture({
+      execute: async () => ({ ...suggestion(), projectSetup: undefined }),
+    });
+    await f.service.discover("app");
+    await f.service.idle();
+    const state = await f.service.status("app");
+    expect(state.status).toBe("failed");
+    expect(state).not.toHaveProperty("report");
+    expect(loadProject(root, "app").areas).toHaveLength(0);
+    expect(() =>
+      validateSetupAnalysis(
+        { ...suggestion(), projectSetup: undefined },
+        snapshot(),
+        [],
+      ),
+    ).not.toThrow();
+  });
+  it("allows environment analysis for an existing covered crew without requiring another PM", async () => {
+    const existingAreas = readFileSync(
+      join(root, "projects/app/areas.json"),
+      "utf8",
+    );
+    const report = suggestion();
+    report.projectSetup.suggestedPms = [];
+    report.projectSetup.commands = {
+      install: {
+        command: "npm install",
+        rationale:
+          "Install the dependency declared in the inspected Node manifest.",
+        evidence: [
+          { path: "package.json", quote: '"dependencies":{"express":"4.0.0"}' },
+        ],
+      },
+    };
+    const execute = vi.fn(async () => report);
+    const f = fixture({ execute });
+    await f.service.discover("app");
+    await f.service.idle();
+    const state = await f.service.status("app");
+    expect(state.status).toBe("analyzed");
+    expect(state.report?.projectSetup?.suggestedPms).toEqual([]);
+    expect(state.report?.projectSetup?.commands.install?.command).toBe(
+      "npm install",
+    );
+    expect(readFileSync(join(root, "projects/app/areas.json"), "utf8")).toBe(
+      existingAreas,
+    );
+    const request = (
+      execute.mock.calls as unknown as {
+        prompt: string;
+        schema: {
+          required: string[];
+          properties: {
+            projectSetup: {
+              properties: { suggestedPms: { minItems: number } };
+            };
+          };
+        };
+      }[][]
+    )[0]![0]!;
+    expect(JSON.parse(request.prompt).existingPmCount).toBe(1);
+    expect(request.schema.required).not.toContain("projectSetup");
+    expect(
+      request.schema.properties.projectSetup.properties.suggestedPms.minItems,
+    ).toBe(0);
+    expect(setupAnalysisSchema(false).required as string[]).toContain(
+      "projectSetup",
+    );
+    const legacy = fixture({
+      execute: async () => ({ ...suggestion(), projectSetup: undefined }),
+    });
+    await legacy.service.discover("app");
+    await legacy.service.idle();
+    expect((await legacy.service.status("app")).status).toBe("analyzed");
+  });
+  it("keeps remaining recommendations reviewable after adoption or Linear setup but invalidates changed source identity", async () => {
+    const f = fixture();
+    await f.service.discover("app");
+    await f.service.idle();
+    const initial = await f.service.status("app");
+    const file = join(root, "projects/app/project.json");
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    config.linear = { teamId: "11111111-1111-4111-8111-111111111111" };
+    writeFileSync(file, JSON.stringify(config));
+    const changedSetup = await createProjectOnboarding(f.options).status("app");
+    expect(changedSetup).toMatchObject({
+      stale: true,
+      recommendationsReviewable: true,
+    });
+    expect(changedSetup.report).toEqual(initial.report);
+    config.workflow.baseBranch = "develop";
+    writeFileSync(file, JSON.stringify(config));
+    expect((await f.service.status("app")).recommendationsReviewable).toBe(
+      false,
+    );
+    config.workflow.baseBranch = "main";
+    config.repo = "different/app";
+    writeFileSync(file, JSON.stringify(config));
+    expect((await f.service.status("app")).recommendationsReviewable).toBe(
+      false,
+    );
+  });
+  it("supplies safe configured testing and owner PM limits without exposing accounts, selectors or provider credentials", async () => {
+    const path = join(root, "projects/app/project.json");
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    config.verification = { mode: "browser", environment: "preview" };
+    config.environments = {
+      preview: {
+        kind: "vercel",
+        role: "preview",
+        projectId: "private-vercel-project",
+        bypassSecret: "PREVIEW_BYPASS",
+        access: {
+          kind: "password",
+          loginPath: "/private-login",
+          usernameSelector: "#private-email",
+          passwordSelector: "#password",
+          submitSelector: "#submit",
+          successSelector: "#account",
+          accounts: [
+            {
+              name: "Private test user",
+              usernameSecret: "TEST_USERNAME",
+              passwordSecret: "TEST_PASSWORD",
+            },
+          ],
+        },
+      },
+    };
+    writeFileSync(path, JSON.stringify(config));
+    const areasPath = join(root, "projects/app/areas.json");
+    const areas = JSON.parse(readFileSync(areasPath, "utf8"));
+    areas.areas.core.mandate =
+      "Owner explicitly permits investigation only; no tickets in this existing area.";
+    writeFileSync(areasPath, JSON.stringify(areas));
+    const f = fixture();
+    await f.service.discover("app");
+    await f.service.idle();
+    expect((await f.service.status("app")).status).toBe("analyzed");
+    const prompt = (
+      f.execute.mock.calls as unknown as { prompt: string }[][]
+    )[0]![0]!.prompt;
+    const context = JSON.parse(prompt);
+    expect(context.configuredTesting).toMatchObject({
+      mode: "browser",
+      provider: "vercel",
+      role: "preview",
+      access: { kind: "password", testAccountCount: 1 },
+      browserPerformed: false,
+    });
+    expect(context.existingPms[0]).toMatchObject({
+      key: "core",
+      mandate: areas.areas.core.mandate,
+    });
+    for (const privateValue of [
+      "private-vercel-project",
+      "PREVIEW_BYPASS",
+      "TEST_USERNAME",
+      "TEST_PASSWORD",
+      "Private test user",
+      "/private-login",
+      "#private-email",
+    ]) {
+      expect(prompt).not.toContain(privateValue);
+    }
+    expect(loadProject(root, "app").areas).toHaveLength(1);
+    expect(loadProject(root, "app").areas[0]!.mandate).toBe(
+      areas.areas.core.mandate,
     );
   });
   it("requires Claude and reports safe provider errors without saving credentials", async () => {

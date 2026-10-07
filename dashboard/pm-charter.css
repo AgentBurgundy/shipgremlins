@@ -7,15 +7,15 @@
   align-items: stretch;
   gap: 4px;
   padding: 5px;
-  margin: 0 0 24px;
+  margin: 0 0 20px;
   border: 1px solid #e4eae6;
   border-radius: 11px;
-  background: #f0f4f2;
+  background: #f4f6f3;
 }
 .pm-charter-editor .charter-navigation button {
   min-width: 0;
-  min-height: 42px;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 8px 12px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -60,13 +60,13 @@
 }
 .pm-charter-editor .charter-panel-description {
   max-width: 64ch;
-  margin: 0 0 22px;
+  margin: 0 0 16px;
   color: var(--muted, #617169);
   font-size: 13px;
-  line-height: 1.65;
+  line-height: 1.55;
 }
 .pm-charter-editor .charter-panel .field {
-  margin: 0 0 22px;
+  margin: 0 0 18px;
 }
 .pm-charter-editor .charter-panel .field:last-child {
   margin-bottom: 0;

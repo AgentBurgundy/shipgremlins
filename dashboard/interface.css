@@ -471,12 +471,49 @@ pre {
   color: #20452e;
   box-shadow: 0 1px 4px #18332412;
 }
+.connection-library-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.connection-library-toolbar .surface-tabs {
+  gap: 2px;
+  padding: 3px;
+}
+.connection-library-toolbar .surface-tabs button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.connection-library-search {
+  display: block;
+  flex: 1 1 190px;
+  max-width: 260px;
+  min-width: 0;
+}
+.connection-library-search input {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.connection-library-empty {
+  padding: 28px 20px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  text-align: center;
+  font-size: 13px;
+}
 .connection-library-help {
-  margin: 22px 0;
-  font-size: 14px;
+  margin: 14px 0 18px;
+  font-size: 13px;
   color: var(--muted);
   max-width: 66ch;
-  line-height: 1.7;
+  line-height: 1.55;
 }
 #connections > .integration-group {
   display: none !important;
@@ -628,30 +665,37 @@ pre {
 .connection-library-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 12px;
 }
 .connection-tile {
-  padding: 24px;
+  padding: 18px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 12px;
   background: #fff;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.connection-tile:hover {
+  border-color: #b5cbb8;
+  box-shadow: 0 4px 14px #18342a08;
 }
 .connection-tile-identity {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .connection-tile-mark {
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   border: 1px solid #e8ece9;
   background: #fafcfb;
-  border-radius: 12px;
+  border-radius: 9px;
   flex-shrink: 0;
   font-size: 23px;
 }
@@ -661,10 +705,10 @@ pre {
   letter-spacing: -0.35px;
 }
 .connection-tile > p {
-  margin: 18px 0 26px;
+  margin: 12px 0 18px;
   color: var(--muted);
   font-size: 13px;
-  line-height: 1.7;
+  line-height: 1.55;
 }
 .connection-tile-footer {
   display: flex;
@@ -682,6 +726,16 @@ pre {
 .connection-tile-state.is-connected {
   color: #317845;
 }
+.connection-tile-state.is-unavailable {
+  color: #8a581c;
+}
+#connections
+  .connection-detail-panel[data-connection-status="attention"]
+  .runtime-badge {
+  color: #8a581c;
+  background: #fff3df;
+  border-color: #edd7b1;
+}
 .connection-tile-state.is-connected::before {
   content: "";
   display: inline-block;
@@ -698,7 +752,7 @@ dialog.connection-detail-dialog {
   max-height: calc(100dvh - 48px);
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 16px;
   color: var(--ink);
   background: #fff;
   box-shadow: 0 26px 100px #0b221e33;
@@ -716,14 +770,14 @@ dialog::backdrop {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22px 26px;
+  padding: 18px 22px;
   gap: 20px;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
 .surface-dialog-header h2 {
   margin: 0;
-  font-size: 21px;
+  font-size: 20px;
   letter-spacing: -0.5px;
 }
 .icon-close {
@@ -739,9 +793,11 @@ dialog::backdrop {
   color: #4b6255;
 }
 .surface-dialog-body {
-  padding: 26px;
+  padding: 22px;
   overflow-y: auto;
   min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .connection-onboarding-next {
   display: none;
@@ -773,22 +829,31 @@ dialog::backdrop {
   border-radius: 0;
   min-width: 0;
 }
-.connection-detail-panel > .service-heading,
-.connection-detail-panel > .slack-heading,
-.connection-detail-panel > .integration-heading {
+#connections .connection-detail-panel > .service-heading,
+#connections .connection-detail-panel > .slack-heading,
+#connections .connection-detail-panel > .integration-heading {
   display: none;
+}
+.connection-dialog-copy {
+  min-width: 0;
+}
+.connection-dialog-description {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .connection-detail-panel .source-grid {
   grid-template-columns: 1fr;
 }
 #connections .connection-detail-panel .service-description {
   margin-top: 0;
-  font-size: 14px;
+  font-size: 13px;
 }
 #connections .connection-detail-panel details > summary {
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: #f3f6f4;
+  padding: 10px 0;
+  border-radius: 0;
+  background: transparent;
   list-style: none;
   display: flex;
   align-items: center;
@@ -801,13 +866,13 @@ details > summary::-webkit-details-marker {
 #connections .connection-detail-panel details > summary::after {
   content: "+";
   color: #688171;
-  font-size: 18px;
+  font-size: 16px;
 }
 #connections .connection-detail-panel details[open] > summary::after {
   content: "−";
 }
 #connections .connection-detail-panel details[open] > summary {
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 .project-settings-dialog,
 .pm-action-dialog {
@@ -993,10 +1058,17 @@ details > summary::-webkit-details-marker {
     gap: 12px;
   }
   .connection-tile {
-    padding: 20px;
+    padding: 16px;
   }
   .connection-tile > p {
-    margin: 12px 0 20px;
+    margin: 10px 0 16px;
+  }
+  .connection-library-search {
+    max-width: none;
+    flex-basis: 100%;
+  }
+  .connection-library-toolbar .surface-tabs {
+    width: 100%;
   }
   .surface-tabs {
     width: 100%;
