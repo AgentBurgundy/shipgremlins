@@ -374,13 +374,13 @@ export function createDashboardAuth(options: {
   function password(value: unknown): string {
     if (
       typeof value !== "string" ||
-      [...value].length < 15 ||
+      [...value].length < 8 ||
       [...value].length > 256 ||
       Buffer.byteLength(value) > 1024
     )
       throw new DashboardAuthError(
         "auth_input",
-        "Use a passphrase with 15–256 characters.",
+        "Use a password with 8–256 characters.",
         400,
       );
     return value;

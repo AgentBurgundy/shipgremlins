@@ -128,6 +128,39 @@ afterEach(() => {
 });
 
 describe("dashboard browser authentication", () => {
+  it.each(["setup", "password"])(
+    "%s accepts eight characters and rejects seven",
+    async (action) => {
+      const f = fixture();
+      const headers =
+        action === "setup"
+          ? { authorization: `Bearer ${bearer}` }
+          : (await f.setup()).headers;
+      const input = {
+        remember: false,
+        ...(action === "password" ? { currentPassword: password } : {}),
+      };
+      await expect(
+        f.call(action, { ...input, password: "seven77" }, headers),
+      ).rejects.toMatchObject({
+        code: "auth_input",
+        message: "Use a password with 8–256 characters.",
+      });
+      expect(
+        (await f.call(action, { ...input, password: "eight888" }, headers)).data
+          .authenticated,
+      ).toBe(true);
+      expect(
+        (
+          await f.call("login", {
+            password: "eight888",
+            remember: false,
+          })
+        ).data.authenticated,
+      ).toBe(true);
+    },
+  );
+
   it("requires the existing owner bearer to establish a password and persists only password/session hashes", async () => {
     const f = fixture(true);
     expect((await f.call("session")).data).toMatchObject({
