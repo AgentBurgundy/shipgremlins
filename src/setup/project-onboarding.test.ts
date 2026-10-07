@@ -1872,6 +1872,35 @@ describe("explicit app sign-in onboarding", () => {
     f.panel.destroy();
   });
 
+  it.each(["public", "password"])(
+    "restores the legacy recipe when switching from %s access",
+    async (kind) => {
+      const current = {
+        ...vercelState({ access: { kind } }),
+        environment: {
+          ...vercelState({ access: { kind } }).environment,
+          legacySignIn: true,
+        },
+      };
+      const api = vi.fn(async (_path: string, _body?: unknown) => current);
+      const f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+      await settle();
+      await chooseAccess(root, "legacy");
+      await walk(root)
+        .find((item) => item.textContent === "Save sign-in recipe")!
+        .fire("click");
+      const saved = api.mock.calls.find(([path]) =>
+        path.endsWith("/configure"),
+      )?.[1] as { environment: string; target: object };
+      expect(saved.environment).toBe(current.environment.name);
+      expect(saved.target).not.toHaveProperty("access");
+      expect(current.environment.target.access).toEqual({ kind });
+      f.panel.destroy();
+    },
+  );
+
   it("preserves legacy sign-in recipes without labeling them as public-only", async () => {
     const environment = {
       ...vercelState({ access: undefined }).environment,

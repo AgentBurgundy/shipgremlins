@@ -77,7 +77,11 @@
           ? 1
           : 0;
   function withAccess(target, draft) {
-    if (draft.accessKind === "legacy") return target;
+    if (draft.accessKind === "legacy") {
+      const result = structuredClone(target);
+      delete result.access;
+      return result;
+    }
     if (draft.accessKind === "public")
       return { ...target, access: { kind: "public" } };
     if (draft.accessKind !== "password")
