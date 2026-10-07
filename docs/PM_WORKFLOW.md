@@ -8,8 +8,11 @@ for repository verification.
 ## The flow at a glance
 
 Project inspection and a PM's own Discovery are separate steps. For an existing
-app, inspect the repository, review and confirm source-backed command suggestions,
-then adopt the recommended PM or choose your own. Optional project signals can
+app, investigate the repository and choose from a small suggested crew with
+distinct ongoing responsibilities. Each suggestion includes a ready-to-edit
+brief and source evidence; review and adopt the ones you want, or create your
+own. Project creation and command confirmation do not adopt a PM. Source-backed
+command suggestions remain available in project setup. Optional project signals can
 be connected from the adoption welcome. Start **Explore the codebase** to let
 the PM learn its mandate's part of the real app before choosing an outcome
 mission. Browser setup can wait. A new idea builds its reviewed foundation
@@ -17,9 +20,11 @@ before asking a PM to investigate source.
 
 ```mermaid
 flowchart TD
-  Repo[Connect existing repository] --> Inspect[Inspect source and review command suggestions]
-  Inspect --> Confirm[Confirm selected setup]
-  Confirm --> PM[Adopt PM with a goal and boundaries]
+  Repo[Connect existing repository with no PMs] --> Inspect[Background repository investigation]
+  Empty[Existing project without PMs] -->|Find my gremlins| Inspect
+  Inspect --> Crew[Review distinct PM suggestions and source evidence]
+  Crew --> PM[Adopt chosen PMs with editable goals and boundaries]
+  Inspect --> Confirm[Review command settings separately]
   PM --> Signals[Optional project signals]
   Signals --> Discovery[First read-only PM Discovery]
   Discovery --> Memory[Code map, features, ranked queue and memory]

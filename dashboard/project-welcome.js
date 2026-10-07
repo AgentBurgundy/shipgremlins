@@ -32,11 +32,14 @@
   const identity = (project) =>
     `${project.name}/${project.instanceId ?? "legacy"}`;
   const suggestions = (proposal) =>
-    proposal?.suggestedPms?.length
-      ? proposal.suggestedPms
-      : proposal?.firstPm
-        ? [proposal.firstPm]
-        : [];
+    Array.isArray(proposal?.suggestedPms)
+      ? proposal.suggestedPms.filter(
+          (item) =>
+            item?.draft?.key &&
+            item.draft.charter?.goal &&
+            Array.isArray(item.draft.charter.expectedToBuild),
+        )
+      : [];
 
   window.createProjectWelcome = ({
     api,
@@ -132,7 +135,7 @@
             await onSaved(s.project.name);
           } catch {
             // Confirmation is already committed. A dashboard refresh failure
-            // must not undo it or prevent the user from meeting their gremlin.
+            // must not undo it or prevent the user from reviewing their crew.
             s.notice =
               "Setup saved. The dashboard could not refresh; you can continue or refresh the inspection.";
           }
@@ -251,6 +254,7 @@
         section = el("section", undefined, "welcome-setup-journey"),
         list = el("ol", undefined, "welcome-setup-steps");
       if (s.suggestionsOnly && activeCrew && allReady) return null;
+      section.setAttribute("data-compact", String(s.suggestionsOnly));
       section.append(
         el("span", "CREW SETUP", "eyebrow muted"),
         el(
@@ -258,14 +262,34 @@
           allReady ? "Your crew is ready." : "Finish setting up your crew.",
         ),
       );
+      const completed = steps.filter(([, done]) => done).length;
+      const progress = el("div", undefined, "welcome-setup-completion");
+      progress.setAttribute("role", "progressbar");
+      progress.setAttribute("aria-label", "Project setup completion");
+      progress.setAttribute("aria-valuemin", "0");
+      progress.setAttribute("aria-valuemax", String(steps.length));
+      progress.setAttribute("aria-valuenow", String(completed));
+      progress.append(
+        el(
+          "span",
+          `${completed} of ${steps.length} ready`,
+          "welcome-setup-count",
+        ),
+      );
+      const track = el("div", undefined, "welcome-setup-track");
+      for (const [, done] of steps)
+        track.append(el("span", undefined, done ? "complete" : "pending"));
+      progress.append(track);
+      section.append(progress);
       list.setAttribute("aria-label", "Project setup progress");
+      const next = steps.find(([, done]) => !done);
       for (const [label, done] of steps) {
         const item = el("li", undefined, done ? "complete" : "pending");
+        if (label === next?.[0]) item.setAttribute("aria-current", "step");
         item.append(el("span", done ? "✓" : "○"), el("span", label));
         list.append(item);
       }
       section.append(list);
-      const next = steps.find(([, done]) => !done);
       if ((allReady && !activeCrew) || canVerifyAndActivate) {
         const activate = button(
           s.busy
@@ -372,49 +396,64 @@
       section.append(
         el(
           "p",
-          project.workflow?.kind === "promotion" &&
-            project.workflow.approvalPolicy === "epic"
-            ? "Approve epics, then review your PMs’ promotion batches. Activate daily PMs and coding for approved epic work; without an approved epic, PMs investigate only. Activation does not approve any epic."
-            : "Patrols start only after setup is ready and you activate the crew. Review your configured delivery policy before enabling coding.",
+          s.suggestionsOnly
+            ? project.workflow?.kind === "promotion" &&
+              project.workflow.approvalPolicy === "epic"
+              ? "Complete setup to activate daily work. Activation does not approve any epic."
+              : "Complete setup to activate daily work. Your approval policy stays in control."
+            : project.workflow?.kind === "promotion" &&
+                project.workflow.approvalPolicy === "epic"
+              ? "Approve epics, then review your PMs’ promotion batches. Activate daily PMs and coding for approved epic work; without an approved epic, PMs investigate only. Activation does not approve any epic."
+              : "Patrols start only after setup is ready and you activate the crew. Review your configured delivery policy before enabling coding.",
           "welcome-note",
         ),
       );
       return section;
     }
-    function crewSuggestions(s, proposal, reviewed, disabled) {
+    function crewSuggestions(s, proposal, reviewed) {
+      const choices = suggestions(proposal);
+      const noAdditionalRoles =
+        Array.isArray(proposal?.suggestedPms) &&
+        !proposal.suggestedPms.length &&
+        s.project.areas?.length;
       const section = el("section", undefined, "welcome-recommendation");
-      section.append(el("span", "YOUR SUGGESTED CREW", "eyebrow muted"));
+      section.append(
+        el(
+          "span",
+          choices.length ? "YOUR SUGGESTED CREW" : "YOUR CREW",
+          "eyebrow muted",
+        ),
+      );
       section.append(
         el(
           "p",
-          "Adopt the responsibilities you want. Remaining suggestions stay here for later; adopting one does not start daily patrols.",
+          choices.length
+            ? "Review the suggested responsibilities and complete briefs in Your crew. Adoption is separate from saving these commands and does not start daily patrols."
+            : noAdditionalRoles
+              ? "No additional PMs were recommended. Manage your existing gremlins in Your crew."
+              : "This inspection has no complete PM briefs. Find your gremlins in Your crew for product-specific recommendations.",
           "welcome-note",
         ),
       );
-      for (const suggestion of suggestions(proposal)) {
-        const adopted = s.project.areas?.some(
-            (area) => area.mandate?.trim() === suggestion.mandate.trim(),
-          ),
-          card = el("article", undefined, "welcome-crew-suggestion");
-        card.append(el("h3", suggestion.name), el("p", suggestion.mandate));
-        if (!reviewed) card.append(evidence(suggestion.evidence));
-        if (adopted)
-          card.append(el("p", "Already in your crew", "welcome-note"));
-        else if (reviewed) {
-          const meet = button(
-            `Meet ${suggestion.name}`,
-            () =>
-              onCreatePm?.(s.project.name, {
-                name: suggestion.name,
-                mandate: suggestion.mandate,
-              }),
-            true,
-          );
-          meet.disabled = disabled;
-          card.append(meet);
-        }
+      for (const suggestion of reviewed ? [] : choices) {
+        const card = el("article", undefined, "welcome-crew-suggestion");
+        card.append(
+          el("h3", suggestion.name),
+          el("p", suggestion.draft.charter.goal),
+          evidence(suggestion.evidence),
+        );
         section.append(card);
       }
+      section.append(
+        link(
+          choices.length
+            ? "Review your crew"
+            : noAdditionalRoles
+              ? "Your crew"
+              : "Find my gremlins",
+          `/projects/${encodeURIComponent(s.project.name)}?tab=crew`,
+        ),
+      );
       return section;
     }
     function paint(s) {
@@ -434,6 +473,7 @@
           s.busy,
           isLocked(),
           s.suggestionsOnly,
+          s.setupOnly,
           s.project.areas?.map((area) => [area.key, area.mandate]),
           s.project.readiness,
           s.project.areas?.map((area) => area.enabled),
@@ -442,7 +482,9 @@
       s.signature = signature;
       s.node.replaceChildren();
       const journey = setupJourney(s);
+      s.node.hidden = Boolean(s.setupOnly && !journey);
       if (journey) s.node.append(journey);
+      if (s.setupOnly) return;
       if (s.suggestionsOnly) {
         if (s.notice) s.node.append(el("p", s.notice, "welcome-note"));
         if (s.error) {
@@ -458,7 +500,6 @@
               s,
               proposal,
               confirmed || Boolean(data.setupConfirmation?.confirmedAt),
-              disabled,
             ),
           );
           if (data.stale)
@@ -487,7 +528,7 @@
       }
       const progress = el("ol", undefined, "welcome-progress");
       progress.setAttribute("aria-label", "Project introduction");
-      ["Inspect your app", "Review setup", "Meet your gremlin"].forEach(
+      ["Inspect your app", "Review setup", "Meet your crew"].forEach(
         (label, index) => {
           const item = el("li", label);
           if (
@@ -506,7 +547,7 @@
       portrait.width = portrait.height = 120;
       copy.append(el("span", "A HOME FOR YOUR CREW", "eyebrow muted"));
       const title = confirmed
-        ? "Meet your first investigator."
+        ? "Your setup is saved."
         : running(data)
           ? "Your Setup Gremlin is looking around."
           : proposal && reviewable && !data?.stale
@@ -516,12 +557,12 @@
               : "Let’s get to know your app.";
       copy.append(el("h2", title));
       const description = confirmed
-        ? "Your reviewed setup is saved. Now give a gremlin the job of learning your product and finding useful opportunities."
+        ? "Your reviewed setup is saved. Choose the product areas your gremlins will investigate and improve."
         : running(data)
           ? "Reading the repository to understand the app and recommend a sensible starting setup."
           : proposal && reviewable && !data?.stale
-            ? "Review the code’s starting points, then meet the gremlin we suggest for your app."
-            : "A Setup Gremlin reads the code, suggests how to check it, and recommends a first investigator. You review its findings before anything is saved.";
+            ? "Review the code’s starting points, then meet the crew we suggest for your app."
+            : "A Setup Gremlin reads the code, suggests how to check it, and recommends focused PMs for your product. You review its findings before anything is saved.";
       copy.append(el("p", description));
       hero.append(copy, portrait);
       s.node.append(progress, hero);
@@ -583,7 +624,7 @@
           s.node.append(
             el(
               "p",
-              "This earlier inspection covered the test environment. Inspect again for project commands and a suggested first gremlin.",
+              "This earlier inspection covered the test environment. Inspect again for project commands and a suggested crew.",
               "welcome-note",
             ),
           );
@@ -665,9 +706,7 @@
           );
         s.node.append(commands);
       }
-      s.node.append(
-        crewSuggestions(s, proposal, confirmed, disabled || Boolean(s.error)),
-      );
+      s.node.append(crewSuggestions(s, proposal, confirmed));
       if (!confirmed && report.warnings?.length) {
         const notes = el("section", undefined, "welcome-open-questions");
         notes.append(el("h3", "Still to check"));
@@ -682,13 +721,7 @@
           onCreatePm?.(s.project.name),
         );
         own.disabled = disabled || Boolean(s.error);
-        actions.append(
-          own,
-          link(
-            "Review your crew",
-            `/projects/${encodeURIComponent(s.project.name)}?tab=crew`,
-          ),
-        );
+        actions.append(own);
       } else {
         const confirm = button(
             s.busy ? "Saving reviewed setup…" : "Confirm setup",
@@ -751,7 +784,11 @@
     window.addEventListener("pagehide", deactivate);
     document.addEventListener("visibilitychange", visibility);
     return {
-      mount(container, project, { suggestionsOnly = false } = {}) {
+      mount(
+        container,
+        project,
+        { suggestionsOnly = false, setupOnly = false } = {},
+      ) {
         let s = entries.get(project.name);
         if (s && identity(s.project) !== identity(project)) {
           forget(project.name);
@@ -775,6 +812,7 @@
         }
         s.project = project;
         s.suggestionsOnly = suggestionsOnly;
+        s.setupOnly = setupOnly;
         if (active !== s) deactivate();
         active = s;
         container.append(s.node);
@@ -804,6 +842,7 @@
       isBusy: () => [...entries.values()].some((s) => s.busy),
       protectFocus: () =>
         Boolean(active?.node.contains(document.activeElement)),
+      deactivate,
       forget,
       destroy() {
         destroyed = true;

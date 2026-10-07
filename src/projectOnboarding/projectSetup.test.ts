@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { validateProjectSetup } from "./projectSetup.ts";
+import {
+  validateProjectSetup,
+  PROJECT_SETUP_SCHEMA,
+  PROJECT_SETUP_PROMPT,
+  sourceOwnershipPaths,
+} from "./projectSetup.ts";
 import type { RepositorySnapshot } from "./repository.ts";
+import { suggestedPm } from "./crew.test-support.ts";
 
 const content =
   '<form id="login"><input id="email"><input id="password" type="password"><button id="submit">Sign in</button></form>\nconst path = "/login";\nif (user) render(<nav data-testid="account-menu" />);';
@@ -50,6 +56,99 @@ const proposal = () => ({
 });
 
 describe("source-grounded crew and login suggestions", () => {
+  it("provides distinct editable drafts with derived labels and ongoing charters", () => {
+    const suggestedPms = [
+      suggestedPm(),
+      suggestedPm("identity-security", "Latch"),
+      suggestedPm("accessible-signin", "Pip"),
+    ];
+    const result = validateProjectSetup(
+      { ...proposal(), suggestedPms },
+      snapshot,
+      { requireCrewDrafts: true },
+    );
+    expect(result.suggestedPms).toHaveLength(3);
+    expect(result.suggestedPms?.[0]).toMatchObject({
+      name: "Sprout",
+      mandate: suggestedPms[0]!.mandate,
+      draft: {
+        key: "account-journey",
+        label: "pm:account-journey",
+        charter: suggestedPms[0]!.draft.charter,
+      },
+      rationale: suggestedPms[0]!.rationale,
+    });
+    expect(result.firstPm).toEqual(firstPm);
+    expect(PROJECT_SETUP_SCHEMA.properties.suggestedPms).toMatchObject({
+      minItems: 1,
+      maxItems: 5,
+    });
+    expect(PROJECT_SETUP_PROMPT).toContain("must NOT become a permanent ban");
+    expect(PROJECT_SETUP_PROMPT).toContain(
+      "this analysis itself has no browser",
+    );
+    expect(PROJECT_SETUP_PROMPT).toContain(
+      "walking the relevant real UI journey",
+    );
+    expect(PROJECT_SETUP_PROMPT).toContain(
+      "An empty repository still needs its foundation",
+    );
+    expect(
+      sourceOwnershipPaths(["src/auth/login.tsx", "src/index.ts"]),
+    ).toEqual(["src", "src/auth", "src/auth/login.tsx", "src/index.ts"]);
+  });
+  it("rejects incomplete, invented, overlapping-key or enabled recommendation drafts", () => {
+    const valid = suggestedPm();
+    for (const draft of [
+      { ...valid.draft, name: "Other" },
+      { ...valid.draft, paths: ["invented.ts"] },
+      { ...valid.draft, schedule: "not cron" },
+      { ...valid.draft, enabled: true },
+      { ...valid.draft, label: "pm:someone-else" },
+      { ...valid.draft, charter: { goal: "Missing full brief" } },
+    ]) {
+      expect(() =>
+        validateProjectSetup(
+          { ...proposal(), suggestedPms: [{ ...valid, draft }] },
+          snapshot,
+        ),
+      ).toThrow();
+    }
+    expect(() =>
+      validateProjectSetup(
+        {
+          ...proposal(),
+          suggestedPms: [
+            valid,
+            {
+              ...suggestedPm("account-journey", "Other"),
+              mandate: "A different responsibility, but duplicate routing key.",
+            },
+          ],
+        },
+        snapshot,
+      ),
+    ).toThrow();
+    expect(() =>
+      validateProjectSetup({ ...proposal(), suggestedPms: [valid] }, snapshot, {
+        existingKeys: ["account-journey"],
+      }),
+    ).toThrow();
+    expect(() =>
+      validateProjectSetup(proposal(), snapshot, { requireCrewDrafts: true }),
+    ).toThrow();
+    expect(() =>
+      validateProjectSetup(
+        {
+          ...proposal(),
+          suggestedPms: Array.from({ length: 6 }, (_, i) =>
+            suggestedPm(`area-${i}`, `Gremlin ${i}`),
+          ),
+        },
+        snapshot,
+      ),
+    ).toThrow();
+  });
   it("retains multiple distinct PM responsibilities and complete login hints without inventing test accounts", () => {
     const result = validateProjectSetup(proposal(), snapshot);
     expect(result.suggestedPms).toHaveLength(2);

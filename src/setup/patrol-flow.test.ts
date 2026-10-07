@@ -175,6 +175,34 @@ describe("patrol plan and evidence", () => {
     expect(text(steps)).toContain("Explore public flows & capture evidence");
     expect(text(steps)).not.toContain("sign-in");
   });
+  it("keeps saved-account coverage compact without claiming a verified sign-in", () => {
+    const root = fixture().renderPatrolPlan(
+      project({
+        kind: "vercel",
+        access: {
+          kind: "password",
+          accounts: [
+            {
+              name: "Reviewer",
+              usernameSecret: "PRIVATE_USER",
+              passwordSecret: "PRIVATE_PASS",
+            },
+          ],
+        },
+      }),
+      { compact: true },
+    );
+    expect(text(root)).toContain("TEST ACCESS");
+    expect(text(root)).toContain("Signed-in testing planned");
+    expect(text(root)).toContain("1 saved test account");
+    expect(text(root)).not.toContain("Vercel access opens the preview");
+    expect(text(root)).not.toContain("PRIVATE_");
+    expect(all(root).some((item) => item.tagName === "ol")).toBe(false);
+    expect(
+      all(root).find((item) => item.textContent === "Environment & accounts")
+        ?.href,
+    ).toBe("/projects/shop?tab=environment");
+  });
   it.each([
     project({ kind: "vercel" }),
     { name: "legacy", vercel: { projectId: "preview-project" } },
@@ -335,6 +363,81 @@ describe("patrol plan and evidence", () => {
       ),
     ).toContain("Browser activity is incomplete");
   });
+  it("calls out a finished page inspection with no interactions instead of implying a complete investigation", () => {
+    const root = fixture().renderPatrolEvidence({
+      job: { type: "pm", status: "succeeded" },
+      activityState: "ready",
+      artifactState: "ready",
+      activity: {
+        summary: "Signed in and all 437 tests passed.",
+        events: [
+          {
+            id: "navigate",
+            type: "tool",
+            title: "mcp__playwright__browser_navigate",
+          },
+          {
+            id: "snapshot",
+            type: "tool",
+            title: "mcp__playwright__browser_snapshot",
+          },
+          {
+            id: "screenshot1",
+            type: "tool",
+            title: "mcp__playwright__browser_take_screenshot",
+          },
+          {
+            id: "screenshot2",
+            type: "tool",
+            title: "mcp__playwright__browser_take_screenshot",
+          },
+        ],
+        checks: [],
+      },
+      artifacts: [{ name: "desktop.png" }, { name: "mobile.png" }],
+    });
+    expect(text(root)).toContain("No browser interactions recorded");
+    expect(text(root)).toContain("1 navigation · 0 interactions");
+    expect(text(root)).toContain(
+      "Sign-in and user workflows remain unverified",
+    );
+    expect(text(root)).toContain("None recorded");
+    expect(text(root)).toContain(
+      "A written summary is not a recorded check result",
+    );
+    expect(text(root)).not.toContain("437");
+    expect(text(root)).not.toContain("Sign-in failed");
+    expect(root.dataset.tone).toBe("attention");
+  });
+  it("keeps partial activity and an in-progress inspection distinct from a complete missing-interaction result", () => {
+    const input = {
+      job: { type: "pm", status: "succeeded" },
+      activity: {
+        events: [{ id: "navigate", type: "tool", title: "browser_navigate" }],
+      },
+      artifacts: [],
+      artifactState: "partial",
+    };
+    const partial = fixture().renderPatrolEvidence({
+      ...input,
+      activityState: "partial",
+    });
+    expect(text(partial)).toContain(
+      "No interactions in the available browser activity",
+    );
+    expect(text(partial)).toContain(
+      "Missing records do not prove that sign-in failed",
+    );
+    expect(partial.dataset.tone).toBe("neutral");
+    const running = fixture().renderPatrolEvidence({
+      ...input,
+      job: { type: "pm", status: "running" },
+      activityState: "ready",
+    });
+    expect(text(running)).toContain("Waiting for browser interactions");
+    expect(text(running)).not.toContain("investigation was completed");
+    expect(running.dataset.tone).toBe("neutral");
+  });
   it("links directly to recorded actions and files and labels images as possible fixtures", () => {
     const onTab = vi.fn(),
       root = fixture().renderPatrolEvidence({
@@ -356,6 +459,28 @@ describe("patrol plan and evidence", () => {
     buttons[0]!.listeners.get("click")!();
     buttons[1]!.listeners.get("click")!();
     expect(onTab.mock.calls).toEqual([["activity"], ["artifacts"]]);
+  });
+  it("does not call an opaque browser script a no-interaction investigation or turn it into a pass", () => {
+    const root = fixture().renderPatrolEvidence({
+      job: { type: "pm", status: "succeeded" },
+      activityState: "ready",
+      artifactState: "ready",
+      activity: {
+        events: [
+          {
+            id: "script",
+            type: "tool",
+            title: "mcp__playwright__browser_run_code",
+          },
+        ],
+      },
+      artifacts: [],
+    });
+    expect(text(root)).toContain("Browser activity recorded");
+    expect(text(root)).not.toContain("No browser interactions recorded");
+    expect(text(root)).toContain("Calls show attempts");
+    expect(text(root)).toContain("None recorded");
+    expect(root.dataset.tone).toBe("neutral");
   });
   it("explains discovery instead of suggesting that missing browser evidence is a failed patrol", () => {
     const root = fixture().renderPatrolEvidence({

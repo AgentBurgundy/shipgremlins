@@ -1,5 +1,7 @@
 # Dashboard design audit
 
+For the subsequent navigation, live crew, compact layout and Motion pass, see the [October 7 crew dashboard audit](DASHBOARD_CREW_AUDIT.md). The report below records the earlier 0.19.0 audit.
+
 **Component design review complete; publication remains gated on PR review and CI.** Reviewed on October 5, 2026 for version 0.19.0 on `codex/idea-foundation-environment`. Every dashboard script, stylesheet, page, and component family below received source review; the real browser pass covered their principal desktop/mobile surfaces and the interaction cases described here. This is not a claim that every external-service outcome was reproduced.
 
 The requested scope is every dashboard page and component, including simple and advanced workflows. The design goal is a clear next action, one decision at a time, readable narrow layouts, and advanced controls that remain accessible without dominating routine work. A fresh idea must reach an approved foundation build before repository analysis or environment setup; established projects must make approved coding work easy to start.

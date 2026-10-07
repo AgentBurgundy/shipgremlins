@@ -18,7 +18,7 @@ import {
   parseProjectCapabilities,
 } from "../projectCapabilities.ts";
 import {
-  SETUP_SCHEMA,
+  setupAnalysisSchema,
   SETUP_SYSTEM,
   validateSetupAnalysis,
 } from "./analysis.ts";
@@ -29,6 +29,8 @@ import {
 } from "./repository.ts";
 import { publishSetupDraft } from "./publish.ts";
 import { confirmationState, confirmSetup } from "./confirmation.ts";
+import { crewAnalysisContext, crewSourceIdentity } from "./crewContext.ts";
+import { sourceOwnershipPaths } from "./projectSetup.ts";
 import {
   createOnboardingStore,
   dead,
@@ -129,9 +131,10 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
         return { state: next, result: next };
       });
     }
+    const projectConfig = loadProject(root, project);
     const setupConfirmation = confirmationState(
       state,
-      loadProject(root, project),
+      projectConfig,
       configurationRevision,
     );
     return {
@@ -152,6 +155,17 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
         state.configurationRevision !== configurationRevision &&
         !setupConfirmation.confirmed,
       setupConfirmation,
+      recommendationsReviewable:
+        !!state.report?.projectSetup &&
+        (state.recommendationSourceRevision
+          ? state.recommendationSourceRevision ===
+            digest(JSON.stringify(crewSourceIdentity(projectConfig)))
+          : !projectConfig.config.serverUrl &&
+            state.report.repository.repo === projectConfig.config.repo &&
+            state.report.repository.provider ===
+              (projectConfig.config.provider ?? "github") &&
+            state.report.repository.branch ===
+              inspectionBranch(projectConfig.config)),
       ...(state.report ? { report: state.report } : {}),
       ...(state.setupPull ? { setupPull: state.setupPull } : {}),
       ...(state.appliedProfile ? { appliedProfile: state.appliedProfile } : {}),
@@ -369,6 +383,21 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
             next.stage = "analyzing-files";
             next.message = `Claude is analyzing ${snapshot.files.length} safe source files. This is analysis, not environment verification.`;
           });
+          const prompt = JSON.stringify({
+            project,
+            workflow: effectiveWorkflow(projectConfig.config),
+            ...crewAnalysisContext(projectConfig, secrets),
+            repository: snapshot.repository,
+            paths: snapshot.paths,
+            ownershipPaths: sourceOwnershipPaths(snapshot.paths),
+            files: snapshot.files,
+          });
+          if (containsSecret(prompt, secrets))
+            throw new ProjectOnboardingError(
+              "Project analysis context contains sensitive material. Remove credentials from project metadata before retrying.",
+              422,
+              "invalid_analysis",
+            );
           const result = await bounded(
             execute({
               usageContext: {
@@ -378,15 +407,9 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
               },
               credential: saved.CLAUDE_CODE_OAUTH_TOKEN!,
               system: SETUP_SYSTEM,
-              schema: SETUP_SCHEMA,
+              schema: setupAnalysisSchema(projectConfig.areas.length > 0),
               signal,
-              prompt: JSON.stringify({
-                project,
-                workflow: effectiveWorkflow(projectConfig.config),
-                repository: snapshot.repository,
-                paths: snapshot.paths,
-                files: snapshot.files,
-              }),
+              prompt,
             }),
             signal,
           );
@@ -395,7 +418,11 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
               "Setup analysis timed out or was canceled. Retry when ready.",
               408,
             );
-          const report = validateSetupAnalysis(result, snapshot, secrets);
+          const report = validateSetupAnalysis(result, snapshot, secrets, {
+            requireCrewDrafts: true,
+            allowEmptyCrew: projectConfig.areas.length > 0,
+            existingKeys: projectConfig.areas.map((area) => area.key),
+          });
           if (config(project) !== state.configurationRevision)
             throw new ProjectOnboardingError(
               "Project settings changed during analysis. Retry to analyze the current configuration.",
@@ -403,6 +430,9 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
             );
           await update(project, id, (next) => {
             next.report = report;
+            next.recommendationSourceRevision = digest(
+              JSON.stringify(crewSourceIdentity(projectConfig)),
+            );
             delete next.setupAcknowledgement;
             delete next.setupPull;
             delete next.appliedProfile;

@@ -9,7 +9,7 @@ body.auth-pending > :not(#dashboard-sign-in) {
   align-items: center;
   padding: 44px 24px 24px;
   background:
-    radial-gradient(ellipse at 15% 12%, #e6efd9 0, transparent 55%), #f5f7f2;
+    radial-gradient(ellipse at 20% 0, #e8f1de 0, transparent 50%), #f4f6f3;
 }
 #dashboard-sign-in[hidden] {
   display: none;
@@ -17,9 +17,9 @@ body.auth-pending > :not(#dashboard-sign-in) {
 .auth-card {
   width: min(100%, 460px);
   box-sizing: border-box;
-  padding: 38px;
-  border: 1px solid #dce4d5;
-  border-radius: 24px;
+  padding: 32px;
+  border: 1px solid var(--line, #dce5dd);
+  border-radius: 16px;
   background: #fff;
   box-shadow: 0 14px 60px #173c2110;
 }
@@ -29,10 +29,10 @@ body.auth-pending > :not(#dashboard-sign-in) {
   gap: 10px;
   font-size: 15px;
   font-weight: 700;
-  margin-bottom: 35px;
+  margin-bottom: 28px;
 }
 .auth-card h1 {
-  font-size: clamp(26px, 5vw, 32px);
+  font-size: clamp(25px, 5vw, 30px);
   line-height: 1.2;
   letter-spacing: -0.035em;
   margin: 0 0 12px;
@@ -52,8 +52,8 @@ body.auth-pending > :not(#dashboard-sign-in) {
 }
 .auth-card button.primary,
 #account-access button.primary {
-  border-color: #234831;
-  background: #234831;
+  border-color: #286448;
+  background: #286448;
   color: #fff;
 }
 .auth-card button:hover:not(:disabled),
@@ -75,9 +75,9 @@ body.auth-pending > :not(#dashboard-sign-in) {
   border-color: #e1b9ad;
 }
 .auth-description {
-  color: #5a685e;
+  color: var(--muted, #65756c);
   font-size: 14px;
-  line-height: 1.7;
+  line-height: 1.6;
   margin: 0 0 24px;
 }
 .auth-form {
@@ -101,7 +101,7 @@ body.auth-pending > :not(#dashboard-sign-in) {
   min-height: 46px;
   box-sizing: border-box;
   font-size: 16px;
-  background: #fbfcfa;
+  background: #fff;
   border: 1px solid #cbd7cd;
   border-radius: 9px;
   padding: 10px 12px;
@@ -192,7 +192,7 @@ body.auth-pending > :not(#dashboard-sign-in) {
   max-width: 650px;
 }
 #account-access > h3 {
-  font-size: 24px;
+  font-size: 22px;
   margin: 8px 0 10px;
 }
 .auth-account-summary {
@@ -216,7 +216,7 @@ body.auth-pending > :not(#dashboard-sign-in) {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  margin-top: 28px;
+  margin-top: 22px;
 }
 .auth-signout-confirm {
   margin-top: 18px;
@@ -245,8 +245,8 @@ body.auth-pending > :not(#dashboard-sign-in) {
     justify-content: flex-start;
   }
   .auth-card {
-    padding: 28px 23px;
-    border-radius: 18px;
+    padding: 26px 22px;
+    border-radius: 14px;
     margin-top: 6vh;
   }
   .auth-brand {

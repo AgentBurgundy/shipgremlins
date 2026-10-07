@@ -1281,17 +1281,6 @@
             anchor("Open project →", route(project.project)),
           );
           card.append(identity, detail);
-          if (status && (status.foundation?.needed || status.areas?.length))
-            card.append(
-              status.foundation?.needed
-                ? window.renderFoundationLauncher(status)
-                : window.renderCodingLauncher(status, {
-                    locked: isLocked(),
-                    compact: true,
-                    jobs: getJobs?.() || [],
-                    operation: getCodingAction?.(project.project),
-                  }),
-            );
           overview.append(card);
         }
         if (!globalProjects.length)

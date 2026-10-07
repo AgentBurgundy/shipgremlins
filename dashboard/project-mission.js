@@ -1199,7 +1199,9 @@
           "p",
           isLocked()
             ? "Open an active dashboard session to review this project’s work."
-            : "Loading your next useful change…",
+            : s.view === "changes"
+              ? "Checking your crew’s changes and promotion batches…"
+              : "Loading your next useful change…",
           "mission-note",
         );
         loading.setAttribute("role", "status");

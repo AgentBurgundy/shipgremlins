@@ -1,11 +1,11 @@
 .project-settings-dialog {
-  width: min(800px, calc(100vw - 40px));
-  max-height: min(860px, calc(100dvh - 48px));
+  width: min(900px, calc(100vw - 40px));
+  max-height: min(860px, calc(100dvh - 40px));
   padding: 0;
   overflow: hidden;
-  border: 1px solid #d9e3dc;
-  border-radius: 20px;
-  box-shadow: 0 32px 100px #10261c38;
+  border: 1px solid var(--line, #dce5dd);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px #18342a2e;
 }
 .project-settings-dialog > form {
   display: flex;
@@ -16,7 +16,7 @@
 .project-settings-dialog .settings-dialog-heading {
   position: relative;
   flex: 0 0 auto;
-  padding: 24px 28px 0;
+  padding: 20px 24px 0;
   gap: 16px;
   background: #fff;
 }
@@ -25,7 +25,7 @@
 }
 .project-settings-dialog h2 {
   margin: 5px 0 7px;
-  font-size: 23px;
+  font-size: 22px;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -43,24 +43,24 @@
   padding: 8px 12px;
 }
 .project-settings-dialog .project-editor-sections {
-  margin: 18px 0 0;
-  gap: 16px;
+  margin: 16px 0 0;
+  gap: 22px;
 }
 .project-settings-dialog .project-editor-sections button {
-  padding: 12px 0;
+  padding: 10px 0;
   border: 0;
-  border-bottom: 3px solid transparent;
+  border-bottom: 2px solid transparent;
   border-radius: 0;
   background: transparent;
-  color: #687a70;
+  color: var(--muted, #65756c);
   font-weight: 600;
-  min-height: 44px;
+  min-height: 40px;
 }
 .project-settings-dialog .project-editor-sections button[aria-current="page"],
 .project-settings-dialog .project-editor-sections button[aria-selected="true"],
 .project-settings-dialog .project-editor-sections button.active {
-  border-bottom-color: #204c37;
-  color: #204c37;
+  border-bottom-color: #286448;
+  color: #286448;
   background: transparent;
 }
 .project-settings-dialog .settings-dialog-body {
@@ -70,7 +70,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 24px 28px;
+  padding: 22px 24px;
   scrollbar-width: thin;
   scrollbar-color: #c4d1c7 transparent;
 }
@@ -88,11 +88,15 @@
 .project-settings-dialog #edit-linear-settings {
   margin: 0;
 }
+.project-settings-dialog:has(#edit-linear-settings:not([hidden]))
+  #reload-project-settings {
+  display: none;
+}
 .project-settings-dialog .settings-discard {
   order: -1;
   flex-shrink: 0;
-  margin: 0 0 20px;
-  padding: 16px;
+  margin: 0 0 16px;
+  padding: 14px;
   border-radius: 10px;
 }
 .project-settings-dialog .settings-discard p {
@@ -114,21 +118,21 @@
 .project-settings-dialog .linear-repair-intro {
   max-width: 62ch;
   margin: 0;
-  line-height: 1.65;
+  line-height: 1.55;
 }
 .project-settings-dialog .linear-repair-controls {
-  margin: 16px 0 22px;
+  margin: 14px 0 18px;
   gap: 8px;
 }
 .project-settings-dialog .linear-connection-field,
 .project-settings-dialog .linear-team-field {
-  margin: 0 0 20px;
+  margin: 0 0 16px;
 }
 .project-settings-dialog .linear-repair label {
   display: block;
   margin: 0 0 7px;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 13px;
 }
 .project-settings-dialog .linear-mapping-note {
   font-size: 12px;
@@ -136,9 +140,9 @@
 }
 .project-settings-dialog .linear-mapping-row {
   gap: 12px 20px;
-  padding: 18px;
-  background: #f6f9f6;
-  border-color: #e0e8e1;
+  padding: 14px;
+  background: #fff;
+  border-color: var(--line, #dce5dd);
 }
 .project-settings-dialog .linear-mapping-row > * {
   min-width: 0;
@@ -152,12 +156,13 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 14px 28px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line, #dce5dd);
   background: #fafbf9;
 }
 .project-settings-dialog .settings-dialog-footer .small-button {
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .project-settings-dialog #delete-project {
   margin-left: auto;
@@ -179,7 +184,7 @@
     gap: 12px;
   }
   .project-settings-dialog .project-editor-sections button {
-    font-size: 11px;
+    font-size: 12px;
   }
   .project-settings-dialog .settings-dialog-body {
     padding: 20px 16px;

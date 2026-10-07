@@ -26,18 +26,13 @@
     const title = node("h2");
     title.tabIndex = -1;
     const drawer = $("new-project-drawer");
-    const exit = node(
-      "button",
-      "← Back to projects",
-      "small-button wizard-exit",
-    );
+    const exit = node("button", "Close setup", "small-button wizard-exit");
     exit.type = "button";
     exit.addEventListener("click", () => {
       drawer.open = false;
       $("projects").classList.remove("is-creating");
       document.querySelector('a[href="#new-project-drawer"]')?.focus();
     });
-    drawer.insertBefore(exit, form);
     drawer.addEventListener("toggle", () => {
       $("projects").classList.toggle("is-creating", drawer.open);
       if (drawer.open) title.focus({ preventScroll: true });
@@ -49,13 +44,15 @@
     back.type = "button";
     const next = $("add-project");
     footer.append(back, next);
-    shell.append(progress, track, title, description, body, footer);
+    const topline = node("div", undefined, "wizard-topline");
+    topline.append(progress, exit);
+    shell.append(topline, track, title, description, body, footer);
     fields.append(shell);
     const sections = {},
       labels = {
         start: [
           "Make your app better.",
-          "Bring your app. Choose a useful improvement. Let your crew do the work.",
+          "Connect your app, then prepare a crew that understands it.",
         ],
         idea: [
           "What do you want to build?",
@@ -79,7 +76,7 @@
         ],
         repository: [
           "Which app are we joining?",
-          "Choose the repository for the app you want to improve. You’ll choose a user outcome next.",
+          "Choose the app’s repository. Next, AI can inspect the code and suggest your crew.",
         ],
         visibility: [
           "Who can see your code?",
@@ -102,7 +99,7 @@
       [
         "existing",
         "Improve my app",
-        "Connect an existing app, choose what should get better, and work toward a reviewable change.",
+        "Connect the repository, let AI investigate, and adopt PMs for the areas that matter.",
         "↗",
       ],
       [

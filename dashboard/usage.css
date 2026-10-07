@@ -3,8 +3,10 @@
   min-width: 0;
 }
 .usage-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
-  margin: 4px 0 26px;
+  margin: 4px 0 22px;
 }
 .usage-heading h1 {
   margin: 5px 0 0;
@@ -16,7 +18,7 @@
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
   min-width: 0;
 }
 .usage-periods {
@@ -24,11 +26,11 @@
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #edf1ee;
+  border-radius: 10px;
+  background: #eef2ed;
 }
 .usage-periods button {
-  min-height: 40px;
+  min-height: 36px;
   border-color: transparent;
   background: transparent;
   color: var(--muted);
@@ -54,12 +56,12 @@
 .usage-project-filter select {
   min-width: 0;
   width: 100%;
-  min-height: 46px;
+  min-height: 42px;
   text-overflow: ellipsis;
 }
 .usage-status {
   min-height: 20px;
-  margin: 14px 0 22px;
+  margin: 12px 0 18px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
@@ -74,16 +76,16 @@
 .usage-metrics {
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.65fr);
-  gap: 16px;
+  gap: 12px;
 }
 .usage-total {
   display: flex;
   flex-direction: column;
   justify-content: center;
   min-width: 0;
-  border-radius: 16px;
-  padding: 30px;
-  background: #183e2c;
+  border-radius: 14px;
+  padding: 24px;
+  background: #18342a;
   color: #fff;
 }
 .usage-kicker {
@@ -94,7 +96,7 @@
 .usage-total-value {
   display: block;
   margin: 12px 0 6px;
-  font-size: clamp(38px, 4vw, 58px);
+  font-size: clamp(36px, 4vw, 52px);
   font-weight: 650;
   line-height: 1.08;
   letter-spacing: -0.055em;
@@ -120,9 +122,9 @@
 }
 .usage-card {
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 12px;
   background: #fff;
-  padding: 24px;
+  padding: 20px;
 }
 .usage-card h2 {
   font-size: 16px;
@@ -131,8 +133,8 @@
   margin: 0;
 }
 .usage-token-card {
-  padding: 19px 22px;
-  border-radius: 13px;
+  padding: 16px 18px;
+  border-radius: 12px;
 }
 .usage-token-card h2 {
   font-size: 12px;
@@ -228,7 +230,7 @@
 }
 .usage-table th,
 .usage-table td {
-  padding: 16px 9px;
+  padding: 12px 9px;
   text-align: right;
   vertical-align: top;
   border-bottom: 1px solid var(--line);
@@ -236,7 +238,7 @@
   overflow-wrap: anywhere;
 }
 .usage-table thead th {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -274,7 +276,7 @@
   display: none;
 }
 .usage-coverage {
-  background: #eff4f0;
+  background: #f8faf7;
 }
 .usage-coverage-summary {
   font-size: 13px;
@@ -292,8 +294,9 @@
 }
 .usage-loading,
 .usage-error {
-  padding: 48px 24px;
-  border-radius: 16px;
+  padding: 32px 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: #fff;
   color: var(--muted);
   text-align: center;
@@ -302,7 +305,7 @@
   max-width: 60ch;
   margin: 12px auto 22px;
 }
-@media (max-width: 1100px) {
+@media (max-width: 950px) {
   .usage-projects .usage-table,
   .usage-table tbody {
     display: block;

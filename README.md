@@ -207,7 +207,15 @@ For new managed projects, that ticket must be a native child of a currently
 approved epic. **Activate ready crew** can enable the ready PMs and coding together;
 it does not approve any epic. [Complete workflow and recovery diagrams →](docs/AUTONOMOUS_WORKFLOW.md)
 
-Choose **Adopt a PM Gremlin** on your project's page. Describe what it should
+New projects and existing projects without PMs offer **Find my gremlins**. AI
+investigates the repository and suggests one to five PMs with distinct product
+responsibilities, source evidence and complete editable briefs. Choose **Adopt**,
+review the brief and confirm; remaining suggestions stay available. This source
+investigation does not test the running app, create a generic starter PM or enable
+automation. [Connect an app and choose its crew →](docs/PROJECT_ONBOARDING.md)
+
+To define another responsibility yourself, choose **Adopt a PM Gremlin** on your
+project's page. Describe what it should
 take care of and choose **Meet my gremlin**, or **Write the brief myself**. AI fills
 blank fields and default controls with a suggested name, ID, grounded ownership,
 shared touchpoints, metric, UTC schedule, WIP limit, and complete product brief:

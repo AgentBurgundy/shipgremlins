@@ -9,10 +9,24 @@ does not ask for hosting or run a PM patrol against an empty repository.
 [When to bring in ShipGremlins →](WHEN_TO_USE.md)
 
 Start with `gremlins setup`, or `gremlins setup --lan` on a homelab server.
-An existing repository first opens **Inspect your app → Review setup → Meet your
-gremlin**. Review source-backed commands, confirm the settings you want, and
-adopt a PM before its first read-only Discovery. Neither that first assignment
-nor adoption requires hosting. See [your first adoption](SETUP.md#your-first-adoption).
+An existing repository opens **Investigate → Choose your crew → Adopt**. The
+background setup investigation recommends one to five PMs with distinct product
+areas, source evidence and editable briefs. It does not create a generic Product
+Understanding PM. Choose **Adopt** on the suggestions you want, review the filled-in
+brief, and confirm. Remaining suggestions stay available after the first adoption;
+already adopted roles are identified so you do not create duplicates.
+
+An existing project without PMs has the same **Find my gremlins** action. This
+investigation reads bounded repository source and saved setup context; it does
+not claim a browser walkthrough or successful sign-in. Source account access,
+Claude and the setup runtime must be ready, but no PM, Linear project or hosting
+connection is needed to discover a crew. Old setup reports without complete PM
+briefs can be analyzed again. Manual adoption remains available.
+
+Review source-backed commands separately in project setup. Adoption does not
+enable schedules or approved-ticket pickup. Connect the remaining services and
+start a PM's first read-only Discovery when ready. See
+[your first adoption](SETUP.md#your-first-adoption).
 
 Open the project's **Environment** when browser testing is useful. A Setup
 Gremlin can read bounded source at an exact commit and recommend a test strategy;
