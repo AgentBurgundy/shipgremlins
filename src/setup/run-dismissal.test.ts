@@ -67,7 +67,7 @@ describe("run dialog dismissal", () => {
   it("continues refreshing an open run over a project and stops when dismissed", () => {
     const context = {
       selectedJobId: "job-one",
-      sessionToken: "fixture-session",
+      auth: { isAuthenticated: () => true },
       restarting: false,
       jobOutputSuspended: false,
       document: { hidden: false },

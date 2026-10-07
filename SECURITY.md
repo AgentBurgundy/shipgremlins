@@ -16,6 +16,8 @@ Do not attach active tokens, raw browser sessions, unredacted logs, or private r
 
 ## Relevant trust boundaries
 
+- The dashboard controls agents and provider credentials. Treat its password, private CLI launch link and remembered browser sessions as administrator access. Browser sessions can be revoked; changing the password revokes existing browser sessions.
+- Use HTTPS for hosted dashboard access. Trusted-LAN HTTP requires explicit owner opt-in and does not encrypt passwords or cookies. Do not expose that mode to the internet. The configured HTTPS origin and local reverse-proxy boundary are explicit; forwarded headers are not an authentication mechanism.
 - Run browser exploration against isolated test environments with synthetic data and restricted accounts.
 - Keep provider credentials in CI secrets or your secret manager. `.env.example` contains names only; `.env` is local and is not loaded automatically.
 - Keep completion manifests under operator control, outside repositories and paths that worker agents can edit. A manifest authorizes a finite deliverable scope.

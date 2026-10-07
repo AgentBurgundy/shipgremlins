@@ -162,7 +162,7 @@ describe("coding agent launcher", () => {
           $,
           formsLocked: false,
           runnerRequestBusy: false,
-          sessionToken: "session",
+          auth: { isAuthenticated: () => true },
           jobHistory: [],
           currentStatus: {
             projects: [{ name: "app", workflow: { kind: workflow } }],

@@ -94,7 +94,11 @@ function fixture(provider: Provider, values = new Map<string, string>()) {
     window,
     sessionStorage: storage,
     URL,
-    sessionToken: "synthetic-session",
+    auth: {
+      isAuthenticated: () => true,
+      prepareRedirect: () =>
+        storage.setItem("synthetic-session-key", "synthetic-session"),
+    },
     sessionKey: "synthetic-session-key",
     serviceEnvelopes: { linear: "", vercel: "" },
     serviceSelection,

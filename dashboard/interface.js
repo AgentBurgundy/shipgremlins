@@ -54,6 +54,15 @@
   const settings = document.getElementById("configuration");
   if (settings)
     surface(settings, "Workspace settings", [
+      ...(document.getElementById("account-access")
+        ? [
+            {
+              key: "account",
+              label: "Account access",
+              panel: document.getElementById("account-access"),
+            },
+          ]
+        : []),
       {
         key: "updates",
         label: "Updates",

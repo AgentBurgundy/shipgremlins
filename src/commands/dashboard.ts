@@ -1,4 +1,9 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  createDashboardAuth,
+  dashboardAuthTransport,
+  DashboardAuthError,
+} from "../dashboardAuth/index.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { createUsage } from "../usage/index.ts";
 import { currentChanges } from "../improvements/currentChanges.ts";
@@ -399,6 +404,7 @@ export function createDashboardServer(
       );
   }
   // Update checks are explicit; opening the static page never makes a network request.
+  const dashboardAuth = createDashboardAuth({ root, bootstrap: session });
   let updater = options.updater;
   const updates = () =>
     (updater ??= createUpdater({ configurationRoot: root, packageRoot }));
@@ -1819,16 +1825,19 @@ export function createDashboardServer(
         throw new RequestError(404, "Unknown remote worker action.");
       }
       if (url.pathname.startsWith("/api/")) {
-        const supplied = Buffer.from(req.headers.authorization ?? "");
-        const expected = Buffer.from(`Bearer ${session}`);
+        const transport = dashboardAuthTransport(
+          req,
+          origin,
+          publicOrigin?.origin,
+          networkHosts,
+        );
         if (
-          supplied.length !== expected.length ||
-          !timingSafeEqual(supplied, expected)
+          await dashboardAuth.handle(req, res, url.pathname, transport, () =>
+            body(req, 4096),
+          )
         )
-          throw new RequestError(
-            401,
-            "Open the dashboard link printed by your CLI.",
-          );
+          return;
+        dashboardAuth.require(req, transport);
         // Keep account replacement and preview credential setup mutually exclusive.
         // Reserve before reading request bodies so neither operation can slip in
         // while the other awaits configuration or provider access.
@@ -5221,6 +5230,13 @@ export function createDashboardServer(
         throw new RequestError(404, "Not found.");
       }
     } catch (error) {
+      if (error instanceof DashboardAuthError) {
+        if (error.status === 429) res.setHeader("Retry-After", "60");
+        if (!res.headersSent)
+          json(res, error.status, { error: error.message, code: error.code });
+        else res.end();
+        return;
+      }
       const status =
         error instanceof RequestError ||
         error instanceof LocalRunnerError ||
@@ -5337,10 +5353,31 @@ export async function runDashboard(
 ): Promise<number> {
   const { values, positionals } = parseFlags(args);
   const usage =
-    "Usage: gremlins dashboard [--lan] [--no-open] [--port PORT]\n  --lan: open on your private IPv4 network (default port 4311); prints links for other devices.\n  Default: loopback only, with an available port and automatic browser opening.";
+    "Usage: gremlins dashboard [--lan] [--no-open] [--port PORT]\n  --lan: open on your private IPv4 network (default port 4311); prints links for other devices.\n  --reset-password: revoke browser sessions and reset the password, then exit; requires local server access.\n  Default: loopback only, with an available port and automatic browser opening.";
   if (values.help === true || args.includes("-h")) {
     io.log(usage);
     return 0;
+  }
+  if (
+    values["reset-password"] === true &&
+    Object.keys(values).length === 1 &&
+    !positionals.length
+  ) {
+    try {
+      createDashboardAuth({
+        root,
+        bootstrap: randomBytes(32).toString("hex"),
+      }).resetPassword();
+      io.log(
+        "Dashboard password and remembered browser sessions reset. Provider connections and jobs are unchanged. Open the private link from gremlins status, or run gremlins dashboard, to set a new password.",
+      );
+      return 0;
+    } catch {
+      io.error(
+        "Dashboard password could not be reset. Check the server's private configuration directory and active authentication operations.",
+      );
+      return 1;
+    }
   }
   const lan = values.lan === true;
   const port =
