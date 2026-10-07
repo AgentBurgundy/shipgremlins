@@ -1,6 +1,10 @@
 # Linear and Vercel connection broker
 
-The official dashboard connects through `https://shipgremlins.ai/api/linear` and `/api/vercel`. Operators do not need to deploy this broker or register their own app. This directory publishes its source for review.
+The official dashboard connects through `https://shipgremlins.ai/api/linear` and
+`/api/vercel`. People running ShipGremlins locally do not need to deploy this
+broker or register their own app. The maintainer of the hosted connection service
+does need to register and configure the provider applications described below.
+This directory publishes the broker's source for review.
 
 `createOAuthBroker(provider)` exports a Node HTTP handler for `/connect`, `/authorize`, `/callback`, and `/status`. The production website imports the same module from `lib/provider-oauth.mjs` in its two Vercel function routes. It also serves the shared `slack-connect.css` and a connection privacy page.
 
@@ -16,7 +20,45 @@ Never put client secrets or state keys in the CLI distribution, source repositor
 
 Linear uses `actor=user`, `read,write`, and S256 PKCE. The broker relays only the authorization code; the controller exchanges and refreshes credentials directly with Linear. Callback: `https://shipgremlins.ai/api/linear/callback`.
 
-Vercel uses a connectable integration with read-only scopes for Integration Configuration, Deployments, Projects, Teams, and Current User. Callback: `https://shipgremlins.ai/api/vercel/callback`. Its confidential token exchange occurs in the broker, which immediately encrypts the token for the requesting instance without persisting it. Vercel tokens have no documented refresh flow; revoked or disabled installations must reconnect.
+Vercel uses a registered **community connectable integration**. Configure **Read**
+access for Integration Configuration, Projects, Teams and Current User; **Read/Write**
+for Deployments and the separate Project Protection Bypass permission. These
+support repository matching, existing deployment discovery and reviewed test
+Preview creation. The bypass scope does **not** enable community OAuth to create
+an automation bypass: Vercel currently permits integration-owned creation only
+for native integrations. General Projects write access, environment-variable
+access and domain access are not
+needed by the current implementation. The
+[permission and endpoint rationale](../docs/LINEAR_VERCEL_OAUTH.md#vercel)
+describes the boundary; do not describe this integration as read-only.
+
+Live setup confirmed that an authorized community installation receives
+`Only native integrations can create automation bypass.` from the protection
+bypass API even with its Read/Write scope approved. Treat this as a supported
+setup limitation, not a reason to repeatedly reconnect or request broader project
+permissions. Keep OAuth connected and have the project owner save one dedicated
+automation bypass in the field setup prepared for this project under
+**Connections → Project access → Vercel preview access**. Setup saves the secret
+reference automatically; manual configuration must use that same reference.
+Deployment Protection stays enabled. Native integrations or a manual API token
+with project protection administration access can support managed generation;
+community OAuth cannot. The manual-token alternative uses the Default connection
+and requires explicitly disconnecting its saved OAuth authorization first. See
+the [protected-preview setup instructions](../docs/LINEAR_VERCEL.md#vercel-preview-access).
+
+Set the integration's callback to
+`https://shipgremlins.ai/api/vercel/callback`. Its registered slug must match
+`SG_VERCEL_INTEGRATION_SLUG`; deploy its client ID, client secret and a separate
+state key to the hosted broker's server environment. Deploying the website or
+setting a slug alone does not create a Vercel integration. A missing registration
+or broker credential is an operator setup problem. End users instead click
+**Connect Vercel**, select their team and permitted projects, and approve that
+installation; they never supply the integration client secret. Existing grants
+must approve any scope upgrade.
+
+The confidential token exchange occurs in the broker, which immediately encrypts
+the token for the requesting instance without persisting it. Vercel tokens have
+no documented refresh flow; revoked or disabled installations must reconnect.
 
 Pairing requests are ten-minute encrypted envelopes. Confirmation requires the canonical site Origin and creates an HttpOnly, Secure, SameSite=Lax browser cookie. Callback state verifies that cookie. Responses use provider-specific AES-GCM AAD and an instance-generated encryption key; credentials are returned only inside an encrypted fragment. Return destinations must be an HTTPS origin or a loopback/private IPv4 HTTP origin with root path and no credentials/query/fragment. The local dashboard additionally validates its session, pending nonce, and expiry before saving anything.
 

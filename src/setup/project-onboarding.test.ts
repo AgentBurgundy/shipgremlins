@@ -597,6 +597,227 @@ describe("automatic Vercel environment setup", () => {
     expect(f.api).toHaveBeenCalledTimes(1);
     f.panel.destroy();
   });
+  it("retries Vercel sign-in from its failure card instead of refreshing unrelated environment status", async () => {
+    const f = fixture(
+        vi.fn(async () => ({ ...state(), environmentSetupSupported: true })),
+        () => ({ serviceConnections: [] }),
+      ),
+      root = new Element();
+    const failure = Object.assign(
+      new Error(
+        "ShipGremlins’ hosted Vercel sign-in service needs configuration. The ShipGremlins operator must finish that setup.",
+      ),
+      { code: "oauth_unavailable", availabilityReason: "not_configured" },
+    );
+    f.onConnectHosting.mockRejectedValueOnce(failure);
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await walk(root)
+      .find((item) => item.textContent === "Connect Vercel")!
+      .fire("click");
+    expect(text(automatic(root))).toContain("ShipGremlins operator");
+    expect(text(automatic(root))).toContain(
+      "prepare private access and verify it from your runner",
+    );
+    expect(
+      walk(root).filter((item) => item.textContent === "Refresh status"),
+    ).toHaveLength(0);
+    expect(
+      walk(automatic(root)).filter(
+        (item) => item.textContent === "Connect Vercel",
+      ),
+    ).toHaveLength(0);
+    const retry = walk(automatic(root)).find(
+      (item) => item.textContent === "Check Vercel sign-in again",
+    )!;
+    expect(retry.disabled).toBe(false);
+    let finish!: () => void;
+    f.onConnectHosting.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const retrying = retry.fire("click");
+    expect(
+      walk(automatic(root)).find(
+        (item) => item.textContent === "Checking Vercel sign-in…",
+      )?.disabled,
+    ).toBe(true);
+    expect(f.panel.isBusy()).toBe(false);
+    finish();
+    await retrying;
+    expect(f.onConnectHosting).toHaveBeenCalledTimes(2);
+    expect(f.api).toHaveBeenCalledTimes(1);
+    expect(text(automatic(root))).not.toContain("ShipGremlins operator");
+    f.panel.destroy();
+  });
+  it("shows known hosted sign-in configuration failure without asking users to connect first", async () => {
+    const f = fixture(
+        vi.fn(async () => ({ ...state(), environmentSetupSupported: true })),
+        () => ({
+          serviceConnections: [
+            {
+              id: "default",
+              provider: "vercel",
+              connected: false,
+              available: false,
+              availabilityReason: "not_configured",
+              message:
+                "The ShipGremlins operator must configure hosted Vercel sign-in.",
+            },
+          ],
+        }),
+      ),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(
+      walk(automatic(root)).find(
+        (item) => item.textContent === "Connect Vercel",
+      ),
+    ).toBeUndefined();
+    expect(text(automatic(root))).toContain("ShipGremlins operator");
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Check Vercel sign-in again")!
+      .fire("click");
+    expect(f.onConnectHosting).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ name: "shop" }),
+      "default",
+    );
+    expect(f.api).toHaveBeenCalledTimes(1);
+    f.panel.destroy();
+  });
+  it("clears a prior sign-in failure when the saved Vercel account becomes connected elsewhere", async () => {
+    let connected = false;
+    const f = fixture(
+        vi.fn(async () => ({
+          ...vercelState(),
+          environmentSetupSupported: true,
+        })),
+        () => ({
+          serviceConnections: [
+            { id: "default", provider: "vercel", connected },
+          ],
+        }),
+      ),
+      root = new Element();
+    f.onConnectHosting.mockRejectedValueOnce(
+      new Error("The sign-in service is unavailable."),
+    );
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Connect Vercel")!
+      .fire("click");
+    expect(text(automatic(root))).toContain(
+      "The sign-in service is unavailable.",
+    );
+    connected = true;
+    expect(() => f.panel.syncConnections()).not.toThrow();
+    expect(automatic(root).hidden).toBe(true);
+    await f.panel.refresh("shop");
+    expect(automatic(root).hidden).toBe(true);
+    expect(
+      walk(root).find((item) => item.className === "onboarding-message")
+        ?.children,
+    ).toHaveLength(0);
+    expect(f.panel.isDirty()).toBe(false);
+    f.panel.destroy();
+  });
+  it("opens manual hosting despite a known Vercel sign-in outage without an environment setup result", async () => {
+    const f = fixture(
+        vi.fn(async () => ({ ...state(), environmentSetupSupported: true })),
+        () => ({
+          serviceConnections: [
+            {
+              id: "default",
+              provider: "vercel",
+              connected: false,
+              available: false,
+              availabilityReason: "not_configured",
+              message:
+                "The ShipGremlins operator must configure hosted Vercel sign-in.",
+            },
+          ],
+        }),
+      ),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const manual = walk(automatic(root)).find(
+      (item) => item.textContent === "Use another host or local environment",
+    )!;
+    expect(() => manual.fire("click")).not.toThrow();
+    expect(automatic(root).hidden).toBe(true);
+    expect(
+      walk(root).find((item) => item.className === "onboarding-choice")?.hidden,
+    ).toBe(false);
+    expect(() => f.panel.syncConnections()).not.toThrow();
+    expect(automatic(root).hidden).toBe(true);
+    expect(f.onConnectHosting).not.toHaveBeenCalled();
+    expect(f.api).toHaveBeenCalledTimes(1);
+    f.panel.destroy();
+  });
+  it("discards an old account failure after the saved Vercel target changes", async () => {
+    let account = "old-account";
+    const f = fixture(
+        vi.fn(async () => ({
+          ...vercelState({
+            connectionId: account,
+            projectId: `project-${account}`,
+          }),
+          environmentSetupSupported: true,
+        })),
+        () => ({
+          serviceConnections: [
+            {
+              id: "old-account",
+              provider: "vercel",
+              connected: false,
+              needsReconnect: true,
+            },
+            {
+              id: "new-account",
+              provider: "vercel",
+              connected: false,
+              needsReconnect: true,
+            },
+          ],
+        }),
+      ),
+      root = new Element();
+    f.onConnectHosting.mockRejectedValueOnce(
+      new Error("The old account's authorization failed."),
+    );
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Reconnect Vercel")!
+      .fire("click");
+    expect(text(automatic(root))).toContain(
+      "old account's authorization failed",
+    );
+    account = "new-account";
+    await f.panel.refresh("shop");
+    expect(text(automatic(root))).not.toContain(
+      "old account's authorization failed",
+    );
+    expect(
+      walk(automatic(root)).find(
+        (item) => item.textContent === "Retry Vercel sign-in",
+      ),
+    ).toBeUndefined();
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Reconnect Vercel")!
+      .fire("click");
+    expect(f.onConnectHosting.mock.calls.map(([, id]) => id)).toEqual([
+      "old-account",
+      "new-account",
+    ]);
+    expect(f.panel.isDirty()).toBe(false);
+    f.panel.destroy();
+  });
   it("reconnects the account that actually failed, then resumes setup once without reconnecting the healthy default", async () => {
     let expired = true;
     const blocked = () => ({
@@ -863,6 +1084,72 @@ describe("automatic Vercel environment setup", () => {
     expect(
       api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
     ).toHaveLength(1);
+    f.panel.destroy();
+  });
+  it("guides the one-time protected-preview secret setup and verifies it without reconnecting Vercel", async () => {
+    const blocked = {
+      ...managed({
+        status: "needs_input",
+        step: "connect_access",
+        action: "manage_credentials",
+        message:
+          "Your Vercel account is connected. Protected previews need a one-time Protection Bypass for Automation secret saved in Connections → Project access.",
+      }),
+      environment: vercelState({
+        bypassSecret: "VERCEL_BYPASS_EXISTING_REFERENCE",
+      }).environment,
+    };
+    const api = vi.fn(async (path: string, _body?: unknown) =>
+      path.endsWith("/prepare-environment")
+        ? {
+            ...blocked,
+            environmentSetup: { status: "ready", step: "test_access" },
+            environment: {
+              ...blocked.environment,
+              verification: { status: "passed" },
+            },
+          }
+        : blocked,
+    );
+    const f = fixture(api, () => ({
+        serviceConnections: [
+          { provider: "vercel", id: "default", connected: true },
+        ],
+      })),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(automatic(root))).toContain(
+      "One-time access for your protected preview",
+    );
+    expect(text(automatic(root))).toContain("“Vercel preview access” for shop");
+    expect(text(automatic(root))).not.toContain("Reconnect Vercel");
+    expect(text(automatic(root))).not.toContain("Try setup again");
+    expect(text(automatic(root))).not.toContain("Add test credentials");
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Add preview access secret")!
+      .fire("click");
+    expect(f.window.dashboardPages.navigate).toHaveBeenCalledWith(
+      "/connections#project-access",
+    );
+    await f.panel.refresh("shop");
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(0);
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Verify preview access")!
+      .fire("click");
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toEqual([
+      [
+        "/api/projects/shop/onboarding/prepare-environment",
+        { configurationRevision: "config-1", force: true },
+      ],
+    ]);
+    expect(f.onConnectHosting).not.toHaveBeenCalled();
+    expect(f.panel.isDirty()).toBe(false);
+    expect(automatic(root).hidden).toBe(true);
     f.panel.destroy();
   });
 

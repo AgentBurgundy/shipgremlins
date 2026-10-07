@@ -34,7 +34,7 @@ type Journal = {
   secretName: string;
   previousRevision: string;
   configurationRevision: string;
-  state: "prepared" | "sent" | "connected";
+  state: "prepared" | "sent" | "connected" | "manual_required";
 };
 const active = new Map<
   string,
@@ -66,6 +66,40 @@ const connected = (): VercelAccessResult => ({
   message:
     "Vercel preview access is connected. Deployment Protection remains enabled. Test access to verify this preview and its app sign-in.",
 });
+const manualAccessRequired = () =>
+  new VercelSetupError(
+    "Vercel requires a native integration to create automation bypasses. This connection can still discover projects and create test previews. Add a dedicated Protection Bypass for Automation secret in Connections, then test preview access.",
+    400,
+    "access_manual_required",
+  );
+
+async function nativeIntegrationRequired(response: Response): Promise<boolean> {
+  // Match one provider refusal, never return or retain its body or diagnostics.
+  const reader = response.body?.getReader();
+  if (!reader) return false;
+  try {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.length;
+      if (size > 16_384) return false;
+      chunks.push(part.value);
+    }
+    const error = record(
+      record(JSON.parse(Buffer.concat(chunks).toString("utf8"))).error,
+    );
+    return (
+      error.code === "bad_request" &&
+      error.message === "Only native integrations can create automation bypass."
+    );
+  } catch {
+    return false;
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
 
 function writeJournal(file: string, value: Journal) {
   assertNoSymlinks(file);
@@ -119,7 +153,7 @@ function readJournal(file: string, scope: string): Journal | undefined {
     value.secretName !== `VERCEL_BYPASS_${scope.toUpperCase()}` ||
     !revision.test(value.previousRevision) ||
     !revision.test(value.configurationRevision) ||
-    !["prepared", "sent", "connected"].includes(value.state)
+    !["prepared", "sent", "connected", "manual_required"].includes(value.state)
   )
     throw new Error();
   return value;
@@ -357,6 +391,13 @@ export function createVercelAccess(
               );
             }
             if (!response.ok) {
+              if (
+                method === "PATCH" &&
+                credential.method === "oauth" &&
+                response.status === 400 &&
+                (await nativeIntegrationRequired(response))
+              )
+                throw manualAccessRequired();
               await response.body?.cancel().catch(() => {});
               throw new VercelSetupError(
                 [401, 403].includes(response.status)
@@ -519,6 +560,20 @@ export function createVercelAccess(
           )
             throw conflict();
           checkCurrent(initial.file.revision);
+          if (journal?.state === "manual_required") {
+            // A user may fill the saved reference after this definite refusal.
+            // Accept it only as unverified input for the normal browser test;
+            // a failed test must return to the one-time access action, not mint.
+            if (
+              !input.repair &&
+              initial.target.bypassSecret &&
+              token(guardedValue)
+            ) {
+              await checkConnection(initial.file.revision);
+              return connected();
+            }
+            throw manualAccessRequired();
+          }
           if (legacy && !recoveredLegacy) {
             if (legacy.state === "sent") throw ambiguous();
             if (!input.repair && !token(guardedValue))
@@ -562,8 +617,16 @@ export function createVercelAccess(
             };
           const repairing =
             input.repair || managed || journal?.state === "connected";
+          // A rejected/not-yet-sent operation can resume its exact saved intent.
+          // Missing metadata still proves nothing about sent/completed work or
+          // any existing credential that a repair might replace.
+          const retryingPrepared =
+            journal?.state === "prepared" &&
+            initial.target.bypassSecret === journal.secretName &&
+            !token(guardedValue);
           if (
             repairing &&
+            !retryingPrepared &&
             (!data.protectionBypass ||
               typeof data.protectionBypass !== "object" ||
               Array.isArray(data.protectionBypass))
@@ -645,9 +708,14 @@ export function createVercelAccess(
             } catch (error) {
               if (
                 error instanceof VercelSetupError &&
-                error.code === "provider_rejected"
+                ["provider_rejected", "access_manual_required"].includes(
+                  error.code,
+                )
               ) {
-                journal.state = "prepared";
+                journal.state =
+                  error.code === "access_manual_required"
+                    ? "manual_required"
+                    : "prepared";
                 writeJournal(file, journal);
               }
               throw error;

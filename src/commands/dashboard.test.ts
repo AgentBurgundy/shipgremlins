@@ -658,6 +658,30 @@ describe("local dashboard HTTP boundary", () => {
           connection,
       });
       expect((await fetch(`${url}/api/${provider}`)).status).toBe(401);
+      expect((await fetch(`${url}/api/${provider}?refresh=1`)).status).toBe(
+        401,
+      );
+      expect(connection.status).not.toHaveBeenCalled();
+      expect(
+        (await fetch(`${url}/api/${provider}?refresh=1`, { headers: auth }))
+          .status,
+      ).toBe(200);
+      expect(connection.status).toHaveBeenLastCalledWith({
+        refreshAvailability: true,
+      });
+      for (const query of [
+        "refresh=0",
+        "refresh=1&refresh=1",
+        "refresh=1&unexpected=value",
+      ]) {
+        expect(
+          (await fetch(`${url}/api/${provider}?${query}`, { headers: auth }))
+            .status,
+        ).toBe(400);
+      }
+      expect(
+        (await post(`${url}/api/${provider}/connect?refresh=1`, {})).status,
+      ).toBe(400);
       expect(
         (
           await post(
@@ -888,6 +912,22 @@ describe("local dashboard HTTP boundary", () => {
       ).toBe(200);
       expect(second.connect).toHaveBeenCalledWith(url + "/");
       expect(original.connect).not.toHaveBeenCalled();
+      expect(
+        (
+          await fetch(
+            `${url}/api/${provider}?connection=client-two&refresh=1`,
+            { headers: auth },
+          )
+        ).status,
+      ).toBe(200);
+      expect(second.status).toHaveBeenLastCalledWith({
+        refreshAvailability: true,
+      });
+      expect(
+        vi
+          .mocked(original.status)
+          .mock.calls.some(([options]) => options?.refreshAvailability),
+      ).toBe(false);
       expect(
         (
           await post(`${url}/api/${provider}/complete?connection=client-two`, {

@@ -116,6 +116,21 @@ creating missing resources.
 
 ## Vercel preview access
 
+Start with **Connect Vercel**. The ShipGremlins connection-service operator
+registers the integration and manages its client secret; you select your Vercel
+account/team and the existing projects it may access. You do not need to create
+an integration or enter a client ID. If browser setup is unavailable because the
+hosted service is not configured, the operator must finish that setup. The
+advanced manual-token option remains available.
+
+The connection reads project, deployment and account information. Deployment
+write access lets setup create reviewed test Previews. Protected previews need a
+separate automation bypass: Vercel currently rejects creating one through a
+community OAuth integration, even when its protection-bypass permission is
+approved. Reconnecting or approving that scope again will not remove this
+restriction. General project settings, environment-variable and domain writes
+are not needed. [Exact integration permissions and operator setup →](LINEAR_VERCEL_OAUTH.md#vercel)
+
 For a manual token, open the Vercel card in Connections and use its link to
 [Vercel Tokens](https://vercel.com/account/tokens). Name the token ShipGremlins,
 select the team or project you need, choose an expiration, and save it in the
@@ -128,19 +143,29 @@ Choose the Vercel account/team and projects available to the integration. Open *
 Connecting Vercel alone creates nothing. If there is no test deployment, **Create a test preview** prepares a reviewed branch and commit, then explicitly creates a Preview using a connection with deployment write access. Existing branches are preserved. Preview variables must already point to safe test services; ShipGremlins does not copy production secrets or create test accounts. Ask the Setup Gremlin for contextual guidance. [Vercel environment flow and limits →](VERCEL_ENVIRONMENTS.md)
 
 **Vercel preview access is a separate credential from the account token.** Choose
-**Connect preview access** in the project's Environment page. ShipGremlins checks
-Deployment Protection, creates or reuses its dedicated automation bypass via the
-selected Vercel connection, and stores the value privately. If the environment
-has unsaved changes, **Save & connect preview access** saves them first. Public
-previews need no new secret. Then choose **Test environment** to verify access.
+**Connect preview access** in the project's Environment page to check Deployment
+Protection. Public previews need no new secret. For the community OAuth
+connection, keep OAuth connected and supply a dedicated bypass once:
 
-Vercel's bypass grants access across the Vercel project's deployments until
-revoked; protection remains enabled. Your application's own sign-in is separate.
-If the connection cannot manage protection, reconnect with the needed permission
-or use **Advanced preview access**: generate a secret under Vercel's **Settings →
-Deployment Protection → Protection Bypass for Automation**, select its secret
-reference, and save the value in **Connections → Project access → Vercel preview
-access**. See [Vercel's automation bypass guide](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation).
+1. In the selected Vercel project, open **Settings → Deployment Protection →
+   Protection Bypass for Automation** and generate a dedicated ShipGremlins secret.
+2. Follow setup's link to **Connections → Project access → Vercel preview access**
+   and save the value in the field prepared for this project. Setup has already
+   saved its secret reference. If configuring access manually instead, select
+   that same reference under **Advanced preview access** and save the environment.
+3. Return to the environment and choose **Test environment**. Later runs reuse the
+   saved secret; replace it in Connections if it is revoked or rotated.
+
+A native Vercel integration with the required permissions, or a manual API token
+belonging to an account allowed to manage the project's protection, can let
+ShipGremlins create and recover its managed bypass automatically. The manual
+token path is supported only by the Default connection; saved OAuth takes
+precedence until that authorization is explicitly disconnected. Supplying the
+dedicated bypass above avoids changing a working OAuth connection.
+
+The bypass applies across that Vercel project's deployments until revoked.
+Deployment Protection stays enabled, and your application's own sign-in still
+needs its separate test account. See [Vercel's automation bypass guide](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation).
 
 ## Credentials and recovery
 
@@ -148,7 +173,16 @@ Linear uses OAuth with PKCE, and the controller exchanges and refreshes tokens l
 
 Encrypted default provider state and its local key live together under `.run/oauth/linear/` and `.run/oauth/vercel/`. Named connections have separate state, keys, pending authorizations, and job reservations in each provider's `connections/CONNECTION_ID/` subdirectory. Back up each complete provider directory privately. Do not copy encrypted state without its key. Manual keys remain in the configuration `.env`; only the default connection supports that fallback. Saved OAuth takes precedence, and a broken OAuth connection does not silently fall back to an older manual key.
 
-The controller uses Vercel tokens for deployment lookup; they are not included in the Docker job payload. Linear access tokens are supplied to workers so PMs can file proposals. Refresh tokens and provider client secrets stay out of worker payloads. Linear and source-control credentials have durable 50-minute job reservations for the 45-minute worker limit; new work waits when refreshing would invalidate a running job's credential. Reservations are released after completion or a failed preparation.
+The controller uses Vercel tokens for project and deployment lookup, reviewed
+Preview creation and, when that credential type permits it, managed automation
+bypass setup; account tokens are not included in the Docker job payload. A
+selected preview's bypass credential is separate and is supplied privately for
+browser access. Linear access tokens are
+supplied to workers so PMs can file proposals. Refresh tokens and provider client
+secrets stay out of worker payloads. Linear and source-control credentials have
+durable 50-minute job reservations for the 45-minute worker limit; new work waits
+when refreshing would invalidate a running job's credential. Reservations are
+released after completion or a failed preparation.
 
 Disconnecting or reconnecting can require active jobs to finish first. Provider revocation can still interrupt a job; review its evidence before retrying. Neither a successful worker nor a draft PR marks a Linear ticket Done. Done remains tied to reviewed production delivery.
 

@@ -133,7 +133,9 @@ function fixture(oauth = false, inferTeam = false) {
     [];
   let losePatch = false,
     hideCreated = false,
+    omitBypassOnRead = false,
     patchStatus = 200;
+  let patchError: Record<string, unknown> | undefined;
   let afterPatch: (() => void) | undefined;
   let beforeGet: (() => Promise<void> | void) | undefined;
   let nextGetStatus = 200;
@@ -152,6 +154,10 @@ function fixture(oauth = false, inferTeam = false) {
       if (method === "GET") {
         expect(url.pathname).toBe("/v9/projects/prj_app");
         await beforeGet?.();
+        if (omitBypassOnRead) {
+          const { protectionBypass: _omitted, ...visible } = data;
+          return response(visible, nextGetStatus);
+        }
         return response(data, nextGetStatus);
       }
       expect(method).toBe("PATCH");
@@ -165,7 +171,7 @@ function fixture(oauth = false, inferTeam = false) {
       });
       if (patchStatus !== 200)
         return response(
-          { error: { message: `${SECRET} ${TOKEN}` } },
+          { error: patchError ?? { message: `${SECRET} ${TOKEN}` } },
           patchStatus,
         );
       if (!hideCreated) {
@@ -218,6 +224,13 @@ function fixture(oauth = false, inferTeam = false) {
     },
     status: (value: number) => {
       patchStatus = value;
+    },
+    reject: (error: Record<string, unknown>, status = 400) => {
+      patchStatus = status;
+      patchError = error;
+    },
+    omitBypassOnRead: () => {
+      omitBypassOnRead = true;
     },
     getStatus: (value: number) => {
       nextGetStatus = value;
@@ -737,6 +750,156 @@ describe("Vercel preview access", () => {
     ).rejects.toMatchObject({ code: "ambiguous_access" });
     expect(f.patchCalls()).toHaveLength(1);
     expect(connections.readConnections(root)[ref()]).toBeUndefined();
+  });
+
+  it("persists the native-integration restriction without exposing diagnostics or retrying creation", async () => {
+    const f = fixture(true),
+      rev = revision();
+    f.omitBypassOnRead();
+    f.reject({
+      code: "bad_request",
+      message: "Only native integrations can create automation bypass.",
+      diagnostic: `${SECRET} ${TOKEN}`,
+    });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const error = await f
+        .create()
+        .connect("app", { configurationRevision: rev })
+        .catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        code: "access_manual_required",
+        status: 400,
+        message: expect.stringContaining(
+          "Add a dedicated Protection Bypass for Automation secret",
+        ),
+      });
+      expect(String(error)).not.toContain(SECRET);
+      expect(String(error)).not.toContain(TOKEN);
+    }
+    expect(f.patchCalls()).toHaveLength(1);
+    expect(JSON.parse(journals()[0]!.text).state).toBe("manual_required");
+    expect(JSON.stringify(journals())).not.toContain(SECRET);
+    expect(JSON.stringify(journals())).not.toContain(TOKEN);
+    expect(ref()).toMatch(/^VERCEL_BYPASS_[A-F0-9]{64}$/);
+    expect(connections.readConnections(root)[ref()]).toBeUndefined();
+  });
+
+  it("accepts a one-time owner-supplied secret at the reserved reference for browser verification", async () => {
+    const f = fixture(true);
+    f.omitBypassOnRead();
+    f.reject({
+      code: "bad_request",
+      message: "Only native integrations can create automation bypass.",
+    });
+    await expect(
+      f.create().connect("app", { configurationRevision: revision() }),
+    ).rejects.toMatchObject({ code: "access_manual_required" });
+    const reference = ref(),
+      rev = revision(),
+      receipt = journals();
+    connections.saveConnections(root, {
+      [reference]: "owner-provided-dedicated-secret",
+    });
+    expect(
+      await f.create().connect("app", { configurationRevision: rev }),
+    ).toMatchObject({
+      status: "connected",
+      message: expect.stringContaining("Test access to verify"),
+    });
+    expect(config().verified).toBeNull();
+    expect(revision()).toBe(rev);
+    expect(journals()).toEqual(receipt);
+    expect(connections.readConnections(root)[reference]).toBe(
+      "owner-provided-dedicated-secret",
+    );
+    // A subsequent real browser rejection must prompt for the right secret,
+    // never repeat an unsupported API operation or replace the supplied value.
+    await expect(
+      f.create().connect("app", { configurationRevision: rev, repair: true }),
+    ).rejects.toMatchObject({ code: "access_manual_required" });
+    expect(f.patchCalls()).toHaveLength(1);
+    expect(connections.readConnections(root)[reference]).toBe(
+      "owner-provided-dedicated-secret",
+    );
+  });
+
+  it.each([
+    [
+      false,
+      "bad_request",
+      "Only native integrations can create automation bypass.",
+      "",
+    ],
+    [
+      true,
+      "unknown_code",
+      "Only native integrations can create automation bypass.",
+      "",
+    ],
+    [
+      true,
+      "bad_request",
+      `Only native integrations can create automation bypass. ${TOKEN}`,
+      "",
+    ],
+    [
+      true,
+      "bad_request",
+      "Only native integrations can create automation bypass.",
+      "x".repeat(17_000),
+    ],
+  ] as const)(
+    "does not infer an integration restriction from unrelated or oversized errors (OAuth=%s, code=%s)",
+    async (oauth, code, message, details) => {
+      const f = fixture(oauth);
+      f.reject({ code, message, details });
+      await expect(
+        f.create().connect("app", { configurationRevision: revision() }),
+      ).rejects.toMatchObject({ code: "provider_rejected", status: 400 });
+      expect(JSON.parse(journals()[0]!.text).state).toBe("prepared");
+      expect(JSON.stringify(journals())).not.toContain(TOKEN);
+    },
+  );
+
+  it("allows a definite rejected prepared operation to retry when project metadata is filtered", async () => {
+    const f = fixture(true),
+      rev = revision();
+    f.omitBypassOnRead();
+    f.status(403);
+    await expect(
+      f.create().connect("app", { configurationRevision: rev }),
+    ).rejects.toMatchObject({ code: "provider_rejected" });
+    expect(JSON.parse(journals()[0]!.text).state).toBe("prepared");
+    expect(connections.readConnections(root)[ref()]).toBeUndefined();
+    f.status(200);
+    expect(
+      await f.create().connect("app", { configurationRevision: rev }),
+    ).toMatchObject({ status: "connected" });
+    expect(f.patchCalls()).toHaveLength(2);
+    expect(connections.readConnections(root)[ref()]).toBe(SECRET);
+    // This exception applies only to definitely unsent/rejected work, not
+    // ongoing reconciliation of a managed connected credential.
+    await expect(
+      f
+        .create()
+        .connect("app", { configurationRevision: revision(), repair: true }),
+    ).rejects.toMatchObject({ code: "access_unconfirmed" });
+    expect(f.patchCalls()).toHaveLength(2);
+  });
+
+  it("does not retry an uncertain sent operation when OAuth project metadata is filtered", async () => {
+    const f = fixture(true),
+      rev = revision();
+    f.omitBypassOnRead();
+    f.lose();
+    await expect(
+      f.create().connect("app", { configurationRevision: rev }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(JSON.parse(journals()[0]!.text).state).toBe("sent");
+    await expect(
+      f.create().connect("app", { configurationRevision: rev }),
+    ).rejects.toMatchObject({ code: "access_unconfirmed" });
+    expect(f.patchCalls()).toHaveLength(1);
   });
 
   it("sanitizes permission failures and allows a definite rejected PATCH to be retried", async () => {

@@ -135,6 +135,7 @@
       busy = false,
       chatting = false,
       connecting = false,
+      connectionFailure = null,
       selectedConnectionId = "",
       active = true,
       destroyed = false,
@@ -274,16 +275,25 @@
           !window.dashboardPages?.navigate("/connections#vercel-connection")
         )
           window.location.assign("/connections#vercel-connection");
+        connectionFailure = null;
       } catch (failure) {
         if (!destroyed) {
-          error.textContent =
-            failure.message ||
-            "Vercel authorization could not start. Your setup choices are kept.";
-          error.hidden = false;
+          connectionFailure = {
+            connectionId,
+            needsOperator:
+              failure.code === "oauth_unavailable" &&
+              failure.availabilityReason === "not_configured",
+            message:
+              failure.message ||
+              "Vercel sign-in could not start. Retry to check the connection and open Vercel.",
+          };
         }
       } finally {
         connecting = false;
-        if (!destroyed) controlState();
+        if (!destroyed) {
+          render();
+          controlState();
+        }
       }
     }
     function choose(candidate) {
@@ -352,6 +362,7 @@
         selected,
         connections,
         selectedConnectionId,
+        connectionFailure,
         Array.isArray(status?.serviceConnections),
       ]);
       if (signature === nextSignature) return;
@@ -390,10 +401,34 @@
         connections.find((item) => item.id === "default")?.id ||
         connections[0]?.id ||
         "default";
-      const connection = connections.find((item) => item.id === connectionId),
-        needsConnection =
+      const connection = connections.find((item) => item.id === connectionId);
+      if (
+        connection?.connected &&
+        !connection.needsReconnect &&
+        connectionFailure?.connectionId === connectionId
+      )
+        connectionFailure = null;
+      const needsConnection =
           Array.isArray(status?.serviceConnections) &&
-          (!connection?.connected || connection.needsReconnect);
+          (!connection?.connected || connection.needsReconnect),
+        unavailable =
+          needsConnection &&
+          connection?.available === false &&
+          ["not_configured", "provider_unavailable"].includes(
+            connection.availabilityReason,
+          ),
+        failure =
+          connectionFailure?.connectionId === connectionId
+            ? connectionFailure
+            : unavailable
+              ? {
+                  needsOperator:
+                    connection.availabilityReason === "not_configured",
+                  message:
+                    connection.message ||
+                    "Vercel sign-in is unavailable. Check again to continue.",
+                }
+              : null;
       if (needsConnection) {
         if (connections.length > 1)
           stage.append(
@@ -405,6 +440,7 @@
                 label: item.label || item.id,
               })),
               (value) => {
+                connectionFailure = null;
                 selectedConnectionId = value;
                 render();
               },
@@ -413,17 +449,43 @@
         stage.append(
           node(
             "h4",
-            connection?.needsReconnect
-              ? "Reconnect your Vercel account"
-              : "Connect your Vercel account",
+            failure
+              ? "A preview for your gremlins"
+              : connection?.needsReconnect
+                ? "Reconnect your Vercel account"
+                : "Connect your Vercel account",
           ),
           node(
             "p",
-            "We’ll find this repository’s test preview and check access for your gremlins after you authorize Vercel.",
+            "We’ll find this app’s preview, prepare private access and verify it from your runner so your gremlins can test real changes.",
             "vercel-setup-note",
           ),
+        );
+        if (failure) {
+          const problem = node("div", undefined, "environment-diagnosis");
+          problem.setAttribute("role", "alert");
+          problem.append(
+            node(
+              "h4",
+              failure.needsOperator
+                ? "Vercel sign-in needs setup."
+                : "Vercel sign-in couldn’t start.",
+            ),
+            node("p", failure.message),
+          );
+          stage.append(problem);
+        }
+        stage.append(
           action(
-            connection?.needsReconnect ? "Reconnect Vercel" : "Connect Vercel",
+            connecting
+              ? "Checking Vercel sign-in…"
+              : failure
+                ? failure.needsOperator
+                  ? "Check Vercel sign-in again"
+                  : "Retry Vercel sign-in"
+                : connection?.needsReconnect
+                  ? "Reconnect Vercel"
+                  : "Connect Vercel",
             () => connect(connectionId),
             true,
           ),

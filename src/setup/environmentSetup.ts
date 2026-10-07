@@ -145,6 +145,16 @@ const publicTarget = (value: VercelTarget): VercelTarget => ({
 // These errors are constructed by the controller, never from a provider's body.
 function trustedVercelFailure(error: unknown) {
   if (
+    error instanceof VercelSetupError &&
+    error.code === "access_manual_required"
+  )
+    return {
+      status: "needs_input" as const,
+      message:
+        "Your Vercel account is connected. Protected previews need a one-time access secret that this integration cannot create. Create a dedicated Protection Bypass for Automation secret in your Vercel project's Deployment Protection settings, save it in Connections → Project access, then verify preview access.",
+      action: "manage_credentials" as const,
+    };
+  if (
     !(error instanceof VercelSetupError) ||
     ![
       "vercel_setup",

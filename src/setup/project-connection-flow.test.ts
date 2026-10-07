@@ -17,14 +17,17 @@ type ReturnState = {
 };
 type Flow = {
   initializeService(provider: Provider): Promise<void>;
-  refreshService(provider: Provider): Promise<void>;
+  refreshService(
+    provider: Provider,
+    refreshAvailability?: boolean,
+  ): Promise<void>;
   connectService(
     provider: Provider,
     input?: { project?: Project; connectionId?: string },
   ): Promise<void>;
 };
 const app = readFileSync("dashboard/app.js", "utf8");
-const start = app.indexOf("  async function refreshService(provider) {");
+const start = app.indexOf("  async function refreshService(");
 const end = app.indexOf(
   "  for (const [provider, config] of Object.entries(serviceProviders))",
   start,
@@ -171,6 +174,61 @@ function deferred<T>() {
 }
 
 describe("project OAuth connection flow", () => {
+  it("distinguishes an unconfigured hosted service and retries against fresh availability before opening Vercel", async () => {
+    const f = fixture("vercel");
+    f.api.mockResolvedValueOnce({
+      available: false,
+      availabilityReason: "not_configured",
+      message: "A manually configured API token still works.",
+    });
+    await expect(
+      f.flow.connectService("vercel", {
+        project: f.project,
+        connectionId: "work",
+      }),
+    ).rejects.toMatchObject({
+      code: "oauth_unavailable",
+      availabilityReason: "not_configured",
+      message: expect.stringContaining("ShipGremlins operator"),
+    });
+    expect(f.assign).not.toHaveBeenCalled();
+    expect(f.values.has(hintKey)).toBe(false);
+    expect(f.serviceBusy.size).toBe(0);
+    await f.flow.connectService("vercel", {
+      project: f.project,
+      connectionId: "work",
+    });
+    expect(f.api.mock.calls.slice(0, 2).map(([path]) => path)).toEqual([
+      "/api/vercel?connection=work&refresh=1",
+      "/api/vercel?connection=work&refresh=1",
+    ]);
+    expect(f.assign).toHaveBeenCalledOnce();
+  });
+
+  it("keeps transient Vercel availability failure distinct from operator configuration", async () => {
+    const f = fixture("vercel");
+    f.api.mockResolvedValueOnce({
+      available: false,
+      availabilityReason: "provider_unavailable",
+    });
+    await expect(f.flow.connectService("vercel")).rejects.toMatchObject({
+      code: "oauth_unavailable",
+      availabilityReason: "provider_unavailable",
+      message: expect.stringContaining("Retry to check it again"),
+    });
+    expect(f.assign).not.toHaveBeenCalled();
+  });
+
+  it("requests fresh availability only for explicit Vercel status refresh", async () => {
+    const f = fixture("vercel");
+    await f.flow.refreshService("vercel");
+    await f.flow.refreshService("vercel", true);
+    expect(f.api.mock.calls.map(([path]) => path)).toEqual([
+      "/api/vercel?connection=work",
+      "/api/vercel?connection=work&refresh=1",
+    ]);
+  });
+
   it.each(["linear", "vercel"] as const)(
     "retains confirmed %s completion through provider-status failure and reload, then resumes the exact project once",
     async (provider) => {

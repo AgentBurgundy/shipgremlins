@@ -191,9 +191,224 @@ function fixture(
     setScope: (value: unknown) => (scope = value),
     setRefreshScope: (value: unknown) => (refreshScope = value),
     projectFailure: (value: number) => (projectFailure = value),
-    brokerFailure: () => (brokerFailure = true),
+    brokerFailure: (value = true) => (brokerFailure = value),
   };
 }
+
+describe("OAuth connection availability", () => {
+  const probes = (f: ReturnType<typeof fixture>) =>
+    f.calls.filter((call) => call.url.endsWith("/status"));
+
+  it.each(["linear", "vercel"] as const)(
+    "rechecks a negative %s result after ten seconds",
+    async (provider) => {
+      const f = fixture(provider);
+      f.brokerFailure();
+      expect(await f.connection.status()).toMatchObject({
+        available: false,
+        availabilityReason: "not_configured",
+      });
+      f.brokerFailure(false);
+      f.advance(9_999);
+      expect((await f.connection.status()).available).toBe(false);
+      expect(probes(f)).toHaveLength(1);
+      f.advance(1);
+      const recovered = await f.connection.status();
+      expect(recovered.available).toBe(true);
+      expect(recovered).not.toHaveProperty("availabilityReason");
+      expect(probes(f)).toHaveLength(2);
+    },
+  );
+
+  it("keeps positive results for five minutes while an explicit retry always checks again", async () => {
+    const f = fixture("vercel");
+    expect((await f.connection.status()).available).toBe(true);
+    f.brokerFailure();
+    f.advance(299_999);
+    expect((await f.connection.status()).available).toBe(true);
+    expect(probes(f)).toHaveLength(1);
+    f.advance(1);
+    expect((await f.connection.status()).available).toBe(false);
+    f.brokerFailure(false);
+    expect((await f.connection.status()).available).toBe(false);
+    expect(
+      (await f.connection.status({ refreshAvailability: true })).available,
+    ).toBe(true);
+    expect(probes(f)).toHaveLength(3);
+    f.brokerFailure();
+    expect(
+      (await f.connection.status({ refreshAvailability: true })).available,
+    ).toBe(false);
+    expect(probes(f)).toHaveLength(4);
+  });
+
+  it("does not claim an unchecked catalog entry is an unconfigured service", async () => {
+    const f = fixture("vercel");
+    const status = await f.connection.status({ checkAvailability: false });
+    expect(status.available).toBe(false);
+    expect(status).not.toHaveProperty("availabilityReason");
+    expect(status.message).toContain("not been checked");
+    expect(probes(f)).toHaveLength(0);
+    expect(
+      (
+        await f.connection.status({
+          checkAvailability: false,
+          refreshAvailability: true,
+        })
+      ).available,
+    ).toBe(true);
+  });
+
+  it.each([
+    () => {
+      throw new Error("private-provider-config-value");
+    },
+    () => new Response("private-provider-config-value", { status: 200 }),
+    () =>
+      Response.json(
+        { available: false, diagnostic: "private-provider-config-value" },
+        { status: 503 },
+      ),
+    () =>
+      Response.json({
+        available: "false",
+        reason: "private-provider-config-value",
+      }),
+  ])(
+    "distinguishes an unverifiable connection service without exposing its response",
+    async (failure) => {
+      const f = fixture("vercel");
+      const connection = createVercelConnection({
+        ...f.options,
+        fetch: (async () => failure()) as typeof fetch,
+      });
+      const status = await connection.status();
+      expect(status).toMatchObject({
+        available: false,
+        availabilityReason: "provider_unavailable",
+      });
+      expect(status.message).toContain("Try again");
+      expect(JSON.stringify(status)).not.toContain(
+        "private-provider-config-value",
+      );
+      expect(status.message).not.toContain("not configured");
+    },
+  );
+
+  it.each(["linear", "vercel"] as const)(
+    "keeps saved %s access usable through setup unavailability",
+    async (provider) => {
+      const f = fixture(provider);
+      await f.connect();
+      f.brokerFailure();
+      expect(
+        await f.connection.status({ refreshAvailability: true }),
+      ).toMatchObject({
+        available: false,
+        availabilityReason: "not_configured",
+        connected: true,
+        method: "oauth",
+      });
+      expect((await f.connection.resolveCredential()).token).toBe(
+        `${provider}-access-secret`,
+      );
+    },
+  );
+
+  it("keeps a manual Vercel token usable without claiming browser setup is ready", async () => {
+    const f = fixture("vercel", {
+      VERCEL_TOKEN: "manual-private-vercel-token",
+    });
+    f.brokerFailure();
+    const status = await f.connection.status();
+    expect(status).toMatchObject({
+      available: false,
+      availabilityReason: "not_configured",
+      connected: true,
+      method: "token",
+    });
+    expect(JSON.stringify(status)).not.toContain("manual-private-vercel-token");
+    expect((await f.connection.resolveCredential()).token).toBe(
+      "manual-private-vercel-token",
+    );
+  });
+
+  it("starts authorization fresh despite a cached negative status", async () => {
+    const f = fixture("vercel");
+    f.brokerFailure();
+    expect((await f.connection.status()).available).toBe(false);
+    await expect(
+      f.connection.connect("http://127.0.0.1:4311/"),
+    ).resolves.toMatchObject({
+      url: "https://shipgremlins.ai/api/vercel/authorize?request=opaque",
+    });
+    expect(
+      await f.connection.status({ checkAvailability: false }),
+    ).toMatchObject({ available: true });
+    expect(
+      f.calls.filter((call) => call.url.endsWith("/connect")),
+    ).toHaveLength(1);
+    expect(probes(f)).toHaveLength(1);
+  });
+
+  it("reports an unconfigured connect endpoint safely without saving an authorization attempt", async () => {
+    const f = fixture("vercel");
+    const connection = createVercelConnection({
+      ...f.options,
+      fetch: (async () =>
+        Response.json(
+          {
+            available: false,
+            availabilityReason: "not_configured",
+            detail: "private-provider-config-value",
+          },
+          { status: 503 },
+        )) as typeof fetch,
+    });
+    const failure = await connection
+      .connect("http://127.0.0.1:4311/")
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "app_not_configured", status: 503 });
+    expect(String(failure)).toContain("operator needs to enable");
+    expect(String(failure)).not.toContain("private-provider-config-value");
+    expect(await connection.status({ checkAvailability: false })).toMatchObject(
+      { availabilityReason: "not_configured" },
+    );
+    expect(
+      (await createOAuthStore(f.root, "vercel").read()).pending,
+    ).toBeUndefined();
+  });
+
+  it("does not replace fresh authorization success with an older failed status probe", async () => {
+    const f = fixture("vercel");
+    let finish!: (response: Response) => void;
+    let started!: () => void;
+    const began = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const connection = createVercelConnection({
+      ...f.options,
+      fetch: (async (url, init) => {
+        if (String(url).endsWith("/status")) {
+          started();
+          return pending;
+        }
+        return f.options.fetch(url, init);
+      }) as typeof fetch,
+    });
+    const checking = connection.status({ refreshAvailability: true });
+    await began;
+    await connection.connect("http://127.0.0.1:4311/");
+    finish(Response.json({ available: false }));
+    expect((await checking).available).toBe(true);
+    expect(
+      await connection.status({ checkAvailability: false }),
+    ).not.toHaveProperty("availabilityReason");
+  });
+});
 
 describe("Linear and Vercel dashboard OAuth", () => {
   it("exchanges Linear PKCE locally, persists encrypted credentials, and exposes safe metadata", async () => {

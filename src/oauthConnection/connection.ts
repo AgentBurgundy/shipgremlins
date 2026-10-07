@@ -18,6 +18,7 @@ import {
   type OAuthConnection,
   type OAuthProvider,
   type OAuthStatus,
+  type OAuthAvailabilityReason,
   type OAuthCredential,
   type CredentialRequest,
 } from "./types.ts";
@@ -129,7 +130,15 @@ export function createOAuthConnection(
   const label = provider === "linear" ? "Linear" : "Vercel";
   const manualKey = provider === "linear" ? "LINEAR_API_KEY" : "VERCEL_TOKEN";
   const callback = `${OAUTH_BROKER}/api/${provider}/callback`;
-  let availability: { value: boolean; checked: number } | undefined;
+  let availability:
+    | {
+        value: boolean;
+        checked: number;
+        reason?: OAuthAvailabilityReason;
+      }
+    | undefined;
+  let availabilityCheck: Promise<boolean> | undefined;
+  let availabilityRevision = 0;
   async function request(
     url: string,
     init: RequestInit = {},
@@ -168,25 +177,58 @@ export function createOAuthConnection(
       );
     }
   }
-  async function available() {
-    if (availability && availability.checked > now() - 5 * 60_000)
-      return availability.value;
-    let value = false;
-    try {
-      const result = await request(
-        `${OAUTH_BROKER}/api/${provider}/status`,
-        {},
-        3_000,
-      );
-      value =
-        result.status === 200 &&
-        object(result.data) &&
-        result.data.available === true;
-    } catch {
-      /* Saved tokens and advanced API keys keep working without the setup broker. */
-    }
-    availability = { value, checked: now() };
+  function rememberAvailability(
+    value: boolean,
+    reason?: OAuthAvailabilityReason,
+  ) {
+    availability = { value, checked: now(), ...(reason ? { reason } : {}) };
+    availabilityRevision++;
     return value;
+  }
+  function availabilityMessage(reason?: OAuthAvailabilityReason) {
+    if (reason === "not_configured")
+      return `${label} sign-in is not configured on the ShipGremlins connection service. Its operator needs to enable it; then check again.${connectionId === "default" ? " You can also use a manual API token in Connections." : " Existing saved connections are unchanged."}`;
+    if (reason === "provider_unavailable")
+      return `The ShipGremlins connection service could not be checked for ${label} sign-in. Try again. Existing saved connections are unchanged.`;
+    return `${label} browser sign-in has not been checked yet. Check its availability in Connections.`;
+  }
+  async function available(refresh = false) {
+    if (
+      !refresh &&
+      availability &&
+      availability.checked > now() - (availability.value ? 5 * 60_000 : 10_000)
+    )
+      return availability.value;
+    if (availabilityCheck) return availabilityCheck;
+    const revision = availabilityRevision;
+    const pending = (async () => {
+      let value = false;
+      let reason: OAuthAvailabilityReason | undefined = "provider_unavailable";
+      try {
+        const result = await request(
+          `${OAUTH_BROKER}/api/${provider}/status`,
+          {},
+          3_000,
+        );
+        if (result.status === 200 && object(result.data)) {
+          value = result.data.available === true;
+          if (value) reason = undefined;
+          else if (result.data.available === false) reason = "not_configured";
+        }
+      } catch {
+        /* Existing credentials keep working without the setup broker. */
+      }
+      // A successful fresh connect outranks an older in-flight status probe.
+      if (revision === availabilityRevision)
+        return rememberAvailability(value, reason);
+      return availability?.value ?? value;
+    })();
+    availabilityCheck = pending;
+    try {
+      return await pending;
+    } finally {
+      if (availabilityCheck === pending) availabilityCheck = undefined;
+    }
   }
   function manual() {
     if (connectionId !== "default") return undefined;
@@ -231,6 +273,9 @@ export function createOAuthConnection(
     return {
       provider,
       available: enabled,
+      ...(!enabled && availability?.reason
+        ? { availabilityReason: availability.reason }
+        : {}),
       connected: connection ? !needsReconnect : fallback,
       method: connection ? "oauth" : fallback ? "token" : "none",
       ...(connection
@@ -257,7 +302,7 @@ export function createOAuthConnection(
           ? { message: "Using the manually configured API token." }
           : !enabled
             ? {
-                message: `${label} OAuth setup is temporarily unavailable.${connectionId === "default" ? " A manually configured API token still works." : " Try connecting this account again shortly."}`,
+                message: availabilityMessage(availability?.reason),
               }
             : {}),
     };
@@ -608,9 +653,9 @@ export function createOAuthConnection(
       requireProfile(state);
       return publicStatus(
         state.connection,
-        options?.checkAvailability === false
+        options?.checkAvailability === false && !options.refreshAvailability
           ? (availability?.value ?? false)
-          : await available(),
+          : await available(options?.refreshAvailability),
       );
     },
     async connect(returnUrl) {
@@ -639,14 +684,31 @@ export function createOAuthConnection(
                 : {}),
             }),
           },
-        );
-        const data = response.data;
-        if (response.status !== 200 || !object(data) || !text(data.url, 8000))
+        ).catch(() => {
+          rememberAvailability(false, "provider_unavailable");
           throw new OAuthConnectionError(
-            `${label} OAuth setup is not available. Try again shortly or use an API token.`,
-            "app_unavailable",
+            availabilityMessage("provider_unavailable"),
+            "provider_unavailable",
             503,
           );
+        });
+        const data = response.data;
+        if (response.status !== 200 || !object(data) || !text(data.url, 8000)) {
+          const reason =
+            response.status === 503 &&
+            object(data) &&
+            data.availabilityReason === "not_configured"
+              ? "not_configured"
+              : "provider_unavailable";
+          rememberAvailability(false, reason);
+          throw new OAuthConnectionError(
+            availabilityMessage(reason),
+            reason === "not_configured"
+              ? "app_not_configured"
+              : "app_unavailable",
+            503,
+          );
+        }
         let url: URL;
         try {
           url = new URL(data.url);
@@ -682,7 +744,7 @@ export function createOAuthConnection(
             : {}),
         };
         await save(state);
-        availability = { value: true, checked: now() };
+        rememberAvailability(true);
         return { url: url.href };
       });
     },

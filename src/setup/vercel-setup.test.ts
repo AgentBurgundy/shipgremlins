@@ -268,9 +268,90 @@ describe("Vercel setup conversation", () => {
     expect(text(f.root)).toContain(
       "Save your unsaved environment edits first.",
     );
-    expect(f.find("Reconnect Vercel").disabled).toBe(false);
+    expect(f.find("Retry Vercel sign-in").disabled).toBe(false);
     expect(f.api).toHaveBeenCalledTimes(1);
     expect(f.selected).not.toHaveBeenCalled();
+  });
+  it("offers one fresh sign-in retry after hosted OAuth configuration failure", async () => {
+    const connect = vi.fn(async () => {});
+    connect.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "ShipGremlins’ hosted Vercel sign-in service needs configuration. The ShipGremlins operator must finish that setup.",
+        ),
+        { code: "oauth_unavailable", availabilityReason: "not_configured" },
+      ),
+    );
+    const f = fixture(initial(), undefined, undefined, {
+      getStatus: () => ({ serviceConnections: [] }),
+      onConnectHosting: connect,
+    });
+    await settle();
+    await f.find("Connect Vercel").fire("click");
+    expect(text(f.root)).toContain("ShipGremlins operator");
+    expect(text(f.root)).toContain(
+      "prepare private access and verify it from your runner",
+    );
+    expect(f.find("Connect Vercel")).toBeUndefined();
+    expect(f.find("Refresh status")).toBeUndefined();
+    expect(
+      walk(f.root).filter(
+        (item) => item.textContent === "Check Vercel sign-in again",
+      ),
+    ).toHaveLength(1);
+    await f.find("Check Vercel sign-in again").fire("click");
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(f.api).toHaveBeenCalledTimes(1);
+    expect(text(f.root)).not.toContain("ShipGremlins operator");
+  });
+  it("shows a known sign-in outage without hiding a working saved token", async () => {
+    let connected = false;
+    const f = fixture(initial(), undefined, undefined, {
+      getStatus: () => ({
+        serviceConnections: [
+          {
+            id: "default",
+            provider: "vercel",
+            connected,
+            available: false,
+            availabilityReason: "not_configured",
+            message:
+              "The ShipGremlins operator must configure hosted Vercel sign-in.",
+          },
+        ],
+      }),
+    });
+    await settle();
+    expect(f.find("Connect Vercel")).toBeUndefined();
+    expect(f.find("Check Vercel sign-in again")).toBeDefined();
+    expect(text(f.root)).toContain("ShipGremlins operator");
+    connected = true;
+    f.panel.syncConnections();
+    expect(f.find("Find my Vercel environment")).toBeDefined();
+    expect(f.find("Check Vercel sign-in again")).toBeUndefined();
+  });
+  it("clears the previous authorization failure when the selected account connects externally", async () => {
+    let connected = false;
+    const connect = vi.fn(async () => {
+      throw new Error("Previous sign-in failure");
+    });
+    const f = fixture(initial(), undefined, undefined, {
+      getStatus: () => ({
+        serviceConnections: [{ id: "default", provider: "vercel", connected }],
+      }),
+      onConnectHosting: connect,
+    });
+    await settle();
+    await f.find("Connect Vercel").fire("click");
+    expect(f.find("Retry Vercel sign-in")).toBeDefined();
+    connected = true;
+    f.panel.syncConnections();
+    expect(f.find("Find my Vercel environment")).toBeDefined();
+    connected = false;
+    f.panel.syncConnections();
+    expect(f.find("Connect Vercel")).toBeDefined();
+    expect(f.find("Retry Vercel sign-in")).toBeUndefined();
+    expect(text(f.root)).not.toContain("Previous sign-in failure");
   });
   it("updates unknown connection status into a prompt and lets a connected account be selected", async () => {
     let status: object | null = null;

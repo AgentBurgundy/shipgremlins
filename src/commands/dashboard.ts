@@ -2167,11 +2167,19 @@ export function createDashboardServer(
           try {
             if (
               [...url.searchParams.keys()].some(
-                (key) => key !== "connection",
+                (key) =>
+                  key !== "connection" &&
+                  !(key === "refresh" && req.method === "GET" && !action),
               ) ||
-              url.searchParams.getAll("connection").length > 1
+              url.searchParams.getAll("connection").length > 1 ||
+              (url.searchParams.has("refresh") &&
+                (url.searchParams.getAll("refresh").length !== 1 ||
+                  url.searchParams.get("refresh") !== "1"))
             )
-              throw new RequestError(400, "Use one saved connection ID.");
+              throw new RequestError(
+                400,
+                "Use one saved connection ID and refresh=1 only when checking status.",
+              );
             const connectionId =
               url.searchParams.get("connection") ?? "default";
             await requireProfile(
@@ -2183,7 +2191,15 @@ export function createDashboardServer(
               connectionId,
             );
             if (req.method === "GET" && !action)
-              json(res, 200, await connection.status());
+              json(
+                res,
+                200,
+                await connection.status(
+                  url.searchParams.has("refresh")
+                    ? { refreshAvailability: true }
+                    : undefined,
+                ),
+              );
             else if (
               req.method === "GET" &&
               action === "resources" &&
