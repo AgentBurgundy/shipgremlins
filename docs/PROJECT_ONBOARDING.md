@@ -20,6 +20,13 @@ no Linear team, PM, or working deployment is required for that analysis.
 
 ### Vercel: let the gremlins handle setup
 
+After adoption, the welcome and project home lead you through Linear setup and
+then **Connect a test environment**. Environment shows **Connect Vercel** even
+when no hosting account is saved. Sign in once; authorization returns to this
+project and resumes setup. An interrupted status refresh can be retried without
+repeating authorization. You can still choose another host or Docker, or start
+with code-only Discovery.
+
 With Vercel connected, opening Environment starts setup automatically for a clean,
 unconfigured project or an unverified saved Vercel environment. ShipGremlins finds
 the exact repository match, chooses the newest ready preview on the configured

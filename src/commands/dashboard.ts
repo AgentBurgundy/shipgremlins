@@ -5035,7 +5035,16 @@ export function createDashboardServer(
           );
           if (projectMapping[2] === "linear") {
             if (
-              Object.keys(input).some((key) => key !== "teamId") ||
+              Object.keys(input).some(
+                (key) =>
+                  !["teamId", "projectInstanceId", "repository"].includes(key),
+              ) ||
+              (input.projectInstanceId !== undefined &&
+                input.projectInstanceId !== null &&
+                (typeof input.projectInstanceId !== "string" ||
+                  !/^[a-f0-9-]{36}$/i.test(input.projectInstanceId))) ||
+              (input.repository !== undefined &&
+                typeof input.repository !== "string") ||
               (input.teamId !== undefined &&
                 (typeof input.teamId !== "string" ||
                   !/^[a-f0-9-]{36}$/i.test(input.teamId)))
@@ -5044,7 +5053,18 @@ export function createDashboardServer(
                 400,
                 "Provide an optional existing Linear team UUID.",
               );
-            loadProject(root, project);
+            const current = loadProject(root, project);
+            if (
+              (input.projectInstanceId !== undefined &&
+                input.projectInstanceId !==
+                  (current.config.instanceId ?? null)) ||
+              (input.repository !== undefined &&
+                input.repository !== current.config.repo)
+            )
+              throw new RequestError(
+                409,
+                "This project changed. Reload Linear setup before creating its resources.",
+              );
             json(res, 200, {
               ok: true,
               linear: await provisionLinear(

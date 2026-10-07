@@ -35,11 +35,17 @@ project**, then choose the path that fits your app:
 4. **Meet and adopt your gremlin.** Choose **Meet [name]**, review its job and
    brief, and adopt it. You can choose a different gremlin or write your own brief.
    Explain who it helps, what should get better, and what it should leave alone.
-5. **Offer optional context.** The welcome screen has Sentry, Mixpanel, and
-   Datadog choices for this project. Configure only the signals you need, or
-   continue with code alone. These are used by later investigations; read-only
-   Discovery does not receive telemetry credentials.
-6. **Give it a first assignment.** Choose **Explore the codebase** to run
+5. **Give the crew a place to work.** The welcome screen offers **Connect Linear**
+   when the account is missing, or **Set up Linear** when it is already connected.
+   Choose an existing team when there is more than one; ShipGremlins creates the
+   missing PM projects and labels and keeps existing mappings. Authorization
+   returns you to this project's setup.
+6. **Connect a test environment.** For a runnable app, the next step opens
+   Environment. **Connect Vercel** signs in and resumes preview discovery and
+   testing automatically. Other hosting and Docker remain available. Once the
+   test target is selected, you can add optional Sentry, Mixpanel or Datadog
+   context. Read-only Discovery does not receive telemetry credentials.
+7. **Give it a first assignment.** Choose **Explore the codebase** to run
    **Discovery**, or **Prepare first mission** if source access, Claude Code, or
    a ready worker is missing. Linear and a browser environment are not required. A new idea instead
    starts with the reviewed **foundation build**: a Coding Gremlin creates the
@@ -97,9 +103,9 @@ automatically.
 
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Claude Code in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
 2. In **Projects → Add project**, choose **Improve my app**. Follow **Inspect your app → Review setup → Meet your gremlin**. Importing can start bounded source analysis, but creates no PM or coding job; confirming saves only the selected commands. Manual adoption remains available if you already know the setup. The experimental idea path creates a private-by-default repository and starts with the reviewed foundation build before source discovery. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
-3. Adopt the suggested PM or choose another with a focused **Product brief**. Its welcome offers optional project-scoped Sentry, Mixpanel, and Datadog setup. New PMs start with both automation controls off.
+3. Adopt the suggested PM or choose another with a focused **Product brief**. Its welcome guides you through connecting Linear, creating missing PM projects and labels, and connecting a test environment. These steps also remain on the project home if you close the welcome. New PMs start with both automation controls off.
 4. Choose **Create local worker**, then **Explore the codebase** for Discovery. The worker runs on the CLI/dashboard server; its first image build can take time. Worker readiness requires actual Chromium evidence, but the PM's source-only Discovery needs no app hosting or Linear mapping.
-5. **When browser testing is useful**, open Environment. Choose **hosted staging** or a **disposable Docker app**, review proposed settings, then **Test environment**. Repository-only projects can skip this step. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
+5. **Connect a test environment** for browser walkthroughs. Environment offers **Connect Vercel** even on a fresh installation, then resumes automatic preview setup after authorization. You can also choose another hosted target or a disposable Docker app. Code-only Discovery remains available while setup is incomplete. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
 6. After reviewing Discovery, use **What should get better?** for a mission tied to one outcome, or **Run now** for one normal patrol. Required Linear setup uses your saved connection and preserves existing mappings. Inspect the proposals and evidence before approving coding. Enable **Look for new improvements** and **Automatically build approved work** independently when ready. Manual Coding can find the next ready approved ticket without turning either on.
 
 Approval uses `pm-approved`; proposals use `pm-proposal`. Area labels remain `pm:core`, `pm:security`, and similar. Project Review lets you inspect a proposal and explicitly approve its bounded scope. The controller removes the proposal hold and re-checks the current scope before approving. After configured checks, the worker publishes its unique branch as a **draft** PR/MR. Repository-only projects leave merges to you. Explicit promotion projects target their integration branch and can advance eligible fixes for owning-PM verification; see [selective delivery](DELIVERY_WORKFLOW.md).

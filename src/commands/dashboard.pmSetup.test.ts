@@ -237,6 +237,35 @@ async function fixture(
 }
 
 describe("PM prepare and verify admission", () => {
+  it("creates Linear projects and labels from the guided setup without queuing a PM", async () => {
+    const f = await fixture();
+    const current = loadProject(f.root, "demo");
+    const result = await f.post("/api/projects/demo/linear", {
+      projectInstanceId: current.config.instanceId ?? null,
+      repository: current.config.repo,
+    });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ linear: { status: "ready" } });
+    expect(f.client.createProject).toHaveBeenCalledTimes(current.areas.length);
+    expect(f.client.ensureLabels).toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
+  it.each([
+    {
+      projectInstanceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      repository: "owner/app",
+    },
+    { projectInstanceId: null, repository: "owner/replaced-app" },
+  ])(
+    "refuses stale Linear setup before creating external resources: %j",
+    async (identity) => {
+      const f = await fixture();
+      const result = await f.post("/api/projects/demo/linear", identity);
+      expect(result.status).toBe(409);
+      expect(f.client.organization).not.toHaveBeenCalled();
+      expect(f.client.createProject).not.toHaveBeenCalled();
+    },
+  );
   it("saves adoption without remote mutations when the selected Linear connection is missing", async () => {
     const f = await fixture({ disconnected: true });
     const response = await f.post("/api/projects/demo/areas", {

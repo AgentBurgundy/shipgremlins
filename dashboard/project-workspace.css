@@ -460,6 +460,36 @@ body:has(.pm-create-dialog[open]) {
 .project-recent-activity {
   margin-top: 30px;
 }
+.project-hosting-invitation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 24px;
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid var(--line, #dbe5dd);
+  border-radius: 16px;
+  background: #f5f8f2;
+  min-width: 0;
+}
+.project-hosting-invitation > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.project-hosting-invitation h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.project-hosting-invitation p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.project-hosting-invitation > button {
+  max-width: 100%;
+  white-space: normal;
+}
 .project-recent-activity h3,
 .project-recent-activity h2 {
   font-size: 14px;

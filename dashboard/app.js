@@ -91,6 +91,8 @@
   const serviceBusy = new Set();
   const serviceSelection = { linear: "default", vercel: "default" };
   const profileControls = new Map();
+  const connectionReturn = window.createProjectConnectionReturn();
+  let linearOnboarding = null;
   let serviceProfiles = [];
   const linearResourceCache = new Map();
   let linearResourcesQueued = false;
@@ -3689,6 +3691,16 @@
     onRefreshReadiness: async () => {
       await refreshStatus();
     },
+    onSetupHosting: (project) => {
+      closePmCreation();
+      pages.navigate(
+        `/projects/${encodeURIComponent(project)}?tab=environment`,
+      );
+    },
+    onSetupLinear: (project, trigger) => {
+      closePmCreation();
+      return linearOnboarding.open(project, trigger);
+    },
     onOpenHome: (adopted) => {
       closePmCreation();
       pages.navigate(
@@ -4129,7 +4141,43 @@
       serviceBusy.delete(provider);
       renderServiceControls();
     }
+    await resumeProjectConnection(provider);
     if (provider === "linear") await refreshLinearResources();
+  }
+  async function resumeProjectConnection(provider) {
+    const selected = serviceSelection[provider];
+    const status = serviceStatuses.get(provider);
+    if (
+      !connectionReturn.pending(provider, selected) ||
+      !status?.connected ||
+      status.needsReconnect
+    )
+      return;
+    try {
+      await refreshStatus();
+      const account = currentStatus?.serviceConnections?.find(
+        (item) =>
+          item.provider === provider && (item.id || "default") === selected,
+      );
+      if (!account?.connected || account.needsReconnect)
+        throw new Error("The connected account is not ready yet.");
+      const destination = connectionReturn.take(
+        currentStatus?.projects || [],
+        selected,
+        provider,
+      );
+      if (!destination) return;
+      pages.navigate(destination.path);
+      if (provider === "linear")
+        await linearOnboarding.resume(destination.project);
+      else await projectOnboarding.resumeHosting(destination.project);
+    } catch (error) {
+      message(
+        $(`${provider}-message`),
+        `${serviceProviders[provider].name} connected, but project setup could not resume. ${error.message} Use Refresh status to try again.`,
+        true,
+      );
+    }
   }
   async function initializeService(provider) {
     if (!sessionToken) return;
@@ -4143,6 +4191,9 @@
     renderServiceControls();
     try {
       await api(serviceUrl(provider, "complete"), { envelope });
+      // Keep confirmed OAuth completion across transient status failures/reloads.
+      // A connected account alone does not authorize replaying an abandoned flow.
+      connectionReturn.confirmed(provider, serviceSelection[provider]);
       try {
         sessionStorage.removeItem("gremlins-pending-" + provider);
       } catch {
@@ -4163,61 +4214,74 @@
       serviceBusy.delete(provider);
       renderServiceControls();
     }
+    await resumeProjectConnection(provider);
     if (provider === "linear") await refreshLinearResources();
+  }
+  async function connectService(provider, { project, connectionId } = {}) {
+    const config = serviceProviders[provider];
+    if (serviceBusy.has(provider) || !sessionToken || formsLocked || restarting)
+      throw new Error("Wait for the current connection check, then try again.");
+    if (hasUnsavedInputs())
+      throw new Error(
+        `Save or clear unsaved configuration and form entries before opening ${config.name}. Authorization leaves this page and returns to your setup.`,
+      );
+    const selected = connectionId || serviceSelection[provider];
+    if (!validProfileId(selected))
+      throw new Error("Choose a valid saved connection.");
+    try {
+      sessionStorage.setItem(sessionKey, sessionToken);
+    } catch {
+      throw new Error(
+        "This browser cannot retain the dashboard session during authorization. Allow session storage or use the manual-token fallback in Connections.",
+      );
+    }
+    serviceBusy.add(provider);
+    renderServiceControls();
+    message($(`${provider}-message`), "");
+    try {
+      const status = await api(serviceUrl(provider, "", selected));
+      if (!status.available)
+        throw new Error(
+          status.message ||
+            `Browser sign-in is unavailable. Open Connections to configure ${config.name}.`,
+        );
+      rememberService(provider, selected);
+      rememberServiceStatus(provider, status);
+      sessionStorage.setItem("gremlins-pending-" + provider, selected);
+      connectionReturn.clear();
+      if (project) connectionReturn.remember(project, selected, provider);
+      const result = await api(serviceUrl(provider, "connect"), {});
+      const url = new URL(result.url);
+      if (
+        url.origin !== "https://shipgremlins.ai" ||
+        url.pathname !== `/api/${provider}/authorize` ||
+        url.username ||
+        url.password ||
+        url.hash
+      )
+        throw new Error(
+          `The server returned an unexpected ${config.name} authorization address.`,
+        );
+      if (hasUnsavedInputs())
+        throw new Error(
+          `Your form changed while connecting. Save or clear its edits before opening ${config.name}.`,
+        );
+      window.location.assign(url.href);
+    } catch (error) {
+      serviceBusy.delete(provider);
+      connectionReturn.clear();
+      renderServiceControls();
+      throw error;
+    }
   }
   for (const [provider, config] of Object.entries(serviceProviders)) {
     $(`${provider}-refresh`).addEventListener("click", () =>
       refreshService(provider),
     );
     $(`${provider}-connect`).addEventListener("click", async () => {
-      if (
-        serviceBusy.has(provider) ||
-        !sessionToken ||
-        !serviceStatuses.get(provider)?.available
-      )
-        return;
-      if (hasUnsavedInputs()) {
-        message(
-          $(`${provider}-message`),
-          `Save or clear unsaved configuration and form entries before opening ${config.name}. Authorization leaves this page and returns to the same dashboard tab.`,
-          true,
-        );
-        return;
-      }
       try {
-        sessionStorage.setItem(sessionKey, sessionToken);
-      } catch {
-        message(
-          $(`${provider}-message`),
-          "This browser cannot retain the dashboard session during authorization. Allow session storage or use the manual-token fallback.",
-          true,
-        );
-        return;
-      }
-      serviceBusy.add(provider);
-      renderServiceControls();
-      message($(`${provider}-message`), "");
-      try {
-        sessionStorage.setItem(
-          "gremlins-pending-" + provider,
-          serviceSelection[provider],
-        );
-        const result = await api(serviceUrl(provider, "connect"), {});
-        const url = new URL(result.url);
-        if (
-          url.origin !== "https://shipgremlins.ai" ||
-          url.pathname !== `/api/${provider}/authorize` ||
-          url.username ||
-          url.password ||
-          url.hash
-        )
-          throw new Error(
-            `The server returned an unexpected ${config.name} authorization address.`,
-          );
-        window.location.assign(url.href);
+        await connectService(provider);
       } catch (error) {
-        serviceBusy.delete(provider);
-        renderServiceControls();
         message($(`${provider}-message`), error.message, true);
       }
     });
@@ -5417,6 +5481,7 @@
       projectOperations?.isBusy() ||
       projectOnboarding?.isDirty() ||
       projectOnboarding?.isBusy() ||
+      linearOnboarding?.isBusy() ||
       remoteWorkers?.isBusy() ||
       Object.keys(pmCharter.read()).length > 0 ||
       pmDraft?.hasDraft() ||
@@ -5681,10 +5746,44 @@
     if (formsLocked || pmCreating) return;
     openPmCreation(event.detail.project);
   });
+  linearOnboarding = window.createLinearOnboarding({
+    api,
+    getStatus: () => currentStatus,
+    isLocked: () => formsLocked || !sessionToken || restarting,
+    onConnect: (project, connectionId) =>
+      connectProjectService("linear", project, connectionId),
+    onSaved: refreshStatus,
+    onReady: (project) =>
+      pages.navigate(
+        `/projects/${encodeURIComponent(project)}?tab=environment`,
+      ),
+  });
+  async function connectProjectService(
+    provider,
+    project,
+    connectionId = "default",
+  ) {
+    const current = currentStatus?.projects?.find(
+      (item) => item.name === project.name,
+    );
+    if (
+      !current ||
+      (current.instanceId ?? null) !== (project.instanceId ?? null) ||
+      current.repo !== project.repo ||
+      (current.provider || "github") !== (project.provider || "github") ||
+      (current.serverUrl ?? null) !== (project.serverUrl ?? null)
+    )
+      throw new Error(
+        "This project changed. Reload its setup before connecting an account.",
+      );
+    await connectService(provider, { project: current, connectionId });
+  }
   projectOnboarding = window.createProjectOnboarding({
     api,
     getStatus: () => currentStatus,
     isLocked: () => formsLocked || !sessionToken || restarting,
+    onConnectHosting: (project, connectionId) =>
+      connectProjectService("vercel", project, connectionId),
     onSaved: async (project) => {
       projectChecks.delete(project);
       await refreshStatus();
@@ -5734,6 +5833,12 @@
     onCreatePm: (project, suggestion) => {
       openPmCreation(project, document.activeElement, suggestion);
     },
+    onSetupHosting: (project) =>
+      pages.navigate(
+        `/projects/${encodeURIComponent(project)}?tab=environment`,
+      ),
+    onSetupLinear: (project, trigger) =>
+      linearOnboarding.open(project, trigger),
     onJob: (job) => {
       jobHistory = [...jobHistory.filter((item) => item.id !== job.id), job];
       renderJobs(runnerStatus?.jobs || []);

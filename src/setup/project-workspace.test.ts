@@ -476,7 +476,7 @@ describe("focused project crew workspace", () => {
 });
 
 describe("project-first investigation", () => {
-  function onboarding() {
+  function onboarding(linear = false) {
     const ui = fixture(),
       root = new Element("MAIN"),
       jobs: Record<string, unknown>[] = [];
@@ -499,9 +499,12 @@ describe("project-first investigation", () => {
       name: "shop",
       instanceId: "current",
       repo: "org/shop",
-      areas: [] as { key: string; name: string }[],
+      areas: [] as { key: string; name: string; linearProjectId?: string }[],
       onboardingProgress: { investigated: false, hasMissions: false },
+      verification: { mode: "repository", environment: "preview" },
+      environments: {} as Record<string, object>,
       readiness: {
+        steps: [] as { id: string; ready: boolean }[],
         areas: [] as {
           key: string;
           discovery: { canRun: boolean; blockers?: object[] };
@@ -520,13 +523,17 @@ describe("project-first investigation", () => {
         status: "queued",
       },
     }));
-    const activity = vi.fn();
+    const activity = vi.fn(),
+      setupHosting = vi.fn(),
+      setupLinear = vi.fn();
     const view = ui.createProjectWorkspace(root, {
       pages: { current: "project", project: "shop", pm: "", tab: "overview" },
       api,
       getJobs: () => jobs,
       onJob: (job: Record<string, unknown>) => jobs.push(job),
       onActivity: activity,
+      onSetupHosting: setupHosting,
+      onSetupLinear: linear ? setupLinear : undefined,
     });
     const refresh = () => view.setStatus({ projects: [project] }, false);
     const adopt = () => {
@@ -544,6 +551,8 @@ describe("project-first investigation", () => {
       project,
       api,
       activity,
+      setupHosting,
+      setupLinear,
       refresh,
       adopt,
       welcome,
@@ -559,7 +568,7 @@ describe("project-first investigation", () => {
     expect(text(f.root)).toContain("Give Moss a first look");
     expect(f.missions.mount).not.toHaveBeenCalled();
     await all(f.root)
-      .find((node) => node.textContent === "Explore the codebase")!
+      .find((node) => node.textContent === "Start with code only")!
       .fire("click");
     expect(f.api).toHaveBeenCalledWith("/api/jobs", {
       type: "pm",
@@ -573,6 +582,37 @@ describe("project-first investigation", () => {
       .fire("click");
     expect(f.activity).toHaveBeenCalledWith("new");
     expect(f.api).toHaveBeenCalledTimes(1);
+  });
+  it("offers Linear before hosting for unmapped PMs, retaining that next step after discovery", async () => {
+    const f = onboarding(true);
+    expect(text(f.root)).not.toContain("Set up Linear");
+    f.adopt();
+    expect(text(f.root)).toContain("Set up Linear");
+    expect(text(f.root)).not.toContain("Connect a test environment");
+    const setup = all(f.root).find(
+      (node) => node.textContent === "Set up Linear",
+    )!;
+    await setup.fire("click");
+    expect(f.setupLinear).toHaveBeenCalledWith("shop", setup);
+    expect(f.api).not.toHaveBeenCalled();
+    f.project.onboardingProgress.investigated = true;
+    f.project.readiness.steps = [{ id: "linear_connection", ready: false }];
+    f.refresh();
+    expect(f.missions.mount).toHaveBeenCalledOnce();
+    expect(text(f.root)).toContain("Connect Linear");
+    expect(text(f.root)).not.toContain("Connect a test environment");
+    f.project.readiness.steps[0]!.ready = true;
+    f.project.areas[0]!.linearProjectId = "CHANGE_LINEAR_PROJECT";
+    f.refresh();
+    expect(text(f.root)).toContain("Set up Linear");
+    f.project.areas[0]!.linearProjectId = "linear-project-core";
+    f.refresh();
+    expect(text(f.root)).not.toContain("Set up Linear");
+    expect(text(f.root)).toContain("Connect a test environment");
+    await setup.fire("click");
+    expect(f.setupLinear).toHaveBeenCalledOnce();
+    expect(f.setupHosting).not.toHaveBeenCalled();
+    expect(f.api).not.toHaveBeenCalled();
   });
   it("uses actual readiness and failures, ignoring runs from a replaced project", async () => {
     const f = onboarding();
@@ -632,6 +672,68 @@ describe("project-first investigation", () => {
     f.refresh();
     expect(text(f.root)).toContain("Runner disconnected");
     expect(text(f.root)).toContain("Retry the investigation");
+    expect(f.api).not.toHaveBeenCalled();
+  });
+  it("offers an already adopted gremlin a browser environment before code-only discovery without starting either on render", async () => {
+    const f = onboarding();
+    f.adopt();
+    const connect = all(f.root).find(
+        (node) => node.textContent === "Connect a test environment",
+      )!,
+      code = all(f.root).find(
+        (node) => node.textContent === "Start with code only",
+      )!;
+    expect(connect.className).toContain("button-dark");
+    expect(code.className).not.toContain("button-dark");
+    expect(text(f.root)).toContain("without opening the app");
+    expect(f.api).not.toHaveBeenCalled();
+    expect(f.setupHosting).not.toHaveBeenCalled();
+    await connect.fire("click");
+    expect(f.setupHosting).toHaveBeenCalledWith("shop", connect);
+    expect(f.api).not.toHaveBeenCalled();
+    f.project.instanceId = "replacement";
+    await connect.fire("click");
+    expect(f.setupHosting).toHaveBeenCalledOnce();
+  });
+  it("keeps hosting visible after discovery without replacing missions, and removes it for a selected browser target", async () => {
+    const f = onboarding();
+    f.adopt();
+    f.project.onboardingProgress.investigated = true;
+    f.refresh();
+    expect(f.missions.mount).toHaveBeenCalledOnce();
+    expect(text(f.root)).toContain("Let your crew see the app, too.");
+    const connect = all(f.root).find(
+      (node) => node.textContent === "Connect a test environment",
+    )!;
+    await connect.fire("click");
+    expect(f.setupHosting).toHaveBeenCalledWith("shop", connect);
+    expect(f.api).not.toHaveBeenCalled();
+    f.project.verification.mode = "browser";
+    f.project.environments.preview = {
+      kind: "url",
+      role: "preview",
+      url: "https://preview.example.com",
+    };
+    f.refresh();
+    expect(f.missions.mount).toHaveBeenCalledTimes(2);
+    expect(text(f.root)).not.toContain("Connect a test environment");
+    await connect.fire("click");
+    expect(f.setupHosting).toHaveBeenCalledOnce();
+  });
+  it("keeps configured browser projects on their existing discovery action", () => {
+    const f = onboarding();
+    f.project.verification.mode = "browser";
+    f.project.environments.preview = {
+      kind: "vercel",
+      role: "preview",
+      projectId: "app",
+    };
+    f.adopt();
+    expect(text(f.root)).not.toContain("Connect a test environment");
+    expect(
+      all(f.root).find((node) => node.textContent === "Explore the codebase")
+        ?.className,
+    ).toContain("button-dark");
     expect(f.api).not.toHaveBeenCalled();
   });
   it("uses retained identity-scoped investigation evidence and preserves established missions or coding history", () => {

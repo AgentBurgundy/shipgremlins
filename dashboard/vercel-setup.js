@@ -29,6 +29,7 @@
     project,
     onSelect,
     onConfigured,
+    onConnectHosting,
     getStatus = () => null,
     isLocked = () => false,
   }) => {
@@ -133,6 +134,8 @@
     let state = null,
       busy = false,
       chatting = false,
+      connecting = false,
+      selectedConnectionId = "",
       active = true,
       destroyed = false,
       timer = null,
@@ -150,8 +153,9 @@
     function controlState() {
       stage.setAttribute("aria-busy", String(busy));
       for (const value of controls)
-        value.disabled = busy || isLocked() || Boolean(guards.get(value)?.());
-      question.disabled = ask.disabled = chatting || isLocked();
+        value.disabled =
+          busy || connecting || isLocked() || Boolean(guards.get(value)?.());
+      question.disabled = ask.disabled = chatting || connecting || isLocked();
     }
     function field(label, value, options, onChange) {
       const wrap = node("div", undefined, "field"),
@@ -176,7 +180,7 @@
         timer = setTimeout(() => load(true), 4000);
     }
     async function call(actionName, body, pending) {
-      if (busy || isLocked() || destroyed) return;
+      if (busy || connecting || isLocked() || destroyed) return;
       const generation = ++request;
       busy = true;
       error.hidden = true;
@@ -259,6 +263,29 @@
       if (loaded && !force) return;
       await call("", undefined);
     }
+    async function connect(connectionId) {
+      if (busy || connecting || isLocked() || destroyed || !active) return;
+      connecting = true;
+      error.hidden = true;
+      controlState();
+      try {
+        if (onConnectHosting) await onConnectHosting(project, connectionId);
+        else if (
+          !window.dashboardPages?.navigate("/connections#vercel-connection")
+        )
+          window.location.assign("/connections#vercel-connection");
+      } catch (failure) {
+        if (!destroyed) {
+          error.textContent =
+            failure.message ||
+            "Vercel authorization could not start. Your setup choices are kept.";
+          error.hidden = false;
+        }
+      } finally {
+        connecting = false;
+        if (!destroyed) controlState();
+      }
+    }
     function choose(candidate) {
       if (busy || isLocked() || !safePreview(candidate)) return;
       selected = candidate.id;
@@ -316,10 +343,17 @@
       return card;
     }
     function render() {
-      const connections = (getStatus()?.serviceConnections || []).filter(
-        (item) => item.provider === "vercel",
-      );
-      const nextSignature = JSON.stringify([state, selected, connections]);
+      const status = getStatus(),
+        connections = (status?.serviceConnections || []).filter(
+          (item) => item.provider === "vercel",
+        );
+      const nextSignature = JSON.stringify([
+        state,
+        selected,
+        connections,
+        selectedConnectionId,
+        Array.isArray(status?.serviceConnections),
+      ]);
       if (signature === nextSignature) return;
       signature = nextSignature;
       for (const dialog of stageDialogs) {
@@ -334,7 +368,72 @@
         message.textContent =
           state?.message ||
           "I can find your existing test deployment or help create a preview for your crew.";
-      const inventory = state?.inventory;
+      const accountCurrent =
+          !selectedConnectionId ||
+          !state?.inventory ||
+          state.inventory.connectionId === selectedConnectionId,
+        inventory = accountCurrent ? state?.inventory : undefined,
+        savedTarget = Object.values(project.environments || {}).find(
+          (target) => target.kind === "vercel",
+        );
+      let connectionId =
+        selectedConnectionId ||
+        inventory?.connectionId ||
+        (project.vercel && (project.vercel.connectionId || "default")) ||
+        (savedTarget && (savedTarget.connectionId || "default")) ||
+        connections.find(
+          (item) =>
+            item.id === "default" && item.connected && !item.needsReconnect,
+        )?.id ||
+        connections.find((item) => item.connected && !item.needsReconnect)
+          ?.id ||
+        connections.find((item) => item.id === "default")?.id ||
+        connections[0]?.id ||
+        "default";
+      const connection = connections.find((item) => item.id === connectionId),
+        needsConnection =
+          Array.isArray(status?.serviceConnections) &&
+          (!connection?.connected || connection.needsReconnect);
+      if (needsConnection) {
+        if (connections.length > 1)
+          stage.append(
+            field(
+              "Vercel connection",
+              connectionId,
+              connections.map((item) => ({
+                value: item.id,
+                label: item.label || item.id,
+              })),
+              (value) => {
+                selectedConnectionId = value;
+                render();
+              },
+            ),
+          );
+        stage.append(
+          node(
+            "h4",
+            connection?.needsReconnect
+              ? "Reconnect your Vercel account"
+              : "Connect your Vercel account",
+          ),
+          node(
+            "p",
+            "We’ll find this repository’s test preview and check access for your gremlins after you authorize Vercel.",
+            "vercel-setup-note",
+          ),
+          action(
+            connection?.needsReconnect ? "Reconnect Vercel" : "Connect Vercel",
+            () => connect(connectionId),
+            true,
+          ),
+        );
+        const manage = node("a", "Manage hosting connections");
+        manage.href = "/connections#vercel-connection";
+        stage.append(manage);
+        controlState();
+        return;
+      }
       if (state?.stale)
         stage.append(
           node(
@@ -343,7 +442,7 @@
             "vercel-setup-note",
           ),
         );
-      if (building(state)) {
+      if (accountCurrent && building(state)) {
         stage.append(
           node("div", "Building your test deployment…", "vercel-build-status"),
           node(
@@ -357,6 +456,7 @@
         return;
       }
       if (
+        accountCurrent &&
         state?.target &&
         state.deployment &&
         safePreview({ ...state.deployment, target: state.target })
@@ -372,17 +472,7 @@
         );
       }
       const pickers = node("div", undefined, "vercel-setup-pickers");
-      let connectionId =
-          inventory?.connectionId ||
-          project.vercel?.connectionId ||
-          Object.values(project.environments || {}).find(
-            (target) => target.kind === "vercel",
-          )?.connectionId ||
-          connections.find((item) => item.id === "default")?.id ||
-          connections.find((item) => item.connected && !item.needsReconnect)
-            ?.id ||
-          "default",
-        teamId = inventory?.teamId,
+      let teamId = inventory?.teamId,
         projectId = inventory?.selectedProject?.id;
       if (connections.length)
         pickers.append(
@@ -395,8 +485,10 @@
             })),
             (value) => {
               connectionId = value;
+              selectedConnectionId = value;
               teamId = undefined;
               projectId = undefined;
+              render();
             },
           ),
         );
