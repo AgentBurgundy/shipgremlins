@@ -122,6 +122,39 @@ function fixture(extra: Partial<PmPlannerOptions> = {}) {
   };
 }
 describe("draft-only mandate planner", () => {
+  it.each(["promotion", "pull-request"] as const)(
+    "grounds the planner's approval policy in %s without discarding owner limits",
+    async (kind) => {
+      const file = join(root, "projects/app/project.json");
+      const project = JSON.parse(readFileSync(file, "utf8"));
+      project.workflow =
+        kind === "promotion" ? { kind } : { kind, baseBranch: "develop" };
+      writeFileSync(file, JSON.stringify(project));
+      const f = fixture();
+      await f.planner.plan({
+        ...input,
+        mandate:
+          "Review-only: investigate payment failures; do not implement changes.",
+      });
+      const execution = f.execute.mock.calls[0]![0];
+      expect(JSON.parse(execution.prompt).mandate).toContain("Review-only");
+      expect(execution.system).toContain(
+        "Preserve explicit owner-authored limits",
+      );
+      if (kind === "promotion") {
+        expect(execution.system).toContain(
+          "PM may self-approve finite implementation tickets",
+        );
+        expect(execution.system).toContain("one combined promotion PR");
+        expect(execution.system).not.toContain(
+          "Keep per-ticket owner approval",
+        );
+      } else {
+        expect(execution.system).toContain("Keep per-ticket owner approval");
+        expect(execution.system).not.toContain("PM may self-approve");
+      }
+    },
+  );
   it("grounds defaults in the selected repository and sends no source or integration credentials to Claude", async () => {
     const f = fixture();
     const files = ["project.json", "areas.json"].map((name) =>

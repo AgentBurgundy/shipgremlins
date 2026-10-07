@@ -189,6 +189,7 @@
         state = result;
         if (
           state?.status === "deployed" &&
+          state.deployment?.state === "READY" &&
           !state.stale &&
           state.plan?.workflowBranches &&
           !state.workflowApplied

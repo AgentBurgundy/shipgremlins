@@ -207,6 +207,72 @@ afterEach(() => {
 });
 
 describe("Vercel setup conversation", () => {
+  it("waits for a created preview to become READY before applying its reviewed workflow once", async () => {
+    vi.useFakeTimers();
+    let reads = 0,
+      applied = false;
+    const configured = vi.fn(async () => {});
+    const response = () => ({
+      ...prepared(),
+      status: "deployed",
+      deployment: {
+        ...preview,
+        state:
+          reads === 1 ? "INITIALIZING" : reads === 2 ? "BUILDING" : "READY",
+      },
+      revision: applied ? "applied-revision" : `preview-${reads}`,
+      workflowApplied: applied,
+      plan: {
+        ...prepared().plan,
+        workflowBranches: {
+          production: "main",
+          staging: "staging",
+          integration: "pm-staging",
+        },
+      },
+    });
+    const f = fixture(
+      undefined,
+      async (path) => {
+        if (path.endsWith("/apply-workflow")) applied = true;
+        else reads++;
+        return response();
+      },
+      configured,
+    );
+    await settle();
+    expect(
+      f.api.mock.calls.filter(([path]) => path.endsWith("/apply-workflow")),
+    ).toHaveLength(0);
+    expect(configured).not.toHaveBeenCalled();
+    expect(f.selected).not.toHaveBeenCalled();
+    expect(
+      walk(f.root).find((item) => item.className === "vercel-setup-error")
+        ?.hidden,
+    ).toBe(true);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(
+      f.api.mock.calls.filter(([path]) => path.endsWith("/apply-workflow")),
+    ).toHaveLength(0);
+    expect(configured).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(
+      f.api.mock.calls.filter(([path]) => path.endsWith("/apply-workflow")),
+    ).toEqual([
+      [
+        "/api/projects/forevermods/onboarding/vercel/apply-workflow",
+        { revision: "preview-3" },
+      ],
+    ]);
+    expect(configured).toHaveBeenCalledOnce();
+    expect(f.selected).not.toHaveBeenCalled();
+    await f.panel.refresh();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(
+      f.api.mock.calls.filter(([path]) => path.endsWith("/apply-workflow")),
+    ).toHaveLength(1);
+    expect(configured).toHaveBeenCalledOnce();
+  });
   it("finishes a reviewed repair by saving its workflow and continuing the access check", async () => {
     const ready = {
       ...prepared(),

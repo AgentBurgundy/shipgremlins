@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { loadProject, type Project } from "../config.ts";
-import { inspectionBranch } from "../projectCapabilities.ts";
+import { effectiveWorkflow, inspectionBranch } from "../projectCapabilities.ts";
 import {
   createSourceControl,
   type SourceControl,
@@ -78,9 +78,9 @@ Provide the full product charter:
 - goal: the concrete outcome this PM should pursue, consistent with the original mandate.
 - metricDefinition: how to observe success using the proposed metric and reproducible evidence; state when a baseline or instrumentation still needs confirmation.
 - users: the users or audiences implied by the mandate, with uncertain audiences labeled as proposed.
-- expectedToBuild: specific capabilities, improvements, investigations, or experiments this PM should propose; the PM does not implement or approve its own changes. Respect review-only mandates and never expand them into unauthorized building.
+- expectedToBuild: specific capabilities, improvements, investigations, or experiments this PM should investigate and specify for coding. The PM does not implement code or approve its own implementation evidence. Respect review-only mandates and never expand them into unauthorized building.
 - nonGoals: reasonable exclusions that keep the mandate focused without silently dropping explicit owner requirements.
-- guardrails: relevant boundaries from the mandate plus safe defaults such as preserving private data, using test environments, requiring owner approval for implementation, and keeping Done tied to production delivery.
+- guardrails: relevant boundaries from the mandate plus safe defaults such as preserving private data, using test environments, respecting the selected workflow's approval policy, and keeping Done tied to production delivery. Preserve explicit owner-authored limits; do not invent blanket per-ticket approval requirements for promotion mode.
 - standingPriorities: a short ordered list of evidence-based priorities consistent with the mandate; do not invent business priorities as facts.
 When information is uncertain, supply a clearly proposed default for review rather than a blank charter. Keep every charter text field under 1000 characters and each list to 1-6 concise entries under 400 characters. Return only the supplied JSON schema with concise rationale, never private reasoning. Do not enable a PM, create tickets/resources, publish, merge, or request broader access.`;
 const CHARTER_SCHEMA = {
@@ -597,7 +597,11 @@ export function createPmPlanner(options: PmPlannerOptions) {
             },
             credential,
             prompt,
-            system: SYSTEM,
+            system:
+              SYSTEM +
+              (effectiveWorkflow(project.config).kind === "promotion"
+                ? "\nSelected workflow: promotion. After adoption, the PM may self-approve finite implementation tickets for ordinary improvements within its owner mandate; larger in-mandate ideas can be decomposed into testable tickets. The controller handles coding, checks, integration merges and independent PM QA. Passing changes accumulate in one combined promotion PR for owner review and merge. Do not seed a generic requirement for owner approval of each ticket or coding draft. Explicit review-only mandates, owner holds, work outside the mandate and hub-control changes remain boundaries; do not suggest bypassing them or hand-merging integration. Planning this draft does not enable automation or authorize any external action."
+                : "\nSelected workflow: direct pull-request. PMs propose tickets; the owner approves implementation and reviews coding drafts. Keep per-ticket owner approval in the proposed guardrails. Planning this draft does not approve work or enable automation."),
             schema: PM_DRAFT_SCHEMA,
             signal,
           }),

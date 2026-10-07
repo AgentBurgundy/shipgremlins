@@ -33,10 +33,12 @@ proposed milestones are approved or ready for parallel dispatch.
 | Real ticket link | Candidate / purpose | Evidence or verification status | Dependencies | Owner action |
 | ---------------- | ------------------- | ------------------------------- | ------------ | ------------ |
 
-Search for duplicates before filing. Existing approval and workflow state must
-be preserved when adding evidence. New tickets require human approval; the PM
-never self-approves, merges or marks Done. A draft PR or staging merge does not
-establish verified production delivery.
+Search for duplicates before filing. Adding evidence never changes existing
+approval or workflow state. Ticket approval follows the runtime's selected
+workflow: scoped PM approval in promotion mode, owner approval in direct
+pull-request mode. Preserve explicit owner holds and review-only mandates.
+PMs never merge or mark Done. A draft PR or staging merge does not establish
+verified production delivery.
 
 ## Blocked decisions or evidence
 

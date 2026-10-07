@@ -518,7 +518,7 @@ describe("outcome-led project missions", () => {
       ],
     }));
     await settle();
-    expect(text(f.root)).toContain("Awaiting delivery admission");
+    expect(text(f.root)).toContain("Preparing for PM QA");
     expect(
       walk(f.root).filter((item) => item.className === "promotion-ticket"),
     ).toHaveLength(1);

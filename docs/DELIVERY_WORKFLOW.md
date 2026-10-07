@@ -12,6 +12,8 @@ Create or reuse an isolated, nonproduction integration environment in the hostin
 
 Each approved Linear issue must belong to the owning PM's mapped project/team, carry its area label and `pm-approved`, and contain an explicit `## Acceptance criteria` section with a finite bullet or numbered list. Earlier `Acceptance criteria and verification` headings and numbered headings are also accepted; narrative alone is not a finite review set. Coding admission captures the complete ticket scope before launch. Changing the approved scope, account, repository or mandate invalidates its later delivery authorization.
 
+In promotion mode, the PM self-approves ordinary work within its adopted mandate and decomposes larger improvements into testable tickets. The owner reviews the promotion batch, not each ticket or integration draft. Explicit owner holds, review-only mandates and configured automation boundaries remain in force. New projects reserve only CI execution configuration (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/`) as an automation boundary; ordinary application prompts are called out in the promotion's **Look closely** section. Existing custom boundaries are preserved. Work outside these limits stays excluded rather than prompting a manual integration merge.
+
 ## Keeping the PM test branch current
 
 For projects configured for promotion with browser verification, the local dashboard reconciles **staging → integration** on startup and every minute while it is running. With the usual branch names, that is `staging → pm-staging`. The sync runs independently of PM patrol schedules. Projects using the ordinary pull-request workflow are left unchanged.
@@ -19,6 +21,8 @@ For projects configured for promotion with browser verification, the local dashb
 When staging has changes missing from integration, ShipGremlins creates an immutable snapshot branch for that staging revision and opens or reuses its sync PR/MR. It checks the current source and target commits, mergeability and branch checks before merging. It uses a **merge commit** to preserve staging ancestry, so the same changes do not keep appearing as new work. Provider cleanup can remove the snapshot branch after merge without deleting staging. A pending or failed check holds the sync; it does not bypass branch protections or rewrite either branch.
 
 Conflicts are handed to a local coding worker with a bounded repair task. A repair still goes through the sync PR/MR and its checks. After two unsuccessful repair attempts, the controller stops retrying the model and reports the blocker for review. It does not repeatedly launch coding agents against the same unresolved conflict.
+
+Changing preview access or test-account settings does not restart a staging repair. Sync retains its repository and branch identity, then checks the currently selected deployment before PM testing resumes. Upgrades recover an earlier repair only when its saved admission, project identity and source revisions match; an ambiguous repair is held instead of starting a duplicate.
 
 After the merge, PMs wait for a ready integration deployment matching the updated branch commit. The controller checks the actual deployment branch and full SHA before admitting a PM run. An old but reachable preview cannot satisfy this gate. This keeps PM investigations on the app that includes the latest staging changes.
 

@@ -214,7 +214,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
             : new GitHubForge({ token: credential.token }))
         );
       },
-      deployment: () => deployment(project),
+      deployment: () => deployment(projectFor(project.config.name)),
       checkMerge: (integration, head) =>
         checkSyncMerge(project, integration, head),
     });

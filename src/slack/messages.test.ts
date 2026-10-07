@@ -84,6 +84,7 @@ describe("branded Slack job messages", () => {
     const message = buildJobNotification({
       ...event,
       type: "succeeded",
+      workflow: "pull-request",
       job: { ...event.job, type: "developer", ticket: "APP-17" },
       result: {
         prUrl: "https://github.com/org/app/pull/17",
@@ -99,6 +100,50 @@ describe("branded Slack job messages", () => {
     expect(message.blocks).toContainEqual(
       expect.objectContaining({ type: "actions" }),
     );
+  });
+
+  it.each([undefined, "sync"] as const)(
+    "reports promotion coding (%s) as automatic work without requesting a draft review",
+    (developerKind) => {
+      const message = buildJobNotification({
+        ...event,
+        type: "succeeded",
+        workflow: "promotion",
+        dashboardUrl: "https://gremlins.example.test/",
+        job: {
+          ...event.job,
+          type: "developer",
+          developerKind,
+          ticket: "APP-17",
+        },
+        result: {
+          prUrl: "https://github.com/org/app/pull/17",
+          checks: ["test"],
+        },
+      });
+      const body = JSON.stringify(message);
+      expect(message.text).toContain("Ready for automatic integration");
+      expect(body).toContain("Follow crew progress");
+      expect(body).toContain("/projects/my-app?tab=changes");
+      expect(body).not.toContain("Review draft");
+      expect(body).not.toContain("ready for human review");
+      expect(body).toContain(
+        developerKind === "sync"
+          ? "merge this staging repair"
+          : "combined promotion PR",
+      );
+    },
+  );
+
+  it("does not invent a manual approval when the saved workflow is unavailable", () => {
+    const message = buildJobNotification({
+      ...event,
+      type: "succeeded",
+      job: { ...event.job, type: "developer", ticket: "APP-17" },
+      result: { prUrl: "https://github.com/org/app/pull/17" },
+    });
+    expect(message.text).toContain("Coding draft published");
+    expect(JSON.stringify(message)).not.toContain("Review draft");
   });
 
   it("handles no changes and failures without promising a draft", () => {

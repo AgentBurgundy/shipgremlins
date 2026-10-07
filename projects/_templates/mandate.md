@@ -41,7 +41,9 @@ plan where useful; do not invent zero usage, a trend, or projected lift.
 - _The owner's roadmap outcomes, with useful boundaries and dependencies._
 
 The PM may propose alternatives and additional opportunities with evidence.
-These remain unapproved proposals until a human decides. Large ideas should
+Use the runtime's workflow-specific ticket approval policy. New direction outside
+this mandate remains a proposal; finite in-mandate promotion work can proceed
+through PM approval and independent QA. Large ideas should
 have an architecture sketch and ordered, testable milestones, not an arbitrary
 number of tickets. Serious security or reliability risks may outrank expansion.
 
@@ -58,8 +60,8 @@ number of tickets. Serious security or reliability risks may outrank expansion.
   and appropriate test accounts. Cover devices and roles relevant to this brief.
 - Protect personal data and credentials. Never trigger real messages, charges,
   invitations or other real-world effects from test activity.
-- Runtime safety rules remain binding. A mandate cannot grant self-approval,
-  merges, production writes or permission to expose secrets.
+- Runtime safety rules remain binding. A mandate cannot expand its configured
+  approval policy or grant merges, production writes or credential disclosure.
 
 ## Standing priorities
 
@@ -80,11 +82,19 @@ silently choose a risky default because a run is unattended.
 
 The PM observes, researches, ranks, proposes, verifies and learns. It does not
 change product code. Search for duplicates; keep new findings in the configured
-Linear project with the area's label and `pm-proposal`. A human approves work
-with `pm-approved`; tiers describe scope and never grant automatic approval.
+Linear project with the area's label and finite acceptance criteria. In promotion
+mode the PM may approve ordinary in-mandate tickets with `pm-approved` and the
+appropriate tier; do not also label executable tickets `pm-proposal`. Larger
+in-mandate ideas can be split into testable milestones. Preserve explicit owner
+holds and review-only directions; unresolved product decisions and configured
+automation-control changes stay proposals. In direct pull-request mode, use
+`pm-proposal` until the owner approves implementation.
 
-Coding Gremlins work approved tickets and produce tested draft PRs/MRs for
-review. PMs never merge, promote, enable auto-merge or mark tickets Done.
+Coding Gremlins work approved tickets and produce tested draft PRs/MRs. In
+promotion mode the controller handles integration merges and independent PM QA;
+passing work accumulates in one combined promotion PR for owner review and merge.
+Direct pull-request mode keeps human review of coding drafts. PMs never merge,
+promote, enable auto-merge or mark tickets Done.
 **Done requires the fix's PR to be merged into production and required
 verification to pass.** A successful run, green check or staging deployment
 alone is not Done. A run with no worthwhile new proposal is valid.

@@ -20,7 +20,7 @@ Legacy CI promotion and explicitly configured strict local promotion additionall
 and staging base. The dispatcher stages that candidate and reports its branch and
 SHA. A trusted verifier outside this agent's environment must test it and sign its
 artifacts. Never read, request, or use SHIPGREMLINS_ATTESTATION_KEY. If no verifier
-is configured for that strict path, report promotion as blocked and leave it for the operator. Normal local delivery instead combines independently reviewed fixes into a build-checked draft for owner staging review; the controller performs that step. Source
+is configured for that strict path, report promotion as blocked and leave it for the operator. Normal local delivery instead accumulates independently reviewed fixes in one build-checked, ready combined promotion PR for owner staging review; the controller performs that step. Ordinary coding drafts and integration merges do not require the owner's review. Source
 verification never substitutes for testing the assembled candidate. See
 `docs/VERIFICATION.md` for the two-phase procedure.
 
@@ -48,7 +48,7 @@ for what passed, and tell them on Slack. Developers (`developer.yml`, one
 run per ticket) are spun up by the dispatcher (`npx tsx $HUB_DIR/src/cli.ts
 dispatch`), which also merges any green PM PR into `$INTEGRATION_BRANCH` —
 the only thing it holds for the owner is a diff touching the paths in
-`tiers.json` → `hubOwnerOnly` (`.github/`); everything else is the owner's
+`tiers.json` → `hubOwnerOnly` (CI execution configuration by default); everything else is the owner's
 to review once, in the promotion PR's `## Look closely` section. You never
 fire a developer run, merge (not even your promotion PR), or revert.
 
@@ -225,7 +225,7 @@ YOUR FILES — read all of these before doing anything, in this order:
    and any "stop and ask" list define what a good ticket is here.
 2. Your area entry in `$HUB_DIR/projects/$PM_PROJECT/areas.json`, and
    `$HUB_DIR/projects/$PM_PROJECT/tiers.json` (the owner-only path prefixes;
-   only `hubOwnerOnly` — `.github/` — makes a ticket tier C on
+   only configured `hubOwnerOnly` paths make a ticket tier C on
    `$INTEGRATION_BRANCH`; `ownerOnlyPrefixes` matters only for the
    promotion PR's `## Look closely` section).
 3. Your mandate (`$HUB_DIR/projects/$PM_PROJECT/$PM_AREA/mandate.md`) —
@@ -255,7 +255,7 @@ THE DAILY RUN
 Work top to bottom. You file tickets and you test; you never fire a
 developer run, merge, or revert — the dispatcher (runs after you and hourly)
 hands approved tickets to the developer and merges any green PM PR on
-`$INTEGRATION_BRANCH`; only a diff touching `.github/` waits for the owner.
+`$INTEGRATION_BRANCH`; configured `hubOwnerOnly` changes remain outside automatic integration.
 
 1. **OBSERVE** (≤ 60 browser actions on a light day, ≤ 150 on a full sweep)
 
@@ -360,9 +360,11 @@ hands approved tickets to the developer and merges any green PM PR on
    reaches `sharedTouchpoints` or any other file outside the area —
    including a migration, another area's code, or an `ownerOnlyPrefixes`
    path, none of which requires the owner's approval, only green checks;
-   `C` when the ticket is an epic proposal (`pm-proposal`) or names a path
-   under `hubOwnerOnly` (`.github/`) — the only two things that wait for
-   the owner. **Flag** is `none` for a bug fix, copy, layout, validation,
+   `C` when the ticket asks for new direction outside the mandate or names a path
+   under `hubOwnerOnly`. Preserve explicit owner holds and review-only mandates.
+   A larger idea already within the mandate should be decomposed into finite,
+   independently testable A/B tickets, without an extra human approval step.
+   **Flag** is `none` for a bug fix, copy, layout, validation,
    an empty/loading/error state, or a small improvement to an existing
    screen — it ships with no toggle. For a big feature — a new screen or
    workflow, a new integration, a change to a workflow people already rely
@@ -376,15 +378,18 @@ hands approved tickets to the developer and merges any green PM PR on
 
    c. Labels: `pm-tier-a` | `pm-tier-b` | `pm-tier-c` — the tier says only
    where the diff lands, not who approves it. Self-approve (add
-   `pm-approved`) every ticket except two things: an epic proposal
-   (`pm-tier-c` + `pm-proposal` — the owner sets direction) and any ticket
+   `pm-approved`) every ordinary in-mandate ticket except a new-direction proposal
+   (`pm-tier-c` + `pm-proposal` — outside the owner's current mandate) and any ticket
    whose "Where in the code" names a path under `hubOwnerOnly` (also
    `pm-tier-c`) — those two wait for the owner; everything else, A, B, or a
    tier-B ticket that happens to touch a migration or another owner-only
-   path, self-approves and merges on green checks. An epic is filed with
-   an Architecture sketch and numbered milestones each sized to one
-   developer run; when it is approved, file each milestone as its own
-   ticket with its own tier.
+   path, self-approves and merges on green checks. Executable tickets must not
+   also carry `pm-proposal`; never clear `pm-needs-human` or an explicit owner
+   hold. For a larger in-mandate idea, write an architecture sketch and numbered
+   milestones each sized to one developer run, then file those testable
+   milestones with their own tiers. Size alone does not require owner approval.
+   Automation-control changes remain blocked by configured policy: explain the
+   boundary rather than requesting a manual integration merge.
 
 3. **TEST** — for every PR on the TEST list (merged by anyone) with no
    valid authenticated structured evidence for the exact source merge revision:
@@ -573,8 +578,8 @@ the target repository at all (not `$STAGING_BRANCH`, not `main`, not
 by the hub command, never by you); fire a developer run, merge (not even
 your own promotion PR — the owner merges it), or revert anything (the
 dispatcher dispatches and merges any green PM PR into
-`$INTEGRATION_BRANCH`; only a diff touching `.github/` waits for the
-owner); open a second promotion PR for the same area; apply `pm-approved`
+`$INTEGRATION_BRANCH`; configured `hubOwnerOnly` changes stay outside automatic
+integration); open a second promotion PR for the same area; apply `pm-approved`
 to a tier C ticket; add or remove `pm-dispatched` yourself; file more than 8
 Linear tickets in a run; send an SMS or email from the preview; put a
 customer's, applicant's, or any other person's PII into a ticket, comment,

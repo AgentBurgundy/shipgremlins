@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -25,17 +26,41 @@ import type { ReviewDeployment } from "./types.ts";
 const SHA = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const digest = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
-export function stagingSyncScope(project: Project): string {
-  return digest({
+function gitIdentity(project: Project) {
+  return {
     identity: projectRuntimeKey(project.config),
     provider: project.config.provider,
     server: project.config.serverUrl,
     repo: project.config.repo,
     branches: project.config.branches,
     workflow: effectiveWorkflow(project.config),
-    verification: effectiveVerification(project.config),
-    commands: project.config.commands,
-  });
+  };
+}
+export function stagingSyncScope(project: Project): string {
+  return digest({ ...gitIdentity(project), commands: project.config.commands });
+}
+/** v0.21 scopes included browser settings. Only reproducible old scopes are trusted. */
+function compatibleLegacyScopes(project: Project): Set<string> {
+  const configurations = [
+    project.config,
+    ...Object.entries(project.config.environments ?? {})
+      .filter(([, target]) => target.role !== "production")
+      .map(([environment]) => ({
+        ...project.config,
+        verification: { mode: "browser" as const, environment },
+      })),
+  ];
+  if (configurations.length > 33)
+    throw new Error("Too many prior environment identities to inspect safely.");
+  return new Set(
+    configurations.map((config) =>
+      digest({
+        ...gitIdentity(project),
+        verification: effectiveVerification(config),
+        commands: project.config.commands,
+      }),
+    ),
+  );
 }
 export interface StagingSyncStatus {
   phase:
@@ -59,6 +84,8 @@ export interface SyncRepairIntent {
   integrationSha: string;
   attempt: number;
   jobId?: string;
+  /** Preserves a proven v0.21 queue key after moving to the stable Git scope. */
+  legacyScope?: string;
 }
 interface State {
   schema: 1;
@@ -66,6 +93,7 @@ interface State {
   status: StagingSyncStatus;
   repairs: SyncRepairIntent[];
   checkedMerge?: { key: string; ok: boolean; at: string };
+  deploymentVerification?: string;
 }
 export interface StagingSyncOptions {
   root: string;
@@ -112,17 +140,17 @@ export function createStagingSync(options: StagingSyncOptions) {
     if (!enabled() || stagingSyncScope(options.currentProject()) !== scope)
       throw new Error("Staging sync configuration changed.");
   };
-  function read(): State {
-    assertNoSymlinks(file);
-    if (!existsSync(file))
+  function read(source = file, expectedScope = scope): State {
+    assertNoSymlinks(source);
+    if (!existsSync(source))
       return { schema: 1, scope, status: initial(), repairs: [] };
-    const stat = lstatSync(file);
+    const stat = lstatSync(source);
     if (!stat.isFile() || stat.nlink !== 1 || stat.size > 256 * 1024)
       throw new Error("Invalid staging sync state.");
-    const value = JSON.parse(readFileSync(file, "utf8")) as State;
+    const value = JSON.parse(readFileSync(source, "utf8")) as State;
     if (
       value.schema !== 1 ||
-      value.scope !== scope ||
+      value.scope !== expectedScope ||
       !value.status ||
       ![
         "disabled",
@@ -137,6 +165,8 @@ export function createStagingSync(options: StagingSyncOptions) {
       typeof value.status.message !== "string" ||
       value.status.message.length > 2000 ||
       !Array.isArray(value.repairs) ||
+      (value.deploymentVerification !== undefined &&
+        !/^[a-f0-9]{64}$/.test(value.deploymentVerification)) ||
       new Set(value.repairs.map((r) => r?.key)).size !== value.repairs.length ||
       (value.checkedMerge !== undefined &&
         (!value.checkedMerge ||
@@ -149,7 +179,15 @@ export function createStagingSync(options: StagingSyncOptions) {
           !SHA.test(r.stagingSha) ||
           !SHA.test(r.integrationSha) ||
           ![1, 2].includes(r.attempt) ||
-          r.key !== repairKey(r.stagingSha, r.attempt) ||
+          (r.legacyScope !== undefined &&
+            (expectedScope !== scope ||
+              !/^[a-f0-9]{64}$/.test(r.legacyScope))) ||
+          r.key !==
+            repairKey(
+              r.stagingSha,
+              r.attempt,
+              r.legacyScope ?? expectedScope,
+            ) ||
           (r.jobId !== undefined && !/^job-[a-f0-9-]{36}$/.test(r.jobId)),
       )
     )
@@ -183,7 +221,19 @@ export function createStagingSync(options: StagingSyncOptions) {
   function status(): StagingSyncStatus {
     if (!enabled()) return initial();
     try {
-      return read().status;
+      const state = read();
+      if (
+        state.status.phase === "current" &&
+        state.deploymentVerification !==
+          digest(effectiveVerification(options.currentProject().config))
+      )
+        return {
+          ...state.status,
+          phase: "waiting-deployment",
+          message:
+            "The selected test environment changed. Waiting to check its current integration deployment before PM testing.",
+        };
+      return state.status;
     } catch {
       return {
         phase: "blocked",
@@ -216,8 +266,68 @@ export function createStagingSync(options: StagingSyncOptions) {
       return null;
     }
   }
-  function repairKey(sha: string, attempt: number) {
-    return `staging-sync:${scope}:${sha}:${attempt}`;
+  function repairKey(sha: string, attempt: number, keyScope = scope) {
+    return `staging-sync:${keyScope}:${sha}:${attempt}`;
+  }
+  async function sameRevisionJobs(staging: string) {
+    return ((await options.jobs?.()) ?? []).filter(
+      (job) =>
+        job.type === "developer" &&
+        job.developerKind === "sync" &&
+        job.project === project.config.name &&
+        job.projectInstanceId === project.config.instanceId &&
+        job.ticket === `SYNC-${staging.slice(0, 12)}` &&
+        job.idempotencyKey?.startsWith("staging-sync:"),
+    );
+  }
+  function legacyCandidates(
+    staging: string,
+    integration: string,
+    jobs: LocalJob[],
+  ): SyncRepairIntent[] {
+    const compatible = compatibleLegacyScopes(options.currentProject());
+    const files = existsSync(directory)
+      ? readdirSync(directory).filter(
+          (entry) =>
+            /^[a-f0-9]{64}\.json$/.test(entry) && entry !== `${scope}.json`,
+        )
+      : [];
+    if (files.length > 32)
+      throw new Error("Too much prior repair history to recover safely.");
+    const candidates: SyncRepairIntent[] = [];
+    for (const entry of files) {
+      const legacyScope = entry.slice(0, -5);
+      if (!compatible.has(legacyScope)) continue;
+      const previous = read(join(directory, entry), legacyScope);
+      for (const intent of previous.repairs) {
+        if (
+          intent.stagingSha !== staging ||
+          intent.integrationSha !== integration ||
+          !intent.jobId
+        )
+          continue;
+        const matching = jobs.filter((job) => matchesRepair(job, intent));
+        if (matching.length === 1) candidates.push({ ...intent, legacyScope });
+      }
+    }
+    return candidates;
+  }
+  async function recoverLegacyRepair(
+    state: State,
+    staging: string,
+    integration: string,
+  ): Promise<string | null> {
+    if (state.repairs.some((r) => r.stagingSha === staging)) return null;
+    const jobs = await sameRevisionJobs(staging);
+    if (!jobs.length) return null;
+    const candidates = legacyCandidates(staging, integration, jobs);
+    if (candidates.length !== 1 || jobs.length !== 1)
+      return "An existing staging repair belongs to a different or ambiguous controller configuration. Inspect its activity and source PR before continuing; no duplicate repair was launched.";
+    // Do not import cached checks or browser readiness from the previous settings.
+    state.repairs.push(candidates[0]!);
+    delete state.checkedMerge;
+    save(state);
+    return null;
   }
   // An ephemeral head prevents provider auto-delete settings from deleting staging.
   function snapshotBranch(sha: string) {
@@ -254,12 +364,24 @@ export function createStagingSync(options: StagingSyncOptions) {
       "waiting-deployment",
       `Waiting for the ready ${branches.integration} deployment at ${integration.slice(0, 8)}. PMs will wait for this revision.`,
     );
+    const verification = digest(
+      effectiveVerification(options.currentProject().config),
+    );
     let deployed: ReviewDeployment;
     try {
       deployed = await options.deployment();
     } catch {
       return state.status;
     }
+    if (
+      verification !==
+      digest(effectiveVerification(options.currentProject().config))
+    )
+      return update(
+        state,
+        "waiting-deployment",
+        "The selected test environment changed during its deployment check. Rechecking the current environment before PM testing.",
+      );
     if (
       deployed.sha !== integration ||
       deployed.branch !== branches.integration ||
@@ -272,6 +394,16 @@ export function createStagingSync(options: StagingSyncOptions) {
         "checking",
         "A branch changed while its deployment was checked. Rechecking before PM testing.",
       );
+    if (
+      verification !==
+      digest(effectiveVerification(options.currentProject().config))
+    )
+      return update(
+        state,
+        "waiting-deployment",
+        "The selected test environment changed during its deployment check. Rechecking the current environment before PM testing.",
+      );
+    state.deploymentVerification = verification;
     return update(
       state,
       "current",
@@ -446,7 +578,7 @@ export function createStagingSync(options: StagingSyncOptions) {
         intent.jobId = job.id;
         save(state);
       }
-      if (job?.status === "canceled")
+      if (job?.status === "canceled" || job?.cancelRequestedAt)
         return update(
           state,
           "blocked",
@@ -498,7 +630,8 @@ export function createStagingSync(options: StagingSyncOptions) {
     const pending = attempts.find(
       (r) => !r.jobId && !jobs.some((j) => j.idempotencyKey === r.key),
     );
-    if (!pending && attempts.length >= 2)
+    const lastAttempt = Math.max(0, ...attempts.map((r) => r.attempt));
+    if (!pending && lastAttempt >= 2)
       return update(
         state,
         "blocked",
@@ -511,10 +644,10 @@ export function createStagingSync(options: StagingSyncOptions) {
         "Staging conflicts with PM changes. The controller will queue a Coding Gremlin to resolve the conflict.",
       );
     const intent = pending ?? {
-      key: repairKey(staging, attempts.length + 1),
+      key: repairKey(staging, lastAttempt + 1),
       stagingSha: staging,
       integrationSha: integration,
-      attempt: attempts.length + 1,
+      attempt: lastAttempt + 1,
     };
     if (!pending) {
       state.repairs.push(intent);
@@ -582,6 +715,20 @@ export function createStagingSync(options: StagingSyncOptions) {
           state,
           "checking",
           `Waiting for the controller to bring ${branches.staging} into ${branches.integration} before PM testing.`,
+        );
+      const recoveryBlock = await recoverLegacyRepair(
+        state,
+        staging,
+        integration,
+      );
+      if (recoveryBlock) return update(state, "blocked", recoveryBlock);
+      if (state.repairs.some((r) => r.stagingSha === staging))
+        return await repair(
+          state,
+          forge,
+          staging,
+          integration,
+          input.queueRepair !== false,
         );
       const snapshot = snapshotBranch(staging);
       const snapshotSha = await forge.getBranchSha(repo, snapshot);
@@ -670,10 +817,35 @@ export function createStagingSync(options: StagingSyncOptions) {
   }
   async function repairIntent(job: LocalJob): Promise<SyncRepairIntent> {
     assertCurrent();
-    const intent = read().repairs.find((r) => r.key === job.idempotencyKey);
-    if (!intent || intent.jobId !== job.id || !matchesRepair(job, intent))
-      throw new Error("This sync repair has no matching controller admission.");
+    const state = read();
+    let intent = state.repairs.find((r) => r.key === job.idempotencyKey);
     const forge = await options.forge();
+    if (!intent) {
+      // A queued v0.21 repair can start before the reconciliation timer. Its
+      // original durable admission remains sufficient; never fabricate a new one.
+      const current = await heads(forge);
+      const jobs = await sameRevisionJobs(current.staging);
+      if (
+        !state.repairs.some((r) => r.stagingSha === current.staging) &&
+        jobs.length === 1 &&
+        jobs[0]!.id === job.id
+      ) {
+        const candidates = legacyCandidates(
+          current.staging,
+          current.integration,
+          jobs,
+        );
+        if (candidates.length === 1) intent = candidates[0];
+      }
+    }
+    if (
+      !intent ||
+      intent.jobId !== job.id ||
+      !matchesRepair(job, intent) ||
+      job.cancelRequestedAt ||
+      job.status === "canceled"
+    )
+      throw new Error("This sync repair has no matching controller admission.");
     if (!(await unchanged(forge, intent.stagingSha, intent.integrationSha)))
       throw new Error(
         "The sync repair's source branches moved. Reconcile staging before starting new repair work.",

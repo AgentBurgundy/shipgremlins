@@ -312,7 +312,7 @@
         "integration-repair-stopped": "Integration repair stopped",
         "integration-repair-replaced": "Replacement draft registered",
         released: "Released",
-        unconfirmed: "Awaiting delivery admission",
+        unconfirmed: "Preparing for PM QA",
         unchanged: "No code change",
       };
       const recordedUrls = [
@@ -470,16 +470,17 @@
         const content = el("div", undefined, "promotion-ticket-content");
         const label = el("div", undefined, "promotion-ticket-title");
         const identifier = delivery?.ticket?.identifier || change.ticket;
-        if (identifier)
+        const title =
+          delivery?.ticket?.title ||
+          change.pullRequests?.[0]?.title ||
+          identifier ||
+          "Coding change";
+        if (
+          identifier &&
+          title.trim().toLowerCase() !== identifier.trim().toLowerCase()
+        )
           label.append(el("span", identifier, "promotion-ticket-id"));
-        label.append(
-          el(
-            "strong",
-            delivery?.ticket?.title ||
-              change.pullRequests?.[0]?.title ||
-              "Coding change",
-          ),
-        );
+        label.append(el("strong", title));
         const statusLabel =
           stage === "building" && change.status === "queued"
             ? "Coding queued"
