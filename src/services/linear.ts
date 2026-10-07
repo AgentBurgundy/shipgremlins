@@ -2,7 +2,7 @@
 // dispatcher used in production (issues / issueLabels / issueUpdate labelIds /
 // commentCreate); labels are created in the ticket's team on first use.
 
-import { fetchJson } from "../http.ts";
+import { fetchWithRetry, HttpError } from "../http.ts";
 import { LABELS } from "../dispatcher/notes.ts";
 import type {
   LinearClient,
@@ -16,6 +16,233 @@ export interface LinearApiOptions {
   apiKey: string;
   endpoint?: string;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+}
+
+const ERROR_MESSAGES = {
+  auth: "Linear authentication failed. Reconnect the account.",
+  permission: "Linear denied access to this operation.",
+  "rate-limit": "Linear temporarily limited requests. Try again later.",
+  limit: "Linear reported a workspace usage limit.",
+  validation: "Linear rejected the supplied input.",
+  unavailable: "Linear could not be reached or returned an unusable response.",
+  unknown: "Linear could not confirm the request.",
+} as const;
+
+export type LinearApiErrorCategory = keyof typeof ERROR_MESSAGES;
+
+const ERROR_CODES = {
+  AUTHENTICATION_ERROR: "auth",
+  UNAUTHENTICATED: "auth",
+  FORBIDDEN: "permission",
+  RATELIMITED: "rate-limit",
+  USAGE_LIMIT_EXCEEDED: "limit",
+  INVALID_INPUT: "validation",
+  BAD_USER_INPUT: "validation",
+  GRAPHQL_VALIDATION_FAILED: "validation",
+  INTERNAL_ERROR: "unavailable",
+  INTERNAL_SERVER_ERROR: "unavailable",
+  LOCK_TIMEOUT: "unavailable",
+  ENTITY_NOT_FOUND: "unknown",
+  NOT_FOUND: "unknown",
+} as const satisfies Record<string, LinearApiErrorCategory>;
+
+export type LinearApiErrorCode = keyof typeof ERROR_CODES;
+
+// These are Linear's structured error types, never free-form error messages.
+const ERROR_TYPES: Record<string, LinearApiErrorCategory> = {
+  "authentication error": "auth",
+  forbidden: "permission",
+  ratelimited: "rate-limit",
+  "usage limit exceeded": "limit",
+  "invalid input": "validation",
+  "internal error": "unavailable",
+  "network error": "unavailable",
+  "lock timeout": "unavailable",
+};
+
+const ERROR_FIELDS = [
+  "icon",
+  "color",
+  "name",
+  "description",
+  "content",
+  "key",
+  "teamId",
+  "teamIds",
+  "projectId",
+  "id",
+  "title",
+] as const;
+
+export type LinearApiErrorField = (typeof ERROR_FIELDS)[number];
+
+const isErrorField = (value: unknown): value is LinearApiErrorField =>
+  typeof value === "string" &&
+  (ERROR_FIELDS as readonly string[]).includes(value);
+
+const ERROR_CONSTRAINTS = new Set([
+  "customValidation",
+  "isString",
+  "isNotEmpty",
+  "maxLength",
+  "minLength",
+  "length",
+  "isHexColor",
+  "isUUID",
+  "isArray",
+  "arrayNotEmpty",
+  "arrayUnique",
+  "matches",
+  "isEnum",
+]);
+
+/** Safe to persist or display. Never retains the provider body, inputs or cause. */
+export class LinearApiError extends Error {
+  override readonly name = "LinearApiError";
+  readonly category: LinearApiErrorCategory;
+  readonly fields: readonly LinearApiErrorField[];
+  readonly status?: number;
+  readonly code?: LinearApiErrorCode;
+
+  constructor(
+    category: LinearApiErrorCategory,
+    metadata: {
+      fields?: readonly LinearApiErrorField[];
+      status?: number;
+      code?: LinearApiErrorCode;
+    } = {},
+  ) {
+    const safeCategory = Object.hasOwn(ERROR_MESSAGES, category)
+      ? category
+      : "unknown";
+    super(ERROR_MESSAGES[safeCategory]);
+    this.category = safeCategory;
+    this.fields = Object.freeze(
+      safeCategory === "validation" && Array.isArray(metadata.fields)
+        ? [...new Set(metadata.fields.filter(isErrorField))].slice(
+            0,
+            ERROR_FIELDS.length,
+          )
+        : [],
+    );
+    if (
+      Number.isInteger(metadata.status) &&
+      metadata.status! >= 100 &&
+      metadata.status! <= 599
+    )
+      this.status = metadata.status;
+    if (metadata.code && Object.hasOwn(ERROR_CODES, metadata.code)) {
+      this.code = metadata.code;
+    }
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function completeValidationField(value: unknown): boolean {
+  const entry = record(value);
+  if (!entry || !isErrorField(entry.property)) return false;
+  // Nested or unfamiliar validation evidence must not disappear from an
+  // icon-only recovery decision. Constraint values themselves are never read.
+  if (
+    entry.children != null &&
+    (!Array.isArray(entry.children) || entry.children.length > 0)
+  )
+    return false;
+  if (entry.constraints != null) {
+    const constraints = record(entry.constraints);
+    if (
+      !constraints ||
+      Object.keys(constraints).some((key) => !ERROR_CONSTRAINTS.has(key))
+    )
+      return false;
+  }
+  return true;
+}
+
+function linearApiError(payload: unknown, status: number): LinearApiError {
+  // A transport refusal outranks input metadata; never retry an icon through a
+  // permission, authentication, throttling or server outage response.
+  const transportCategory: LinearApiErrorCategory | undefined =
+    status === 401
+      ? "auth"
+      : status === 403
+        ? "permission"
+        : status === 429
+          ? "rate-limit"
+          : status === 408 || status >= 500
+            ? "unavailable"
+            : undefined;
+  if (transportCategory)
+    return new LinearApiError(transportCategory, { status });
+
+  const errors = record(payload)?.errors;
+  if (!Array.isArray(errors) || errors.length === 0 || errors.length > 20) {
+    return new LinearApiError(status === 422 ? "validation" : "unknown", {
+      status,
+    });
+  }
+  const classified = errors.map((error) => {
+    const extensions = record(record(error)?.extensions);
+    const code =
+      typeof extensions?.code === "string" &&
+      Object.hasOwn(ERROR_CODES, extensions.code)
+        ? (extensions.code as LinearApiErrorCode)
+        : undefined;
+    const type =
+      typeof extensions?.type === "string" &&
+      Object.hasOwn(ERROR_TYPES, extensions.type)
+        ? ERROR_TYPES[extensions.type]
+        : undefined;
+    const validation = extensions?.validationErrors;
+    const fields =
+      Array.isArray(validation) &&
+      validation.length > 0 &&
+      validation.length <= 20
+        ? validation.map((entry) => record(entry)?.property)
+        : [];
+    const unfamiliarEvidence =
+      (extensions?.code != null && !code) ||
+      (extensions?.type != null && !type);
+    const completeFields =
+      fields.length > 0 &&
+      (validation as unknown[]).every(completeValidationField);
+    const category = code
+      ? ERROR_CODES[code]
+      : (type ?? (completeFields ? "validation" : "unknown"));
+    // Conflicting structured evidence cannot authorize a cosmetic-only retry.
+    const conflict =
+      (code && type && ERROR_CODES[code] !== type) ||
+      (fields.length > 0 && category !== "validation");
+    return {
+      category: conflict ? "unknown" : category,
+      code: conflict ? undefined : code,
+      fields:
+        completeFields && !unfamiliarEvidence
+          ? (fields as LinearApiErrorField[])
+          : [],
+    };
+  });
+  const category = classified[0]!.category;
+  if (classified.some((error) => error.category !== category)) {
+    return new LinearApiError("unknown", { status });
+  }
+  const code = classified[0]!.code;
+  return new LinearApiError(category, {
+    status,
+    ...(code && classified.every((error) => error.code === code)
+      ? { code }
+      : {}),
+    fields:
+      category === "validation" &&
+      classified.every((error) => error.fields.length > 0)
+        ? classified.flatMap((error) => error.fields)
+        : [],
+  });
 }
 
 export interface LinearTeam {
@@ -110,26 +337,44 @@ export class LinearApi implements LinearClient {
     query: string,
     variables: Record<string, unknown> = {},
   ): Promise<T> {
-    const res = await fetchJson<{ data?: T; errors?: { message: string }[] }>(
-      this.endpoint,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: this.apiKey,
+    let response: Response;
+    try {
+      response = await fetchWithRetry(
+        this.endpoint,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: this.apiKey,
+          },
+          body: JSON.stringify({ query, variables }),
+          redirect: "error",
         },
-        body: JSON.stringify({ query, variables }),
-        redirect: "error",
-      },
-      { fetch: this.fetcher, retries: 0 },
-    );
-    if (res.errors?.length) {
-      throw new Error(
-        `Linear GraphQL: ${res.errors.map((e) => e.message).join("; ")}`,
+        // Mutations must reconcile their persisted IDs before an explicit retry.
+        { fetch: this.fetcher, retries: 0 },
       );
+    } catch (error) {
+      if (error instanceof HttpError)
+        throw linearApiError(error.json(), error.status);
+      throw new LinearApiError("unavailable");
     }
-    if (!res.data) throw new Error("Linear GraphQL: empty response");
-    return res.data;
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new LinearApiError("unavailable", { status: response.status });
+    }
+    const res = record(payload);
+    if (
+      !res ||
+      (res.errors != null &&
+        (!Array.isArray(res.errors) || res.errors.length > 0))
+    ) {
+      throw linearApiError(payload, response.status);
+    }
+    if (!res.data)
+      throw new LinearApiError("unknown", { status: response.status });
+    return res.data as T;
   }
 
   async organization(): Promise<{ id: string; name: string }> {
@@ -554,7 +799,11 @@ export class LinearApi implements LinearClient {
       );
       return data.issue ? toTicket(data.issue) : null;
     } catch (err) {
-      if (err instanceof Error && /not found/i.test(err.message)) return null;
+      if (
+        err instanceof LinearApiError &&
+        (err.code === "ENTITY_NOT_FOUND" || err.code === "NOT_FOUND")
+      )
+        return null;
       throw err;
     }
   }

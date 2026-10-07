@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LinearApi } from "./linear.ts";
+import { inspect } from "node:util";
+import { LinearApi, LinearApiError } from "./linear.ts";
 
 type Call = {
   query: string;
@@ -96,7 +97,7 @@ describe("LinearApi transport", () => {
       name: "Core",
       description: "Core PM",
       content: "Test core flows",
-      icon: "👾",
+      icon: ":space_invader:",
       color: "#c3f66b",
     });
     expect(
@@ -109,7 +110,7 @@ describe("LinearApi transport", () => {
       id: projectId,
       teamIds: [teamId],
       content: "Test core flows",
-      icon: "👾",
+      icon: ":space_invader:",
       color: "#c3f66b",
     });
   });
@@ -154,11 +155,11 @@ describe("LinearApi transport", () => {
     });
     await api.updateProject("project-1", {
       content: "## Saved mandate",
-      icon: "👾",
+      icon: ":space_invader:",
     });
     expect(calls[1]!.variables).toEqual({
       id: "project-1",
-      input: { content: "## Saved mandate", icon: "👾" },
+      input: { content: "## Saved mandate", icon: ":space_invader:" },
     });
     expect(calls[0]!.query).toContain("description content icon color");
   });
@@ -173,7 +174,7 @@ describe("LinearApi transport", () => {
       },
     }));
     await expect(
-      client().updateProject("expected-project", { icon: "👾" }),
+      client().updateProject("expected-project", { icon: ":space_invader:" }),
     ).rejects.toThrow("projectUpdate refused");
   });
   it("paginates resource selections and retains each project's team IDs", async () => {
@@ -221,13 +222,361 @@ describe("LinearApi transport", () => {
     expect(calls[0]!.headers.get("content-type")).toBe("application/json");
   });
 
-  it("throws on GraphQL errors", async () => {
+  it("does not infer authentication from a free-form GraphQL message", async () => {
     stubLinear(() => ({
       errors: [{ message: "AUTHENTICATION_ERROR: bad key" }],
     }));
-    await expect(client().getTicket("GAME-12")).rejects.toThrow(
-      "AUTHENTICATION_ERROR",
+    await expect(client().getTicket("GAME-12")).rejects.toMatchObject({
+      category: "unknown",
+      message: "Linear could not confirm the request.",
+      fields: [],
+    });
+  });
+});
+
+describe("safe Linear API errors", () => {
+  const token = "Bearer private-test-token";
+  const brief = "PRIVATE-PROJECT-BRIEF: build a confidential customer tool";
+  const iconError = {
+    message: `Argument Validation Error ${token}`,
+    extensions: {
+      code: "INVALID_INPUT",
+      type: "invalid input",
+      userPresentableMessage: `icon is not a valid icon. ${brief}`,
+      validationErrors: [
+        {
+          property: "icon",
+          constraints: {
+            customValidation: `icon is not a valid icon. ${token}`,
+          },
+          target: {
+            name: "Private project",
+            content: brief,
+            authorization: token,
+          },
+          value: "👾",
+        },
+      ],
+    },
+  };
+
+  async function rejectedProject(payload: unknown, status = 200) {
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe(token);
+      const request = JSON.parse(String(init?.body));
+      expect(request.variables.input).toMatchObject({
+        id: "reserved-id",
+        content: brief,
+        icon: ":space_invader:",
+      });
+      return new Response(
+        typeof payload === "string" ? payload : JSON.stringify(payload),
+        { status },
+      );
+    });
+    const api = new LinearApi({ apiKey: token, fetch: fetcher });
+    const error = await api
+      .createProject({
+        id: "reserved-id",
+        teamId: "team-1",
+        name: "Private project",
+        description: "A PM's scope",
+        content: brief,
+        icon: ":space_invader:",
+      })
+      .catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(LinearApiError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    return error as LinearApiError;
+  }
+
+  it.each([200, 400])(
+    "classifies the actual icon rejection on HTTP %s without retaining provider inputs",
+    async (status) => {
+      const error = await rejectedProject({ errors: [iconError] }, status);
+      expect(error).toMatchObject({
+        category: "validation",
+        code: "INVALID_INPUT",
+        status,
+        fields: ["icon"],
+        message: "Linear rejected the supplied input.",
+      });
+      const output = [
+        String(error),
+        error.stack,
+        JSON.stringify(error),
+        inspect(error),
+      ].join("\n");
+      for (const privateValue of [
+        token,
+        brief,
+        "Private project",
+        "👾",
+        "userPresentableMessage",
+        "target",
+        "constraints",
+      ]) {
+        expect(output).not.toContain(privateValue);
+      }
+      expect(error).not.toHaveProperty("cause");
+      expect(error).not.toHaveProperty("body");
+      expect(error).not.toHaveProperty("query");
+      expect(error).not.toHaveProperty("variables");
+      expect(Object.isFrozen(error.fields)).toBe(true);
+    },
+  );
+
+  it.each([
+    [401, "auth"],
+    [403, "permission"],
+    [429, "rate-limit"],
+    [503, "unavailable"],
+  ])(
+    "uses HTTP %s over misleading validation metadata and never retries a mutation",
+    async (status, category) => {
+      const error = await rejectedProject(
+        { errors: [iconError] },
+        Number(status),
+      );
+      expect(error).toMatchObject({ category, status, fields: [] });
+      expect(error.code).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ["AUTHENTICATION_ERROR", "auth"],
+    ["FORBIDDEN", "permission"],
+    ["RATELIMITED", "rate-limit"],
+    ["USAGE_LIMIT_EXCEEDED", "limit"],
+    ["INVALID_INPUT", "validation"],
+    ["INTERNAL_SERVER_ERROR", "unavailable"],
+  ])(
+    "uses structured GraphQL code %s even with HTTP 200",
+    async (code, category) => {
+      const error = await rejectedProject({
+        errors: [{ message: token, extensions: { code } }],
+        data: {
+          projectCreate: { success: true, project: { id: "reserved-id" } },
+        },
+      });
+      expect(error).toMatchObject({ category, code, status: 200, fields: [] });
+      expect(inspect(error)).not.toContain(token);
+    },
+  );
+
+  it("recognizes Linear's HTTP 400 GraphQL rate limit without retrying", async () => {
+    const error = await rejectedProject(
+      { errors: [{ extensions: { code: "RATELIMITED" } }] },
+      400,
     );
+    expect(error).toMatchObject({
+      category: "rate-limit",
+      code: "RATELIMITED",
+      fields: [],
+    });
+  });
+
+  it.each([
+    ["authentication error", "auth"],
+    ["forbidden", "permission"],
+    ["ratelimited", "rate-limit"],
+    ["usage limit exceeded", "limit"],
+    ["invalid input", "validation"],
+    ["network error", "unavailable"],
+  ])("recognizes the structured Linear type %s", async (type, category) => {
+    const error = await rejectedProject({ errors: [{ extensions: { type } }] });
+    expect(error).toMatchObject({ category, fields: [] });
+    expect(error.code).toBeUndefined();
+  });
+
+  it("accepts explicit validation-field evidence without exposing constraint text", async () => {
+    const error = await rejectedProject({
+      errors: [
+        {
+          extensions: {
+            validationErrors: [
+              { property: "icon", constraints: { customValidation: token } },
+            ],
+          },
+        },
+      ],
+    });
+    expect(error).toMatchObject({ category: "validation", fields: ["icon"] });
+    expect(inspect(error)).not.toContain(token);
+  });
+
+  it.each([
+    { message: "Permission denied. Upgrade your plan. Invalid icon." },
+    {
+      extensions: { code: "SENSITIVE-UNKNOWN-CODE", type: "new unknown type" },
+    },
+    {
+      extensions: {
+        code: "FORBIDDEN",
+        type: "invalid input",
+        validationErrors: [{ property: "icon" }],
+      },
+    },
+  ])(
+    "keeps uncertain errors neutral without permissions or limit guesses",
+    async (providerError) => {
+      const error = await rejectedProject({ errors: [providerError] }, 400);
+      expect(error).toMatchObject({
+        category: "unknown",
+        fields: [],
+        message: "Linear could not confirm the request.",
+      });
+      expect(error.code).toBeUndefined();
+      expect(inspect(error)).not.toContain("SENSITIVE-UNKNOWN-CODE");
+    },
+  );
+
+  it.each([
+    { extensions: { code: "FORBIDDEN" } },
+    { extensions: { code: "RATELIMITED" } },
+    { message: "Unrecognized second failure" },
+    { extensions: { code: "INVALID_INPUT" } },
+    {
+      extensions: {
+        code: "INVALID_INPUT",
+        validationErrors: [{ property: "private-unknown-field" }],
+      },
+    },
+  ])(
+    "does not authorize icon recovery when another GraphQL failure is present",
+    async (additionalError) => {
+      const error = await rejectedProject({
+        errors: [iconError, additionalError],
+      });
+      expect(error.fields).toEqual([]);
+      expect(inspect(error)).not.toContain("private-unknown-field");
+    },
+  );
+
+  it.each([
+    {
+      validationErrors: [
+        { property: "icon" },
+        { property: "private-unknown-field" },
+      ],
+    },
+    {
+      validationErrors: [
+        { property: "icon", children: [{ property: "secret-nested-field" }] },
+      ],
+    },
+    {
+      validationErrors: [
+        { property: "icon", constraints: { newUnknownConstraint: token } },
+      ],
+    },
+    {
+      validationErrors: Array.from({ length: 21 }, () => ({
+        property: "icon",
+      })),
+    },
+    { code: "NEW_PROVIDER_FAILURE" },
+    { type: "new provider error" },
+  ])(
+    "suppresses cosmetic recovery for incomplete or unfamiliar structured evidence",
+    async (extensions) => {
+      const error = await rejectedProject({
+        errors: [
+          {
+            ...iconError,
+            extensions: { ...iconError.extensions, ...extensions },
+          },
+        ],
+      });
+      expect(error.fields).toEqual([]);
+      expect(inspect(error)).not.toContain(token);
+      expect(inspect(error)).not.toContain("private-unknown-field");
+      expect(inspect(error)).not.toContain("secret-nested-field");
+    },
+  );
+
+  it("retains all recognized validation fields instead of reducing a mixed rejection to icon", async () => {
+    const error = await rejectedProject({
+      errors: [
+        {
+          extensions: {
+            code: "INVALID_INPUT",
+            validationErrors: [
+              { property: "icon" },
+              { property: "name" },
+              { property: "icon" },
+            ],
+          },
+        },
+      ],
+    });
+    expect(error).toMatchObject({
+      category: "validation",
+      fields: ["icon", "name"],
+    });
+  });
+
+  it.each([
+    null,
+    { errors: token },
+    { errors: [null] },
+    { errors: Array(21).fill(iconError) },
+    {},
+  ])("bounds malformed and oversized GraphQL failures", async (payload) => {
+    const error = await rejectedProject(payload);
+    expect(error).toMatchObject({ category: "unknown", fields: [] });
+    expect(inspect(error)).not.toContain(token);
+  });
+
+  it.each([200, 403, 502])(
+    "never exposes a malformed HTTP %s response body",
+    async (status) => {
+      const error = await rejectedProject(
+        `<html>${brief} ${token}</html>`,
+        status,
+      );
+      expect(error.category).toBe(
+        status === 403 ? "permission" : "unavailable",
+      );
+      expect(error.fields).toEqual([]);
+      expect(inspect(error)).not.toContain(brief);
+      expect(inspect(error)).not.toContain(token);
+    },
+  );
+
+  it("sanitizes transport failures and leaves mutation retries to the provisioner", async () => {
+    const fetcher = vi.fn(async () => {
+      throw new TypeError(`fetch failed ${token} ${brief}`);
+    });
+    const api = new LinearApi({ apiKey: token, fetch: fetcher });
+    const error = await api
+      .createProject({
+        teamId: "team-1",
+        name: "Core",
+        description: brief,
+        content: brief,
+      })
+      .catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(LinearApiError);
+    expect(error).toMatchObject({ category: "unavailable", fields: [] });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(inspect(error)).not.toContain(token);
+    expect(inspect(error)).not.toContain(brief);
+  });
+
+  it("does not turn an unknown message or a mixed not-found failure into a missing ticket", async () => {
+    for (const errors of [
+      [{ message: "Entity not found: Issue" }],
+      [
+        { extensions: { code: "ENTITY_NOT_FOUND" } },
+        { extensions: { code: "FORBIDDEN" } },
+      ],
+    ]) {
+      stubLinear(() => ({ errors }));
+      await expect(client().getTicket("GAME-99")).rejects.toMatchObject({
+        category: "unknown",
+      });
+    }
   });
 });
 
@@ -364,6 +713,7 @@ describe("getTicket", () => {
               {
                 message:
                   "Entity not found: Issue - Could not find referenced Issue.",
+                extensions: { code: "ENTITY_NOT_FOUND" },
               },
             ],
           }
@@ -682,13 +1032,19 @@ describe("labels", () => {
         ? { issueLabels: { nodes: [] } }
         : {
             errors: [
-              { message: "You do not have permission to create labels" },
+              {
+                message: "You do not have permission to create labels",
+                extensions: { code: "FORBIDDEN", type: "forbidden" },
+              },
             ],
           },
     );
     await expect(
       client().ensureLabels("team-1", ["pm:foundation"]),
-    ).rejects.toThrow("permission to create labels");
+    ).rejects.toMatchObject({
+      category: "permission",
+      message: "Linear denied access to this operation.",
+    });
     expect(
       calls.filter((call) => call.query.includes("CreateLabel")),
     ).toHaveLength(1);

@@ -20,7 +20,11 @@ import {
   createLinearProvisioning,
   type LinearProvisioningClient,
 } from "./linearProvisioning.ts";
-import type { LinearProjectResource, LinearTeam } from "../services/linear.ts";
+import {
+  LinearApiError,
+  type LinearProjectResource,
+  type LinearTeam,
+} from "../services/linear.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -96,6 +100,120 @@ function fixture() {
 }
 
 describe("Linear app and mandate provisioning", () => {
+  it("reconciles and retries a rejected decorative icon once with the same project ID", async () => {
+    const f = fixture();
+    const create = f.client.createProject;
+    f.client.createProject = vi.fn(async (input) => {
+      if (input.icon)
+        throw new LinearApiError("validation", { fields: ["icon"] });
+      return create(input);
+    });
+    const service = f.create();
+    await expect(service.provision("demo")).resolves.toMatchObject({
+      status: "ready",
+    });
+    const calls = vi.mocked(f.client.createProject).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0].icon).toBe(":space_invader:");
+    expect(calls[1]![0]).not.toHaveProperty("icon");
+    expect(calls[1]![0].id).toBe(calls[0]![0].id);
+    expect(f.projects.size).toBe(1);
+    expect(f.client.updateProject).not.toHaveBeenCalled();
+    await service.provision("demo");
+    expect(f.client.createProject).toHaveBeenCalledTimes(2);
+    expect(f.client.updateProject).not.toHaveBeenCalled();
+  });
+  it("does not recreate an already committed project when icon rejection includes partial success", async () => {
+    const f = fixture();
+    const create = f.client.createProject;
+    f.client.createProject = vi.fn(async (input) => {
+      await create(input);
+      throw new LinearApiError("validation", { fields: ["icon"] });
+    });
+    await expect(f.create().provision("demo")).resolves.toMatchObject({
+      status: "ready",
+    });
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(f.projects.size).toBe(1);
+  });
+  it.each([
+    new LinearApiError("validation", { fields: ["icon", "name"] }),
+    new LinearApiError("permission"),
+    new LinearApiError("rate-limit"),
+    new Error("private upstream token or prompt"),
+  ])(
+    "does not replay project creation for non-cosmetic failures",
+    async (failure) => {
+      const f = fixture();
+      vi.mocked(f.client.createProject).mockRejectedValue(failure);
+      await expect(f.create().provision("demo")).rejects.toThrow(
+        "creating the PM project",
+      );
+      expect(f.client.createProject).toHaveBeenCalledTimes(1);
+      expect(f.projects.size).toBe(0);
+      expect(f.create().status("demo").status).toBe("error");
+    },
+  );
+  it("keeps the recovery intent when the icon-free retry also fails", async () => {
+    const f = fixture();
+    vi.mocked(f.client.createProject)
+      .mockRejectedValueOnce(
+        new LinearApiError("validation", { fields: ["icon"] }),
+      )
+      .mockRejectedValueOnce(new LinearApiError("unavailable"));
+    await expect(f.create().provision("demo")).rejects.toThrow(
+      "temporarily unavailable",
+    );
+    const calls = vi.mocked(f.client.createProject).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0].id).toBe(calls[1]![0].id);
+    await expect(f.create().provision("demo")).resolves.toMatchObject({
+      status: "ready",
+    });
+    expect(vi.mocked(f.client.createProject).mock.calls[2]![0].id).toBe(
+      calls[0]![0].id,
+    );
+  });
+  it("preserves human edits while recovering rejected metadata decoration", async () => {
+    const f = fixture();
+    const create = f.client.createProject;
+    f.client.createProject = vi.fn(async (input) => {
+      const saved = await create(input);
+      const remote = f.projects.get(saved.id)!;
+      remote.icon = null;
+      remote.content = null;
+      throw new Error("lost response");
+    });
+    await expect(f.create().provision("demo")).rejects.toThrow(
+      "creating the PM project",
+    );
+    vi.mocked(f.client.updateProject).mockImplementationOnce(async (id) => {
+      f.projects.get(id)!.content = "New human notes";
+      throw new LinearApiError("validation", { fields: ["icon"] });
+    });
+    await expect(f.create().provision("demo")).resolves.toMatchObject({
+      status: "ready",
+    });
+    expect([...f.projects.values()][0]!.content).toBe("New human notes");
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect(f.client.updateProject).toHaveBeenCalledTimes(1);
+  });
+  it("reports the failing step without guessing permissions or exposing provider text", async () => {
+    const f = fixture();
+    vi.mocked(f.client.createProject).mockRejectedValue(
+      new Error("TOKEN private project content"),
+    );
+    await expect(f.create().provision("demo")).rejects.toThrow(
+      "Linear setup stopped while creating the PM project. Retry to resume this step.",
+    );
+    try {
+      await f.create().provision("demo");
+    } catch (error) {
+      expect(String(error)).not.toMatch(
+        /TOKEN|private project content|permission|limit/i,
+      );
+    }
+  });
   it.each(["promotion", "pull-request"] as const)(
     "creates a %s brief with the matching ticket and review handoff",
     async (kind) => {
@@ -198,7 +316,7 @@ describe("Linear app and mandate provisioning", () => {
     await service.provision("demo");
     const project = loadProject(f.root, "demo");
     vi.mocked(f.client.ensureLabels!).mockRejectedValueOnce(
-      new Error("permission denied"),
+      new LinearApiError("permission"),
     );
     await expect(service.provision("demo")).rejects.toThrow(
       "read and create issue labels",
@@ -794,7 +912,7 @@ describe("Linear app and mandate provisioning", () => {
     const input = vi.mocked(f.client.createProject).mock.calls[0]![0];
     expect(input).toMatchObject({
       name: "Account guardian",
-      icon: "👾",
+      icon: ":space_invader:",
       color: "#c3f66b",
     });
     expect(input.description.length).toBeLessThanOrEqual(255);
@@ -887,7 +1005,7 @@ describe("Linear app and mandate provisioning", () => {
     expect(f.client.createProject).toHaveBeenCalledTimes(1);
     const patch = vi.mocked(f.client.updateProject).mock.calls[1]![1];
     expect(patch).toMatchObject({
-      icon: "👾",
+      icon: ":space_invader:",
       content: expect.stringContaining("ShipGremlins"),
     });
     expect(patch).not.toHaveProperty("description");

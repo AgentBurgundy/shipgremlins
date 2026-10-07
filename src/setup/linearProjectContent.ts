@@ -6,8 +6,8 @@ import {
   effectiveWorkflow,
 } from "../projectCapabilities.ts";
 
-/** Linear's public schema accepts Markdown content, emoji icons and hex colors. */
-export const GREMLIN_PROJECT_ICON = "👾";
+/** Linear's icon field uses an icon name or emoji shortcode, not a Unicode glyph. */
+export const GREMLIN_PROJECT_ICON = ":space_invader:";
 export const GREMLIN_PROJECT_COLOR = "#c3f66b";
 
 const plain = (value: string) =>
