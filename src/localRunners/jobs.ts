@@ -67,6 +67,12 @@ export class JobReadinessError extends Error {
 }
 
 export interface JobPreparationOptions {
+  prepareSyncRepair?: (job: LocalJob) => Promise<DockerJobPayload>;
+  beforePmStart?: (job: LocalJob) => Promise<void>;
+  pinPmBaseline?: (
+    job: LocalJob,
+    payload: DockerJobPayload,
+  ) => Promise<DockerJobPayload>;
   beforeDeveloper?: (
     job: LocalJob,
     payload: DockerJobPayload,
@@ -405,6 +411,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
     linearBinding?: LocalJobInput["linearBinding"];
     discoveryRevision?: string;
   }> {
+    if (input.developerKind === "sync")
+      throw new JobReadinessError(
+        "Sync repairs are admitted by the staging controller. Use Retry sync in Delivery.",
+      );
     const project = projectFor(input);
     if (input.pmMode === "grumblin") {
       const profile = validateGrumblinProfileSnapshot(input.grumblin);
@@ -1157,7 +1167,23 @@ export function createJobPreparation(options: JobPreparationOptions) {
   }
   async function prepareJob(job: LocalJob): Promise<DockerJobPayload> {
     try {
+      if (job.developerKind === "sync") {
+        if (!options.prepareSyncRepair)
+          throw new JobReadinessError(
+            "This controller cannot prepare staging repairs.",
+          );
+        return await options.prepareSyncRepair(job);
+      }
+      if (job.type === "pm" && job.pmMode !== "discovery")
+        await options.beforePmStart?.(job);
       const payload = await prepare(job);
+      if (
+        job.type === "pm" &&
+        job.pmMode &&
+        job.pmMode !== "discovery" &&
+        options.pinPmBaseline
+      )
+        return await options.pinPmBaseline(job, payload);
       return job.type === "pm" && !job.pmMode && options.beforePm
         ? await options.beforePm(job, payload)
         : payload;

@@ -246,6 +246,15 @@ export class FakeForge implements Forge {
   async getPull(repo: RepoRef, number: number): Promise<PullRequest | null> {
     return this.pulls.get(`${repo}#${number}`) ?? null;
   }
+  async createBranch(
+    repo: RepoRef,
+    branch: string,
+    sha: string,
+  ): Promise<void> {
+    if (this.branches.has(`${repo}#${branch}`))
+      throw new Error("Branch already exists");
+    this.seedBranch(repo, branch, sha);
+  }
   async createPull(
     repo: RepoRef,
     input: CreatePullInput,

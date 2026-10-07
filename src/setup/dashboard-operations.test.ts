@@ -629,6 +629,126 @@ describe("explicit review controls", () => {
 });
 
 describe("remote and delivery controls", () => {
+  it("shows staging sync progress, prevents duplicate retries and reports retry failures inline", async () => {
+    const initial = {
+      enabled: true,
+      stagingSync: {
+        phase: "waiting-checks",
+        message: "Waiting for staging checks.",
+        checkedAt: "2026-10-06T21:00:00Z",
+        pullUrl: "https://github.com/owner/alpha/pull/23",
+      },
+    };
+    let finish!: (value: typeof initial) => void;
+    let fail = false;
+    const api = vi.fn(async (path: string, body?: unknown) => {
+      if (path.endsWith("/states")) return { states: [] };
+      if (path.endsWith("/sync")) {
+        expect(body).toEqual({});
+        if (fail) throw new Error("Source provider unavailable.");
+        return new Promise<typeof initial>((resolve) => {
+          finish = resolve;
+        });
+      }
+      return initial;
+    });
+    const { window } = fixture(api),
+      root = new Element("section");
+    const changed = vi.fn();
+    const helper = window.createDeliveryWorkflow({
+      api,
+      pages: { current: "project", project: "alpha", tab: "delivery" },
+      isLocked: () => false,
+      onChanged: changed,
+    });
+    helper.mount(root, { name: "alpha", areas: [] });
+    await flush();
+    const sync = root.querySelector(".delivery-staging-sync")!;
+    expect(sync.hidden).toBe(false);
+    expect(text(sync)).toContain("Waiting for branch checks");
+    expect(text(sync)).toContain("Checks automatically every minute");
+    expect(sync.querySelector("a")!.href).toBe(initial.stagingSync.pullUrl);
+    const retry = find(sync, "Retry sync");
+    const pending = retry.fire("click");
+    expect(retry.disabled).toBe(true);
+    expect(text(sync)).toContain("Checking staging and the test branch…");
+    await retry.fire("click");
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/sync")),
+    ).toHaveLength(1);
+    finish({
+      ...initial,
+      stagingSync: {
+        ...initial.stagingSync,
+        phase: "current",
+        message: "Ready for PM testing.",
+      },
+    });
+    await pending;
+    expect(text(sync)).toContain("Test branch is up to date");
+    expect(text(sync)).toContain("Ready for PM testing.");
+    expect(retry.disabled).toBe(false);
+    expect(changed).toHaveBeenCalledWith("alpha");
+    fail = true;
+    await retry.fire("click");
+    expect(text(sync)).toContain(
+      "Sync could not finish. Source provider unavailable.",
+    );
+    expect(retry.disabled).toBe(false);
+    expect(root.querySelector("dialog")!.open).toBe(false);
+  });
+  it("keeps staging sync unavailable for disabled workflows and blocks unsafe links or busy retries", async () => {
+    let state = {
+      enabled: false,
+      stagingSync: {
+        phase: "disabled",
+        message: "Ordinary pull requests.",
+        pullUrl: "",
+        checkedAt: "invalid",
+      },
+    };
+    const api = vi.fn(async (path: string) =>
+      path.endsWith("/states") ? { states: [] } : state,
+    );
+    const { window } = fixture(api),
+      root = new Element("section");
+    const helper = window.createDeliveryWorkflow({
+      api,
+      pages: { current: "project", project: "alpha", tab: "delivery" },
+      isLocked: () => false,
+    });
+    helper.mount(root, { name: "alpha", areas: [] });
+    await flush();
+    const sync = root.querySelector(".delivery-staging-sync")!;
+    const retry = find(sync, "Retry sync");
+    expect(sync.hidden).toBe(true);
+    expect(retry.disabled).toBe(true);
+    await retry.fire("click");
+    expect(api.mock.calls.some(([path]) => path.endsWith("/sync"))).toBe(false);
+    for (const phase of ["checking", "repairing"]) {
+      state = {
+        enabled: true,
+        stagingSync: {
+          phase,
+          message: "Sync in progress.",
+          pullUrl: "javascript:alert(1)",
+          checkedAt: "invalid",
+        },
+      };
+      await helper.refresh("alpha");
+      expect(sync.hidden).toBe(false);
+      expect(retry.disabled).toBe(true);
+      expect(sync.querySelector("a")!.hidden).toBe(true);
+      expect(sync.querySelector("a")!.href).toBe("");
+      expect(text(sync)).not.toContain("Invalid Date");
+    }
+    state.stagingSync.phase = "blocked";
+    state.stagingSync.pullUrl =
+      "https://github.com/owner/alpha/pull/23?token=private";
+    await helper.refresh("alpha");
+    expect(retry.disabled).toBe(false);
+    expect(sync.querySelector("a")!.hidden).toBe(true);
+  });
   it("renders nested production audit outcomes without treating an unmerged or unapplied ticket as Done", async () => {
     const api = vi.fn(async () => ({
       enabled: false,

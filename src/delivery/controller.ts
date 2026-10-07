@@ -45,6 +45,9 @@ import {
   type ProductionDeclarationInput,
 } from "./production.ts";
 import { integrationHealth } from "../dispatcher/stopTheLine.ts";
+import { createStagingSync } from "./stagingSync.ts";
+import { createSyncRepairPayload } from "./syncRepair.ts";
+import { LocalJobDeferredError } from "../localRunners/engine.ts";
 import {
   createDeliveryService,
   deliveryConfiguration,
@@ -86,6 +89,8 @@ export interface DeliveryControllerOptions {
   now?: () => Date;
   docker?: Pick<DockerRunners, "ensureImage">;
   executor?: typeof createPromotionExecutor;
+  syncJobs?: () => Promise<LocalJob[]>;
+  enqueueSyncRepair?: (input: LocalJobInput) => Promise<LocalJob>;
 }
 export interface CandidateHandoff {
   project: string;
@@ -154,6 +159,116 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
   const source = () =>
     options.sourceControl ??
     createSourceControl({ root: options.root, env: environment() });
+  function stagingSync(project: Project) {
+    return createStagingSync({
+      root: options.root,
+      project,
+      currentProject: () => projectFor(project.config.name),
+      now,
+      jobs: options.syncJobs,
+      enqueue: options.enqueueSyncRepair,
+      forge: async () => {
+        const credential = await source().resolveCredential({
+          provider: project.config.provider ?? "github",
+          serverUrl: project.config.serverUrl,
+          repository: project.config.repo,
+          write: true,
+          minValidityMs: 60_000,
+        });
+        return (
+          options.forge?.(project, credential.token) ??
+          (project.config.provider === "gitlab"
+            ? new GitLabForge({
+                token: credential.token,
+                serverUrl: project.config.serverUrl,
+              })
+            : new GitHubForge({ token: credential.token }))
+        );
+      },
+      deployment: () => deployment(project),
+      checkMerge: (integration, head) =>
+        checkSyncMerge(project, integration, head),
+    });
+  }
+  async function checkSyncMerge(
+    project: Project,
+    integration: string,
+    head: string,
+  ) {
+    if (!options.docker || !project.config.commands.test?.trim()) return false;
+    const access = source(),
+      jobId = `job-sync-checks-${randomBytes(12).toString("hex")}`;
+    const target = {
+      provider: project.config.provider ?? ("github" as const),
+      serverUrl: project.config.serverUrl,
+      repository: project.config.repo,
+    };
+    const credential = access.acquireLease
+      ? await access.acquireLease({ ...target, jobId, minutes: 50 })
+      : await access.resolveCredential({
+          ...target,
+          minValidityMs: 50 * 60_000,
+        });
+    try {
+      const executor = await (options.executor ?? createPromotionExecutor)({
+        root: options.root,
+        project,
+        token: credential.token,
+        docker: options.docker,
+      });
+      const git = (args: string[]) =>
+        executor.git.run(args, executor.checkoutDir);
+      if (
+        (await git(["checkout", "--detach", integration])).code !== 0 ||
+        (await git(["rev-parse", "HEAD"])).out.trim() !== integration
+      )
+        return false;
+      if ((await git(["merge", "--no-commit", "--no-ff", head])).code !== 0)
+        return false;
+      return (await executor.check(executor.checkoutDir)).ok;
+    } finally {
+      await access.releaseLease?.(jobId);
+    }
+  }
+  async function beforePmStart(job: LocalJob) {
+    if (!job.project || job.pmMode === "discovery") return;
+    const project = projectFor(job.project);
+    if (!enabled(project)) return;
+    const status = await stagingSync(project).reconcile({
+      queueRepair: false,
+      checkOnly: true,
+    });
+    if (status.phase !== "current")
+      throw new LocalJobDeferredError(status.message, "environment-wait");
+  }
+  async function prepareSyncRepair(job: LocalJob): Promise<DockerJobPayload> {
+    const project = projectFor(job.project!);
+    const intent = await stagingSync(project).repairIntent(job);
+    const claudeToken = environment().CLAUDE_CODE_OAUTH_TOKEN;
+    if (!claudeToken)
+      throw new Error("Save a Claude connection before repairing staging.");
+    const access = source();
+    if (!access.acquireLease)
+      throw new Error("Sync repair requires managed source credentials.");
+    const credential = await access.acquireLease({
+      jobId: job.id,
+      provider: project.config.provider ?? "github",
+      serverUrl: project.config.serverUrl,
+      repository: project.config.repo,
+      write: true,
+      minutes: 50,
+    });
+    // A connection refresh may take time. Recheck durable admission before handing off secrets.
+    await stagingSync(projectFor(job.project!)).repairIntent(job);
+    return createSyncRepairPayload({
+      project,
+      job,
+      stagingSha: intent.stagingSha,
+      integrationSha: intent.integrationSha,
+      credential,
+      claudeToken,
+    });
+  }
   const localLedger = (project: Project) =>
     createDeliveryService({
       root: options.root,
@@ -497,11 +612,48 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       ];
     });
   }
+  async function pinPmBaseline(
+    job: LocalJob,
+    payload: DockerJobPayload,
+  ): Promise<DockerJobPayload> {
+    const project = projectFor(job.project!);
+    if (enabled(project) && job.pmMode !== "discovery") {
+      await beforePmStart(job);
+      let target: ReviewDeployment;
+      try {
+        target = await deployment(project);
+      } catch {
+        throw new LocalJobDeferredError(
+          "Waiting for the current PM deployment to become available.",
+          "environment-wait",
+        );
+      }
+      const status = stagingSync(project).status();
+      if (
+        target.sha !== status.integrationSha ||
+        target.branch !== payload.branch
+      )
+        throw new LocalJobDeferredError(
+          "The PM test deployment changed during preparation. Waiting for its current revision.",
+          "environment-wait",
+        );
+      payload = {
+        ...payload,
+        expectedCommitSha: target.sha,
+        browserTarget: target.url,
+        prompt: payload.browserTarget
+          ? payload.prompt?.split(payload.browserTarget).join(target.url)
+          : payload.prompt,
+      };
+    }
+    return payload;
+  }
   async function beforePm(
     job: LocalJob,
     payload: DockerJobPayload,
   ): Promise<DockerJobPayload> {
     const project = projectFor(job.project!);
+    payload = await pinPmBaseline(job, payload);
     if (
       !enabled(project) ||
       job.pmMode ||
@@ -512,12 +664,29 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     )
       return payload;
     const { ledger } = await clients(project);
+    let reviewDeployment: ReviewDeployment;
+    try {
+      reviewDeployment = await deployment(project);
+    } catch {
+      throw new LocalJobDeferredError(
+        "Waiting for the current integration deployment before preparing its review.",
+        "environment-wait",
+      );
+    }
+    if (
+      reviewDeployment.sha !== payload.expectedCommitSha ||
+      reviewDeployment.url !== payload.browserTarget
+    )
+      throw new LocalJobDeferredError(
+        "The integration deployment moved during preparation. Waiting to admit one matching checkout and browser deployment.",
+        "environment-wait",
+      );
     let plan: PmReviewPlan | null;
     try {
       plan = await ledger.prepareReview({
         area: job.area,
         jobId: job.id,
-        deployment: await deployment(project),
+        deployment: reviewDeployment,
       });
     } catch {
       await ledger.reviewUnavailable(job.area);
@@ -546,6 +715,14 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       throw new Error(
         "The owning PM must inspect the exact integration deployment before delivery verification.",
       );
+    if (
+      payload.expectedCommitSha !== plan.deployment.sha ||
+      payload.browserTarget !== plan.deployment.url
+    )
+      throw new LocalJobDeferredError(
+        "The integration deployment moved while its review was being prepared. Waiting to admit one matching checkout and browser deployment.",
+        "environment-wait",
+      );
     return {
       ...payload,
       reviewPlan: plan,
@@ -558,6 +735,9 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     result: Record<string, unknown>,
     docker: DockerRunners,
   ): Promise<void> {
+    // Sync repair publication is independently inspected by staging reconciliation,
+    // never registered as an approved product ticket or promoted to production.
+    if (job.developerKind === "sync") return;
     if (!job.project || !["pm", "developer"].includes(job.type) || job.pmMode)
       return;
     const project = projectFor(job.project);
@@ -1072,6 +1252,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     }
   }
   return {
+    beforePmStart,
+    pinPmBaseline,
+    prepareSyncRepair,
+    reconcileStaging: (name: string) =>
+      stagingSync(projectFor(name)).reconcile(),
     beforeDeveloper,
     beforePm,
     pendingReviews,
@@ -1089,6 +1274,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         ...declarationsFor(project).status(),
         candidates: candidateHandoffs(project),
         enabled: enabled(project),
+        stagingSync: stagingSync(project).status(),
         deliveries: localLedger(project).list(),
         candidateEnvironment:
           effectiveWorkflow(project.config).kind === "promotion"

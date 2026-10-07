@@ -309,6 +309,17 @@ export class GitHubForge implements Forge {
     return { aheadBy: c.ahead_by, behindBy: c.behind_by };
   }
 
+  async createBranch(
+    repo: RepoRef,
+    branch: string,
+    sha: string,
+  ): Promise<void> {
+    await this.rest("POST", `/repos/${repo}/git/refs`, {
+      ref: `refs/heads/${branch}`,
+      sha,
+    });
+  }
+
   async deleteBranch(repo: RepoRef, branch: string): Promise<void> {
     try {
       await this.rest<null>(

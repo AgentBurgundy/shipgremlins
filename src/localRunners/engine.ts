@@ -106,10 +106,12 @@ export class LocalRunnerError extends Error {
 
 /** A temporary credential admission delay, not a failed agent attempt. */
 export class LocalJobDeferredError extends Error {
-  constructor() {
-    super(
-      "Waiting for active jobs to finish before refreshing the source connection. This job remains queued.",
-    );
+  constructor(
+    message = "Waiting for active jobs to finish before refreshing the source connection. This job remains queued.",
+    public readonly category:
+      "credential-wait" | "environment-wait" = "credential-wait",
+  ) {
+    super(message);
     this.name = "LocalJobDeferredError";
   }
 }
@@ -1459,7 +1461,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         job.startedAt = undefined;
         job.message = error.message;
         job.failure = {
-          category: "credential-wait",
+          category: error.category,
           at: now(),
           retryable: true,
         };

@@ -199,6 +199,13 @@ export class GitLabForge implements Forge {
     );
     return value && object(value.commit) ? str(value.commit.id) || null : null;
   }
+  async createBranch(repo: string, branch: string, sha: string): Promise<void> {
+    revision(sha);
+    await this.request(`${this.project(repo)}/repository/branches`, "POST", {
+      branch,
+      ref: sha,
+    });
+  }
   async compare(repo: string, base: string, head: string) {
     if (base === head) return { aheadBy: 0, behindBy: 0 };
     const prefix = this.project(repo);

@@ -691,6 +691,12 @@ export function createDashboardServer(
       linearConnectionFor,
       vercelConnectionFor,
       docker: localDocker,
+      syncJobs: () => runners().jobs(),
+      enqueueSyncRepair: async (input) => {
+        const job = await runners().enqueue(input);
+        runners().start();
+        return job;
+      },
     });
   const preparation: ReturnType<typeof createJobPreparation> =
     options.jobs ??
@@ -703,6 +709,9 @@ export function createDashboardServer(
       vercelConnectionFor,
       beforePm: delivery.beforePm,
       beforeDeveloper: delivery.beforeDeveloper,
+      beforePmStart: delivery.beforePmStart,
+      pinPmBaseline: delivery.pinPmBaseline,
+      prepareSyncRepair: delivery.prepareSyncRepair,
       ensurePreviewAccess: async (project) => {
         const selected = effectiveVerification(project.config);
         if (
@@ -1038,19 +1047,69 @@ export function createDashboardServer(
       })
       .finally(() => continuePromotions(name));
   }
-  let productionBusy = false;
-  async function reconcileDeliveries() {
-    if (productionBusy || configurationMutation) return;
-    productionBusy = true;
+  const reconcilingProjects = new Set<string>();
+  async function synchronizeStaging(name: string) {
+    const key = projectRuntimeKey(loadProject(root, name).config);
+    if (
+      configurationMutation ||
+      deliveryOperations.get(key)?.phase === "running"
+    )
+      return;
+    if (!delivery.reconcileStaging) return;
+    deliveryOperations.set(key, {
+      phase: "running",
+      message: "Synchronizing staging and checking the PM test deployment.",
+    });
     try {
-      for (const name of listProjectNames(root)) {
-        if (configurationMutation) break;
+      const state = await withProjectOperation(name, () =>
+        delivery.reconcileStaging(name),
+      );
+      deliveryOperations.set(key, {
+        phase: state.phase === "blocked" ? "error" : "idle",
+        message: state.message,
+      });
+      return state;
+    } catch {
+      deliveryOperations.set(key, {
+        phase: "error",
+        message:
+          "Staging sync could not finish. Check Delivery for its status; the controller will retry.",
+      });
+    }
+  }
+  async function reconcileDeliveries() {
+    if (configurationMutation) return;
+    await Promise.allSettled(
+      listProjectNames(root).map(async (name) => {
+        if (configurationMutation || reconcilingProjects.has(name)) return;
+        reconcilingProjects.add(name);
         try {
           const key = projectRuntimeKey(loadProject(root, name).config);
           const status = delivery.deliveryStatus(name);
-          await improvements.reconcile?.(name);
+          try {
+            await improvements.reconcile?.(name);
+          } catch {
+            /* Improvement-provider outages must not stop branch maintenance. */
+          }
           if (!status.enabled || !loadProject(root, name).config.verified)
-            continue;
+            return;
+          // Production receipts are independent of whether the next PM preview is ready.
+          if (status.declarations.length) {
+            try {
+              productionReports.set(
+                key,
+                await withProjectOperation(name, () =>
+                  delivery.reconcileProduction(name),
+                ),
+              );
+            } catch {
+              /* Preserve prior production receipts while another provider is unavailable. */
+            }
+          }
+          if (typeof delivery.reconcileStaging === "function") {
+            const synced = await synchronizeStaging(name);
+            if (!synced || synced.phase !== "current") return;
+          }
           continuePromotions(name);
           if (
             status.deliveries.some(
@@ -1086,20 +1145,13 @@ export function createDashboardServer(
               /* Existing delivery evidence remains held for a later eligible retry. */
             }
           }
-          if (status.declarations.length)
-            productionReports.set(
-              key,
-              await withProjectOperation(name, () =>
-                delivery.reconcileProduction(name),
-              ),
-            );
         } catch {
           /*Each project keeps its durable scope. One unavailable provider must not stop other projects.*/
+        } finally {
+          reconcilingProjects.delete(name);
         }
-      }
-    } finally {
-      productionBusy = false;
-    }
+      }),
+    );
   }
   const cleanOutput = (lines: string[]) => {
     let secrets: string[] = [];
@@ -1126,6 +1178,11 @@ export function createDashboardServer(
       ...preparation,
       admissionBlocker: projectKnowledge.admissionBlocker,
       reconcileCompletedJob: async (job, result, worker) => {
+        if (job.developerKind === "sync") {
+          // Reconcile after the engine persists completion and releases its queue lock.
+          setTimeout(() => void reconcileDeliveries(), 0).unref();
+          return;
+        }
         improvements.captureResult?.(job, result);
         await delivery.completeJob(job, result, worker);
         if (job.type === "pm" && !job.pmMode && job.project && job.area) {
@@ -1147,6 +1204,7 @@ export function createDashboardServer(
             continuePromotions(job.project);
           }
         }
+        setTimeout(() => void reconcileDeliveries(), 0).unref();
       },
       beforeLaunch: () => activityStore.ensure(),
       releaseJobResources: preparation.releaseJobResources,
@@ -2273,7 +2331,7 @@ export function createDashboardServer(
           return;
         }
         const deliveryRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]*)\/delivery(?:\/(promote|production|states|advance|environment))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]*)\/delivery(?:\/(promote|production|states|advance|environment|sync))?$/.exec(
             url.pathname,
           );
         if (deliveryRoute) {
@@ -2388,6 +2446,31 @@ export function createDashboardServer(
                 "No matching verified deliveries are ready to package. Run the owning PM after its integration deployment is ready.",
               );
             preparePromotion(name, input.area as string | undefined);
+            json(res, 202, deliveryView(name));
+          } else if (req.method === "POST" && action === "sync") {
+            if (Object.keys(await body(req)).length)
+              throw new RequestError(
+                400,
+                "Use an empty object to retry staging sync.",
+              );
+            if (
+              !delivery.deliveryStatus(name).enabled ||
+              !loadProject(root, name).config.verified
+            )
+              throw new RequestError(
+                409,
+                "Verify a promotion project before syncing staging.",
+              );
+            if (
+              deliveryOperations.get(
+                projectRuntimeKey(loadProject(root, name).config),
+              )?.phase === "running"
+            )
+              throw new RequestError(
+                409,
+                "A delivery operation is already running for this project.",
+              );
+            void synchronizeStaging(name);
             json(res, 202, deliveryView(name));
           } else if (req.method === "POST" && action === "advance") {
             if (Object.keys(await body(req)).length)
@@ -4960,6 +5043,7 @@ export function createDashboardServer(
   server.once("listening", () => {
     void syncRemoteWorkers();
     for (const name of listProjectNames(root)) continuePromotions(name);
+    void reconcileDeliveries();
     if (
       options.runners ||
       existsSync(join(root, ".run", "local-runners", "state.json"))

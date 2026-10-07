@@ -93,6 +93,8 @@ export interface Forge {
   listPullChanges?(repo: RepoRef, number: number): Promise<PullChange[]>;
   // ── branches ──────────────────────────────────────────────────────────────
   getBranchSha(repo: RepoRef, branch: string): Promise<string | null>;
+  /** Create an immutable sync snapshot; never update or force an existing ref. */
+  createBranch?(repo: RepoRef, branch: string, sha: string): Promise<void>;
   /** how many commits `head` has that `base` lacks, and vice versa */
   compare(
     repo: RepoRef,

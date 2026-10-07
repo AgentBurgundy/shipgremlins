@@ -4,6 +4,27 @@ import { GitHubForge } from "./github.ts";
 const REPO = "owner/game";
 const HUB = "owner/pm-hub";
 
+it("creates a staging snapshot without updating an existing branch", async () => {
+  const calls = stubGitHub([
+    {
+      method: "POST",
+      re: /\/repos\/owner\/game\/git\/refs$/,
+      handler: () => ({}),
+    },
+  ]);
+  const forge = new GitHubForge({ token: "test-token" });
+  await forge.createBranch(
+    REPO,
+    "gremlins/staging-sync-snapshot",
+    "a".repeat(40),
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.body).toEqual({
+    ref: "refs/heads/gremlins/staging-sync-snapshot",
+    sha: "a".repeat(40),
+  });
+});
+
 type Call = { method: string; url: URL; body: unknown; headers: Headers };
 type Route = {
   method: string;
