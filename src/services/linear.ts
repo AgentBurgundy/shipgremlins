@@ -275,6 +275,7 @@ const TICKET_FIELDS = `
   state { id type }
   team { id }
   project { id }
+  parent { id }
   labels { nodes { id name } }
 `;
 
@@ -290,6 +291,7 @@ interface IssueNode {
   state: { id?: string; type: string } | null;
   team: { id: string } | null;
   project?: { id: string } | null;
+  parent?: { id: string } | null;
   labels: { nodes: { id: string; name: string }[] } | null;
 }
 
@@ -309,6 +311,7 @@ function toTicket(n: IssueNode): LinearTicket {
     ...(n.state?.id ? { stateId: n.state.id } : {}),
     ...(n.team?.id ? { teamId: n.team.id } : {}),
     ...(n.project?.id ? { projectId: n.project.id } : {}),
+    ...(n.parent?.id ? { parentId: n.parent.id } : {}),
     priority: n.priority ?? 0,
     createdAt: n.createdAt,
     updatedAt: n.updatedAt,
@@ -946,6 +949,7 @@ export class LinearApi implements LinearClient {
     id?: string;
     teamId?: string;
     projectId: string;
+    parentId?: string;
     title: string;
     description: string;
     labels: string[];
@@ -985,6 +989,7 @@ export class LinearApi implements LinearClient {
           ...(input.id ? { id: input.id } : {}),
           teamId,
           projectId: input.projectId,
+          ...(input.parentId ? { parentId: input.parentId } : {}),
           title: input.title,
           description: input.description,
           labelIds,

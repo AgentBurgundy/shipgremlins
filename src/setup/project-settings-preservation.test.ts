@@ -95,7 +95,7 @@ const access = {
     },
   ],
 };
-function form(target: object) {
+function form(target: object, overrides: Record<string, unknown> = {}) {
   const document = {
     createElement: (tag: string) => new Element(tag.toUpperCase()),
     createTextNode: (text: string) =>
@@ -148,6 +148,7 @@ function form(target: object) {
       verification: { mode: "browser", environment: "testing" },
       workflow: { kind: "pull-request", baseBranch: "main" },
       commands: { install: "npm ci", test: "npm test" },
+      ...overrides,
     };
   const settings = window.createProjectSettings(root, "edit", config, {
     onReveal,
@@ -155,6 +156,45 @@ function form(target: object) {
   return { root, settings, onReveal, signalInput };
 }
 describe("project editor environment preservation", () => {
+  it("keeps epic policy, candidate environment and batch target on unrelated edits and makes migration explicit", () => {
+    const target = {
+      kind: "url",
+      role: "staging",
+      url: "https://example.test",
+    };
+    const workflow = {
+      kind: "promotion",
+      approvalPolicy: "epic",
+      candidateEnvironment: "candidate",
+      promotionBatchSize: 15,
+    };
+    const { root, settings } = form(target, { workflow });
+    const fields = root.querySelectorAll("input,select");
+    fields.find((item) => item.dataset.setting === "command-test")!.value =
+      "node --test";
+    expect(settings.read()).toMatchObject({ workflow });
+    fields.find(
+      (item) => item.dataset.setting === "promotionBatchSize",
+    )!.value = "4";
+    expect(settings.read()).toMatchObject({
+      workflow: { ...workflow, promotionBatchSize: 4 },
+    });
+    const legacy = form(target, { workflow: { kind: "promotion" } });
+    expect(legacy.settings.read()).toMatchObject({
+      workflow: { kind: "promotion", promotionBatchSize: 10 },
+    });
+    expect(
+      (legacy.settings.read().workflow as Record<string, unknown>)
+        .approvalPolicy,
+    ).toBeUndefined();
+    legacy.root
+      .querySelectorAll("input,select")
+      .find((item) => item.dataset.setting === "approvalPolicy")!.value =
+      "epic";
+    expect(legacy.settings.read()).toMatchObject({
+      workflow: { approvalPolicy: "epic" },
+    });
+  });
   it.each([
     {
       kind: "docker",

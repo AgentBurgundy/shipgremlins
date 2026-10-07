@@ -290,7 +290,8 @@ describe("PM prepare and verify admission", () => {
         (area) => area.key === "investigator",
       ),
     ).toMatchObject({
-      enabled: true,
+      enabled: false,
+      codingEnabled: false,
       linearProjectId: "PASTE_LINEAR_PROJECT_ID",
     });
     expect(f.client.organization).not.toHaveBeenCalled();
@@ -314,8 +315,8 @@ describe("PM prepare and verify admission", () => {
       linear: { status: "ready" },
     });
     expect(adopted).toMatchObject({
-      enabled: true,
-      codingEnabled: true,
+      enabled: false,
+      codingEnabled: false,
       schedule: "0 13 * * *",
     });
     expect(adopted.linearProjectId).not.toBe("PASTE_LINEAR_PROJECT_ID");

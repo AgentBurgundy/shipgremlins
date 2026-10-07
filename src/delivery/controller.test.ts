@@ -621,6 +621,25 @@ describe("local delivery controller integration", () => {
       ok: false as const,
       reason: "Trusted candidate evidence pending",
     }));
+    const automaticCheck = vi.fn(async () => ({ ok: true, output: "checks" }));
+    vi.mocked(w.executor).mockResolvedValueOnce({
+      git,
+      checkoutDir: w.root,
+      check: automaticCheck,
+    });
+    const collecting = await w.controller.preparePromotion("game", {
+      area: "core",
+      automatic: true,
+      docker: {
+        ensureImage: async () => "shipgremlins-local:aaaaaaaaaaaaaaaa",
+      },
+    });
+    expect(collecting).toEqual([
+      expect.objectContaining({
+        text: expect.stringContaining("Core: 1/10 PM-tested tickets"),
+      }),
+    ]);
+    expect(automaticCheck).not.toHaveBeenCalled();
     await w.controller.promote("game", {
       git,
       checkoutDir: w.root,
@@ -632,8 +651,7 @@ describe("local delivery controller integration", () => {
     expect(handoff).toMatchObject({
       project: "game",
       repo: TEST_REPO,
-      area: "combined",
-      ownershipRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
+      area: "core",
       candidateSha,
       baseSha: stagingSha,
       changes: [1],

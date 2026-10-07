@@ -221,6 +221,9 @@ describe("project Setup Gremlin", () => {
       }[][]
     )[0]![0]!;
     expect(execution.prompt).toContain("express");
+    expect(JSON.parse(execution.prompt).workflow).toMatchObject({
+      kind: "pull-request",
+    });
     expect(execution.prompt).not.toContain(TOKEN);
     expect(execution.credential).toBe(CLAUDE);
     expect(JSON.stringify(result)).not.toContain(CLAUDE);

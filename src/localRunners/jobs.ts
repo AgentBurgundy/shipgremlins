@@ -44,7 +44,11 @@ import {
 import { resolveEnvironment } from "../hosting/index.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import { listConnectionIds } from "../oauthConnection/profiles.ts";
-import { hasPmMandate, hasPmMapping } from "../setup/pmReadiness.ts";
+import {
+  hasPmMandate,
+  hasPmMapping,
+  promotionEnvironmentBlocker,
+} from "../setup/pmReadiness.ts";
 import { createPmKnowledge, knowledgeRevision } from "../pmKnowledge/index.ts";
 import {
   buildPmDiscoveryPrompt,
@@ -63,6 +67,15 @@ import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-pro
 import { buildGrumblinPrompt } from "../grumblins/prompts.ts";
 import { acceptanceCriteria } from "../delivery/index.ts";
 import { missionCodingBlocker } from "../improvements/index.ts";
+import {
+  epicCodingBlocker,
+  epicApproved,
+  usesEpicApproval,
+  promotionTicketPolicy,
+} from "../epics.ts";
+import { environmentVerificationStatus } from "../setup/environmentAccess.ts";
+import type { DeliveryRecord } from "../delivery/types.ts";
+import { codingWorkInProgress } from "./workInProgress.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -72,6 +85,7 @@ export class JobReadinessError extends Error {
 }
 
 export interface JobPreparationOptions {
+  deliveryRecords?: (project: string) => DeliveryRecord[];
   prepareSyncRepair?: (job: LocalJob) => Promise<DockerJobPayload>;
   beforePmStart?: (job: LocalJob) => Promise<void>;
   pinPmBaseline?: (
@@ -308,10 +322,28 @@ export function createJobPreparation(options: JobPreparationOptions) {
           project.config.signIn?.databaseUrlSecret,
         );
   }
+  function codingEnvironmentBlocker(project: Project) {
+    return promotionEnvironmentBlocker(
+      project,
+      environmentVerificationStatus(root, project, connections()),
+    );
+  }
+  function assertCodingEnvironment(project: Project) {
+    const blocker = codingEnvironmentBlocker(project);
+    if (blocker) throw new JobReadinessError(blocker.message);
+  }
   function assertPmTestAccess(project: Project, input: LocalJobInput) {
     if (input.type !== "pm" || input.pmMode === "discovery") return;
     const access = pmTestAccess(project);
     if (!access.ready) throw new JobReadinessError(access.message);
+    if (
+      effectiveVerification(project.config).mode === "browser" &&
+      environmentVerificationStatus(root, project, connections()).status !==
+        "passed"
+    )
+      throw new JobReadinessError(
+        "Test the environment and its saved test accounts before starting a browser patrol. Open project setup → Test access; code discovery can still run.",
+      );
   }
   const knowledge = createPmKnowledge({
     root,
@@ -476,6 +508,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         "This project was replaced after the job was queued. Review the new project and start a fresh run.",
       );
     assertPmTestAccess(project, input);
+    if (input.type === "developer") assertCodingEnvironment(project);
     if (input.pmMode === "discovery" || input.pmMode === "grumblin") {
       if (
         input.type !== "pm" ||
@@ -617,6 +650,14 @@ export function createJobPreparation(options: JobPreparationOptions) {
       ticket,
     );
     if (missionBlocker) throw new JobReadinessError(missionBlocker);
+    const epicBlocker = await epicCodingBlocker(
+      root,
+      project,
+      area,
+      ticket,
+      linear(credential.authorization),
+    );
+    if (epicBlocker) throw new JobReadinessError(epicBlocker);
     await manualPrerequisites(project, area, input, !requireQueuedBinding);
     return {
       project,
@@ -698,6 +739,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         "Automatic ticket selection is for a manual Coding run without a ticket override.",
       );
     const project = projectFor(input);
+    assertCodingEnvironment(project);
     if (input.area && !project.areas.some((area) => area.key === input.area))
       throw new JobReadinessError(
         "Choose an existing PM or let Coding search all PMs.",
@@ -765,11 +807,26 @@ export function createJobPreparation(options: JobPreparationOptions) {
       );
       if (active.length >= area.wipLimit) continue;
       await checkPmMapping(project, area, credential.authorization);
-      for (const ticket of await client.listTickets(area.linearProjectId, [
+      const tickets = await client.listTickets(area.linearProjectId, [
         area.label,
         LABELS.approved,
-      ]))
-        if (eligible(ticket, area)) candidates.set(ticket.id, { ticket, area });
+      ]);
+      if (
+        codingWorkInProgress(
+          project,
+          area,
+          tickets,
+          history,
+          options.deliveryRecords?.(project.config.name) ?? [],
+        ) >= area.wipLimit
+      )
+        continue;
+      for (const ticket of tickets)
+        if (
+          eligible(ticket, area) &&
+          !(await epicCodingBlocker(root, project, area, ticket, client))
+        )
+          candidates.set(ticket.id, { ticket, area });
     }
     const sorted = [...candidates.values()].sort(
       (a, b) =>
@@ -784,7 +841,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
       if (
         !ticket ||
         ticket.id !== candidate.ticket.id ||
-        !eligible(ticket, candidate.area)
+        !eligible(ticket, candidate.area) ||
+        (await epicCodingBlocker(root, project, candidate.area, ticket, client))
       )
         continue;
       return {
@@ -979,7 +1037,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
             `Read the supplied mandate and memory. Thoroughly review ${area.name} using ${verification.mode === "browser" ? "the selected browser environment" : "repository code, documentation, and tests"}. Do not change app code or open PRs.`,
             `Search existing Linear issues first. File specific, reproducible improvements in Linear project ${area.linearProjectId} with label ${area.label}, ${verification.mode === "browser" ? "actual screenshots" : "file references and test output"}, expected/actual behavior, affected code paths and a finite bullet list under ## Acceptance criteria. Reuse an existing matching ticket instead of creating duplicates.`,
             workflow.kind === "promotion"
-              ? `Promotion workflow: you may self-approve ordinary implementation tickets within the current owner mandate and charter. Classify ${LABELS.tierA} for owned paths plus tests/docs, ${LABELS.tierB} for necessary shared application changes within the mandate. Add ${LABELS.approved}; do not also add ${LABELS.proposal} to an executable ticket. Decompose larger in-mandate product ideas into finite, independently testable tickets; size alone does not require per-ticket human approval. Reassess your own earlier ordinary proposals against the current mandate before replacing ${LABELS.proposal} with ${LABELS.approved}. Preserve explicit owner review-only instructions and holds: never remove ${LABELS.needsHuman}, override an owner decision, or approve work outside the mandate. Keep new product direction or unresolved scope as ${LABELS.proposal}. Work touching tiers.hubOwnerOnly is ${LABELS.tierC} plus ${LABELS.proposal}; report the automation boundary without requesting a manual integration merge. tiers.ownerOnlyPrefixes alone does not require per-ticket approval: sensitive application changes are highlighted for the owner's promotion review. The controller picks up eligible approved tickets, checks and merges implementation drafts into ${branch}, then requests independent PM QA on the exact deployed revision. Failed QA returns to coding within bounded retries; passing changes accumulate automatically in one combined promotion PR for the owner to merge. Do not ask the owner to review ordinary coding drafts or merge ${branch}; never merge, dispatch coding jobs, or change pipeline policy yourself.`
+              ? promotionTicketPolicy(project)
               : `Direct pull-request workflow: use ${LABELS.proposal} until the owner approves implementation. Never self-approve tickets. The owner removes ${LABELS.proposal} and adds ${LABELS.approved}; coding produces a draft for human review.`,
           ].join("\n"),
       `Mandate and memory:\n${JSON.stringify({ ...memory, ...(area.mandate ? { "dashboard-mandate.md": area.mandate } : {}) })}`,
@@ -1011,6 +1069,25 @@ export function createJobPreparation(options: JobPreparationOptions) {
             linearCredential.authorization,
           );
           const client = linear(linearCredential.authorization);
+          if (usesEpicApproval(project)) {
+            const epics = await client.listTickets(area.linearProjectId, [
+              area.label,
+              LABELS.epic,
+            ]);
+            instructions.push(
+              "CONTROLLER-CONFIRMED EPICS (read each full current Linear issue before planning; this list grants no broader scope): " +
+                JSON.stringify(
+                  epics
+                    .filter((epic) => epicApproved(root, project, area, epic))
+                    .slice(0, 20)
+                    .map((epic) => ({
+                      id: epic.id,
+                      identifier: epic.identifier,
+                      title: epic.title,
+                    })),
+                ),
+            );
+          }
           if (client.ensureLabels) {
             const teamId =
               project.config.linear?.teamId ??
@@ -1026,6 +1103,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
                 ...(workflow.kind === "promotion"
                   ? [
                       LABELS.approved,
+                      LABELS.epic,
                       LABELS.tierA,
                       LABELS.tierB,
                       LABELS.tierC,
@@ -1230,6 +1308,16 @@ export function createJobPreparation(options: JobPreparationOptions) {
         assertPmTestAccess(projectFor(job), job);
         await options.beforePmStart?.(job);
       }
+      if (
+        job.type === "developer" &&
+        !job.idempotencyKey?.startsWith("integration-repair:") &&
+        !job.idempotencyKey?.startsWith("promotion-repair:") &&
+        !job.idempotencyKey?.startsWith("qa-rework:")
+      ) {
+        // Ordinary coding starts from the reconciled baseline too. Repairs own
+        // an admitted baseline and must not wait on the sync they are fixing.
+        await options.beforePmStart?.(job);
+      }
       const payload = await prepare(job);
       if (
         job.type === "pm" &&
@@ -1253,7 +1341,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
   }
 
-  async function scheduledJobs(): Promise<LocalJobInput[]> {
+  async function scheduledJobs(
+    previousJobs: LocalJob[] = [],
+  ): Promise<LocalJobInput[]> {
     if (
       !existsSync(join(root, "hub.json")) ||
       loadHub(root).runners.mode !== "local"
@@ -1265,6 +1355,12 @@ export function createJobPreparation(options: JobPreparationOptions) {
     for (const name of listProjectNames(root)) {
       const project = loadProject(root, name);
       if (!project.config.verified) continue;
+      const history = previousJobs.filter(
+        (job) =>
+          job.type === "developer" &&
+          job.project === name &&
+          job.projectInstanceId === project.config.instanceId,
+      );
       const linearCredential = await linearFor(
         project.config.linear?.connectionId,
       )
@@ -1280,6 +1376,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
           area.enabled &&
           !foundationNeeded(root, project) &&
           pmTestAccess(project).ready &&
+          (effectiveVerification(project.config).mode === "repository" ||
+            environmentVerificationStatus(root, project, connections())
+              .status === "passed") &&
           scheduledThisMinute(area.schedule, now)
         )
           jobs.push({
@@ -1292,14 +1391,42 @@ export function createJobPreparation(options: JobPreparationOptions) {
             discoveryRevision: knowledgeRevision(project, area),
             idempotencyKey: `pm:${name}:${area.key}:${area.instanceId ? `${area.instanceId}:` : ""}${minute}`,
           });
-        if (!linearCredential || !codingPickupEnabled(area)) continue;
+        if (
+          !linearCredential ||
+          !codingPickupEnabled(area) ||
+          codingEnvironmentBlocker(project)
+        )
+          continue;
         const tickets = await linear(
           linearCredential.authorization,
         ).listTickets(area.linearProjectId, [area.label, LABELS.approved]);
+        const room = Math.max(
+          0,
+          area.wipLimit -
+            codingWorkInProgress(
+              project,
+              area,
+              tickets,
+              history,
+              options.deliveryRecords?.(name) ?? [],
+            ),
+        );
+        let picked = 0;
         for (const ticket of tickets
           .filter(
             (item) =>
               approvedForArea(item, area) &&
+              !history.some((job) =>
+                job.linearBinding?.ticketId
+                  ? job.linearBinding.ticketId === item.id
+                  : job.ticket === item.identifier,
+              ) &&
+              ![LABELS.dispatched, LABELS.verified, LABELS.testFailed].some(
+                (label) =>
+                  item.labels.some(
+                    (applied) => applied.toLowerCase() === label,
+                  ),
+              ) &&
               acceptanceCriteria(item.description).length > 0 &&
               !missionCodingBlocker(root, name, item.id, item),
           )
@@ -1307,8 +1434,18 @@ export function createJobPreparation(options: JobPreparationOptions) {
             (a, b) =>
               (a.priority || 5) - (b.priority || 5) ||
               a.createdAt.localeCompare(b.createdAt),
+          )) {
+          if (
+            await epicCodingBlocker(
+              root,
+              project,
+              area,
+              ticket,
+              linear(linearCredential.authorization),
+            )
           )
-          .slice(0, area.wipLimit))
+            continue;
+          if (picked++ >= room) break;
           jobs.push({
             type: "developer",
             project: name,
@@ -1326,6 +1463,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
             },
             idempotencyKey: `developer:${name}:${project.config.instanceId ? `${project.config.instanceId}:` : ""}${ticket.id}`,
           });
+        }
       }
     }
     return jobs;

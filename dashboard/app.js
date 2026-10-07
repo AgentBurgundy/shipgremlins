@@ -968,7 +968,7 @@
     $("add-project").disabled = idea && ideaCrew.busy;
     $("project-create-explanation").textContent = idea
       ? "Creates the reviewed PM crew and shared brief. Empty repositories get a README. PM schedules start paused; app code is built through approved tickets."
-      : "A Setup Gremlin reads the repository and suggests a setup for your review. Then adopt your first PM and let it learn the app. Coding waits for your approval of a specific change.";
+      : "A Setup Gremlin reads the repository and suggests a setup and crew for your review. Connect its test environment and activate the ready crew. Coding stays within the scope you approve.";
     projectWizard?.update();
   }
   projectWizard = window.createProjectWizard({
@@ -3084,6 +3084,7 @@
       job?.status,
       job?.cancelRequestedAt,
       job?.nextAttemptAt,
+      job?.failure?.category,
       jobActionBusy,
       formsLocked,
     ]);
@@ -3096,7 +3097,7 @@
         element(
           "span",
           "runner-guidance",
-          `Infrastructure retry scheduled: ${timestamp(job.nextAttemptAt)}`,
+          `${job.failure?.category === "environment-wait" ? "Next environment check" : "Infrastructure retry scheduled"}: ${timestamp(job.nextAttemptAt)}`,
         ),
       );
     if (!["pm", "developer"].includes(job.type)) return;

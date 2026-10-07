@@ -61,11 +61,16 @@ const { installBrowserAccess } = require('/opt/gremlins/browser-access.mjs');
         } catch {
           if (routeFailure) fail(routeFailure);
           if (field === 'successSelector' && rejected) {
-            const invalid = await page.evaluate(() => [...document.querySelectorAll('[role="alert"],[aria-live="assertive"]')].slice(0,10).some(el => {
+            const rejection = await page.evaluate(() => {
+              const messages = [...document.querySelectorAll('[role="alert"],[aria-live="assertive"]')].slice(0,10).filter(el => {
               if (!el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') return false;
-              return /^(invalid (email or password|username or password|credentials)|incorrect (email or password|username or password|password)|wrong password)[.!]?$/i.test((el.textContent || '').slice(0,256).trim());
-            })).catch(() => false);
-            fail(invalid ? 'login_credentials_rejected' : 'login_rejected');
+                return true;
+              }).map(el => (el.textContent || '').slice(0,256).trim());
+              if (messages.some(text => /^(invalid origin|origin (is )?not (allowed|trusted)|untrusted origin|cross-origin requests are not allowed)[.!]?$/i.test(text))) return 'origin';
+              if (messages.some(text => /^(invalid (email or password|username or password|credentials)|incorrect (email or password|username or password|password)|wrong password)[.!]?$/i.test(text))) return 'credentials';
+            }).catch(() => undefined);
+            if (rejection === 'origin') fail('login_origin_rejected', { origin });
+            fail(rejection === 'credentials' ? 'login_credentials_rejected' : 'login_rejected');
           }
           const count = await locator?.count().catch(() => undefined);
           const extra = { field, ...(Number.isSafeInteger(count) ? { matchCount: Math.min(count,10000) } : {}) };

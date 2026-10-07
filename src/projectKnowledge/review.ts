@@ -4,6 +4,14 @@ import { LABELS } from "../dispatcher/notes.ts";
 import type { LinearClient, LinearTicket } from "../services/types.ts";
 import { ProjectKnowledgeError } from "./index.ts";
 import { acceptanceCriteria } from "../delivery/index.ts";
+import {
+  approveEpic,
+  epicApproved,
+  epicApprovalContext,
+  isEpic,
+  usesEpicApproval,
+} from "../epics.ts";
+import { ticketScopeHash } from "../lifecycle/manifest.ts";
 
 const revision = (project: Project, ticket: LinearTicket) =>
   createHash("sha256")
@@ -18,6 +26,9 @@ const revision = (project: Project, ticket: LinearTicket) =>
           instanceId: a.instanceId,
           label: a.label,
           linearProjectId: a.linearProjectId,
+          ...(usesEpicApproval(project)
+            ? { approvalContext: epicApprovalContext(project, a) }
+            : {}),
         })),
         ticket,
       }),
@@ -46,12 +57,15 @@ export function createProjectReview(options: {
     return matches[0]!;
   }
   function canApprove(project: Project, ticket: LinearTicket) {
+    const epic =
+      usesEpicApproval(project) && isEpic(ticket) && !ticket.parentId;
     return (
+      (!usesEpicApproval(project) || epic) &&
       ticket.description.length <= 20000 &&
       acceptanceCriteria(ticket.description).length > 0 &&
       !["completed", "canceled"].includes(ticket.stateType) &&
       ![
-        LABELS.approved,
+        ...(epic ? [] : [LABELS.approved]),
         LABELS.needsHuman,
         LABELS.sync,
         LABELS.port,
@@ -72,15 +86,31 @@ export function createProjectReview(options: {
       for (const ticket of await client.listTickets(area.linearProjectId, [
         area.label,
       ])) {
+        let approvedEpic = false;
+        if (usesEpicApproval(project) && isEpic(ticket)) {
+          try {
+            approvedEpic = epicApproved(
+              options.root,
+              project,
+              mapped(project, ticket),
+              ticket,
+            );
+          } catch {
+            /* A changed mapping cannot retain approval. */
+          }
+        }
         if (
           !["completed", "canceled"].includes(ticket.stateType) &&
-          !ticket.labels.includes(LABELS.approved)
+          (!ticket.labels.includes(LABELS.approved) ||
+            (usesEpicApproval(project) && isEpic(ticket) && !approvedEpic)) &&
+          (!usesEpicApproval(project) || isEpic(ticket))
         )
           collected.set(ticket.id, ticket);
       }
     }
     return {
       project: name,
+      approvalPolicy: usesEpicApproval(project) ? "epic" : "ticket",
       items: [...collected.values()]
         .sort(
           (a, b) =>
@@ -105,16 +135,20 @@ export function createProjectReview(options: {
             truncated: ticket.description.length > 20000,
             url: ticket.url,
             area,
+            kind:
+              usesEpicApproval(project) && isEpic(ticket) ? "epic" : "ticket",
             revision: revision(project, ticket),
             canApprove: !!area && canApprove(project, ticket),
             reason: !area
               ? "Repair the Linear mapping before approval."
               : ticket.description.length > 20000
-                ? "Only the first part of this proposal is shown. Review and approve the full ticket in Linear, or split it into a shorter bounded scope before approving here."
+                ? "Only the first part of this proposal is shown. Split it into a shorter bounded scope before approving here."
                 : acceptanceCriteria(ticket.description).length === 0
                   ? "Add a finite, observable bullet list under ## Acceptance criteria in Linear before approving coding. Each item should state an outcome that can be verified."
                   : ticket.labels.includes(LABELS.proposal)
-                    ? "Review this proposal's acceptance criteria. Split broad epics into testable milestones before approving coding."
+                    ? usesEpicApproval(project)
+                      ? "Approve this epic's bounded outcome once. Its PM will create and self-approve testable child tickets within that scope."
+                      : "Review this proposal's acceptance criteria. Split broad epics into testable milestones before approving coding."
                     : ticket.labels.includes(LABELS.needsHuman)
                       ? "Resolve the owner blocker in Linear first."
                       : "Review the scope and acceptance criteria before approving.",
@@ -151,6 +185,7 @@ export function createProjectReview(options: {
           "The ticket or project mapping changed. Refresh and review its current scope before approving.",
           409,
         );
+      const reviewedTicket = structuredClone(ticket);
       if (!canApprove(project, ticket))
         throw new ProjectKnowledgeError(
           !acceptanceCriteria(ticket.description).length &&
@@ -196,11 +231,29 @@ export function createProjectReview(options: {
           );
       }
       await client.addLabel(ticket.id, LABELS.approved);
+      const epic = usesEpicApproval(project) && isEpic(ticket);
+      if (epic) {
+        const current = await client.getTicket(id);
+        const latest = loadProject(options.root, name);
+        if (
+          !current ||
+          current.id !== id ||
+          ticketScopeHash(current) !== ticketScopeHash(reviewedTicket) ||
+          revision(latest, reviewedTicket) !== expected
+        ) {
+          throw new ProjectKnowledgeError(
+            "The epic changed while saving approval. No child work was authorized; review its current scope again.",
+            409,
+          );
+        }
+        approveEpic(options.root, latest, mapped(latest, current), current);
+      }
       return {
         ok: true,
         identifier: ticket.identifier,
-        message:
-          "Approved for coding. Enabled project automation picks it up; you can also start Coding Gremlins manually. This does not mark the ticket Done.",
+        message: epic
+          ? "Epic approved. Its PM can now break this scope into testable child tickets and run them autonomously. Your next review is the PM's promotion batch."
+          : "Approved for coding. Enabled project automation picks it up; you can also start Coding Gremlins manually. This does not mark the ticket Done.",
       };
     } finally {
       inFlight.delete(key);

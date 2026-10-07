@@ -1006,6 +1006,22 @@
 .onboarding-setup-callout a {
   flex-shrink: 0;
 }
+.onboarding-login-detection {
+  margin-block: 18px;
+  padding: 16px 18px;
+  border-left: 3px solid #799558;
+  background: #f3f7ed;
+  border-radius: 0 12px 12px 0;
+}
+.onboarding-login-detection h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.onboarding-login-detection p {
+  margin: 8px 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
 .project-top-tabs:has(a[href*="tab=environment"]) {
   display: flex;
   flex-wrap: wrap;

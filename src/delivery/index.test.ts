@@ -218,6 +218,260 @@ it("preserves a stale historical delivery without blocking a current owning-PM r
     "blocked",
   );
 });
+it("ports a conflicted verified ticket once, integrates it automatically, and requires fresh owning-PM QA of the isolated source", async () => {
+  const w = await admitted();
+  await w.service.ingestReview(w.ingestion);
+  const staging = "8".repeat(40),
+    source = "9".repeat(40),
+    head = "e".repeat(40),
+    merged = "f".repeat(40);
+  w.forge.seedBranch(TEST_REPO, "staging", staging);
+  const intent = (await w.service.reservePromotionRepair(1, staging))!;
+  expect(intent.promotionRepair).toMatchObject({
+    phase: "queued",
+    sourceDeliveryIds: ["job-one"],
+    sourceShas: [MERGE],
+    allowedPaths: ["app/name.ts"],
+  });
+  expect(w.service.list()[0]!.status).toBe("blocked");
+  expect(
+    await w.service.prepareReview({
+      area: "core",
+      jobId: "job-too-early",
+      deployment: w.deployment,
+    }),
+  ).toBeNull();
+  const job = {
+    id: "job-port",
+    runId: 2,
+    type: "developer" as const,
+    developerKind: "port" as const,
+    project: "game",
+    area: "core",
+    ticket: w.ticket.identifier,
+    attempt: 1,
+    runOnce: true,
+    idempotencyKey: intent.promotionRepair!.key,
+    status: "running" as const,
+    createdAt: "2026-10-05T12:00:00Z",
+  };
+  await w.service.admitPromotionRepair(job);
+  w.forge.seedPull(
+    TEST_REPO,
+    {
+      number: 2,
+      headRef: "gremlins/job-port",
+      headSha: head,
+      baseRef: "pm-staging",
+      draft: true,
+      mergeableState: "clean",
+    },
+    [],
+  );
+  w.forge.seedCompare(TEST_REPO, staging, source, { aheadBy: 1, behindBy: 0 });
+  const repair = await w.service.register({
+    ...w.input,
+    jobId: job.id,
+    pullNumber: 2,
+    promotionRepairKey: intent.promotionRepair!.key,
+    promotionSourceSha: source,
+    promotionBaseSha: staging,
+    expectedHeadSha: head,
+  });
+  expect(repair.promotionSource).toEqual({
+    sha: source,
+    baseSha: staging,
+    paths: ["app/name.ts"],
+  });
+  expect(w.service.list()[0]!.supersededBy).toBe(job.id);
+  expect(
+    await w.service.promotionOptions().candidateVerdict!(
+      (await w.forge.getPull(TEST_REPO, 2))!,
+    ),
+  ).toMatchObject({ verdict: "untested", sourceSha: source });
+  w.forge.seedChecks(TEST_REPO, head, { status: "success", failedJobs: [] });
+  // A pure lineage merge can have no integration diff; its standalone source is still nonempty and checked.
+  await w.service.advanceIntegration(async () => true);
+  expect(w.forge.merged).toEqual([2]);
+  w.forge.patchPull(TEST_REPO, 2, { state: "merged", mergeCommitSha: merged });
+  w.forge.seedBranch(TEST_REPO, "pm-staging", merged);
+  w.forge.seedChecks(TEST_REPO, merged, { status: "success", failedJobs: [] });
+  const deployment = { ...w.deployment, id: "port-deploy", sha: merged };
+  const plan = (await w.service.prepareReview({
+    area: "core",
+    jobId: "job-port-review",
+    deployment,
+  }))!;
+  expect(plan.deliveries.map((r) => r.id)).toEqual([job.id]);
+  await w.service.ingestReview({
+    ...w.ingestion,
+    planId: plan.id,
+    deployment,
+    manifest: {
+      ...w.manifest,
+      planId: plan.id,
+      jobId: plan.jobId,
+      testedSha: merged,
+      deploymentId: deployment.id,
+      deliveries: [{ ...w.manifest.deliveries[0]!, id: job.id }],
+    },
+    trustedResult: {
+      ok: true,
+      kind: "pm",
+      nonce: plan.jobId,
+      commitSha: merged,
+    },
+  });
+  expect(
+    await w.service.promotionOptions().candidateVerdict!(
+      (await w.forge.getPull(TEST_REPO, 2))!,
+    ),
+  ).toMatchObject({
+    verdict: "verified",
+    ticketId: w.ticket.id,
+    sourceSha: source,
+    sourcePaths: ["app/name.ts"],
+  });
+  expect(
+    await w.service.promotionOptions().candidatePullNumbers!("core"),
+  ).toEqual([2]);
+  // Later staging drift cannot silently reset the one-port budget.
+  expect(await w.service.reservePromotionRepair(2, staging)).toBeNull();
+  expect(w.service.list().find((r) => r.id === job.id)!.message).toContain(
+    "one automatic promotion port",
+  );
+});
+
+it("stops an isolated port if its admitted baseline or source scope changes", async () => {
+  const w = await admitted();
+  await w.service.ingestReview(w.ingestion);
+  const staging = "8".repeat(40);
+  w.forge.seedBranch(TEST_REPO, "staging", staging);
+  const original = (await w.service.reservePromotionRepair(1, staging))!;
+  const job = {
+    id: "job-port",
+    runId: 2,
+    type: "developer" as const,
+    developerKind: "port" as const,
+    project: "game",
+    area: "core",
+    ticket: w.ticket.identifier,
+    attempt: 1,
+    runOnce: true,
+    idempotencyKey: original.promotionRepair!.key,
+    status: "queued" as const,
+    createdAt: "2026-10-05T12:00:00Z",
+  };
+  w.forge.seedBranch(TEST_REPO, "staging", "7".repeat(40));
+  await expect(w.service.admitPromotionRepair(job)).rejects.toThrow("baseline");
+  expect(w.service.list()[0]!.supersededBy).toBeUndefined();
+});
+it("recovers a lost close response from a durable promotion-retirement intent", async () => {
+  const w = await admitted();
+  await w.service.ingestReview(w.ingestion);
+  const staging = "8".repeat(40),
+    promotionHead = "7".repeat(40);
+  w.forge.seedBranch(TEST_REPO, "staging", staging);
+  const pull = w.forge.seedPull(TEST_REPO, {
+    number: 20,
+    baseRef: "staging",
+    headRef: "pm-release/core/test",
+    headSha: promotionHead,
+    state: "open",
+    draft: false,
+  });
+  await w.service.recordPromotion({
+    deliveryIds: ["job-one"],
+    pullNumber: 20,
+    candidate: {
+      checkoutDir: w.root,
+      branch: "candidate/test",
+      releaseBranch: pull.headRef,
+      sha: promotionHead,
+      baseSha: staging,
+      changes: [1],
+    },
+    reviewedCandidate: true,
+    trustedAuthor: pull.author,
+  });
+  const read = vi.spyOn(w.forge, "getPull"),
+    close = w.forge.closePull.bind(w.forge);
+  vi.spyOn(w.forge, "closePull").mockImplementation(async (repo, number) => {
+    const saved = JSON.parse(
+      readFileSync(join(w.root, ".run/delivery/game/state.json"), "utf8"),
+    );
+    expect(saved.records[0].promotionRepair.phase).toBe("queued");
+    await close(repo, number);
+    read.mockRejectedValueOnce(new Error("provider unavailable after close"));
+    throw new Error("lost close response");
+  });
+  await expect(w.service.reservePromotionRepair(1, staging)).rejects.toThrow(
+    "provider unavailable",
+  );
+  const restarted = w.create();
+  expect(restarted.list()[0]!.promotion?.number).toBe(20);
+  expect(
+    (await restarted.reservePromotionRepair(1, staging))?.promotionRepair
+      ?.phase,
+  ).toBe("queued");
+  expect(restarted.list()[0]!.promotion).toBeUndefined();
+  expect(restarted.list()[0]!.promotionHistory).toHaveLength(1);
+  expect(w.forge.closed).toEqual([20]);
+});
+it.each([false, true])(
+  "retires only its exact unchanged promotion for repair (user moved head: %s)",
+  async (moved) => {
+    const w = await admitted();
+    await w.service.ingestReview(w.ingestion);
+    const staging = "8".repeat(40),
+      promotionHead = "7".repeat(40);
+    w.forge.seedBranch(TEST_REPO, "staging", staging);
+    const pull = w.forge.seedPull(TEST_REPO, {
+      number: 20,
+      baseRef: "staging",
+      headRef: "pm-release/core/test",
+      headSha: promotionHead,
+      state: "open",
+      draft: false,
+    });
+    await w.service.recordPromotion({
+      deliveryIds: ["job-one"],
+      pullNumber: 20,
+      candidate: {
+        checkoutDir: w.root,
+        branch: "candidate/test",
+        releaseBranch: pull.headRef,
+        sha: promotionHead,
+        baseSha: staging,
+        changes: [1],
+      },
+      reviewedCandidate: true,
+      trustedAuthor: pull.author,
+    });
+    if (moved) w.forge.patchPull(TEST_REPO, 20, { headSha: "6".repeat(40) });
+    expect(await w.service.promotionOptions().currentPromotion!(pull)).toBe(
+      !moved,
+    );
+    const admittedPort = await w.service.reservePromotionRepair(1, staging);
+    if (moved) {
+      expect(admittedPort).toBeNull();
+      expect(w.forge.closed).toEqual([]);
+      expect(w.service.list()[0]!.promotion?.number).toBe(20);
+    } else {
+      expect(admittedPort?.promotionRepair?.phase).toBe("queued");
+      expect(w.forge.closed).toEqual([20]);
+      expect(w.service.list()[0]!.promotion).toBeUndefined();
+      expect(w.service.list()[0]!.promotionHistory).toEqual([
+        expect.objectContaining({ number: 20, headSha: promotionHead }),
+      ]);
+      expect(
+        await w.service.promotionOptions().candidateVerdict!(
+          (await w.forge.getPull(TEST_REPO, 1))!,
+        ),
+      ).toMatchObject({ rebuildingBatch: true, verdict: "untested" });
+    }
+  },
+);
 describe("durable owning-PM delivery", () => {
   it("does not assign a deleted PM's deliveries to a new PM with the same ID", async () => {
     const w = world();
@@ -323,9 +577,60 @@ describe("durable owning-PM delivery", () => {
     const pull = (await w.forge.getPull(TEST_REPO, 1))!;
     expect(await w.service.promotionOptions().candidateVerdict!(pull)).toEqual({
       area: "core",
+      ticketId: w.ticket.id,
       verdict: "verified",
     });
     expect(w.linear.stateUpdates).toEqual([]);
+  });
+  it("feeds admitted current-area PR IDs plus open carried lineages, without crowding released history into new batches", async () => {
+    const w = await admitted();
+    await w.service.ingestReview(w.ingestion);
+    const file = join(w.root, ".run/delivery/game/state.json"),
+      state = JSON.parse(readFileSync(file, "utf8"));
+    const original = state.records[0];
+    for (const [number, promotionNumber] of [
+      [2, 20],
+      [3, 21],
+    ]) {
+      const branch = `pm-release/core/batch-${promotionNumber}`;
+      state.records.push({
+        ...original,
+        id: `job-${number}`,
+        jobId: `job-${number}`,
+        status: "promoted",
+        implementation: { ...original.implementation, number },
+        promotion: {
+          number: promotionNumber,
+          branch,
+          headSha: HEAD,
+          url: `https://github.com/${TEST_REPO}/pull/${promotionNumber}`,
+        },
+      });
+      w.forge.seedPull(TEST_REPO, {
+        number: promotionNumber,
+        baseRef: "staging",
+        headRef: branch,
+        headSha: HEAD,
+        state: promotionNumber === 20 ? "merged" : "open",
+      });
+    }
+    state.records.push({
+      ...original,
+      id: "superseded",
+      supersededBy: "job-one",
+      implementation: { ...original.implementation, number: 4 },
+    });
+    writeFileSync(file, JSON.stringify(state));
+    const options = w.service.promotionOptions();
+    expect(await options.candidatePullNumbers!("core")).toEqual([1, 3]);
+    expect(await options.candidatePullNumbers!("other")).toEqual([]);
+    w.forge.patchPull(TEST_REPO, 21, { state: "closed" });
+    expect(await options.candidatePullNumbers!("core")).toEqual([1]);
+    w.project.config.commands.test = "npm run changed-checks";
+    expect(await options.candidatePullNumbers!("core")).toEqual([]);
+    expect(
+      await options.candidateVerdict!((await w.forge.getPull(TEST_REPO, 1))!),
+    ).toBeNull();
   });
   it("rejects wrong job proof without overwriting earlier state", async () => {
     const w = await admitted();
@@ -369,6 +674,125 @@ describe("durable owning-PM delivery", () => {
     expect(w.forge.merged).toEqual([1]);
     expect(w.service.list()[0]!.status).toBe("awaiting-deployment");
   });
+  it("does not let a stale delivery jam current approved work", async () => {
+    const w = world();
+    await w.service.register(w.input);
+    w.project.config.commands.test = "npm run updated-test";
+    w.forge.seedPull(
+      TEST_REPO,
+      {
+        number: 2,
+        headRef: "gremlins/job-two",
+        headSha: MERGE,
+        baseRef: "pm-staging",
+        draft: true,
+        mergeableState: "clean",
+      },
+      ["app/name.ts"],
+    );
+    await w.service.register({ ...w.input, jobId: "job-two", pullNumber: 2 });
+    w.forge.seedChecks(TEST_REPO, MERGE, { status: "success", failedJobs: [] });
+    await w.service.advanceIntegration(async () => true);
+    expect(w.forge.merged).toEqual([2]);
+    expect(w.service.list()[0]!.status).toBe("blocked");
+    expect(w.service.list()[1]!.status).toBe("awaiting-deployment");
+  });
+  it.each(["head", "author", "base", "approval"])(
+    "does not merge when %s changes while lifting a managed draft",
+    async (changed) => {
+      const w = world();
+      await w.service.register(w.input);
+      w.forge.seedChecks(TEST_REPO, HEAD, {
+        status: "success",
+        failedJobs: [],
+      });
+      const markReady = w.forge.markReady.bind(w.forge);
+      vi.spyOn(w.forge, "markReady").mockImplementation(
+        async (repo, number) => {
+          await markReady(repo, number);
+          if (changed === "head")
+            w.forge.patchPull(repo, number, { headSha: MERGE });
+          if (changed === "author")
+            w.forge.patchPull(repo, number, { author: "other" });
+          if (changed === "base")
+            w.forge.patchPull(repo, number, { baseRef: "main" });
+          if (changed === "approval") w.ticket.labels = [];
+        },
+      );
+      await w.service.advanceIntegration(async () => true);
+      expect(w.forge.merged).toEqual([]);
+      expect(w.service.list()[0]!.status).toBe("blocked");
+    },
+  );
+  it.each(["markReady", "mergePull"] as const)(
+    "retries transient %s failures without requiring individual PR management",
+    async (operation) => {
+      const w = world();
+      await w.service.register(w.input);
+      w.forge.seedChecks(TEST_REPO, HEAD, {
+        status: "success",
+        failedJobs: [],
+      });
+      vi.spyOn(w.forge, operation).mockRejectedValueOnce(
+        new Error("private-provider-response"),
+      );
+      await w.service.advanceIntegration(async () => true);
+      expect(w.service.list()[0]).toMatchObject({ status: "awaiting-merge" });
+      expect(w.service.list()[0]!.message).toContain("controller will");
+      expect(w.service.list()[0]!.message).not.toContain("private-provider");
+      expect(w.forge.merged).toEqual([]);
+      await w.service.advanceIntegration(async () => true);
+      expect(w.forge.merged).toEqual([1]);
+    },
+  );
+  it("recovers an automatic merge response lost by the provider", async () => {
+    const w = world();
+    await w.service.register(w.input);
+    w.forge.seedChecks(TEST_REPO, HEAD, { status: "success", failedJobs: [] });
+    const merge = w.forge.mergePull.bind(w.forge);
+    vi.spyOn(w.forge, "mergePull").mockImplementationOnce(async (...args) => {
+      await merge(...args);
+      throw new Error("lost response");
+    });
+    await w.service.advanceIntegration(async () => true);
+    expect(w.service.list()[0]!.status).toBe("awaiting-merge");
+    await w.service.advanceIntegration(async () => true);
+    expect(w.forge.merged).toEqual([1]);
+    expect(w.service.list()[0]!.status).toBe("awaiting-deployment");
+  });
+  it("accepts a matching provider merge completed while the managed draft is lifted", async () => {
+    const w = world();
+    await w.service.register(w.input);
+    w.forge.seedChecks(TEST_REPO, HEAD, { status: "success", failedJobs: [] });
+    const markReady = w.forge.markReady.bind(w.forge);
+    vi.spyOn(w.forge, "markReady").mockImplementation(async (repo, number) => {
+      await markReady(repo, number);
+      await w.forge.mergePull(repo, number, { method: "merge", sha: HEAD });
+    });
+    await w.service.advanceIntegration(async () => true);
+    expect(w.forge.merged).toEqual([1]);
+    expect(w.service.list()[0]!.status).toBe("awaiting-deployment");
+  });
+  it.each([
+    ["pending", "clean", "current checks"],
+    ["failure", "clean", "bounded coding repair"],
+    ["success", "dirty", "No individual PR review"],
+    ["success", "behind", "No individual PR review"],
+    ["success", "blocked", "Repository rules"],
+    ["success", "unknown", "provider to confirm"],
+  ] as const)(
+    "explains automatic integration waiting for %s checks and %s mergeability",
+    async (status, mergeableState, message) => {
+      const w = world();
+      await w.service.register(w.input);
+      w.forge.patchPull(TEST_REPO, 1, { mergeableState });
+      w.forge.seedChecks(TEST_REPO, HEAD, { status, failedJobs: [] });
+      await w.service.advanceIntegration(async () => true);
+      expect(w.forge.merged).toEqual([]);
+      expect(w.service.list()[0]!.message).toContain(message);
+      expect(w.service.list()[0]!.message).not.toContain("ready for review");
+    },
+  );
   it("lifts a checked owned draft before refreshing provider mergeability", async () => {
     const w = world();
     await w.service.register(w.input);

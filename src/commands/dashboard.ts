@@ -1,10 +1,11 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   createDashboardAuth,
   dashboardAuthTransport,
   DashboardAuthError,
 } from "../dashboardAuth/index.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
+import { automaticPromotionKey } from "../delivery/batching.ts";
 import { createUsage } from "../usage/index.ts";
 import { currentChanges } from "../improvements/currentChanges.ts";
 import {
@@ -206,6 +207,7 @@ import {
   saveExecution,
 } from "../projectKnowledge/operations.ts";
 import { createProjectReview } from "../projectKnowledge/review.ts";
+import { activateProjectCrew } from "../setup/activateCrew.ts";
 import {
   readSetupSuggestions,
   applySetupSuggestions,
@@ -776,6 +778,7 @@ export function createDashboardServer(
       beforePmStart: delivery.beforePmStart,
       pinPmBaseline: delivery.pinPmBaseline,
       prepareSyncRepair: delivery.prepareSyncRepair,
+      deliveryRecords: (name) => delivery.deliveryStatus(name).deliveries,
       ensurePreviewAccess: async (project) => {
         const selected = effectiveVerification(project.config);
         if (
@@ -975,6 +978,18 @@ export function createDashboardServer(
       key = projectRuntimeKey(project.config);
       if (deliveryOperations.get(key)?.phase === "running") return;
       if (!project.config.verified) return;
+      const status = delivery.deliveryStatus(name);
+      // Reconsider held batches when another PM lands on staging or the owner
+      // changes the target. Stable snapshots finish once, without polling work.
+      for (const area of project.areas) {
+        const snapshot = automaticPromotionKey(
+          project,
+          area.key,
+          status.deliveries,
+          status.stagingSync?.stagingSha,
+        );
+        if (snapshot) automaticPromotions.enqueue(name, area.key, snapshot);
+      }
       for (const item of automaticPromotions.pending({ readyOnly: true })) {
         if (item.project !== name) continue;
         const hasVerified =
@@ -1057,12 +1072,16 @@ export function createDashboardServer(
     deliveryOperations.set(key, {
       phase: "running",
       message:
-        "Combining PM-verified changes and running their checks in Docker before opening or updating the project's staging promotion PR.",
+        "Packaging this PM's verified tickets and running their checks in Docker before opening or updating its staging promotion PR.",
     });
     promotionOperations.set(key, deliveryOperations.get(key)!);
     let retry = false;
     void delivery
-      .preparePromotion(name, { area, docker: localDocker })
+      .preparePromotion(name, {
+        area,
+        automatic: !!automatic,
+        docker: localDocker,
+      })
       .then((rows) => {
         retry = rows.some((row) => row.pending);
         deliveryOperations.set(key, {
@@ -1177,7 +1196,10 @@ export function createDashboardServer(
           if (!status.enabled || !loadProject(root, name).config.verified)
             return;
           // Production receipts are independent of whether the next PM preview is ready.
-          if (status.declarations.length) {
+          if (
+            status.declarations.length ||
+            status.deliveries.some((item) => item.status === "promoted")
+          ) {
             try {
               productionReports.set(
                 key,
@@ -1187,6 +1209,17 @@ export function createDashboardServer(
               );
             } catch {
               /* Preserve prior production receipts while another provider is unavailable. */
+            }
+          }
+          if (status.integrationRepairActive) {
+            // A repair's bounded attempt owns this integration baseline. Let it
+            // publish and merge before newer staging work can move that baseline.
+            // Do not wait for sync-current here: sync is deliberately deferred.
+            await delivery.reconcileIntegrationRepairs?.(name);
+            if (delivery.deliveryStatus(name).integrationRepairActive) {
+              if (deliveryOperations.get(key)?.phase !== "running")
+                advanceIntegration(name);
+              return;
             }
           }
           if (typeof delivery.reconcileStaging === "function") {
@@ -1272,20 +1305,7 @@ export function createDashboardServer(
         improvements.captureResult?.(job, result);
         await delivery.completeJob(job, result, worker);
         if (job.type === "pm" && !job.pmMode && job.project && job.area) {
-          const verified = delivery
-            .deliveryStatus(job.project)
-            .deliveries.filter(
-              (item) => item.status === "verified" && item.review,
-            )
-            .map((item) => ({ id: item.id, review: item.review!.manifestHash }))
-            .sort((a, b) => a.id.localeCompare(b.id));
-          if (verified.length) {
-            const key = createHash("sha256")
-              .update(JSON.stringify(verified))
-              .digest("hex");
-            automaticPromotions.enqueue(job.project, job.area, key);
-            continuePromotions(job.project);
-          }
+          continuePromotions(job.project);
         }
         setTimeout(() => void reconcileDeliveries(), 0).unref();
       },
@@ -1504,6 +1524,8 @@ export function createDashboardServer(
       canRunWorker: (remoteId, project) =>
         docker.canRun?.(remoteId, project) ?? !remoteId,
       localMode,
+      environmentVerification: (project) =>
+        environmentAccess.status(project.config.name),
     };
   }
   function projectReadiness(name: string, context: ReadinessContext) {
@@ -4487,10 +4509,16 @@ export function createDashboardServer(
                 ReturnType<typeof delivery.promotionBatch>
               > = null;
               let promotionBatchError: string | undefined;
+              let promotionBatches:
+                | Awaited<ReturnType<typeof delivery.promotionBatches>>
+                | undefined;
               if (effectiveWorkflow(project.config).kind === "promotion") {
                 try {
-                  promotionBatch =
-                    (await delivery.promotionBatch?.(name!)) ?? null;
+                  if (delivery.promotionBatches)
+                    promotionBatches = await delivery.promotionBatches(name!);
+                  else
+                    promotionBatch =
+                      (await delivery.promotionBatch?.(name!)) ?? null;
                 } catch {
                   promotionBatchError =
                     "The current promotion PR could not be checked. Your ticket history is preserved; ShipGremlins will check again.";
@@ -4505,6 +4533,7 @@ export function createDashboardServer(
                     : {}),
                 })),
                 promotionBatch,
+                ...(promotionBatches ? { promotionBatches } : {}),
                 ...(promotionBatchError ? { promotionBatchError } : {}),
                 deliveryOperation: promotionOperations.get(
                   projectRuntimeKey(project.config),
@@ -4704,6 +4733,64 @@ export function createDashboardServer(
             project: pmReadiness[1],
             ...projectReadiness(pmReadiness[1]!, await readinessContext()),
           });
+          return;
+        }
+        const activateCrew =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/crew\/activate$/.exec(
+            url.pathname,
+          );
+        if (activateCrew) {
+          if (req.method !== "POST")
+            throw new RequestError(405, "Use POST to activate the crew.");
+          const input = await body(req);
+          if (
+            Object.keys(input).some(
+              (key) => !["projectRevision", "areasRevision"].includes(key),
+            ) ||
+            typeof input.projectRevision !== "string" ||
+            typeof input.areasRevision !== "string"
+          )
+            throw new RequestError(
+              400,
+              "Provide the current project and crew revisions.",
+            );
+          const name = activateCrew[1]!;
+          try {
+            json(
+              res,
+              200,
+              await runners().withConfigurationMutation({ project: name }, () =>
+                activateProjectCrew(
+                  root,
+                  name,
+                  input as { projectRevision: string; areasRevision: string },
+                  {
+                    context: readinessContext,
+                    validate: (area) =>
+                      preparation.validate({
+                        type: "pm",
+                        project: name,
+                        area,
+                        runOnce: true,
+                      }),
+                  },
+                ),
+              ),
+            );
+          } catch (error) {
+            if (
+              error instanceof PmControlError ||
+              error instanceof ConfigEditorError ||
+              error instanceof LocalRunnerError
+            )
+              throw new RequestError(error.status, error.message);
+            if (error instanceof JobReadinessError)
+              throw new RequestError(409, error.message);
+            throw new RequestError(
+              400,
+              "Crew activation could not finish. Check project readiness; no partial activation was saved.",
+            );
+          }
           return;
         }
         const pmStatus =
@@ -5114,7 +5201,11 @@ export function createDashboardServer(
               adopted = await runners().withConfigurationMutation(
                 { project, area: input.key },
                 async () => {
-                  await linearProvisioning.addArea(project, input);
+                  await linearProvisioning.addArea(project, {
+                    ...input,
+                    enabled: false,
+                    codingEnabled: false,
+                  });
                   const saved = loadProject(root, project),
                     area = saved.areas.find((item) => item.key === input.key);
                   if (!area)

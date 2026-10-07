@@ -22,7 +22,9 @@ export interface ProductionEvidence {
   productionUrl: string;
   productionMergeSha: string;
   mergedAt: string;
-  mapping: "ancestry-and-content" | "exact-content";
+  mapping: "ancestry-and-content" | "exact-content" | "verified-composition";
+  promotionPr?: number;
+  promotionSourceSha?: string;
   checkedPaths: string[];
 }
 
@@ -81,6 +83,7 @@ function scopeMatches(ticket: LinearTicket, scope: CompletionScope): boolean {
 export async function auditProduction(
   ctx: Ctx,
   supplied?: CompletionManifest,
+  options: { onlySuppliedTickets?: boolean } = {},
 ): Promise<ProductionAudit> {
   const { repo, branches } = ctx.project.config;
   const manifest = supplied ? parseCompletionManifest(supplied) : undefined;
@@ -98,7 +101,8 @@ export async function auditProduction(
     for (const ticket of await ctx.linear.listTickets(area.linearProjectId, [
       area.label,
     ]))
-      tracked.set(ticket.id, ticket);
+      if (!options.onlySuppliedTickets || scopes.has(ticket.id))
+        tracked.set(ticket.id, ticket);
   }
   // A manifest may not enroll arbitrary workspace tickets or other projects.
   for (const scope of scopes.values())
@@ -190,6 +194,30 @@ export async function auditProduction(
       continue;
     }
     try {
+      const composition = scope.composition;
+      const promotion = composition
+        ? await ctx.forge.getPull(repo, composition.promotionPr)
+        : null;
+      if (
+        composition &&
+        (!merged(promotion) ||
+          promotion.author !== ctx.botLogin ||
+          promotion.baseRef !== branches.staging ||
+          promotion.headRef !== composition.branch ||
+          promotion.headSha !== composition.headSha)
+      )
+        throw new Error(
+          "Recorded verified promotion identity changed or is not merged into staging",
+        );
+      const promotionPaths = composition
+        ? new Set(
+            pathsOf(await ctx.forge.listPullChanges(repo, promotion!.number)),
+          )
+        : null;
+      const promotionHead = composition ? await tree(promotion!.headSha) : null;
+      const promotionMerge = composition
+        ? await tree(promotion!.mergeCommitSha!)
+        : null;
       for (const required of scope.deliverables) {
         const [implementation, production] = await Promise.all([
           ctx.forge.getPull(repo, required.implementationPr),
@@ -206,6 +234,9 @@ export async function auditProduction(
               developerBranch(ticket.identifier)) ||
           (required.implementationHeadSha !== undefined &&
             implementation.headSha !== required.implementationHeadSha) ||
+          (required.implementationMergeSha !== undefined &&
+            implementation.mergeCommitSha !==
+              required.implementationMergeSha) ||
           ![
             branches.integration,
             branches.staging,
@@ -225,6 +256,16 @@ export async function auditProduction(
           Date.parse(production.mergedAt) < Date.parse(implementation.mergedAt)
         )
           throw new Error("Production merge predates the implementation merge");
+        if (
+          composition &&
+          (production.headRef !== branches.staging ||
+            Date.parse(promotion!.mergedAt!) <
+              Date.parse(implementation.mergedAt) ||
+            Date.parse(production.mergedAt) < Date.parse(promotion!.mergedAt!))
+        )
+          throw new Error(
+            "Production must follow the recorded verified promotion from staging",
+          );
         const lineage = await ctx.forge.compare(
           repo,
           production.mergeCommitSha,
@@ -234,13 +275,9 @@ export async function auditProduction(
           throw new Error(
             "Recorded production merge is absent from current production history",
           );
-        const paths = pathsOf(
+        let paths = pathsOf(
           await ctx.forge.listPullChanges(repo, implementation.number),
         );
-        if (!paths.length)
-          throw new Error(
-            "Empty implementation change set cannot prove delivery",
-          );
         const [sourceTree, releaseTree, currentTree, sourceHeadTree] =
           await Promise.all([
             tree(implementation.mergeCommitSha),
@@ -248,11 +285,79 @@ export async function auditProduction(
             tree(productionHead),
             tree(implementation.headSha),
           ]);
+        if (required.promotionSource) {
+          const source = required.promotionSource;
+          const [portTree, baseTree, portHistory, testedHistory] =
+            await Promise.all([
+              tree(source.sha),
+              tree(source.baseSha),
+              ctx.forge.compare(repo, source.baseSha, source.sha),
+              ctx.forge.compare(repo, source.sha, implementation.headSha),
+            ]);
+          if (
+            portHistory.aheadBy !== 1 ||
+            portHistory.behindBy !== 0 ||
+            testedHistory.behindBy !== 0
+          )
+            throw new Error(
+              "Isolated promotion source is not the recorded one-commit staging port in the tested implementation head",
+            );
+          const allowed = new Set(source.paths);
+          const portPaths = [
+            ...new Set([...baseTree.keys(), ...portTree.keys()]),
+          ]
+            .filter(
+              (path) =>
+                entryIdentity(baseTree.get(path)) !==
+                entryIdentity(portTree.get(path)),
+            )
+            .sort();
+          if (
+            !portPaths.length ||
+            [...paths, ...portPaths].some((path) => !allowed.has(path))
+          )
+            throw new Error(
+              "Isolated promotion source or integration draft escaped its recorded finite path scope",
+            );
+          for (const path of portPaths) {
+            if (
+              entryIdentity(portTree.get(path)) !==
+                entryIdentity(sourceHeadTree.get(path)) ||
+              entryIdentity(portTree.get(path)) !==
+                entryIdentity(sourceTree.get(path))
+            )
+              throw new Error(
+                `Tested integration does not preserve isolated promotion source at ${path}`,
+              );
+          }
+          // Squashing the internal merge can erase the port's ancestry and leave
+          // its PR with no file diff. The exact worker-registered source still
+          // has to be present, with identical modes/content, in both QA revisions.
+          paths = portPaths;
+        }
+        if (!paths.length)
+          throw new Error(
+            "Empty implementation change set cannot prove delivery",
+          );
         for (const path of paths) {
-          const identity = entryIdentity(sourceTree.get(path));
-          if (identity !== entryIdentity(sourceHeadTree.get(path)))
+          const originalIdentity = entryIdentity(sourceTree.get(path));
+          if (originalIdentity !== entryIdentity(sourceHeadTree.get(path)))
             throw new Error(
               `Implementation merge changed ${path}; revised candidate needs review`,
+            );
+          if (composition && !promotionPaths!.has(path))
+            throw new Error(
+              `Verified promotion does not cover ${path} from the complete implementation and repair set`,
+            );
+          const identity = composition
+            ? entryIdentity(promotionHead!.get(path))
+            : originalIdentity;
+          if (
+            composition &&
+            identity !== entryIdentity(promotionMerge!.get(path))
+          )
+            throw new Error(
+              `Promotion merge changed ${path}; revised composition needs verification`,
             );
           if (identity !== entryIdentity(releaseTree.get(path)))
             throw new Error(
@@ -265,7 +370,9 @@ export async function auditProduction(
         }
         const sourceLineage = await ctx.forge.compare(
           repo,
-          implementation.mergeCommitSha,
+          composition
+            ? promotion!.mergeCommitSha!
+            : implementation.mergeCommitSha,
           production.mergeCommitSha,
         );
         let mapping: ProductionEvidence["mapping"] = "ancestry-and-content";
@@ -289,7 +396,11 @@ export async function auditProduction(
           productionUrl: production.htmlUrl,
           productionMergeSha: production.mergeCommitSha,
           mergedAt: production.mergedAt,
-          mapping,
+          mapping: composition ? "verified-composition" : mapping,
+          ...(composition ? { promotionPr: composition.promotionPr } : {}),
+          ...(required.promotionSource
+            ? { promotionSourceSha: required.promotionSource.sha }
+            : {}),
           checkedPaths: paths,
         });
       }
@@ -311,6 +422,7 @@ export async function auditProduction(
                 e.implementationMergeSha,
                 e.productionPr,
                 e.productionMergeSha,
+                ...(e.promotionSourceSha ? [e.promotionSourceSha] : []),
               ])
               .sort((a, b) => String(a).localeCompare(String(b))),
           }),
@@ -327,9 +439,15 @@ export async function auditProduction(
 export async function reconcileProduction(
   ctx: Ctx,
   manifest: CompletionManifest,
-  options: { apply?: boolean } = {},
+  options: {
+    apply?: boolean;
+    authorizeTicket?: (ticketId: string) => Promise<boolean>;
+    onlySuppliedTickets?: boolean;
+    /** Managed batches isolate a provider error to its ticket and retry it later. */
+    continueOnTicketError?: boolean;
+  } = {},
 ): Promise<ProductionAudit> {
-  const report = await auditProduction(ctx, manifest);
+  const report = await auditProduction(ctx, manifest, options);
   if (!options.apply || ctx.dryRun) return report;
   if (!ctx.linear.updateWorkflowState)
     throw new Error(
@@ -344,66 +462,88 @@ export async function reconcileProduction(
       row.currentState === "completed"
     )
       continue;
-    const scope = manifest.tickets.find((t) => t.ticketId === row.ticketId)!;
-    const before = await ctx.linear.getTicket(row.ticketId);
-    if (
-      !before ||
-      before.stateType === "canceled" ||
-      before.stateType === "completed" ||
-      !scopeMatches(before, scope)
-    ) {
-      row.reason = "Ticket changed after audit; no transition applied";
-      continue;
-    }
-    const expectedStateId = before.stateId;
-    if (
-      (await ctx.forge.getBranchSha(report.repo, report.productionBranch)) !==
-      report.productionHead
-    ) {
+    try {
+      const scope = manifest.tickets.find((t) => t.ticketId === row.ticketId)!;
+      if (
+        options.authorizeTicket &&
+        !(await options.authorizeTicket(row.ticketId))
+      ) {
+        row.reason =
+          "Current managed scope or owner approval changed; no transition applied";
+        continue;
+      }
+      const before = await ctx.linear.getTicket(row.ticketId);
+      if (
+        !before ||
+        before.stateType === "canceled" ||
+        before.stateType === "completed" ||
+        !scopeMatches(before, scope)
+      ) {
+        row.reason = "Ticket changed after audit; no transition applied";
+        continue;
+      }
+      const expectedStateId = before.stateId;
+      if (
+        (await ctx.forge.getBranchSha(report.repo, report.productionBranch)) !==
+        report.productionHead
+      ) {
+        row.reason =
+          "Production advanced after audit; rerun to validate the new tree";
+        continue;
+      }
+      const marker = `<!-- shipgremlins:production:${row.transitionKey} -->`;
+      if (
+        !(await ctx.linear.listComments(row.ticketId)).some((c) =>
+          c.body.includes(marker),
+        )
+      ) {
+        await ctx.linear.addComment(
+          row.ticketId,
+          `${marker}\nProduction completion evidence for ${report.repo}@${report.productionBranch}. All ${row.evidence.length} approved deliverables verified at ${report.productionHead}.\n${row.evidence.map((e) => `- ${e.implementationUrl} → ${e.productionUrl} (${e.productionMergeSha}, merged ${e.mergedAt}, ${e.mapping})`).join("\n")}\nScope: ${scope.scopeHash}; approved by ${scope.approvedBy} at ${scope.approvedAt}. This records production merge, not deployment health. Status transition is attempted separately and may be retried.`,
+        );
+      }
+      // Comments are not evidence or authorization. Re-fetch after our comment,
+      // since it may change updatedAt; preserve owner cancellation and scope edits.
+      const current = await ctx.linear.getTicket(row.ticketId);
+      if (
+        !current ||
+        !current.stateId ||
+        current.stateType === "canceled" ||
+        current.stateType === "completed" ||
+        current.stateId !== expectedStateId ||
+        !scopeMatches(current, scope)
+      ) {
+        row.reason = "Ticket changed before transition; no transition applied";
+        continue;
+      }
+      if (
+        (await ctx.forge.getBranchSha(report.repo, report.productionBranch)) !==
+        report.productionHead
+      ) {
+        row.reason =
+          "Production changed before transition; no transition applied";
+        continue;
+      }
+      if (
+        options.authorizeTicket &&
+        !(await options.authorizeTicket(row.ticketId))
+      ) {
+        row.reason =
+          "Current managed scope or owner approval changed before transition";
+        continue;
+      }
+      await ctx.linear.updateWorkflowState(current.id, row.proposedStateId, {
+        projectId: scope.projectId,
+        teamId: scope.teamId,
+        stateId: current.stateId,
+        updatedAt: current.updatedAt,
+      });
+      row.applied = true;
+    } catch (error) {
+      if (!options.continueOnTicketError) throw error;
       row.reason =
-        "Production advanced after audit; rerun to validate the new tree";
-      continue;
+        "The provider could not confirm this ticket's completion update. Saved evidence is preserved; the controller will retry without blocking other tickets.";
     }
-    const marker = `<!-- shipgremlins:production:${row.transitionKey} -->`;
-    if (
-      !(await ctx.linear.listComments(row.ticketId)).some((c) =>
-        c.body.includes(marker),
-      )
-    ) {
-      await ctx.linear.addComment(
-        row.ticketId,
-        `${marker}\nProduction completion evidence for ${report.repo}@${report.productionBranch}. All ${row.evidence.length} approved deliverables verified at ${report.productionHead}.\n${row.evidence.map((e) => `- ${e.implementationUrl} → ${e.productionUrl} (${e.productionMergeSha}, merged ${e.mergedAt}, ${e.mapping})`).join("\n")}\nScope: ${scope.scopeHash}; approved by ${scope.approvedBy} at ${scope.approvedAt}. This records production merge, not deployment health. Status transition is attempted separately and may be retried.`,
-      );
-    }
-    // Comments are not evidence or authorization. Re-fetch after our comment,
-    // since it may change updatedAt; preserve owner cancellation and scope edits.
-    const current = await ctx.linear.getTicket(row.ticketId);
-    if (
-      !current ||
-      !current.stateId ||
-      current.stateType === "canceled" ||
-      current.stateType === "completed" ||
-      current.stateId !== expectedStateId ||
-      !scopeMatches(current, scope)
-    ) {
-      row.reason = "Ticket changed before transition; no transition applied";
-      continue;
-    }
-    if (
-      (await ctx.forge.getBranchSha(report.repo, report.productionBranch)) !==
-      report.productionHead
-    ) {
-      row.reason =
-        "Production changed before transition; no transition applied";
-      continue;
-    }
-    await ctx.linear.updateWorkflowState(current.id, row.proposedStateId, {
-      projectId: scope.projectId,
-      teamId: scope.teamId,
-      stateId: current.stateId,
-      updatedAt: current.updatedAt,
-    });
-    row.applied = true;
   }
   return report;
 }

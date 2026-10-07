@@ -13,6 +13,7 @@ import {
   PlannerExecutionError,
 } from "../pmPlanner/docker.ts";
 import {
+  effectiveWorkflow,
   inspectionBranch,
   parseProjectCapabilities,
 } from "../projectCapabilities.ts";
@@ -381,6 +382,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
               signal,
               prompt: JSON.stringify({
                 project,
+                workflow: effectiveWorkflow(projectConfig.config),
                 repository: snapshot.repository,
                 paths: snapshot.paths,
                 files: snapshot.files,

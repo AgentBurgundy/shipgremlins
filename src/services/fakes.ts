@@ -42,6 +42,7 @@ export class FakeLinear implements LinearClient {
       stateId: t.stateId ?? "state-backlog",
       teamId: t.teamId ?? "team-1",
       projectId: t.projectId,
+      ...(t.parentId ? { parentId: t.parentId } : {}),
       priority: t.priority ?? 3,
       createdAt:
         t.createdAt ?? new Date(Date.UTC(2026, 9, 1, 0, num)).toISOString(),
@@ -134,6 +135,7 @@ export class FakeLinear implements LinearClient {
   }
   async createTicket(input: {
     projectId: string;
+    parentId?: string;
     title: string;
     description: string;
     labels: string[];

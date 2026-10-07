@@ -272,6 +272,37 @@
                   : "No browser calls recorded",
       header = node("div", "patrol-evidence-heading");
     root.setAttribute("aria-label", "Run evidence");
+    if (
+      job?.status === "queued" &&
+      !job.startedAt &&
+      !activity?.events?.some(
+        (event) => event.id !== "lifecycle:queued" || event.type !== "progress",
+      ) &&
+      !activity?.checks?.length &&
+      !activity?.summary &&
+      !artifacts?.length
+    ) {
+      root.dataset.tone = "neutral";
+      const preparing = job.failure?.category === "environment-wait";
+      header.append(
+        node(
+          "h3",
+          "",
+          preparing ? "Preparing the test environment" : "Waiting to start",
+        ),
+      );
+      root.append(
+        header,
+        node(
+          "p",
+          "patrol-evidence-note",
+          preparing
+            ? "Your gremlin has not started yet. The controller handles staging sync, repairs and deployment checks, then starts this run when the environment is ready. These checks do not start another AI run."
+            : "Your gremlin is queued. Activity and evidence will appear after the run starts.",
+        ),
+      );
+      return root;
+    }
     root.dataset.tone =
       !discovery && !counts.calls && !active && activityState === "ready"
         ? "attention"

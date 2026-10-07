@@ -18,7 +18,7 @@ import { dirname, join, resolve } from "node:path";
 export interface AutomaticPromotion {
   project: string;
   area: string;
-  /** SHA-256 of the exact verified delivery IDs and review-manifest hashes. */
+  /** SHA-256 of verified delivery IDs, review manifests, batch target and staging baseline. */
   key: string;
 }
 interface Claim {

@@ -4,6 +4,19 @@ import { GitHubForge } from "./github.ts";
 const REPO = "owner/game";
 const HUB = "owner/pm-hub";
 
+it("closes a superseded pull request without deleting its branch or merging", async () => {
+  const calls = stubGitHub([
+    {
+      method: "PATCH",
+      re: /\/repos\/owner\/game\/pulls\/7$/,
+      handler: () => ({}),
+    },
+  ]);
+  await new GitHubForge({ token: "test-token" }).closePull(REPO, 7);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.body).toEqual({ state: "closed" });
+});
+
 it("retargets an existing draft without changing its head or enabling merge", async () => {
   const calls = stubGitHub([
     {

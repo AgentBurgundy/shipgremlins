@@ -481,7 +481,7 @@ describe("runPromote", () => {
     expect(rows[0]!.text).toBe("Core: promotion #70 — 1 new, 2 total, 0 held");
   });
 
-  it("preserves and holds a batch whose old source commit fell outside the candidate window", async () => {
+  it("preserves a legacy combined promotion without reassigning its contents to a PM", async () => {
     const ctx = twoAreas();
     const old = seedMerged(ctx, {
       number: 50,
@@ -519,14 +519,17 @@ describe("runPromote", () => {
         return { ok: true, output: "checks passed" };
       },
     });
-    expect(rows).toEqual([
-      expect.objectContaining({
-        needsYou: true,
-        text: expect.stringContaining(
-          "outside the current reviewed candidate set",
-        ),
-      }),
-    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pending: true,
+          text: expect.stringContaining(
+            "existing combined promotion is still open",
+          ),
+        }),
+      ]),
+    );
     expect(checked).toBe(false);
     expect(git.commands().some((command) => command.startsWith("push "))).toBe(
       false,

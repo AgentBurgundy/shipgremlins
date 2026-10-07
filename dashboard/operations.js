@@ -234,7 +234,9 @@
         el(
           "p",
           "runner-guidance",
-          "Review the idea, evidence, and scope. Approve a small, testable change when you’re ready for a coding agent to build it.",
+          s.review?.approvalPolicy === "epic"
+            ? "Review the proposed outcome, evidence and limits. Approve an epic once; its PM manages the child tickets and brings you a tested promotion batch."
+            : "Review the proposed outcome, evidence and limits under this project's saved approval policy.",
         ),
       );
       if (s.reviewError) root.append(message(s.reviewError, true));
@@ -318,7 +320,11 @@
         if (item.reason) card.append(el("p", "runner-guidance", item.reason));
         if (item.canApprove) {
           const approve = btn(
-            s.approving === item.id ? "Approving…" : "Approve coding",
+            s.approving === item.id
+              ? "Approving…"
+              : item.kind === "epic"
+                ? "Approve epic"
+                : "Approve coding",
             () => {
               s.confirmApproval = item.id;
               paintReview(s);
@@ -334,7 +340,9 @@
               el(
                 "p",
                 "",
-                `Approve this bounded scope for coding (${item.identifier})? Split broad epics into testable milestones before approval. The server will re-check this exact proposal and its project.`,
+                item.kind === "epic"
+                  ? `Approve ${item.identifier} as this PM’s bounded epic? The PM can create and approve child tickets within this outcome. You review the final promotion batch; changes to the epic’s scope require approval again.`
+                  : `Approve this bounded scope for coding (${item.identifier})? The server will re-check this exact proposal and its project.`,
               ),
             );
             const actions = el("div", "button-row"),
@@ -755,7 +763,7 @@
             ? "Your crew builds. Your PM tests."
             : "From ticket to pull request",
           promotion
-            ? "Follow integration checks, PM QA and the resulting promotion. A ticket is Done only after its production merge is confirmed."
+            ? "Your crew handles internal PRs, integration checks and PM QA. You review the promotion batch. A ticket is Done only after its production merge is confirmed."
             : "Follow the work, inspect the checks, and review the draft pull request before merging.",
         ),
       );
@@ -871,8 +879,11 @@
             );
           const links = el("div", "project-pm-actions");
           for (const [label, url] of [
-            ["Implementation PR ↗", item.implementation?.url],
-            ["Staging PR ↗", item.promotion?.url],
+            [
+              promotion ? "Crew-managed PR ↗" : "Implementation PR ↗",
+              item.implementation?.url,
+            ],
+            ["Review promotion PR ↗", item.promotion?.url],
             ["Tested deployment ↗", item.review?.deployment?.url],
           ]) {
             const href = url && safeHref(url);

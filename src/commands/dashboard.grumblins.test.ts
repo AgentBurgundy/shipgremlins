@@ -27,6 +27,7 @@ import type { LocalJob } from "../localRunners/types.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 import type { createJobPreparation } from "../localRunners/jobs.ts";
 import type { OAuthConnection } from "../oauthConnection/types.ts";
+import { createEnvironmentAccess } from "../setup/environmentAccess.ts";
 
 const roots: string[] = [],
   servers: Server[] = [];
@@ -175,6 +176,15 @@ async function fixture(
     jobs: { validate } as unknown as ReturnType<typeof createJobPreparation>,
     linearConnection: connection,
     vercelConnection: connection,
+    environmentAccess: {
+      status: () => ({
+        status: "passed",
+        message: "Synthetic verified public preview",
+      }),
+      busy: () => false,
+      idle: async () => {},
+      close: async () => {},
+    } as unknown as ReturnType<typeof createEnvironmentAccess>,
     background: false,
   });
   servers.push(server);

@@ -36,6 +36,29 @@ function fixture() {
   return { root, file, areas };
 }
 describe("owner PM brief", () => {
+  it("sets, preserves, and clears a PM batch override independently of its scope and neighbors", () => {
+    const f = fixture();
+    const original = readPmBrief(f.root, "demo", "core");
+    const withOverride = savePmBrief(f.root, "demo", "core", {
+      revision: original.revision,
+      brief: { promotionBatchSize: 25 },
+    });
+    expect(withOverride.brief.promotionBatchSize).toBe(25);
+    const unchanged = savePmBrief(f.root, "demo", "core", {
+      revision: withOverride.revision,
+      brief: { metric: "/import" },
+    });
+    expect(unchanged.brief.promotionBatchSize).toBe(25);
+    const inherited = savePmBrief(f.root, "demo", "core", {
+      revision: unchanged.revision,
+      brief: { promotionBatchSize: null },
+    });
+    expect(inherited.brief.promotionBatchSize).toBeNull();
+    const raw = JSON.parse(readFileSync(f.file, "utf8"));
+    expect(raw.areas.core).not.toHaveProperty("promotionBatchSize");
+    expect(raw.areas.other).toEqual(f.areas.areas.other);
+    expect(raw.areas.core.mandate).toBe(original.brief.mandate);
+  });
   it("saves the intended PM with concurrency protection and preserves mappings, automation, and other PMs", () => {
     const f = fixture();
     const original = readPmBrief(f.root, "demo", "core");
@@ -94,6 +117,10 @@ describe("owner PM brief", () => {
     { sharedTouchpoints: ["C:\\private"] },
     { schedule: "not cron" },
     { wipLimit: 0 },
+    { promotionBatchSize: 0 },
+    { promotionBatchSize: 101 },
+    { promotionBatchSize: 1.5 },
+    { promotionBatchSize: "10" },
     { mandate: "" },
   ])(
     "rejects invalid or authority-changing fields without writing: %j",

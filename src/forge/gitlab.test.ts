@@ -18,6 +18,20 @@ const mr = {
   changes_count: "1",
 };
 describe("GitLab delivery forge", () => {
+  it("closes a superseded merge request without deleting its branch or merging", async () => {
+    const fetcher = vi.fn(async () => Response.json(mr));
+    await new GitLabForge({ token: "test-token", fetch: fetcher }).closePull(
+      repo,
+      7,
+    );
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+      "https://gitlab.com/api/v4/projects/group%2Fsubgroup%2Fapp/merge_requests/7",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ state_event: "close" }),
+      }),
+    );
+  });
   it("retargets only the selected merge request target branch", async () => {
     const fetcher = vi.fn(async () => Response.json(mr));
     await new GitLabForge({ token: "test-token", fetch: fetcher }).retargetPull(

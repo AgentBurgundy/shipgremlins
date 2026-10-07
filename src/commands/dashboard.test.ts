@@ -795,6 +795,8 @@ describe("local dashboard HTTP boundary", () => {
       key: "security",
       name: "Security",
       mandate: "Test permission boundaries.",
+      enabled: false,
+      codingEnabled: false,
     });
     expect(linearProvisioning.provision).toHaveBeenLastCalledWith("demo", {
       teamId: undefined,
@@ -811,10 +813,11 @@ describe("local dashboard HTTP boundary", () => {
     expect(
       (await post(`${url}/api/projects/demo/areas`, fullBrief)).status,
     ).toBe(200);
-    expect(linearProvisioning.addArea).toHaveBeenLastCalledWith(
-      "demo",
-      fullBrief,
-    );
+    expect(linearProvisioning.addArea).toHaveBeenLastCalledWith("demo", {
+      ...fullBrief,
+      enabled: false,
+      codingEnabled: false,
+    });
     expect(
       (
         await post(`${url}/api/projects/demo/areas`, {

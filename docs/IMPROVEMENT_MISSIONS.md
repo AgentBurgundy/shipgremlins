@@ -18,7 +18,16 @@ Save the project's Linear connection when ready for proposals; the PM prepares
 missing mappings and labels rather than asking you to assemble them manually.
 [First-run setup →](SETUP.md#your-first-adoption)
 
-## From a goal to a reviewed change
+## New managed projects: approve the epic
+
+With `workflow.approvalPolicy: "epic"`, a mission carries the desired outcome
+into investigation. Its **Review epic** action opens Proposals, where the owner
+approves the exact parent scope. The PM creates native child tickets; coding,
+internal merges, deployed PM QA and bounded rework follow automatically. The
+mission never sends the epic itself to a coder. Review the owning PM's final
+promotion batch into staging. [Full workflow diagrams →](AUTONOMOUS_WORKFLOW.md)
+
+## Existing ticket-policy projects: reviewed change plans
 
 1. **Investigate.** Select an owning PM and start the mission. If the project has
    no PM, setup can create a focused Product improvements PM with recurring work
@@ -53,7 +62,8 @@ candidate hosting or a trusted signer automatically.
 
 Every new coding admission, in either delivery mode, needs a finite list under
 `## Acceptance criteria` in its Linear ticket. An older ticket without a list
-needs an edited proposal and another review. “Make it better” is not a testable
+needs finite criteria before pickup. In epic-policy projects, its PM can supply
+them within the approved parent scope. “Make it better” is not a testable
 scope.
 
 Coding gets the owning PM's structured product charter, ownership, mandate,

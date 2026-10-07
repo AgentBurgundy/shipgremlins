@@ -15,6 +15,8 @@ export interface LinearTicket {
   stateId?: string;
   teamId?: string;
   projectId?: string;
+  /** Native Linear parent issue; never inferred from title or description. */
+  parentId?: string;
   priority: number;
   createdAt: string;
   updatedAt: string;
@@ -63,6 +65,7 @@ export interface LinearClient {
     teamId?: string;
     projectId: string;
     title: string;
+    parentId?: string;
     description: string;
     labels: string[];
     priority?: number;

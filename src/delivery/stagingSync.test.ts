@@ -526,6 +526,114 @@ describe("durable local staging synchronization", () => {
     expect(w.enqueue).not.toHaveBeenCalled();
   });
 
+  it.each(["pending", "failure", "branch rules", "repair"] as const)(
+    "keeps the controller's %s reason while queued PMs check the same branch heads",
+    async (reason) => {
+      const w = world();
+      if (reason === "repair") w.dirty();
+      else if (reason === "branch rules")
+        w.forge.seedPull(TEST_REPO, {
+          headRef: w.snapshot,
+          headSha: STAGING,
+          baseRef: "pm-staging",
+          draft: false,
+          mergeableState: "blocked",
+        });
+      else
+        w.forge.seedChecks(TEST_REPO, STAGING, {
+          status: reason,
+          failedJobs: [],
+        });
+      const authoritative = await w.service.reconcile();
+      w.clock("2026-10-06T12:00:30Z");
+      expect(await w.restart().reconcile({ checkOnly: true })).toEqual(
+        authoritative,
+      );
+      expect(w.restart().status()).toEqual(authoritative);
+      expect(w.enqueue).toHaveBeenCalledTimes(reason === "repair" ? 1 : 0);
+      expect(w.merge).not.toHaveBeenCalled();
+    },
+  );
+
+  it("drops a prior waiting reason when a queued PM observes a new branch pair", async () => {
+    const w = world();
+    w.forge.seedChecks(TEST_REPO, STAGING, {
+      status: "pending",
+      failedJobs: [],
+    });
+    const previous = await w.service.reconcile();
+    expect(previous.pullUrl).toBeTruthy();
+    w.forge.seedBranch(TEST_REPO, "pm-staging", MOVED);
+    w.compare(MOVED, STAGING, 2, 2);
+    expect(await w.restart().reconcile({ checkOnly: true })).toMatchObject({
+      phase: "checking",
+      integrationSha: MOVED,
+      pullUrl: undefined,
+    });
+    expect(w.createPull).toHaveBeenCalledOnce();
+    expect(w.merge).not.toHaveBeenCalled();
+  });
+
+  it("automatically readies a controller snapshot draft after checking its exact merge", async () => {
+    const w = world();
+    const pull = w.forge.seedPull(TEST_REPO, {
+      headRef: w.snapshot,
+      headSha: STAGING,
+      baseRef: "pm-staging",
+      draft: true,
+    });
+    w.checkMerge.mockImplementation(async (integration, head) => {
+      expect([integration, head]).toEqual([INTEGRATION, STAGING]);
+      expect(w.forge.readied).toEqual([]);
+      return true;
+    });
+    expect((await w.service.reconcile()).phase).toBe("current");
+    expect(w.forge.readied).toEqual([pull.number]);
+    expect(w.merge).toHaveBeenCalledExactlyOnceWith(TEST_REPO, pull.number, {
+      method: "merge",
+      sha: STAGING,
+    });
+    expect(w.enqueue).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "head",
+    "combined checks",
+    "provider checks",
+    "changed provider checks",
+    "source drift",
+  ])("does not ready a snapshot draft with invalid %s", async (reason) => {
+    const w = world();
+    w.forge.seedPull(TEST_REPO, {
+      headRef: w.snapshot,
+      headSha: reason === "head" ? MOVED : STAGING,
+      baseRef: "pm-staging",
+      draft: true,
+    });
+    if (reason === "combined checks") w.checkMerge.mockResolvedValue(false);
+    if (reason === "provider checks")
+      w.forge.seedChecks(TEST_REPO, STAGING, {
+        status: "failure",
+        failedJobs: [],
+      });
+    if (reason === "source drift")
+      w.checkMerge.mockImplementation(async () => {
+        w.forge.seedBranch(TEST_REPO, "staging", MOVED);
+        return true;
+      });
+    if (reason === "changed provider checks")
+      w.checkMerge.mockImplementation(async () => {
+        w.forge.seedChecks(TEST_REPO, STAGING, {
+          status: "failure",
+          failedJobs: [],
+        });
+        return true;
+      });
+    await w.service.reconcile();
+    expect(w.forge.readied).toEqual([]);
+    expect(w.merge).not.toHaveBeenCalled();
+  });
+
   it.each(["failure", "pending"] as const)(
     "blocks a merge on %s provider checks",
     async (status) => {
@@ -568,6 +676,84 @@ describe("durable local staging synchronization", () => {
     expect(w.enqueue).not.toHaveBeenCalled();
   });
 
+  it("automatically repairs a snapshot that must include the current integration branch", async () => {
+    const w = world();
+    w.forge.seedPull(TEST_REPO, {
+      headRef: w.snapshot,
+      headSha: STAGING,
+      baseRef: "pm-staging",
+      draft: false,
+      mergeableState: "behind",
+    });
+    expect((await w.service.reconcile()).phase).toBe("repairing");
+    expect(w.jobs[0]).toMatchObject({
+      developerKind: "sync",
+      attempt: 1,
+    });
+    w.jobs[0]!.status = "succeeded";
+    const repaired = w.resolution(w.jobs[0]!);
+    expect((await w.restart().reconcile()).phase).toBe("current");
+    expect(w.merge).toHaveBeenCalledExactlyOnceWith(
+      TEST_REPO,
+      repaired.number,
+      { method: "merge", sha: REPAIRED },
+    );
+    expect(w.enqueue).toHaveBeenCalledOnce();
+  });
+
+  it.each(["pending", "failure"] as const)(
+    "does not spend a repair on an outdated snapshot with %s provider checks",
+    async (status) => {
+      const w = world();
+      w.forge.seedPull(TEST_REPO, {
+        headRef: w.snapshot,
+        headSha: STAGING,
+        baseRef: "pm-staging",
+        mergeableState: "behind",
+      });
+      w.forge.seedChecks(TEST_REPO, STAGING, { status, failedJobs: [] });
+      expect((await w.service.reconcile()).phase).toBe(
+        status === "pending" ? "waiting-checks" : "blocked",
+      );
+      expect(w.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not spend another attempt on stale provider mergeability when repair ancestry is already current", async () => {
+    const w = world();
+    w.dirty();
+    await w.service.reconcile();
+    w.jobs[0]!.status = "succeeded";
+    const repaired = w.resolution(w.jobs[0]!, {
+      mergeableState: "behind",
+    });
+    expect((await w.restart().reconcile()).phase).toBe("waiting-merge");
+    expect(w.enqueue).toHaveBeenCalledOnce();
+    expect(w.merge).not.toHaveBeenCalled();
+    w.forge.patchPull(TEST_REPO, repaired.number, {
+      mergeableState: "clean",
+    });
+    expect((await w.restart().reconcile()).phase).toBe("current");
+    expect(w.enqueue).toHaveBeenCalledOnce();
+  });
+
+  it.each(["dirty", "behind"])(
+    "does not admit repair for an altered snapshot reporting %s",
+    async (mergeableState) => {
+      const w = world();
+      w.forge.seedPull(TEST_REPO, {
+        headRef: w.snapshot,
+        headSha: MOVED,
+        baseRef: "pm-staging",
+        mergeableState,
+      });
+      w.forge.seedBranch(TEST_REPO, w.snapshot, STAGING);
+      expect((await w.service.reconcile()).phase).toBe("checking");
+      expect(w.enqueue).not.toHaveBeenCalled();
+      expect(w.merge).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["old revision", "wrong branch", "not ready"])(
     "waits for the exact integration deployment: %s",
     async (kind) => {
@@ -602,6 +788,10 @@ describe("durable local staging synchronization", () => {
     const first = w.service.reconcile();
     await vi.waitFor(() => expect(w.checkMerge).toHaveBeenCalledOnce());
     expect(existsSync(join(w.directory, "operation.lock"))).toBe(true);
+    expect(await w.restart().reconcile({ checkOnly: true })).toMatchObject({
+      phase: "waiting-checks",
+      message: expect.stringContaining("combined staging and PM changes"),
+    });
     const second = await w.restart().reconcile();
     expect(second).toMatchObject({
       phase: "checking",
@@ -662,6 +852,29 @@ describe("durable local staging synchronization", () => {
     expect((await w.restart().reconcile()).phase).toBe("current");
     expect(w.createPull).toHaveBeenCalledOnce();
   });
+
+  it.each([false, true])(
+    "recovers a lost merge response using branch ancestry without duplicate work (repair=%s)",
+    async (repair) => {
+      const w = world();
+      if (repair) {
+        w.dirty();
+        await w.service.reconcile();
+        w.jobs[0]!.status = "succeeded";
+        w.resolution(w.jobs[0]!);
+      }
+      const merge = w.merge.getMockImplementation()!;
+      w.merge.mockImplementationOnce(async (...args) => {
+        await merge(...args);
+        throw new Error("lost merge response");
+      });
+      expect((await w.service.reconcile()).phase).toBe("blocked");
+      expect((await w.restart().reconcile()).phase).toBe("current");
+      expect(w.merge).toHaveBeenCalledOnce();
+      expect(w.enqueue).toHaveBeenCalledTimes(repair ? 1 : 0);
+      expect(w.createPull).toHaveBeenCalledTimes(repair ? 0 : 1);
+    },
+  );
 
   it("never overwrites an externally changed snapshot branch", async () => {
     const w = world();
@@ -760,30 +973,114 @@ describe("durable local staging synchronization", () => {
   );
 
   it.each([STAGING, INTEGRATION])(
-    "requires a repair head to include ancestry %s before merging",
+    "replaces a completed repair missing ancestry %s within the existing attempt budget",
     async (missing) => {
       const w = world();
       w.dirty();
       await w.service.reconcile();
       w.jobs[0]!.status = "succeeded";
-      const pull = w.resolution(w.jobs[0]!);
+      const original = w.resolution(w.jobs[0]!);
       w.compare(REPAIRED, missing, 1);
-      expect((await w.service.reconcile()).phase).toBe("blocked");
+      expect((await w.service.reconcile()).phase).toBe("repairing");
+      expect(w.enqueue).toHaveBeenCalledTimes(2);
+      expect(w.jobs[1]!.attempt).toBe(2);
       expect(w.merge).not.toHaveBeenCalled();
-      w.compare(REPAIRED, missing, 0, 2);
+      expect(w.forge.readied).toEqual([]);
+      await w.restart().reconcile();
+      expect(w.enqueue).toHaveBeenCalledTimes(2);
+      w.jobs[1]!.status = "succeeded";
+      const pull = w.resolution(w.jobs[1]!, { headSha: MOVED });
+      w.compare(MOVED, STAGING, 0, 3);
+      w.compare(MOVED, INTEGRATION, 0, 3);
+      w.forge.seedChecks(TEST_REPO, MOVED, {
+        status: "success",
+        failedJobs: [],
+      });
       expect((await w.restart().reconcile()).phase).toBe("current");
       expect(w.forge.readied).toEqual([pull.number]);
+      expect((await w.forge.getPull(TEST_REPO, original.number))?.state).toBe(
+        "open",
+      );
       expect(w.merge).toHaveBeenCalledExactlyOnceWith(TEST_REPO, pull.number, {
         method: "merge",
-        sha: REPAIRED,
+        sha: MOVED,
       });
-      expect(w.checkMerge).toHaveBeenCalledExactlyOnceWith(
-        INTEGRATION,
-        REPAIRED,
-      );
-      expect(w.enqueue).toHaveBeenCalledOnce();
+      expect(w.checkMerge).toHaveBeenCalledExactlyOnceWith(INTEGRATION, MOVED);
+      expect(w.enqueue).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("uses current integration history for its remaining repair after the branch advances", async () => {
+    const w = world();
+    w.dirty();
+    await w.service.reconcile();
+    w.jobs[0]!.status = "succeeded";
+    w.resolution(w.jobs[0]!);
+    w.forge.seedBranch(TEST_REPO, "pm-staging", MOVED);
+    w.compare(MOVED, STAGING, 2, 2);
+    w.compare(REPAIRED, MOVED, 1, 1);
+    expect((await w.restart().reconcile()).phase).toBe("repairing");
+    expect(await w.restart().repairIntent(w.jobs[1]!)).toMatchObject({
+      stagingSha: STAGING,
+      integrationSha: MOVED,
+      attempt: 2,
+    });
+    expect(w.merge).not.toHaveBeenCalled();
+    expect(w.enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it("never exceeds two attempts when both completed repair PRs still conflict", async () => {
+    const w = world();
+    w.dirty();
+    await w.service.reconcile();
+    w.jobs[0]!.status = "succeeded";
+    w.resolution(w.jobs[0]!, { mergeableState: "dirty" });
+    expect((await w.restart().reconcile({ queueRepair: false })).phase).toBe(
+      "repairing",
+    );
+    expect(w.enqueue).toHaveBeenCalledOnce();
+    expect((await w.restart().reconcile()).phase).toBe("repairing");
+    w.jobs[1]!.status = "succeeded";
+    w.resolution(w.jobs[1]!, { mergeableState: "dirty" });
+    expect(await w.restart().reconcile()).toMatchObject({
+      phase: "blocked",
+      message: expect.stringContaining("Two Coding Gremlin attempts"),
+    });
+    await w.restart().reconcile();
+    expect(w.enqueue).toHaveBeenCalledTimes(2);
+    expect(w.merge).not.toHaveBeenCalled();
+    expect(w.forge.readied).toEqual([]);
+  });
+
+  it("respects cancellation of an earlier attempt before merging its replacement", async () => {
+    const w = world();
+    w.dirty();
+    await w.service.reconcile();
+    w.jobs[0]!.status = "failed";
+    await w.service.reconcile();
+    w.jobs[0]!.cancelRequestedAt = "2026-10-06T12:01:00Z";
+    w.jobs[1]!.status = "succeeded";
+    w.resolution(w.jobs[1]!);
+    expect((await w.restart().reconcile()).phase).toBe("blocked");
+    expect(w.forge.readied).toEqual([]);
+    expect(w.merge).not.toHaveBeenCalled();
+    expect(w.enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an unrelated PR returned while looking up an admitted repair", async () => {
+    const w = world();
+    w.dirty();
+    await w.service.reconcile();
+    w.jobs[0]!.status = "succeeded";
+    const unrelated = w.resolution(w.jobs[0]!, {
+      headRef: "someone-elses-feature",
+    });
+    vi.mocked(w.forge.listOpenPulls).mockResolvedValue([unrelated]);
+    expect((await w.restart().reconcile()).phase).toBe("blocked");
+    expect(w.forge.readied).toEqual([]);
+    expect(w.merge).not.toHaveBeenCalled();
+    expect(w.enqueue).toHaveBeenCalledOnce();
+  });
 
   it.each(["staging", "integration"])(
     "rejects repair admission after %s moves",

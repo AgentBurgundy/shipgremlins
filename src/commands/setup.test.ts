@@ -335,7 +335,11 @@ describe("setup initialization", () => {
     expect(project.config.verified).toBeNull();
     expect(project.areas[0]!.enabled).toBe(true);
     expect(project.areas[0]!.schedule).toBe("0 13 * * *");
-    expect(project.config.workflow).toEqual({ kind: "promotion" });
+    expect(project.config.workflow).toEqual({
+      kind: "promotion",
+      approvalPolicy: "epic",
+      promotionBatchSize: 10,
+    });
     expect(project.config.branches).toEqual({
       production: "main",
       staging: "staging",

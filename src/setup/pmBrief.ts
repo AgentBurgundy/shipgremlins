@@ -9,6 +9,7 @@ import {
 } from "../pmCharter.ts";
 import { assertNoSymlinks } from "./files.ts";
 import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
+import { validPromotionBatchSize } from "../delivery/batching.ts";
 
 export class PmBriefError extends Error {
   constructor(
@@ -28,6 +29,7 @@ export interface PmBrief {
   metric: string;
   schedule: string;
   wipLimit: number;
+  promotionBatchSize?: number | null;
 }
 const fields = [
   "name",
@@ -38,6 +40,7 @@ const fields = [
   "metric",
   "schedule",
   "wipLimit",
+  "promotionBatchSize",
 ] as const;
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -78,6 +81,7 @@ export function readPmBrief(root: string, project: string, areaKey: string) {
     metric: area.metric,
     schedule: area.schedule,
     wipLimit: area.wipLimit,
+    promotionBatchSize: area.promotionBatchSize ?? null,
   };
   return { project, area: areaKey, revision: document.revision, brief };
 }
@@ -110,6 +114,13 @@ export function savePmBrief(
       409,
     );
   const value = { ...current.brief, ...input.brief };
+  if (
+    value.promotionBatchSize != null &&
+    !validPromotionBatchSize(value.promotionBatchSize)
+  )
+    throw new PmBriefError(
+      "Use a promotion batch size from 1 to 100, or leave it empty to use the project default.",
+    );
   if (
     !printableBrief(value.name, 100) ||
     !value.name.trim() ||
@@ -169,6 +180,9 @@ export function savePmBrief(
     schedule: value.schedule.trim(),
     wipLimit: value.wipLimit,
   });
+  if (value.promotionBatchSize == null)
+    delete raw.areas[area].promotionBatchSize;
+  else raw.areas[area].promotionBatchSize = value.promotionBatchSize;
   saveEditableConfig(root, {
     path: document.path,
     revision: input.revision,

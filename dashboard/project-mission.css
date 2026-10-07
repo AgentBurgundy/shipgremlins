@@ -341,6 +341,34 @@
   gap: 14px;
   margin: 24px 0;
 }
+.promotion-pm-batches {
+  display: grid;
+  gap: 0;
+  margin-top: 20px;
+}
+.promotion-pm-batch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 18px 0;
+  border-top: 1px solid #dbe5dd;
+}
+.promotion-pm-batch > div {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.promotion-pm-batch h3 {
+  margin: 0 0 5px;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.promotion-pm-batch p {
+  margin: 0;
+  color: #607767;
+  font-size: 13px;
+}
 .project-tool {
   border: 1px solid #dbe5dd;
   border-radius: 12px;

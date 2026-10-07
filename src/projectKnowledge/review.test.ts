@@ -19,6 +19,11 @@ beforeEach(() => {
     project: "app",
     repo: "owner/app",
   });
+  // Preserve coverage of the explicitly supported legacy per-ticket policy.
+  const projectPath = join(root, "projects/app/project.json");
+  const project = JSON.parse(readFileSync(projectPath, "utf8"));
+  project.workflow = { kind: "promotion", approvalPolicy: "ticket" };
+  writeFileSync(projectPath, JSON.stringify(project));
   const file = join(root, "projects", "app", "areas.json"),
     raw = JSON.parse(readFileSync(file, "utf8"));
   raw.areas.core.linearProjectId = "linear-project";

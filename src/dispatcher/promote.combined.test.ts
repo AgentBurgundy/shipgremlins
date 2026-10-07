@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { makeCtx, makeProject, TEST_REPO } from "../services/fakes.ts";
 import { runPromote } from "./promote.ts";
 
 it(
-  "automatically publishes one reusable PM-reviewed promotion, enforces supplied verification, and excludes untested commits",
+  "batches each PM separately, waits for distinct tested tickets, supports an explicit smaller batch, and preserves staging",
   async () => {
     const temp = await mkdtemp(join(tmpdir(), "gremlins-combined-"));
     const checkout = join(temp, "checkout"),
@@ -39,6 +39,10 @@ it(
           ],
         }),
       });
+      ctx.project.config.workflow = {
+        kind: "promotion",
+        promotionBatchSize: 2,
+      };
       ctx.forge.seedBranch(TEST_REPO, "staging", base);
       const originalGetPull = ctx.forge.getPull.bind(ctx.forge);
       vi.spyOn(ctx.forge, "getPull").mockImplementation(
@@ -86,16 +90,12 @@ it(
       await addChange(2, "core/untested.txt", false);
       await addChange(3, "billing/good.txt", true);
       const check = vi.fn(async () => {
-        expect(await readFile(join(checkout, "core/good.txt"), "utf8")).toBe(
-          "change 1\n",
-        );
-        expect(await readFile(join(checkout, "billing/good.txt"), "utf8")).toBe(
-          "change 3\n",
-        );
-        expect(await git("ls-tree", "-r", "--name-only", "HEAD")).not.toContain(
-          "untested.txt",
-        );
-        return { ok: true, output: "combined application checks passed" };
+        const tree = await git("ls-tree", "-r", "--name-only", "HEAD");
+        expect(tree).not.toContain("untested.txt");
+        expect(
+          tree.includes("core/good.txt") && tree.includes("billing/good.txt"),
+        ).toBe(false);
+        return { ok: true, output: "PM batch checks passed" };
       });
       const opts = {
         git: realGit,
@@ -108,6 +108,7 @@ it(
           labels: string[];
         }) => ({
           area: pull.number === 3 ? "billing" : "core",
+          ticketId: `ticket-${pull.number === 4 ? 1 : pull.number}`,
           verdict: pull.labels.includes("reviewed")
             ? ("verified" as const)
             : ("untested" as const),
@@ -119,8 +120,26 @@ it(
       }));
       const prepared = vi.fn(async () => {}),
         published = vi.fn(async () => {});
+      const collecting = await runPromote(ctx, { ...opts, automatic: true });
+      expect(collecting.map((row) => row.text)).toEqual([
+        expect.stringContaining("Core: 1/2 PM-tested tickets"),
+        expect.stringContaining("Billing: 1/2 PM-tested tickets"),
+      ]);
+      expect(check).not.toHaveBeenCalled();
+      // A follow-up implementation of the same ticket must not inflate the target.
+      await git("checkout", "pm-staging");
+      await addChange(4, "core/followup.txt", true);
+      expect(
+        (await runPromote(ctx, { ...opts, area: "core", automatic: true }))[0]!
+          .text,
+      ).toContain("1/2 PM-tested tickets");
+      expect(check).not.toHaveBeenCalled();
+      await git("checkout", "pm-staging");
+      await addChange(5, "core/second.txt", true);
       const waiting = await runPromote(ctx, {
         ...opts,
+        area: "core",
+        automatic: true,
         verifyCandidate,
         onCandidatePrepared: prepared,
         onPublished: published,
@@ -132,64 +151,70 @@ it(
       expect(
         await ctx.forge.listOpenPulls(TEST_REPO, { base: "staging" }),
       ).toEqual([]);
-      await runPromote(ctx, { ...opts, onPublished: published });
+      await runPromote(ctx, {
+        ...opts,
+        automatic: true,
+        onPublished: published,
+      });
       const [pull] = await ctx.forge.listOpenPulls(TEST_REPO, {
         base: "staging",
       });
       expect(pull).toMatchObject({
-        headRef: "pm-release/combined/20261002",
+        headRef: expect.stringMatching(/^pm-release\/core\/20261002(?:-\d+)?$/),
         draft: false,
       });
-      expect(pull!.body).toContain("owning PMs");
+      expect(pull!.body).toContain("owning PM's");
       expect(pull!.body).toContain("Change 2 — not tested");
       expect(pull!.body).toContain(
         "no separate browser review of this assembled candidate is claimed",
       );
       expect(published).toHaveBeenCalledWith(
-        expect.objectContaining({ changes: [1, 3] }),
+        expect.objectContaining({ changes: [1, 4, 5] }),
         expect.objectContaining({ number: pull!.number, draft: false }),
       );
       expect(ctx.forge.merged).toEqual([]);
       expect(ctx.forge.autoMerged).toEqual([]);
+      // The owner may explicitly flush Billing's smaller, fully checked batch.
+      await runPromote(ctx, {
+        ...opts,
+        area: "billing",
+        onPublished: published,
+      });
+      const billing = (
+        await ctx.forge.listOpenPulls(TEST_REPO, { base: "staging" })
+      ).find((item) => item.headRef.startsWith("pm-release/billing/"))!;
+      expect(billing.draft).toBe(false);
+      expect(published).toHaveBeenLastCalledWith(
+        expect.objectContaining({ changes: [3] }),
+        expect.objectContaining({ number: billing.number }),
+      );
       await git("checkout", "pm-staging");
       await addChange(10, "core/next.txt", true);
-      await runPromote(ctx, { ...opts, onPublished: published });
+      await runPromote(ctx, {
+        ...opts,
+        area: "core",
+        automatic: true,
+        onPublished: published,
+      });
       const pulls = await ctx.forge.listOpenPulls(TEST_REPO, {
         base: "staging",
       });
-      expect(pulls).toHaveLength(1);
-      expect(pulls[0]!.number).toBe(pull!.number);
-      expect(pulls[0]!.body).toContain("Change 10");
-      const combinedSha = await git("rev-parse", `origin/${pull!.headRef}`);
+      expect(pulls).toHaveLength(2);
+      const core = pulls.find((item) => item.number === pull!.number)!;
+      expect(core.body).toContain("Change 10");
+      expect(core.body).not.toContain("Change 3");
+      expect(pulls.find((item) => item.number === billing.number)?.body).toBe(
+        billing.body,
+      );
+      const coreSha = await git("rev-parse", `origin/${pull!.headRef}`);
       expect(published).toHaveBeenLastCalledWith(
-        expect.objectContaining({ changes: [1, 3, 10], sha: combinedSha }),
-        expect.objectContaining({ number: pull!.number, headSha: combinedSha }),
+        expect.objectContaining({ changes: [1, 4, 5, 10], sha: coreSha }),
+        expect.objectContaining({ number: pull!.number, headSha: coreSha }),
       );
       expect(await git("rev-parse", "origin/staging")).toBe(base);
       expect(
         await git("ls-tree", "-r", "--name-only", `origin/${pull!.headRef}`),
       ).not.toContain("untested.txt");
-      expect(check).toHaveBeenCalledTimes(3);
-      // A useful project batch can grow past ten tickets; no count threshold
-      // prevents the initial small batch from being published.
-      await git("checkout", "pm-staging");
-      for (let number = 11; number <= 19; number++)
-        await addChange(number, `core/next-${number}.txt`, true);
-      await runPromote(ctx, { ...opts, onPublished: published });
-      const [largeBatch] = await ctx.forge.listOpenPulls(TEST_REPO, {
-        base: "staging",
-      });
-      expect(largeBatch!.number).toBe(pull!.number);
-      expect(largeBatch!.title).toContain("12 changes");
-      expect(published).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          changes: [1, 3, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
-        }),
-        expect.objectContaining({
-          number: pull!.number,
-          headSha: await git("rev-parse", `origin/${pull!.headRef}`),
-        }),
-      );
       expect(check).toHaveBeenCalledTimes(4);
       ctx.forge.seedPull(TEST_REPO, {
         number: 20,
@@ -198,9 +223,9 @@ it(
         state: "open",
         draft: true,
       });
-      expect((await runPromote(ctx, opts))[0]!.text).toContain(
-        "existing per-PM promotion PRs",
-      );
+      expect(
+        (await runPromote(ctx, { ...opts, area: "core" }))[0]!.text,
+      ).toContain("More than one promotion is open for this batch");
       expect(check).toHaveBeenCalledTimes(4);
     } finally {
       await rm(temp, { recursive: true, force: true });

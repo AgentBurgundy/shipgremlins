@@ -29,6 +29,7 @@ async function fixture(
     verified?: boolean;
     production?: boolean;
     productionError?: boolean;
+    activeRepair?: boolean;
   } = {},
 ) {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
@@ -63,6 +64,9 @@ async function fixture(
     message: "Waiting for the updated app.",
   };
   const reconcileStaging = vi.fn(async () => state);
+  let activeRepair = options.activeRepair ?? false;
+  const reconcileIntegrationRepairs = vi.fn(async () => {});
+  const advanceIntegration = vi.fn(async () => null);
   const reconcileProduction = vi.fn(async () => {
     if (options.productionError) throw new Error("Linear unavailable.");
     return [];
@@ -80,7 +84,10 @@ async function fixture(
       deliveries: [],
       declarations: options.production ? [{ id: "declared-release" }] : [],
       stagingSync: state,
+      integrationRepairActive: activeRepair,
     }),
+    reconcileIntegrationRepairs,
+    advanceIntegration,
     reconcileStaging,
     reconcileProduction,
     pendingReviews,
@@ -120,11 +127,16 @@ async function fixture(
   return {
     reconcileStaging,
     reconcileProduction,
+    reconcileIntegrationRepairs,
+    advanceIntegration,
     pendingReviews,
     enqueue,
     validate,
     post,
     waitForIdle,
+    setActiveRepair: (active: boolean) => {
+      activeRepair = active;
+    },
     setState: (next: StagingSyncStatus) => {
       state = next;
     },
@@ -146,6 +158,39 @@ it("syncs at startup and every minute, holding PM reviews until the current depl
   await vi.waitFor(() => expect(f.enqueue).toHaveBeenCalledTimes(1));
   expect(f.reconcileStaging).toHaveBeenCalledTimes(3);
   expect(f.pendingReviews).toHaveBeenCalledExactlyOnceWith("app");
+});
+
+it("lets an active integration repair finish before new staging sync without waiting for sync-current", async () => {
+  const f = await fixture({ activeRepair: true });
+  await vi.waitFor(() => expect(f.advanceIntegration).toHaveBeenCalledOnce());
+  await f.waitForIdle();
+  expect(f.reconcileIntegrationRepairs).toHaveBeenCalledOnce();
+  expect(f.reconcileStaging).not.toHaveBeenCalled();
+  expect(f.pendingReviews).not.toHaveBeenCalled();
+  expect(f.enqueue).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(60_000);
+  await f.waitForIdle();
+  expect(f.advanceIntegration).toHaveBeenCalledTimes(2);
+  expect(f.reconcileStaging).not.toHaveBeenCalled();
+  f.setActiveRepair(false);
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(f.reconcileStaging).toHaveBeenCalledOnce());
+  expect(f.pendingReviews).not.toHaveBeenCalled();
+  f.setState({ phase: "current", message: "The current test app is ready." });
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(f.enqueue).toHaveBeenCalledOnce());
+});
+
+it("resumes staging immediately when repair reconciliation reports a stopped family", async () => {
+  const f = await fixture({ activeRepair: true });
+  await vi.waitFor(() => expect(f.advanceIntegration).toHaveBeenCalledOnce());
+  await f.waitForIdle();
+  f.reconcileIntegrationRepairs.mockImplementation(async () => {
+    f.setActiveRepair(false);
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(f.reconcileStaging).toHaveBeenCalledOnce());
+  expect(f.advanceIntegration).toHaveBeenCalledOnce();
 });
 
 it("accepts a manual retry and rejects additional request fields", async () => {

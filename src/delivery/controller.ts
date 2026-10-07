@@ -59,9 +59,16 @@ import {
   validQaFinding,
 } from "./qaRework.ts";
 import { prepareProductionRelease } from "./release.ts";
+import { reconcileManagedCompletion } from "./managedCompletion.ts";
 import { createDraftAdoption, type CompletedDraft } from "./adoption.ts";
-import { readPromotionBatch } from "./promotionBatch.ts";
+import { readPromotionBatch, readPromotionBatches } from "./promotionBatch.ts";
 import {
+  matchesPromotionRepair,
+  promotionRepairInput,
+  promotionRepairPayload,
+} from "./promotionRepair.ts";
+import {
+  hasActiveIntegrationRepair,
   integrationRepairInput,
   integrationRepairPayload,
   matchesIntegrationRepair,
@@ -95,6 +102,7 @@ interface Admission {
   approvedAt: string;
   qaRepairKey?: string;
   integrationRepairKey?: string;
+  promotionRepairKey?: string;
 }
 export interface DeliveryControllerOptions {
   root: string;
@@ -169,7 +177,7 @@ export function reviewPrompt(plan: PmReviewPlan): string {
     })),
     null,
     2,
-  )}\nUse Playwright to investigate every criterion. Then save /output/pm-review-request.json as {"schema":1,"planId":${JSON.stringify(plan.id)},"deliveries":[{"id":"EXACT delivery id","checks":[{"criterion":"EXACT approved criterion text","path":"/non-production-path","kind":"text-visible","text":"Exact visible text"}]}]}. The trusted worker independently replays checks and captures real screenshots AFTER you finish. Supported kinds: text-visible/text-absent with exact text; selector-visible/selector-absent with selector; url-path with expected pathname. Each check opens a fresh browser context on this deployment only; paths cannot include query/fragment or another origin. Optional steps (maximum 12 per check) replay click/fill/select/check/uncheck with a unique selector; fill/select also use value. To reuse a real login, save Playwright storageState ONLY in /output/.review-sessions/ROLE.json after signing in and set session to ROLE (lowercase letters, digits and hyphens). Cookies and localStorage must belong only to this deployment origin. The worker loads this private role session, replays steps and deletes the session; never save sessions anywhere else under /output; this hidden handoff is excluded from public artifacts and consumed only by the isolated replay phase. Do not choose a trivial check that fails to test the criterion. If authentication, interaction or an API assertion cannot be reproduced by this contract, omit that check and explain the blocker in your summary; it remains blocked for promotion. Your own JSON pass claims never count as evidence. Continue ordinary PM observation without altering the approved delivery scope.\n`;
+  )}\nUse Playwright to investigate every criterion. Then save /output/pm-review-request.json as {"schema":1,"planId":${JSON.stringify(plan.id)},"deliveries":[{"id":"EXACT delivery id","checks":[{"criterion":"EXACT approved criterion text","path":"/non-production-path","kind":"text-visible","text":"Exact visible text"}]}]}. The trusted worker independently replays checks and captures real screenshots AFTER you finish. Supported kinds: text-visible/text-absent with exact text; selector-visible/selector-absent with selector; url-path with expected pathname. For UI or layout changes set viewports to ["mobile", "desktop"] on each affected check: mobile is pinned to 390x844 and desktop to 1280x800. Other checks may choose one name; omitted viewports use desktop. Every requested viewport must replay and pass, with its size and screenshot recorded. Each check opens a fresh browser context per viewport on this deployment only; paths cannot include query/fragment or another origin. Optional steps (maximum 12 per check) replay click/fill/select/check/uncheck with a unique selector; fill/select also use value. To reuse a real login, save Playwright storageState ONLY in /output/.review-sessions/ROLE.json after signing in and set session to ROLE (lowercase letters, digits and hyphens). Cookies and localStorage must belong only to this deployment origin. The worker loads this private role session, replays steps and deletes the session; never save sessions anywhere else under /output; this hidden handoff is excluded from public artifacts and consumed only by the isolated replay phase. Do not choose a trivial check that fails to test the criterion. If authentication, interaction or an API assertion cannot be reproduced by this contract, omit that check and explain the blocker in your summary; it remains blocked for promotion. Your own JSON pass claims never count as evidence. Continue ordinary PM observation without altering the approved delivery scope.\n`;
 }
 export function createDeliveryController(options: DeliveryControllerOptions) {
   const now = () => options.now?.() ?? new Date();
@@ -511,9 +519,12 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
   }
   async function reconcileQaRework(name: string) {
     const project = projectFor(name);
-    if (!enabled(project) || !options.qaJobs || !options.enqueueQaRepair)
-      return [];
+    if (!enabled(project)) return [];
     const { ledger } = await clients(project);
+    await ledger
+      .reconcileQaFeedback(qaFeedbackSecrets())
+      .catch(() => undefined);
+    if (!options.qaJobs || !options.enqueueQaRepair) return [];
     const results: import("./types.ts").DeliveryRecord[] = [];
     for (const failed of ledger
       .list()
@@ -588,6 +599,16 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     }
     return results;
   }
+  function qaFeedbackSecrets() {
+    return Object.entries(environment())
+      .filter(
+        ([key, value]) =>
+          /secret|token|password|authorization|api.?key|credential/i.test(
+            key,
+          ) && typeof value === "string",
+      )
+      .map(([, value]) => value!);
+  }
   async function reconcileIntegrationRepairs(name: string) {
     const project = projectFor(name);
     if (
@@ -597,12 +618,102 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       !options.enqueueQaRepair
     )
       return;
-    const { ledger, forge } = await clients(project);
+    const { ledger, forge } = await clients(project, true);
+    for (const record of ledger
+      .list()
+      .filter(
+        (r) =>
+          r.promotionRepair &&
+          ["queued", "running"].includes(r.promotionRepair.phase),
+      )) {
+      const intent = record.promotionRepair!;
+      try {
+        const resumed = await ledger.reservePromotionRepair(
+          record.implementation.number,
+          intent.stagingSha,
+        );
+        if (
+          !resumed ||
+          resumed.promotion ||
+          resumed.promotionRepair?.phase === "stopped"
+        )
+          continue;
+        const jobs = await options.qaJobs();
+        const matching = jobs.filter(
+          (job) => job.idempotencyKey === intent.key,
+        );
+        if (
+          matching.length > 1 ||
+          (matching[0] && !matchesPromotionRepair(matching[0], project, record))
+        )
+          throw new Error("Promotion repair queue identity changed.");
+        let job = matching[0];
+        if (!job) {
+          if (
+            jobs.some(
+              (item) =>
+                item.project === name &&
+                item.type === "developer" &&
+                item.ticket === record.ticket.identifier &&
+                ["queued", "running"].includes(item.status),
+            )
+          )
+            continue;
+          job = await options.enqueueQaRepair(
+            promotionRepairInput(project, record),
+          );
+        }
+        if (
+          ledger.list().find((r) => r.id === record.id)?.promotionRepair
+            ?.phase === "replaced"
+        )
+          continue;
+        if (["succeeded", "failed", "canceled"].includes(job.status)) {
+          await ledger.stopPromotionRepair(
+            intent.key,
+            "The automatic promotion port ended without a safely registered replacement. Its sources and report are preserved; duplicate port attempts stopped.",
+          );
+          continue;
+        }
+        await ledger.admitPromotionRepair(job);
+      } catch (error) {
+        // Provider/queue outages do not consume a coding attempt. Explicit
+        // identity or admission drift stops the intent; other failures retry it.
+        if (
+          error instanceof Error &&
+          /queue identity changed|bounded promotion repair.*changed|retry key already identifies different work/i.test(
+            error.message,
+          )
+        )
+          await ledger.stopPromotionRepair(
+            intent.key,
+            "The promotion port's sources, baseline, queue or approved scope changed. Its work is preserved; the bounded attempt stopped without broadening scope.",
+          );
+      }
+    }
+    await ledger.retireSupersededDrafts((record) => {
+      const latest = projectFor(name);
+      return (
+        enabled(latest) &&
+        !!latest.config.verified &&
+        projectRuntimeKey(latest.config) ===
+          projectRuntimeKey(project.config) &&
+        configHash(latest, record.area) === record.configuration
+      );
+    });
     for (const candidate of ledger
       .list()
       .filter((r) => r.status === "awaiting-merge" && !r.supersededBy)) {
       let record = candidate;
       if (!record.integrationRepair) {
+        if (
+          !record.integrationRepairOf &&
+          hasActiveIntegrationRepair(
+            ledger.list().filter((other) => other.id !== record.id),
+            (other) => other.configuration === configHash(project, other.area),
+          )
+        )
+          continue;
         const pull = await forge.getPull(
           project.config.repo,
           record.implementation.number,
@@ -630,8 +741,15 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           pull.headSha,
         );
         if (provider.status === "pending") continue;
-        let kind: "conflict" | "checks";
+        let kind: "conflict" | "checks" | "behind";
         if (pull.mergeableState === "dirty") kind = "conflict";
+        else if (
+          pull.mergeableState === "behind" &&
+          (provider.status === "success" ||
+            (provider.status === "none" &&
+              (await localChecks(project, pull.headSha)).status === "success"))
+        )
+          kind = "behind";
         else if (
           ["failure", "none"].includes(provider.status) &&
           (await localChecks(project, pull.headSha)).status === "failure"
@@ -643,6 +761,14 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           project.config.branches.integration,
         );
         if (!integrationSha) continue;
+        if (record.integrationRepairOf) {
+          await ledger.reserveIntegrationRepair({
+            deliveryId: record.id,
+            kind,
+            integrationSha,
+          });
+          continue;
+        }
         // An unhealthy baseline is not a defect in this ticket's implementation.
         if ((await localChecks(project, integrationSha)).status !== "success")
           continue;
@@ -718,8 +844,10 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     const integrationRepairing = job.idempotencyKey?.startsWith(
       "integration-repair:",
     );
+    const promotionRepairing =
+      job.idempotencyKey?.startsWith("promotion-repair:");
     if (!enabled(project)) {
-      if (repairing || integrationRepairing)
+      if (repairing || integrationRepairing || promotionRepairing)
         throw new Error("QA repair requires the admitted promotion workflow.");
       return payload;
     }
@@ -734,6 +862,19 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       );
     let repair: import("./types.ts").DeliveryRecord | undefined;
     let integrationRepair: import("./types.ts").DeliveryRecord | undefined;
+    let promotionRepair: import("./types.ts").DeliveryRecord | undefined;
+    if (promotionRepairing) {
+      const { ledger } = await clients(project);
+      promotionRepair = await ledger.admitPromotionRepair(job);
+      if (
+        ticketScopeHash(ticket) !== promotionRepair.scopeHash ||
+        ticket.id !== promotionRepair.ticket.id
+      )
+        throw new Error(
+          "Promotion repair must retain the original approved ticket scope.",
+        );
+      payload = promotionRepairPayload(payload, promotionRepair);
+    }
     if (integrationRepairing) {
       const { ledger } = await clients(project);
       integrationRepair = await ledger.admitIntegrationRepair(job);
@@ -804,10 +945,14 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       approvedAt:
         repair?.approvedAt ??
         integrationRepair?.approvedAt ??
+        promotionRepair?.approvedAt ??
         now().toISOString(),
       ...(repair ? { qaRepairKey: repair.rework!.key } : {}),
       ...(integrationRepair
         ? { integrationRepairKey: integrationRepair.integrationRepair!.key }
+        : {}),
+      ...(promotionRepair
+        ? { promotionRepairKey: promotionRepair.promotionRepair!.key }
         : {}),
     };
     const existing = admission(job);
@@ -816,7 +961,8 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         existing.configuration !== snapshot.configuration ||
         existing.scopeHash !== snapshot.scopeHash ||
         existing.qaRepairKey !== snapshot.qaRepairKey ||
-        existing.integrationRepairKey !== snapshot.integrationRepairKey
+        existing.integrationRepairKey !== snapshot.integrationRepairKey ||
+        existing.promotionRepairKey !== snapshot.promotionRepairKey
       )
         throw new Error(
           "The original coding admission changed. Queue a new reviewed attempt.",
@@ -1092,6 +1238,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
             "stopped",
             "The coding repair produced no change. Automatic retries stopped; inspect the failed QA evidence and coding report.",
           );
+        if (captured?.promotionRepairKey)
+          await localLedger(project).stopPromotionRepair(
+            captured.promotionRepairKey,
+            "The isolated promotion repair produced no publishable source. No duplicate attempt will launch; its approved scope and report are preserved.",
+          );
         return;
       }
       const captured = admission(job);
@@ -1153,6 +1304,13 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         ...(captured.qaRepairKey ? { qaRepairKey: captured.qaRepairKey } : {}),
         ...(captured.integrationRepairKey
           ? { integrationRepairKey: captured.integrationRepairKey }
+          : {}),
+        ...(captured.promotionRepairKey
+          ? {
+              promotionRepairKey: captured.promotionRepairKey,
+              promotionSourceSha: String(result.promotionSourceSha),
+              promotionBaseSha: String(result.promotionBaseSha),
+            }
           : {}),
         expectedHeadSha: String(result.headSha),
         ...(independentChecks.status === "success"
@@ -1230,9 +1388,13 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           !receipts.some(
             (r) =>
               object(r) &&
-              object(r.screenshot) &&
-              r.screenshot.name === name &&
-              r.screenshot.sha256 === sha256,
+              [r, ...(Array.isArray(r.views) ? r.views : [])].some(
+                (view) =>
+                  object(view) &&
+                  object(view.screenshot) &&
+                  view.screenshot.name === name &&
+                  view.screenshot.sha256 === sha256,
+              ),
           )
         )
           return false;
@@ -1316,6 +1478,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         return validQaFinding(finding) ? finding : null;
       },
     });
+    // The review is already durable. A competing controller/provider outage
+    // must not turn a completed PM job into a failure; reconciliation retries.
+    await ledger
+      .reconcileQaFeedback(qaFeedbackSecrets())
+      .catch(() => undefined);
   }
   async function promote(name: string, opts: PromoteOpts) {
     const project = projectFor(name);
@@ -1328,7 +1495,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       ...new Set(
         ledger
           .list()
-          .filter((r) => ["verified", "promoted"].includes(r.status))
+          .filter(
+            (r) =>
+              (!opts.area || r.area === opts.area) &&
+              ["verified", "promoted"].includes(r.status),
+          )
           .map((r) => r.implementation.author),
       ),
     ];
@@ -1376,6 +1547,9 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     const rows = await runPromote(ctx, {
       ...opts,
       ...ledger.promotionOptions(),
+      onPromotionConflict: async ({ pullNumber, stagingSha }) => {
+        return !!(await ledger.reservePromotionRepair(pullNumber, stagingSha));
+      },
       publishReviewedCandidate,
       onPublished: async (candidate, pull) => {
         if (publishReviewedCandidate)
@@ -1497,7 +1671,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     });
   async function preparePromotion(
     name: string,
-    input: { area?: string; docker: Pick<DockerRunners, "ensureImage"> },
+    input: {
+      area?: string;
+      automatic?: boolean;
+      docker: Pick<DockerRunners, "ensureImage">;
+    },
   ) {
     const project = projectFor(name);
     if (!enabled(project))
@@ -1527,7 +1705,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         token: credential.token,
         docker: input.docker,
       });
-      return await promote(name, executor);
+      return await promote(name, {
+        ...executor,
+        area: input.area,
+        automatic: input.automatic,
+      });
     } finally {
       await access.releaseLease?.(jobId);
     }
@@ -1826,6 +2008,32 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         now,
       });
     },
+    promotionBatches: async (name: string) => {
+      const project = projectFor(name);
+      if (!enabled(project)) return { areas: [], legacy: [] };
+      // Reading final review links must remain available during a Linear outage.
+      const credential = await source().resolveCredential({
+        provider: project.config.provider ?? "github",
+        serverUrl: project.config.serverUrl,
+        repository: project.config.repo,
+        write: false,
+        minValidityMs: 60_000,
+      });
+      const forge =
+        options.forge?.(project, credential.token) ??
+        (project.config.provider === "gitlab"
+          ? new GitLabForge({
+              token: credential.token,
+              serverUrl: project.config.serverUrl,
+            })
+          : new GitHubForge({ token: credential.token }));
+      return readPromotionBatches({
+        project,
+        forge,
+        records: localLedger(project).list(),
+        now,
+      });
+    },
     prepareRelease: async (name: string) => {
       const project = projectFor(name);
       const { forge } = await clients(project, true);
@@ -1838,16 +2046,25 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     advanceIntegration,
     declareProduction: (name: string, input: ProductionDeclarationInput) =>
       declarationsFor(projectFor(name)).declare(input),
-    reconcileProduction: (name: string) =>
-      declarationsFor(projectFor(name)).reconcile(),
+    reconcileProduction: async (name: string) => {
+      const project = projectFor(name);
+      const declared = await declarationsFor(project).reconcile();
+      const { ctx, ledger } = await contextFor(project);
+      return [...declared, ...(await reconcileManagedCompletion(ctx, ledger))];
+    },
     deliveryStatus: (name: string) => {
       const project = projectFor(name);
+      const deliveries = localLedger(project).list();
       return {
         ...declarationsFor(project).status(),
         candidates: candidateHandoffs(project),
         enabled: enabled(project),
         stagingSync: stagingSync(project).status(),
-        deliveries: localLedger(project).list(),
+        deliveries,
+        integrationRepairActive: hasActiveIntegrationRepair(
+          deliveries,
+          (record) => record.configuration === configHash(project, record.area),
+        ),
         draftMigrations: readDraftMigrations(options.root, project),
         candidateEnvironment:
           effectiveWorkflow(project.config).kind === "promotion"

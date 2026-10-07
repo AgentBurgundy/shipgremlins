@@ -254,6 +254,7 @@
       api,
       pages,
       onCreatePm,
+      onSetupLinear,
       onSaved,
       isLocked: () => locked,
     });
@@ -387,7 +388,9 @@
               .map((part) => part.trim())
               .filter(Boolean)
           : number
-            ? Number(input.value)
+            ? key === "promotionBatchSize" && !input.value.trim()
+              ? null
+              : Number(input.value)
             : input.value.trim();
       value.charter = editor.charter?.read() || {};
       return value;
@@ -456,6 +459,7 @@
           {
             list = false,
             number = false,
+            numberMax = 20,
             rows = 3,
             required = false,
             max = 4000,
@@ -470,7 +474,7 @@
           if (number) {
             input.type = "number";
             input.min = "1";
-            input.max = "20";
+            input.max = String(numberMax);
           } else {
             if (rows === 1) input.type = "text";
             else input.rows = rows;
@@ -515,6 +519,14 @@
             number: true,
             required: true,
           }),
+          addField(
+            "promotionBatchSize",
+            "Tickets per promotion · empty uses project default",
+            {
+              number: true,
+              numberMax: 100,
+            },
+          ),
         );
         const navigation = node("nav", "surface-tabs settings-navigation");
         navigation.setAttribute("aria-label", "Edit PM settings");
@@ -1073,6 +1085,22 @@
       root.append(card);
     }
     function crewWorkspace(project) {
+      const setupIncomplete =
+        !project.areas?.length ||
+        project.areas.some((area) => {
+          const state = project.readiness?.areas?.find(
+            (item) => item.key === area.key,
+          );
+          return (
+            !area.enabled ||
+            !(area.codingEnabled ?? area.enabled) ||
+            !state?.canRun ||
+            !state.canEnable ||
+            !state.coding?.canEnable
+          );
+        });
+      if (setupIncomplete)
+        welcome?.mount(root, project, { suggestionsOnly: true });
       const crew = node("section", "project-crew-section");
       const title = node("div", "project-section-title");
       title.append(
@@ -1146,6 +1174,8 @@
       }
       crew.append(cards);
       root.append(crew);
+      if (!setupIncomplete)
+        welcome?.mount(root, project, { suggestionsOnly: true });
       const tools = node("section", "project-tools");
       for (const [title, description, tab, label] of [
         [
@@ -1635,7 +1665,7 @@
           const item = link(label, path(project.name, "", key));
           const activeTab = ["brief", "overview"].includes(pages.tab)
             ? "overview"
-            : ["knowledge", "grumblins"].includes(pages.tab)
+            : ["knowledge", "grumblins", "setup"].includes(pages.tab)
               ? "crew"
               : ["environment", "limits"].includes(pages.tab)
                 ? "settings"
@@ -1658,6 +1688,7 @@
         );
       else if (area) pmWorkspace(project, area);
       else if (pages.tab === "crew") crewWorkspace(project);
+      else if (pages.tab === "setup") welcome?.mount(root, project);
       else if (pages.tab === "settings") settingsWorkspace(project);
       else if (pages.tab === "changes")
         missions?.mount(root, project, "changes");

@@ -33,6 +33,10 @@ import {
   prepareSyncRepairCheckout,
 } from "./sync-repair.mjs";
 import {
+  validatePromotionRepairPayload,
+  preparePromotionRepairCheckout,
+} from "./promotion-repair.mjs";
+import {
   enforceDeadline,
   jobEnvironments,
   preparePublication,
@@ -128,7 +132,9 @@ async function run(command, args, options = {}) {
     });
     let modelError = false;
     let captured = "";
+    let capturedBytes = 0;
     current.stdout.on("data", (chunk) => {
+      capturedBytes += chunk.length;
       captured = (captured + chunk.toString("utf8")).slice(-1024 * 1024);
     });
     const modelStream = current.stdout;
@@ -191,7 +197,13 @@ async function run(command, args, options = {}) {
     }
     current.once("close", (code) => {
       current = undefined;
-      if (code === 0 && !modelError && !stopping) done(captured);
+      if (options.requireCompleteOutput && capturedBytes > 1024 * 1024)
+        reject(
+          new Error(
+            "A trusted Git result exceeded its output bound. No partial source proof is accepted.",
+          ),
+        );
+      else if (code === 0 && !modelError && !stopping) done(captured);
       else
         reject(
           new Error("A job command failed. Inspect the redacted job log."),
@@ -259,6 +271,7 @@ try {
   activity.emit("progress", "Job started", `Starting ${kind} work.`, "running");
   if (kind === "developer") validateDelivery(input.delivery);
   validateSyncRepairPayload(input);
+  validatePromotionRepairPayload(input);
   if (input.reviewPlan !== undefined) {
     if (kind !== "pm" || input.pmMode || input.browserVerification !== true)
       throw new Error("Delivery review requires a normal browser PM patrol.");
@@ -392,6 +405,13 @@ try {
       throw new Error(
         "Integration moved before checkout. Queue a patrol after its deployment settles.",
       );
+    if (input.promotionRepair)
+      await preparePromotionRepairCheckout({
+        integrationSha: baseSha,
+        repair: input.promotionRepair,
+        run: (cmd, args) =>
+          run(cmd, args, { cwd: "/work/repo", env: publication }),
+      });
     if (input.syncRepair)
       await prepareSyncRepairCheckout({
         integrationSha: baseSha,
@@ -510,11 +530,17 @@ try {
             delivery: input.delivery,
             report: readImplementationReport("/output", redact),
             syncRepair: input.syncRepair,
+            promotionRepair: input.promotionRepair,
+            nonce: input.nonce,
             baseSha,
             repoUrl: repo.href,
             provider: input.provider,
             run: (command, args) =>
-              run(command, args, { cwd: "/work/repo", env }),
+              run(command, args, {
+                cwd: "/work/repo",
+                env,
+                requireCompleteOutput: command === "git",
+              }),
             publish: (command, args) =>
               run(command, args, {
                 cwd: command === "git" ? "/work/repo" : publicationDirectory,

@@ -245,6 +245,38 @@ describe("progressive PM product brief", () => {
 });
 
 describe("focused project crew workspace", () => {
+  it("offers deployment setup instead of coding when repository patrols are ready but promotion is not", () => {
+    const rendered = fixture().renderCodingLauncher(
+      {
+        name: "app",
+        workflow: { kind: "promotion" },
+        readiness: {
+          canRun: true,
+          blockers: [],
+          areas: [
+            {
+              coding: {
+                canEnable: false,
+                enableBlockers: [
+                  {
+                    id: "promotion_environment",
+                    action: "environment",
+                    message: "Test the integration deployment.",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      {},
+    );
+    const action = all(rendered).find(
+      (item) => item.textContent === "Set up test deployment",
+    );
+    expect(action?.dataset.setupAction).toBe("environment");
+    expect(text(rendered)).not.toContain("Start coding");
+  });
   it("does not block approved coding on a browser-only test-login setup step", () => {
     const rendered = fixture().renderCodingLauncher(
       {
@@ -316,7 +348,7 @@ describe("focused project crew workspace", () => {
         ?.href,
     ).toBe("/activity?run=coding-1");
   });
-  function workspace() {
+  function workspace(withWelcome = false) {
     const root = new Element("MAIN"),
       pages = {
         current: "project",
@@ -339,8 +371,20 @@ describe("focused project crew workspace", () => {
       ],
     };
     const state = { projects: [project] },
-      jobs: object[] = [];
-    const view = fixture().createProjectWorkspace(root, {
+      jobs: object[] = [],
+      ui = fixture();
+    if (withWelcome)
+      ui.createProjectWelcome = () => ({
+        mount: (container: Element) => {
+          const card = new Element("SECTION");
+          card.className = "setup-progress";
+          container.append(card);
+        },
+        resume() {},
+        protectFocus: () => false,
+        isBusy: () => false,
+      });
+    const view = ui.createProjectWorkspace(root, {
       pages,
       api: async () => ({}),
       getJobs: () => jobs,
@@ -348,6 +392,29 @@ describe("focused project crew workspace", () => {
     view.setStatus(state, false);
     return { root, pages, project, state, view, jobs };
   }
+  it("puts incomplete setup before PM cards and moves optional growth suggestions below an active crew", () => {
+    const f = workspace(true),
+      position = (className: string) =>
+        f.root.children.findIndex((item) => item.className === className);
+    expect(position("setup-progress")).toBeLessThan(
+      position("project-crew-section"),
+    );
+    f.project.areas[0]!.enabled = true;
+    Object.assign(f.project.readiness, {
+      areas: [
+        {
+          key: f.project.areas[0]!.key,
+          canRun: true,
+          canEnable: true,
+          coding: { canEnable: true },
+        },
+      ],
+    });
+    f.view.setStatus(f.state, false);
+    expect(position("setup-progress")).toBeGreaterThan(
+      position("project-crew-section"),
+    );
+  });
   it("keeps app sign-in setup visible on the crew page and individual PM page", () => {
     const f = workspace();
     Object.assign(f.project, {

@@ -85,7 +85,307 @@ function world() {
   return { ctx, ticket, manifest };
 }
 
+function compositionWorld() {
+  const w = world();
+  const promotionHead = "e".repeat(40),
+    promotionMerge = "f".repeat(40),
+    repairHead = "1".repeat(40),
+    repairMerge = "2".repeat(40);
+  w.ctx.forge.patchPull(TEST_REPO, 1, { headRef: "gremlins/job-original" });
+  Object.assign(w.manifest.tickets[0]!.deliverables[0]!, {
+    implementationBranch: "gremlins/job-original",
+    implementationHeadSha: SHA.head,
+    implementationMergeSha: SHA.source,
+  });
+  w.ctx.forge.seedPull(
+    TEST_REPO,
+    {
+      number: 2,
+      headRef: "gremlins/job-repair",
+      headSha: repairHead,
+      mergeCommitSha: repairMerge,
+      state: "merged",
+      baseRef: "pm-staging",
+      mergedAt: "2026-10-01T14:00:00Z",
+    },
+    ["app.ts"],
+  );
+  w.ctx.forge.seedPull(
+    TEST_REPO,
+    {
+      number: 5,
+      headRef: "pm-release/core/20261001",
+      headSha: promotionHead,
+      mergeCommitSha: promotionMerge,
+      state: "merged",
+      baseRef: "staging",
+      mergedAt: "2026-10-01T16:00:00Z",
+    },
+    ["app.ts"],
+  );
+  w.manifest.tickets[0]!.deliverables.push({
+    implementationPr: 2,
+    productionPr: 9,
+    implementationBranch: "gremlins/job-repair",
+    implementationHeadSha: repairHead,
+    implementationMergeSha: repairMerge,
+  });
+  w.manifest.tickets[0]!.composition = {
+    promotionPr: 5,
+    branch: "pm-release/core/20261001",
+    headSha: promotionHead,
+    implementationPrs: [1, 2],
+  };
+  for (const sha of [
+    repairHead,
+    repairMerge,
+    promotionHead,
+    promotionMerge,
+    SHA.release,
+    SHA.current,
+  ])
+    w.ctx.forge.seedRevisionTree(TEST_REPO, sha, [file("app.ts", "repaired")]);
+  return { ...w, promotionHead, promotionMerge, repairHead, repairMerge };
+}
+
+function isolatedPortWorld() {
+  const w = compositionWorld();
+  const portSha = "3".repeat(40),
+    baseSha = "4".repeat(40);
+  // Only the isolated replacement remains in the registered active lineage.
+  w.manifest.tickets[0]!.deliverables = [
+    w.manifest.tickets[0]!.deliverables[0]!,
+  ];
+  w.manifest.tickets[0]!.composition!.implementationPrs = [1];
+  w.manifest.tickets[0]!.deliverables[0]!.promotionSource = {
+    sha: portSha,
+    baseSha,
+    paths: ["app.ts"],
+  };
+  w.ctx.forge.seedRevisionTree(TEST_REPO, baseSha, [
+    file("app.ts", "old"),
+    file("other.ts", "staging-other"),
+  ]);
+  w.ctx.forge.seedRevisionTree(TEST_REPO, portSha, [
+    file("app.ts", "repaired"),
+    file("other.ts", "staging-other"),
+  ]);
+  for (const sha of [SHA.head, SHA.source])
+    w.ctx.forge.seedRevisionTree(TEST_REPO, sha, [
+      file("app.ts", "repaired"),
+      file("other.ts", "integration-other"),
+    ]);
+  w.ctx.forge.seedPullChanges(TEST_REPO, 1, []);
+  w.ctx.forge.seedCompare(TEST_REPO, baseSha, portSha, {
+    aheadBy: 1,
+    behindBy: 0,
+  });
+  // Internal PR may have been squash merged: its head contains the port, but
+  // integration's recorded merge SHA need only preserve exact tested content.
+  w.ctx.forge.seedCompare(TEST_REPO, portSha, SHA.head, {
+    aheadBy: 2,
+    behindBy: 0,
+  });
+  w.ctx.forge.seedCompare(TEST_REPO, portSha, SHA.source, {
+    aheadBy: 1,
+    behindBy: 1,
+  });
+  return { ...w, portSha, baseSha };
+}
+
 describe("production completion audit", () => {
+  it("completes a squash-merged isolated port with an ancestry-only integration PR", async () => {
+    const w = isolatedPortWorld();
+    const result = await reconcileProduction(w.ctx, w.manifest, {
+      apply: true,
+    });
+    expect(result.tickets[0]).toMatchObject({
+      classification: "production-confirmed",
+      applied: true,
+    });
+    expect(result.tickets[0]!.evidence[0]).toMatchObject({
+      promotionSourceSha: w.portSha,
+      checkedPaths: ["app.ts"],
+    });
+  });
+  it.each([
+    "source scope",
+    "untested source",
+    "wrong baseline",
+    "merge content",
+    "source mode",
+  ])("rejects altered isolated port provenance: %s", async (change) => {
+    const w = isolatedPortWorld();
+    if (change === "source scope")
+      w.ctx.forge.seedRevisionTree(TEST_REPO, w.portSha, [
+        file("app.ts", "repaired"),
+        file("other.ts", "unrelated feature"),
+      ]);
+    if (change === "untested source")
+      w.ctx.forge.seedCompare(TEST_REPO, w.portSha, SHA.head, {
+        aheadBy: 2,
+        behindBy: 1,
+      });
+    if (change === "wrong baseline")
+      w.ctx.forge.seedCompare(TEST_REPO, w.baseSha, w.portSha, {
+        aheadBy: 2,
+        behindBy: 0,
+      });
+    if (change === "merge content")
+      w.ctx.forge.seedRevisionTree(TEST_REPO, SHA.source, [
+        file("app.ts", "dropped feature"),
+      ]);
+    if (change === "source mode")
+      w.ctx.forge.seedRevisionTree(TEST_REPO, w.portSha, [
+        file("app.ts", "repaired", "100755"),
+        file("other.ts", "staging-other"),
+      ]);
+    const result = await reconcileProduction(w.ctx, w.manifest, {
+      apply: true,
+    });
+    expect(result.tickets[0]!.classification).not.toBe("production-confirmed");
+    expect(w.ctx.linear.stateUpdates).toEqual([]);
+  });
+  it("isolates a managed ticket update outage so other verified tickets can complete", async () => {
+    const { ctx, manifest, ticket } = world();
+    const second = ctx.linear.seedTicket({
+      ...ticket,
+      id: "second-ticket",
+      identifier: "T-2",
+      projectId: "lin_core",
+    });
+    ctx.forge.seedPull(
+      TEST_REPO,
+      {
+        number: 2,
+        headRef: "pm/t-2",
+        headSha: SHA.head,
+        state: "merged",
+        baseRef: "pm-staging",
+        mergedAt: "2026-10-01T12:00:00Z",
+        mergeCommitSha: SHA.source,
+      },
+      ["app.ts"],
+    );
+    manifest.tickets.push({
+      ...manifest.tickets[0]!,
+      ticketId: second.id,
+      scopeHash: ticketScopeHash(second),
+      deliverables: [{ implementationPr: 2, productionPr: 9 }],
+    });
+    const update = ctx.linear.updateWorkflowState.bind(ctx.linear);
+    vi.spyOn(ctx.linear, "updateWorkflowState").mockImplementation(
+      async (id, state, guard) => {
+        if (id === ticket.id) throw new Error("Provider unavailable");
+        await update(id, state, guard);
+      },
+    );
+    const result = await reconcileProduction(ctx, manifest, {
+      apply: true,
+      onlySuppliedTickets: true,
+      continueOnTicketError: true,
+    });
+    expect(result.tickets[0]!.reason).toContain(
+      "without blocking other tickets",
+    );
+    expect(result.tickets[1]!.applied).toBe(true);
+    expect(ctx.linear.stateUpdates).toEqual([
+      { ticketId: second.id, stateId: "done-id" },
+    ]);
+  });
+  it("uses the exact verified final composition for overlapping original and QA-repair paths", async () => {
+    const w = compositionWorld();
+    const result = await reconcileProduction(w.ctx, w.manifest, {
+      apply: true,
+    });
+    expect(result.tickets[0]).toMatchObject({
+      classification: "production-confirmed",
+      applied: true,
+    });
+    expect(result.tickets[0]!.evidence.map((e) => e.mapping)).toEqual([
+      "verified-composition",
+      "verified-composition",
+    ]);
+  });
+  it("retains conservative individual-blob proof for legacy manifests without a composition receipt", async () => {
+    const w = compositionWorld();
+    delete w.manifest.tickets[0]!.composition;
+    expect(
+      (await auditProduction(w.ctx, w.manifest)).tickets[0]!.classification,
+    ).toBe("ambiguous");
+    expect(w.ctx.linear.stateUpdates).toEqual([]);
+  });
+  it.each([
+    "promotion author",
+    "promotion base",
+    "promotion branch",
+    "promotion head",
+    "promotion unmerged",
+    "promotion omitted path",
+    "promotion merge edit",
+    "implementation changed head",
+    "implementation changed merge",
+    "production revert",
+    "production incomplete port",
+    "release before promotion",
+  ])("rejects a changed final composition: %s", async (change) => {
+    const w = compositionWorld();
+    if (change === "promotion author")
+      w.ctx.forge.patchPull(TEST_REPO, 5, { author: "someone-else" });
+    if (change === "promotion base")
+      w.ctx.forge.patchPull(TEST_REPO, 5, { baseRef: "pm-staging" });
+    if (change === "promotion branch")
+      w.ctx.forge.patchPull(TEST_REPO, 5, { headRef: "pm-release/other" });
+    if (change === "promotion head")
+      w.ctx.forge.patchPull(TEST_REPO, 5, { headSha: "3".repeat(40) });
+    if (change === "promotion unmerged")
+      w.ctx.forge.patchPull(TEST_REPO, 5, { state: "open" });
+    if (change === "promotion omitted path")
+      w.ctx.forge.seedPullChanges(TEST_REPO, 5, [{ path: "unrelated.ts" }]);
+    if (change === "promotion merge edit")
+      w.ctx.forge.seedRevisionTree(TEST_REPO, w.promotionMerge, [
+        file("app.ts", "changed-at-merge"),
+      ]);
+    if (change === "implementation changed head")
+      w.ctx.forge.patchPull(TEST_REPO, 2, { headSha: "3".repeat(40) });
+    if (change === "implementation changed merge")
+      w.ctx.forge.patchPull(TEST_REPO, 2, { mergeCommitSha: "3".repeat(40) });
+    if (change === "production revert")
+      w.ctx.forge.seedRevisionTree(TEST_REPO, SHA.current, [
+        file("app.ts", "original"),
+      ]);
+    if (change === "production incomplete port") {
+      w.ctx.forge.seedCompare(TEST_REPO, w.promotionMerge, SHA.release, {
+        aheadBy: 2,
+        behindBy: 1,
+      });
+      w.ctx.forge.seedPullChanges(TEST_REPO, 9, [{ path: "unrelated.ts" }]);
+    }
+    if (change === "release before promotion")
+      w.ctx.forge.patchPull(TEST_REPO, 5, { mergedAt: "2026-10-03T00:00:00Z" });
+    expect(
+      (await reconcileProduction(w.ctx, w.manifest, { apply: true }))
+        .tickets[0]!.classification,
+    ).toBe("ambiguous");
+    expect(w.ctx.linear.stateUpdates).toEqual([]);
+  });
+  it.each([
+    "missing repair",
+    "unknown implementation",
+    "duplicate implementation",
+    "missing registered merge",
+  ])("rejects an incomplete composition receipt: %s", (change) => {
+    const w = compositionWorld();
+    const scope = w.manifest.tickets[0]!;
+    if (change === "missing repair") scope.composition!.implementationPrs = [1];
+    if (change === "unknown implementation")
+      scope.composition!.implementationPrs = [1, 7];
+    if (change === "duplicate implementation")
+      scope.composition!.implementationPrs = [1, 1];
+    if (change === "missing registered merge")
+      delete scope.deliverables[1]!.implementationMergeSha;
+    expect(() => parseCompletionManifest(w.manifest)).toThrow(/composition/);
+  });
   it("supports exact registered local-worker branches while rejecting a moved head", async () => {
     const { ctx, manifest } = world();
     ctx.forge.seedPull(
@@ -387,6 +687,27 @@ describe("guarded opt-in reconciliation", () => {
 });
 
 describe("completion manifest validation", () => {
+  it.each([
+    "../other",
+    ".git/config",
+    "C:/other",
+    "other\\file",
+    "bad\npath",
+    "",
+  ])("rejects unsafe promotion source path %j", (path) => {
+    const w = isolatedPortWorld();
+    w.manifest.tickets[0]!.deliverables[0]!.promotionSource!.paths = [path];
+    expect(() => parseCompletionManifest(w.manifest)).toThrow(
+      "finite safe paths",
+    );
+  });
+  it("requires source provenance to have the complete registered implementation identity", () => {
+    const w = isolatedPortWorld();
+    delete w.manifest.tickets[0]!.deliverables[0]!.implementationMergeSha;
+    expect(() => parseCompletionManifest(w.manifest)).toThrow(
+      "exact implementation identities",
+    );
+  });
   it("rejects empty deliverables, duplicate tickets/PRs and missing approval", () => {
     const { manifest } = world();
     const scope = manifest.tickets[0]!;

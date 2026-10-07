@@ -10,7 +10,14 @@ or separate automation repository is not required. Terminal initialization is:
 gremlins setup init --project my-app --repo your-org/my-app
 ```
 
-The new project's **Environment** page starts a Setup Gremlin to inspect the source and recommend hosted staging or a disposable Docker app. Review and test the selected strategy, then create a PM. You can also keep repository-only verification. Review the PR base branch and test commands under **Edit settings**. See [project onboarding](PROJECT_ONBOARDING.md) for draft setup PRs, test accounts and Docker services.
+The new project starts with source inspection and suggested PM responsibilities.
+Review commands and login hints, adopt the areas you want, connect Linear, and
+prepare the integration deployment. Save dedicated test-account credentials when
+needed and pass the real browser test. The setup checklist includes the AI
+connection and a verified agent service; **Activate ready crew** enables daily
+patrols and eligible coding only when all adopted PMs are ready. Source discovery
+can start earlier. Explicit direct-PR projects can stay repository-only.
+See [project onboarding](PROJECT_ONBOARDING.md) for test accounts and Docker services.
 Use Configuration to edit advanced JSON and File locations to find the mandate/memory
 files. Create a Docker worker in the dashboard and wait for its browser screenshot
 verification. Choose **Verify connections** or run `gremlins doctor my-app`, then enable reviewed areas. The local
@@ -18,9 +25,13 @@ controller reads their schedules in UTC; there is no `crons write` or commit/pus
 step for local scheduling. Inspect a supervised PM run before relying on it.
 
 Developer jobs require an open `pm-approved` ticket in the area's Linear project
-with its `pm:AREA` label. Approval is rechecked at launch; the worker publishes a draft
-PR/MR to the configured base branch only after checks pass. Legacy promotion projects use their integration branch. The model does not publish
-directly, and jobs cannot merge or mark the ticket Done.
+with its `pm:AREA` label. New projects require a native parent epic whose exact
+scope the owner approved in ShipGremlins. The PM may approve finite children in
+that scope. The trusted worker publishes the coding draft after checks; the
+controller handles its integration merge and the PM tests the exact deployment.
+Only the owning PM's final promotion to staging needs human review. Direct-PR
+projects retain owner review of individual coding drafts. Models never publish
+directly or mark a ticket Done. [Workflow diagrams →](AUTONOMOUS_WORKFLOW.md)
 See [the setup guide](SETUP.md) for background operation and current limits.
 
 ## Advanced legacy CI enrollment

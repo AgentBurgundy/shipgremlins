@@ -57,17 +57,17 @@ flowchart TD
   Fixes --> Proof{Independent evidence matches required deployment?}
   Proof -->|No| Hold[Keep delivery unverified]
   Proof -->|Yes, promotion workflow| Candidate[Controller prepares selective candidate]
-  Candidate --> CandidateGate[Run candidate checks; await deployed candidate and trusted signed verification]
+  Candidate --> CandidateGate[Run assembled checks; require extra signer only when configured]
   CandidateGate --> Promotion[Only passing candidates get a staging promotion PR]
   Promotion --> Production[Owner merges staging and production]
-  Production --> Scope[Owner declares complete delivery scope]
-  Scope --> Audit[Controller audits exact production inclusion]
+  Production --> Audit[Controller audits finite managed scope and exact production inclusion]
   Audit --> Done[Only then can Linear become Done]
   Learn --> Finish[Report to dashboard and optional Slack; clean disposable resources]
   Finish --> Next[Next patrol uses updated memory]
   Next -.-> Trigger
-  Propose --> Owner[Owner approves scope]
-  Owner --> Coding[Coding Gremlin implements and runs checks]
+  Propose --> Owner[Owner approves epic scope]
+  Owner --> Children[PM creates bounded native child tickets]
+  Children --> Coding[Coding Gremlin implements and runs checks]
   Coding --> Draft[Passing checks produce a draft PR or MR]
   Draft --> Integration[Promotion workflow: eligible integration merge]
   Integration -.-> Fixes
@@ -79,7 +79,7 @@ The project overview and PM brief show a **Patrol plan** with the selected envir
 
 Each PM run's Summary separates worker completion from **Run evidence**: recorded Playwright calls, saved image files and reported checks. Select a card to open Activity or Evidence. Calls show attempts, not successful navigation or sign-in; images can also be generated fixtures. A completed run without recorded browser calls says so. Missing or partial activity stays unavailable/incomplete, and an old run is never described using the project's newly edited environment. This display does not introduce a browser-proof completion gate for ordinary patrols.
 
-The owning PM does not itself publish or merge promotion PRs. In the optional promotion workflow, its review feeds a separately verified candidate. Candidate promotion waits for the configured trusted signer; a PM's own review is insufficient. Owners retain staging and production merge decisions. Linear completion requires an explicit complete-scope declaration and an exact production-merge/content audit; it does not assert that a live production deployment is healthy. Ordinary pull-request mode ends with reviewed drafts, and Docker/direct-URL/Cloud Run environments do not qualify for the current Vercel/Railway promotion-review route.
+The owning PM does not itself publish or merge promotion PRs. Its verified tickets accumulate toward its own area's batch target (default 10). The controller selectively assembles and checks the candidate, then publishes that PM's staging PR. A separately configured signer adds an additional gate. New epic-policy projects derive finite completion scope from tracked verified deliveries; legacy/manual flows retain explicit declarations. Both require an exact production-merge/content audit, which does not establish live deployment health. Ordinary direct-PR mode ends with reviewed drafts. Docker/direct-URL/Cloud Run environments do not qualify for the current Vercel/Railway promotion-review route. See [complete workflow diagrams](AUTONOMOUS_WORKFLOW.md).
 
 ## Give the PM a product brief
 
@@ -305,9 +305,11 @@ Each proposal explains:
    measurement plan where instrumentation is missing.
 8. Owner decisions/access needed and relevant rollout or rollback considerations.
 
-The PM never adds `pm-approved`, clears a needs-human block, merges, promotes
-or marks Done. A tier describes scope, not permission to bypass human approval.
-Coding Gremlins work approved tickets and produce tested draft PRs/MRs for
-review. **Done requires the fix's PR to be merged into production and required
+Under epic approval, PMs may add `pm-approved` only to finite native child tickets
+within a currently owner-approved epic. The controller validates its private scope
+receipt independently. Direct-PR mode retains owner ticket approval. PMs never
+clear an owner hold, merge, promote or mark Done. Coding Gremlins produce tested
+drafts; the managed controller checks and integrates them for independent PM QA.
+**Done requires the fix's PR to be merged into production and required
 verification to pass.** A completed agent run, green check or staging deployment
 alone does not meet that rule.

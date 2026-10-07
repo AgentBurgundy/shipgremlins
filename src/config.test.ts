@@ -89,6 +89,19 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "pm-hub-config-"));
   writeFileSync(join(root, "hub.json"), JSON.stringify(HUB));
 });
+it("loads each PM's optional promotion target and rejects invalid sizes", () => {
+  const areas = structuredClone(AREAS) as {
+    areas: { core: Record<string, unknown> };
+  };
+  areas.areas.core.promotionBatchSize = 4;
+  writeProject("demo", { areas });
+  expect(loadProject(root, "demo").areas[0]!.promotionBatchSize).toBe(4);
+  for (const invalid of [0, 101, 1.5, "4"]) {
+    areas.areas.core.promotionBatchSize = invalid;
+    writeProject("demo", { areas });
+    expect(() => loadProject(root, "demo")).toThrow(/promotionBatchSize/);
+  }
+});
 it("binds recreated PM memory branches to a validated instance while retaining legacy branch names", () => {
   writeProject("demo");
   expect(loadProject(root, "demo").areas[0]!.memoryBranch).toBe("pm/demo/core");

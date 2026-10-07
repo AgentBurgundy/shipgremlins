@@ -23,7 +23,17 @@ export interface CompletionScope {
     productionPr: number;
     implementationBranch?: string;
     implementationHeadSha?: string;
+    implementationMergeSha?: string;
+    /** Worker-proven isolated source, freshly QAed after merging into integration. */
+    promotionSource?: { sha: string; baseSha: string; paths: string[] };
   }[];
+  /** Controller-recorded final composition of an implementation and its verified repair. */
+  composition?: {
+    promotionPr: number;
+    branch: string;
+    headSha: string;
+    implementationPrs: number[];
+  };
 }
 
 /** State/labels are deliberately excluded: QA and reconciliation change them. */
@@ -34,6 +44,7 @@ export function ticketScopeHash(ticket: LinearTicket): string {
         id: ticket.id,
         identifier: ticket.identifier,
         projectId: ticket.projectId,
+        parentId: ticket.parentId,
         teamId: ticket.teamId,
         title: ticket.title,
         description: ticket.description,
@@ -103,9 +114,70 @@ export function parseCompletionManifest(input: unknown): CompletionManifest {
       if (pulls.has(implementationPr))
         return fail(`duplicate implementation PR #${implementationPr}`);
       pulls.add(implementationPr);
+      if (
+        item.implementationMergeSha !== undefined &&
+        (item.implementationHeadSha === undefined ||
+          typeof item.implementationMergeSha !== "string" ||
+          !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(item.implementationMergeSha))
+      )
+        return fail("registered implementation merge SHA is invalid");
+      let promotionSource: CompletionScope["deliverables"][number]["promotionSource"];
+      if (item.promotionSource !== undefined) {
+        const source = record(item.promotionSource);
+        const validSha = (value: unknown) =>
+          typeof value === "string" &&
+          /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
+        if (
+          !item.implementationBranch ||
+          !item.implementationHeadSha ||
+          !item.implementationMergeSha ||
+          !validSha(source.sha) ||
+          !validSha(source.baseSha) ||
+          source.sha === source.baseSha ||
+          !Array.isArray(source.paths) ||
+          !source.paths.length ||
+          source.paths.length > 1000 ||
+          new Set(source.paths).size !== source.paths.length ||
+          source.paths.some(
+            (path) =>
+              typeof path !== "string" ||
+              !path ||
+              path.length > 1000 ||
+              path.startsWith("/") ||
+              /^[a-z]:/i.test(path) ||
+              path.includes("\\") ||
+              [...path].some(
+                (character) =>
+                  character.charCodeAt(0) < 32 ||
+                  character.charCodeAt(0) === 127,
+              ) ||
+              path
+                .split("/")
+                .some(
+                  (part) =>
+                    !part ||
+                    part === "." ||
+                    part === ".." ||
+                    part.toLowerCase() === ".git",
+                ),
+          )
+        )
+          return fail(
+            "isolated promotion source requires exact implementation identities and finite safe paths",
+          );
+        promotionSource = {
+          sha: source.sha as string,
+          baseSha: source.baseSha as string,
+          paths: source.paths as string[],
+        };
+      }
       return {
         implementationPr,
         productionPr: item.productionPr as number,
+        ...(promotionSource ? { promotionSource } : {}),
+        ...(item.implementationMergeSha === undefined
+          ? {}
+          : { implementationMergeSha: item.implementationMergeSha as string }),
         ...(item.implementationBranch === undefined
           ? {}
           : {
@@ -114,6 +186,39 @@ export function parseCompletionManifest(input: unknown): CompletionManifest {
             }),
       };
     });
+    let composition: CompletionScope["composition"];
+    if (t.composition !== undefined) {
+      const value = record(t.composition);
+      if (
+        typeof value.promotionPr !== "number" ||
+        !Number.isSafeInteger(value.promotionPr) ||
+        value.promotionPr < 1 ||
+        typeof value.branch !== "string" ||
+        !/^pm-release\/[a-z0-9][a-z0-9/_-]{0,190}$/.test(value.branch) ||
+        typeof value.headSha !== "string" ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.headSha) ||
+        !Array.isArray(value.implementationPrs) ||
+        value.implementationPrs.length !== deliverables.length ||
+        value.implementationPrs.length > 100 ||
+        new Set(value.implementationPrs).size !== deliverables.length ||
+        value.implementationPrs.some((id) => !pulls.has(id)) ||
+        deliverables.some(
+          (item) =>
+            !item.implementationBranch ||
+            !item.implementationHeadSha ||
+            !item.implementationMergeSha,
+        )
+      )
+        return fail(
+          "composition must bind an exact promotion and every registered implementation identity",
+        );
+      composition = {
+        promotionPr: value.promotionPr,
+        branch: value.branch,
+        headSha: value.headSha,
+        implementationPrs: value.implementationPrs as number[],
+      };
+    }
     return {
       ticketId,
       scopeHash,
@@ -123,6 +228,7 @@ export function parseCompletionManifest(input: unknown): CompletionManifest {
       approvedBy: required(t.approvedBy, "approvedBy"),
       completedStateId: required(t.completedStateId, "completedStateId"),
       deliverables,
+      ...(composition ? { composition } : {}),
     };
   });
   return {

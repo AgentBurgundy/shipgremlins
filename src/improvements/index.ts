@@ -20,6 +20,7 @@ import type { GrumblinProfileSnapshot } from "../grumblins/schema.ts";
 import type { DeliveryRecord } from "../delivery/types.ts";
 import { acceptanceCriteria } from "../delivery/index.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
+import { usesEpicApproval } from "../epics.ts";
 import {
   createObservations,
   readPrivateJson,
@@ -587,6 +588,7 @@ export function createImprovements(options: ImprovementOptions) {
     );
     return {
       mission: view(mission, project, jobs, allChanges),
+      approvalPolicy: usesEpicApproval(project) ? "epic" : "ticket",
       candidates,
       observations: linked,
       baselines: baselines.slice(0, 20),
@@ -872,6 +874,11 @@ export function createImprovements(options: ImprovementOptions) {
     input: { revision: unknown; steps: unknown },
   ) {
     await locked(name, async (project, state, save) => {
+      if (usesEpicApproval(project))
+        throw new ImprovementError(
+          "Approve this mission's epic in the project's Epic review. The owning PM will prepare child tickets, and coding pickup will implement them under that approval. An epic is not an individual coding ticket.",
+          409,
+        );
       const mission = find(state, id);
       if (
         revision(mission) !== input.revision ||

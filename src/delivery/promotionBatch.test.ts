@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { makeProject, TEST_REPO } from "../services/fakes.ts";
 import { FakeForge } from "../forge/fake.ts";
-import { readPromotionBatch } from "./promotionBatch.ts";
+import { readPromotionBatch, readPromotionBatches } from "./promotionBatch.ts";
 import type { DeliveryRecord } from "./types.ts";
 const head = "a".repeat(40),
   branch = "pm-release/combined/20261006";
@@ -124,4 +124,92 @@ it("does not guess between two open combined promotions", async () => {
     baseRef: "staging",
   });
   await expect(w.read()).rejects.toThrow("More than one combined promotion");
+});
+it("keeps each PM's batch, distinct ticket progress and overrides separate while retaining legacy history", async () => {
+  const w = world();
+  w.project = makeProject({
+    areas: [
+      { key: "core", name: "Core", paths: ["core/"] },
+      {
+        key: "billing",
+        name: "Billing",
+        paths: ["billing/"],
+        promotionBatchSize: 3,
+      },
+      { key: "new", name: "New", paths: ["new/"], instanceId: "new-instance" },
+    ],
+  });
+  w.project.config.workflow = { kind: "promotion", promotionBatchSize: 5 };
+  w.forge.patchPull(TEST_REPO, 20, { state: "merged" });
+  const billingHead = "b".repeat(40);
+  w.forge.seedPull(TEST_REPO, {
+    number: 21,
+    headRef: "pm-release/billing/20261007",
+    headSha: billingHead,
+    baseRef: "staging",
+    draft: false,
+  });
+  const verified = {
+    ...w.records[0]!,
+    id: "verified-core",
+    status: "verified" as const,
+    promotion: undefined,
+  };
+  w.records.push(
+    verified,
+    { ...verified, id: "verified-core-retry" },
+    {
+      ...verified,
+      id: "superseded-core",
+      ticket: { ...verified.ticket, id: "superseded" },
+      supersededBy: "new-attempt",
+    },
+    { ...verified, id: "old-pm", area: "new", areaInstanceId: "old-instance" },
+    {
+      ...verified,
+      id: "billing-one",
+      area: "billing",
+      status: "promoted",
+      promotion: {
+        number: 21,
+        url: `https://github.com/${TEST_REPO}/pull/21`,
+        headSha: billingHead,
+        branch: "pm-release/billing/20261007",
+      },
+    },
+  );
+  const result = await readPromotionBatches(w);
+  expect(result.areas).toMatchObject([
+    { area: "core", target: 5, verifiedTicketCount: 1, batch: null },
+    {
+      area: "billing",
+      target: 3,
+      verifiedTicketCount: 0,
+      batch: { number: 21, ticketCount: 1, state: "open" },
+    },
+    { area: "new", target: 5, verifiedTicketCount: 0, batch: null },
+  ]);
+  expect(result.legacy).toMatchObject([
+    { number: 20, ticketCount: 12, state: "merged" },
+  ]);
+  w.project.config.workflow = { kind: "promotion" };
+  expect((await readPromotionBatches(w)).areas[0]!.target).toBe(10);
+  w.forge.patchPull(TEST_REPO, 21, { headSha: "c".repeat(40) });
+  expect((await readPromotionBatches(w)).areas[1]!.batch!.ticketCount).toBe(0);
+});
+it("fails closed when one PM has more than one open promotion", async () => {
+  const w = world();
+  w.forge.seedPull(TEST_REPO, {
+    number: 21,
+    headRef: "pm-release/core/one",
+    baseRef: "staging",
+  });
+  w.forge.seedPull(TEST_REPO, {
+    number: 22,
+    headRef: "pm-release/core/two",
+    baseRef: "staging",
+  });
+  await expect(readPromotionBatches(w)).rejects.toThrow(
+    "More than one promotion is open for core",
+  );
 });

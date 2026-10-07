@@ -132,7 +132,9 @@ function world() {
   const page = {
     context: () => ({ newCDPSession }),
     setDefaultTimeout: () => {},
-    goto: vi.fn(async () => ({ status: () => 200 })),
+    goto: vi.fn(async (): Promise<{ status: () => number }> => ({
+      status: () => 200,
+    })),
     url: () => "https://preview.example/settings",
     getByText: () => locator,
     locator: () => locator,
@@ -176,6 +178,108 @@ function world() {
   };
 }
 describe("trusted worker browser receipts", () => {
+  it("records fixed mobile and desktop evidence for every requested layout view", async () => {
+    const w = world();
+    Object.assign(w.request.deliveries[0]!.checks[0]!, {
+      viewports: ["mobile", "desktop"],
+    });
+    const result = await w.run();
+    const proof = JSON.parse(
+      readFileSync(join(w.root, result.reviewProof.file), "utf8"),
+    );
+    expect(w.browser.newContext.mock.calls.map(([options]) => options)).toEqual(
+      [
+        { serviceWorkers: "block", viewport: { width: 390, height: 844 } },
+        { serviceWorkers: "block", viewport: { width: 1280, height: 800 } },
+      ],
+    );
+    expect(
+      proof.receipts.receipts[0].views.map(
+        (view: { viewport: unknown }) => view.viewport,
+      ),
+    ).toEqual([
+      { name: "mobile", width: 390, height: 844 },
+      { name: "desktop", width: 1280, height: 800 },
+    ]);
+    expect(proof.manifest.deliveries[0].screenshots).toHaveLength(2);
+    expect(proof.manifest.deliveries[0].assertions).toHaveLength(1);
+    expect(proof.manifest.deliveries[0].status).toBe("passed");
+    expect(w.context.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("selects the failed mobile receipt even when the desktop check passes", async () => {
+    const w = world();
+    Object.assign(w.request.deliveries[0]!.checks[0]!, {
+      viewports: ["mobile", "desktop"],
+    });
+    w.locator.isVisible = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const result = await w.run();
+    const proof = JSON.parse(
+      readFileSync(join(w.root, result.reviewProof.file), "utf8"),
+    );
+    const receipt = proof.receipts.receipts[0];
+    expect(receipt.status).toBe("failed");
+    expect(receipt.viewport.name).toBe("mobile");
+    expect(receipt.screenshot.name).toContain("-mobile.png");
+    expect(receipt.views.map((v: { status: string }) => v.status)).toEqual([
+      "failed",
+      "passed",
+    ]);
+  });
+
+  it("blocks an incomplete layout replay even if another viewport reports a failure", async () => {
+    const w = world();
+    Object.assign(w.request.deliveries[0]!.checks[0]!, {
+      viewports: ["mobile", "desktop"],
+    });
+    w.locator.isVisible = async () => false;
+    w.page.goto
+      .mockResolvedValueOnce({ status: () => 200 })
+      .mockResolvedValueOnce({ status: () => 503 });
+    const result = await w.run();
+    const proof = JSON.parse(
+      readFileSync(join(w.root, result.reviewProof.file), "utf8"),
+    );
+    expect(proof.receipts.receipts[0].status).toBe("blocked");
+    expect(proof.manifest.deliveries[0].status).toBe("blocked");
+  });
+
+  it.each([
+    [],
+    ["tablet"],
+    ["mobile", "mobile"],
+    [{ width: 999999, height: 1 }],
+    "mobile",
+  ])(
+    "rejects viewport recipes outside the fixed contract: %j",
+    async (viewports) => {
+      const w = world();
+      Object.assign(w.request.deliveries[0]!.checks[0]!, { viewports });
+      const result = await w.run();
+      const proof = JSON.parse(
+        readFileSync(join(w.root, result.reviewProof.file), "utf8"),
+      );
+      expect(proof.manifest.deliveries[0].status).toBe("blocked");
+      expect(w.browser.newContext).not.toHaveBeenCalled();
+    },
+  );
+
+  it("omits URL query tokens and fragments from retained browser receipts", async () => {
+    const w = world();
+    w.page.url = () =>
+      "https://preview.example/settings?token=private-secret#private-fragment";
+    const result = await w.run();
+    const bytes = readFileSync(join(w.root, result.reviewProof.file), "utf8");
+    expect(bytes).not.toContain("private-secret");
+    expect(bytes).not.toContain("private-fragment");
+    expect(JSON.parse(bytes).receipts.receipts[0].url).toBe(
+      "https://preview.example/settings",
+    );
+  });
+
   it.each(["/login", "/sign-in/password", "/_vercel/sso"])(
     "keeps unexpected %s redirects blocked instead of sending a false product failure to coding",
     async (path) => {
@@ -210,6 +314,11 @@ describe("trusted worker browser receipts", () => {
     );
     const proof = JSON.parse(bytes.toString());
     expect(proof.manifest.deliveries[0].status).toBe("passed");
+    expect(proof.receipts.receipts[0].viewport).toEqual({
+      name: "desktop",
+      width: 1280,
+      height: 800,
+    });
     expect(w.page.goto).toHaveBeenCalledWith(
       "https://preview.example/settings",
       expect.anything(),
@@ -217,6 +326,7 @@ describe("trusted worker browser receipts", () => {
     expect(w.page.screenshot).toHaveBeenCalledOnce();
     expect(w.browser.newContext).toHaveBeenCalledWith({
       serviceWorkers: "block",
+      viewport: { width: 1280, height: 800 },
     });
     expect(w.session.send).toHaveBeenCalledWith("Fetch.enable", {
       patterns: [{ urlPattern: "*", requestStage: "Request" }],

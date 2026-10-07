@@ -13,6 +13,47 @@ import {
 } from "./projectCapabilities.ts";
 
 describe("project capabilities", () => {
+  it("round-trips explicit promotion batching and approval policy without migrating legacy defaults", () => {
+    const workflow = {
+      kind: "promotion",
+      promotionBatchSize: 10,
+      approvalPolicy: "epic",
+      candidateEnvironment: "candidate",
+    };
+    expect(
+      parseProjectCapabilities({
+        workflow,
+        verification: { mode: "repository" },
+        environments: {
+          candidate: {
+            kind: "vercel",
+            role: "preview",
+            projectId: "prj_candidate",
+          },
+        },
+      }).workflow,
+    ).toEqual(workflow);
+    expect(
+      parseProjectCapabilities({ workflow: { kind: "promotion" } }).workflow,
+    ).toEqual({ kind: "promotion" });
+  });
+  it.each([0, 101, 1.5, "10", NaN])(
+    "rejects invalid promotion batch size %s",
+    (promotionBatchSize) => {
+      expect(() =>
+        parseProjectCapabilities({
+          workflow: { kind: "promotion", promotionBatchSize },
+        }),
+      ).toThrow();
+    },
+  );
+  it("rejects unknown approval policy", () => {
+    expect(() =>
+      parseProjectCapabilities({
+        workflow: { kind: "promotion", approvalPolicy: "automatic" },
+      }),
+    ).toThrow();
+  });
   it("accepts a named custom Vercel environment and rejects reserved or unsafe identifiers", () => {
     const raw = (customEnvironmentId: string) => ({
       verification: { mode: "browser", environment: "preview" },

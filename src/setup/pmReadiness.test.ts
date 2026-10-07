@@ -20,6 +20,7 @@ import {
   inspectPmReadiness,
   hasPmMandate,
   setPmAutomation,
+  promotionEnvironmentBlocker,
   type ReadinessContext,
 } from "./pmReadiness.ts";
 
@@ -31,7 +32,11 @@ afterEach(() => {
 function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gremlins-pm-ready-")));
   roots.push(root);
-  initializeSetup(root, process.cwd(), { project: "demo", repo: "org/app" });
+  initializeSetup(root, process.cwd(), {
+    project: "demo",
+    repo: "org/app",
+    settings: { workflow: { kind: "pull-request", baseBranch: "main" } },
+  });
   const projectFile = join(root, "projects/demo/project.json"),
     areasFile = join(root, "projects/demo/areas.json");
   const project = JSON.parse(readFileSync(projectFile, "utf8"));
@@ -65,6 +70,7 @@ function fixture() {
       },
     ],
     localMode: true,
+    environmentVerification: () => ({ status: "passed" }),
   };
   const input = (enabled: boolean) => ({
     enabled,
@@ -82,6 +88,125 @@ function fixture() {
   };
 }
 describe("PM readiness and automation controls", () => {
+  it.each(["repository", "url", "docker", "cloud-run"])(
+    "keeps %s source patrols available but blocks promotion coding without supported deployment provenance",
+    (kind) => {
+      const f = fixture(),
+        raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+      raw.workflow = { kind: "promotion", approvalPolicy: "epic" };
+      if (kind !== "repository") {
+        raw.verification = { mode: "browser", environment: "preview" };
+        const target =
+          kind === "url"
+            ? { kind, url: "https://preview.example.test" }
+            : kind === "docker"
+              ? {
+                  kind,
+                  recipe: { kind: "image", image: "example/app:latest" },
+                  port: 3000,
+                }
+              : {
+                  kind,
+                  projectId: "test-project",
+                  region: "us-central1",
+                  service: "app",
+                };
+        raw.environments = {
+          preview: { ...target, role: "preview", access: { kind: "public" } },
+        };
+      }
+      writeFileSync(f.projectFile, JSON.stringify(raw));
+      const readiness = f.inspect();
+      expect(readiness.canRun).toBe(true);
+      expect(readiness.areas[0]!.coding.canEnable).toBe(false);
+      expect(readiness.areas[0]!.coding.enableBlockers).toContainEqual(
+        expect.objectContaining({
+          id: "promotion_environment",
+          action: "environment",
+        }),
+      );
+      expect(readiness.blockers).not.toContainEqual(
+        expect.objectContaining({ id: "promotion_environment" }),
+      );
+      expect(
+        promotionEnvironmentBlocker(loadProject(f.root, "demo"), {
+          status: "passed",
+        })?.id,
+      ).toBe("promotion_environment");
+    },
+  );
+  it.each(["vercel", "railway"])(
+    "requires a current passed %s browser check before promotion coding",
+    (kind) => {
+      const f = fixture(),
+        raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+      raw.workflow = { kind: "promotion", approvalPolicy: "epic" };
+      raw.verification = { mode: "browser", environment: "preview" };
+      raw.environments = {
+        preview: {
+          kind,
+          role: "preview",
+          projectId: "test-project",
+          ...(kind === "railway"
+            ? { environmentId: "test-environment", serviceId: "test-service" }
+            : {}),
+          access: { kind: "public" },
+        },
+      };
+      f.context.env.VERCEL_TOKEN = "vercel-test";
+      f.context.env.RAILWAY_TOKEN = "railway-test";
+      writeFileSync(f.projectFile, JSON.stringify(raw));
+      for (const status of ["untested", "testing", "failed"]) {
+        f.context.environmentVerification = () => ({ status });
+        expect(f.inspect().areas[0]!.coding.enableBlockers).toContainEqual(
+          expect.objectContaining({ id: "promotion_environment" }),
+        );
+        expect(
+          promotionEnvironmentBlocker(loadProject(f.root, "demo"), { status })
+            ?.id,
+        ).toBe("promotion_environment");
+      }
+      f.context.environmentVerification = () => ({ status: "passed" });
+      expect(f.inspect().areas[0]!.coding.canEnable).toBe(true);
+      expect(
+        promotionEnvironmentBlocker(loadProject(f.root, "demo"), {
+          status: "passed",
+        }),
+      ).toBeUndefined();
+    },
+  );
+  it("requires the current real browser result before browser patrols while leaving approved coding available", () => {
+    const f = fixture(),
+      raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    raw.verification = { mode: "browser", environment: "preview" };
+    raw.environments = {
+      preview: {
+        kind: "url",
+        role: "preview",
+        url: "https://preview.example.test",
+        access: { kind: "public" },
+      },
+    };
+    writeFileSync(f.projectFile, JSON.stringify(raw));
+    for (const status of ["untested", "testing", "failed"]) {
+      f.context.environmentVerification = () => ({ status });
+      expect(f.inspect()).toMatchObject({
+        canRun: false,
+        canEnable: false,
+        areas: [{ coding: { canEnable: true } }],
+      });
+      expect(f.inspect().blockers).toContainEqual(
+        expect.objectContaining({
+          id: "browser_verification",
+          action: "environment",
+        }),
+      );
+    }
+    delete f.context.environmentVerification;
+    expect(f.inspect().canRun).toBe(false);
+    f.context.environmentVerification = () => ({ status: "passed" });
+    expect(f.inspect().canEnable).toBe(true);
+  });
   it("blocks browser PM launches and automation until test access is explicitly chosen", async () => {
     const f = fixture();
     const raw = JSON.parse(readFileSync(f.projectFile, "utf8"));

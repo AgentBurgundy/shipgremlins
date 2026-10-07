@@ -79,6 +79,31 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("source investigation", () => {
+  it("reads dynamically loaded login UI from the pinned repository without treating a library name as a verified recipe", async () => {
+    const f = fixture({
+        "package.json": '{"scripts":{"test":"vitest"}}',
+        "src/components/auth-modal.tsx":
+          '<form><input type="email" id="email"/><input type="password" id="password"/></form>',
+        "src/lib/unrelated.ts": "export const irrelevant = true;",
+        "src/auth.test.ts": "test('irrelevant', () => {});",
+      }),
+      result = await f.read();
+    expect(result.repository.filesRead).toContain(
+      "src/components/auth-modal.tsx",
+    );
+    expect(result.repository.filesRead).not.toContain("src/lib/unrelated.ts");
+    expect(
+      result.files.find((file) => file.path === "src/components/auth-modal.tsx")
+        ?.content,
+    ).toContain('type="password"');
+    expect(seedPriority("src/auth.test.ts")).toBeUndefined();
+    const longApp = [
+      ...Array.from({ length: 500 }, () => "// unrelated source padding"),
+      '<input type="password" id="actual-password"/>',
+      ...Array.from({ length: 500 }, () => "// unrelated source padding"),
+    ].join("\n");
+    expect(sourceExcerpt(longApp).content).toContain('id="actual-password"');
+  });
   it("follows manifest entrypoints into actual dashboard source and runnable examples before unrelated test/docs", async () => {
     const files: Record<string, string> = {
       "package.json": JSON.stringify({

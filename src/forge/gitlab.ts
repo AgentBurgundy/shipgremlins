@@ -317,6 +317,13 @@ export class GitLabForge implements Forge {
       title: pull.title.replace(/^(?:Draft:|WIP:)\s*/i, ""),
     });
   }
+  async closePull(repo: string, number: number) {
+    await this.request(
+      `${this.project(repo)}/merge_requests/${id(number)}`,
+      "PUT",
+      { state_event: "close" },
+    );
+  }
   async mergePull(
     repo: string,
     number: number,

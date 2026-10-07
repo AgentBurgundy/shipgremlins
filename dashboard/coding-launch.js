@@ -76,9 +76,13 @@
       active[0] ||
       (!confirmed ? operation?.job : null);
     // Test login limits browser patrols; approved coding can still proceed.
-    const blocker = project.readiness?.blockers?.find(
-      (item) => item.id !== "test_access",
-    );
+    const blocker =
+      project.readiness?.areas
+        ?.flatMap((area) => area.coding?.enableBlockers || [])
+        .find((item) => item.id === "promotion_environment") ||
+      project.readiness?.blockers?.find(
+        (item) => !["test_access", "browser_verification"].includes(item.id),
+      );
     const path = `/projects/${encodeURIComponent(project.name)}`;
     const promotion = project.workflow?.kind === "promotion";
     root.dataset.state = "ready";
@@ -176,14 +180,19 @@
       title.textContent = "Checking your runners";
       description.textContent = "Checking the connections for this project.";
       actions.append(launchButton(project, "Checking setup…", true));
-    } else if (!project.readiness.canRun && blocker) {
+    } else if (
+      blocker &&
+      (!project.readiness.canRun || blocker.id === "promotion_environment")
+    ) {
       root.dataset.state = "setup";
       title.textContent = "One step closer to your first run";
       description.textContent = blocker.message;
       const setup = node(
         "button",
         "button button-dark",
-        setupLabels[blocker.action] || "Review setup",
+        blocker.id === "promotion_environment"
+          ? "Set up test deployment"
+          : setupLabels[blocker.action] || "Review setup",
       );
       setup.type = "button";
       setup.disabled = locked;

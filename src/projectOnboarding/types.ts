@@ -103,6 +103,21 @@ export interface ProjectSetupProposal {
     >
   >;
   firstPm: { name: string; mandate: string; evidence: SetupEvidence[] };
+  /** Additional source-grounded responsibilities retained for later adoption. */
+  suggestedPms?: { name: string; mandate: string; evidence: SetupEvidence[] }[];
+  /** Source observations only; applying a recipe still requires a live login check. */
+  appAccess?: {
+    kind: "password" | "email-code" | "sso" | "public" | "unknown";
+    summary: string;
+    evidence: SetupEvidence[];
+    password?: {
+      loginPath: string;
+      usernameSelector: string;
+      passwordSelector: string;
+      submitSelector: string;
+      successSelector: string;
+    };
+  };
 }
 export interface ConfirmProjectSetupInput {
   revision: string;

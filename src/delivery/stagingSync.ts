@@ -450,18 +450,12 @@ export function createStagingSync(options: StagingSyncOptions) {
         "checking",
         "The sync pull request changed. Rechecking its branches before continuing.",
       );
-    if (pull.draft && !repair)
-      return update(
-        state,
-        "blocked",
-        "The existing staging sync PR is a draft. Mark it ready when you want synchronization to continue.",
-      );
     const checks = await forge.getChecks(repo, pull.headSha);
     if (checks.status === "failure")
       return update(
         state,
         "blocked",
-        "The sync branch has failing checks. Fix them; synchronization will retry automatically.",
+        "The sync branch has failing checks. Automatic synchronization is paused until they pass; the controller will keep checking.",
       );
     if (checks.status === "pending")
       return update(
@@ -494,7 +488,16 @@ export function createStagingSync(options: StagingSyncOptions) {
         "checking",
         "The sync pull request moved during checks. Rechecking before merging.",
       );
-    if (repair && fresh.draft) {
+    // The controller owns these exact snapshot/repair heads. A draft is a
+    // publication detail, not a request for a person or PM to review the sync.
+    if (fresh.draft) {
+      const readyChecks = await forge.getChecks(repo, pull.headSha);
+      if (["failure", "pending"].includes(readyChecks.status))
+        return update(
+          state,
+          "waiting-checks",
+          "Checks changed before preparing the automatic sync merge. Waiting for the current results.",
+        );
       assertCurrent();
       await forge.markReady(repo, fresh.number);
       fresh = await forge.getPull(repo, fresh.number);
@@ -535,7 +538,7 @@ export function createStagingSync(options: StagingSyncOptions) {
       return update(
         state,
         "waiting-merge",
-        "The source provider refused the sync merge. Check the PR's branch rules; synchronization will retry.",
+        "The source provider refused the automatic sync merge. Waiting for branch rules and source permissions; the controller will retry without bypassing protections.",
       );
     // Never treat an API merge acknowledgement as proof of ancestry or deployment.
     const current = await heads(forge);
@@ -561,7 +564,12 @@ export function createStagingSync(options: StagingSyncOptions) {
     queue: boolean,
   ) {
     const jobs = (await options.jobs?.()) ?? [];
-    const attempts = state.repairs.filter((r) => r.stagingSha === staging);
+    const attempts = state.repairs
+      .filter((r) => r.stagingSha === staging)
+      .sort((a, b) => b.attempt - a.attempt);
+    let needsFreshRepair = false;
+    // A later completed attempt must not conceal a canceled or invalid earlier
+    // admission. Only valid, uncanceled controller work can authorize a merge.
     for (const intent of attempts) {
       const job = jobs.find(
         (j) =>
@@ -574,16 +582,23 @@ export function createStagingSync(options: StagingSyncOptions) {
           "blocked",
           "The repair job no longer matches its controller admission. Review its original activity; no new job or merge was authorized.",
         );
-      if (job && !intent.jobId) {
-        intent.jobId = job.id;
-        save(state);
-      }
       if (job?.status === "canceled" || job?.cancelRequestedAt)
         return update(
           state,
           "blocked",
-          "The sync repair was canceled. Resolve the sync PR manually; automatic retries respect this cancellation.",
+          "The sync repair was canceled. Automatic synchronization is paused for this staging revision to respect the cancellation.",
         );
+    }
+    for (const intent of attempts) {
+      const job = jobs.find(
+        (j) =>
+          j.idempotencyKey === intent.key &&
+          j.projectInstanceId === project.config.instanceId,
+      );
+      if (job && !intent.jobId) {
+        intent.jobId = job.id;
+        save(state);
+      }
       if (job && ["queued", "running"].includes(job.status))
         return update(
           state,
@@ -604,25 +619,34 @@ export function createStagingSync(options: StagingSyncOptions) {
           })
         : [];
       if (resolution) {
+        if (
+          resolution.state !== "open" ||
+          resolution.baseRef !== branches.integration ||
+          resolution.headRef !== `gremlins/${jobId}` ||
+          !SHA.test(resolution.headSha)
+        )
+          return update(
+            state,
+            "blocked",
+            "The repair pull request no longer matches its controller admission. Automatic synchronization is paused; no unrelated pull request was changed.",
+          );
         // A repaired head must retain BOTH histories. Squashed/cherry-picked copies are not a sync.
         const [source, base] = await Promise.all([
           forge.compare(repo, resolution.headSha, staging),
           forge.compare(repo, resolution.headSha, integration),
         ]);
-        if (source.aheadBy !== 0 || base.aheadBy !== 0)
-          return update(
-            state,
-            "blocked",
-            "The repair PR does not include both current branch histories. Update that PR before synchronization can continue.",
-            { pullUrl: resolution.htmlUrl },
-          );
-        if (resolution.mergeableState === "dirty")
-          return update(
-            state,
-            "blocked",
-            "The repair PR now conflicts. Resolve the existing repair PR; no duplicate coding job will be launched.",
-            { pullUrl: resolution.htmlUrl },
-          );
+        if (
+          source.aheadBy !== 0 ||
+          base.aheadBy !== 0 ||
+          resolution.mergeableState === "dirty"
+        ) {
+          // A finished attempt may become obsolete as integration advances.
+          // Keep its evidence, but let the existing bounded repair budget
+          // prepare a replacement from the current immutable branch pair.
+          needsFreshRepair = true;
+          state.status.pullUrl = resolution.htmlUrl;
+          continue;
+        }
         state.status.pullUrl = resolution.htmlUrl;
         return merge(state, forge, resolution, staging, integration, true);
       }
@@ -635,13 +659,15 @@ export function createStagingSync(options: StagingSyncOptions) {
       return update(
         state,
         "blocked",
-        "Two Coding Gremlin attempts could not resolve this staging conflict. Review the sync PR and worker output; automatic retries are paused for this staging revision.",
+        "Two Coding Gremlin attempts could not complete this staging sync. Automatic repair is paused for this staging revision; its worker output explains the remaining problem. This maintenance does not require PM or promotion review.",
       );
     if (!options.enqueue || !queue)
       return update(
         state,
         "repairing",
-        "Staging conflicts with PM changes. The controller will queue a Coding Gremlin to resolve the conflict.",
+        needsFreshRepair
+          ? "The completed sync repair no longer covers the current branch histories or still conflicts. The controller will queue its remaining automatic repair attempt."
+          : "Staging conflicts with PM changes. The controller will queue a Coding Gremlin to resolve the conflict.",
       );
     const intent = pending ?? {
       key: repairKey(staging, lastAttempt + 1),
@@ -669,7 +695,9 @@ export function createStagingSync(options: StagingSyncOptions) {
     return update(
       state,
       "repairing",
-      "A Coding Gremlin is queued to resolve the staging conflict on your runner.",
+      needsFreshRepair
+        ? "The controller queued its remaining automatic repair attempt against the current staging and PM branches. Existing repair evidence is preserved."
+        : "A Coding Gremlin is queued to resolve the staging conflict on your runner.",
     );
   }
   async function reconcile(
@@ -677,12 +705,19 @@ export function createStagingSync(options: StagingSyncOptions) {
   ): Promise<StagingSyncStatus> {
     if (!enabled()) return initial();
     const fd = acquire();
-    if (fd === null)
+    if (fd === null) {
+      const currentStatus = status();
+      if (
+        input.checkOnly &&
+        !["disabled", "checking", "current"].includes(currentStatus.phase)
+      )
+        return currentStatus;
       return {
-        ...status(),
+        ...currentStatus,
         phase: "checking",
         message: "Another staging sync is in progress. PM testing will wait.",
       };
+    }
     let state: State | undefined;
     try {
       state = read();
@@ -696,11 +731,13 @@ export function createStagingSync(options: StagingSyncOptions) {
           "blocked",
           "Choose separate integration, staging and production branches before enabling automatic sync.",
         );
-      update(
-        state,
-        "checking",
-        `Checking ${branches.staging} → ${branches.integration}.`,
-      );
+      const previousStatus = { ...state.status };
+      if (!input.checkOnly)
+        update(
+          state,
+          "checking",
+          `Checking ${branches.staging} → ${branches.integration}.`,
+        );
       const forge = await options.forge();
       const { staging, integration } = await heads(forge);
       state.status = {
@@ -710,12 +747,28 @@ export function createStagingSync(options: StagingSyncOptions) {
       };
       if ((await forge.compare(repo, integration, staging)).aheadBy === 0)
         return await ready(state, forge, staging, integration);
-      if (input.checkOnly)
+      if (input.checkOnly) {
+        // Queue eligibility checks must not erase the controller's concrete
+        // reason for waiting on this same immutable pair of branch heads.
+        if (
+          previousStatus.stagingSha === staging &&
+          previousStatus.integrationSha === integration &&
+          [
+            "waiting-checks",
+            "waiting-merge",
+            "repairing",
+            "waiting-deployment",
+            "blocked",
+          ].includes(previousStatus.phase)
+        )
+          return previousStatus;
         return update(
           state,
           "checking",
           `Waiting for the controller to bring ${branches.staging} into ${branches.integration} before PM testing.`,
+          { pullUrl: undefined },
         );
+      }
       const recoveryBlock = await recoverLegacyRepair(
         state,
         staging,
@@ -774,8 +827,26 @@ export function createStagingSync(options: StagingSyncOptions) {
           "waiting-merge",
           "Waiting for the source provider to report the sync PR.",
         );
+      if (
+        pull.state !== "open" ||
+        pull.headRef !== snapshot ||
+        pull.headSha !== staging ||
+        pull.baseRef !== branches.integration
+      )
+        return update(
+          state,
+          "checking",
+          "The sync pull request changed. Rechecking its exact branches before preparing automatic synchronization.",
+        );
       state.status.pullUrl = pull.htmlUrl;
-      if (pull.mergeableState === "dirty")
+      if (
+        pull.mergeableState === "behind" &&
+        ["pending", "failure"].includes(
+          (await forge.getChecks(repo, pull.headSha)).status,
+        )
+      )
+        return await merge(state, forge, pull, staging, integration);
+      if (["dirty", "behind"].includes(pull.mergeableState))
         return await repair(
           state,
           forge,

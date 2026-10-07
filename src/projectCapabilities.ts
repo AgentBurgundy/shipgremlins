@@ -14,7 +14,12 @@ export { validConnectionId } from "./oauthConnection/profileId.ts";
 
 export type ProjectWorkflow =
   | { kind: "pull-request"; baseBranch: string }
-  | { kind: "promotion"; candidateEnvironment?: string };
+  | {
+      kind: "promotion";
+      candidateEnvironment?: string;
+      promotionBatchSize?: number;
+      approvalPolicy?: "epic" | "ticket";
+    };
 export type ProjectVerification =
   { mode: "repository" } | { mode: "browser"; environment: string };
 
@@ -281,7 +286,26 @@ export function parseProjectCapabilities(
         baseBranch: raw.workflow.baseBranch,
       };
     } else if (raw.workflow.kind === "promotion") {
-      keys(raw.workflow, ["kind", "candidateEnvironment"]);
+      keys(raw.workflow, [
+        "kind",
+        "candidateEnvironment",
+        "promotionBatchSize",
+        "approvalPolicy",
+      ]);
+      if (
+        raw.workflow.approvalPolicy !== undefined &&
+        !["epic", "ticket"].includes(String(raw.workflow.approvalPolicy))
+      )
+        throw new Error("Promotion approval policy must be epic or ticket.");
+      if (
+        raw.workflow.promotionBatchSize !== undefined &&
+        (!Number.isSafeInteger(raw.workflow.promotionBatchSize) ||
+          Number(raw.workflow.promotionBatchSize) < 1 ||
+          Number(raw.workflow.promotionBatchSize) > 100)
+      )
+        throw new Error(
+          "Promotion batch size must be an integer from 1 to 100.",
+        );
       if (
         raw.workflow.candidateEnvironment !== undefined &&
         (typeof raw.workflow.candidateEnvironment !== "string" ||
@@ -292,6 +316,14 @@ export function parseProjectCapabilities(
         );
       result.workflow = {
         kind: "promotion",
+        ...(raw.workflow.approvalPolicy === undefined
+          ? {}
+          : {
+              approvalPolicy: raw.workflow.approvalPolicy as "epic" | "ticket",
+            }),
+        ...(raw.workflow.promotionBatchSize === undefined
+          ? {}
+          : { promotionBatchSize: raw.workflow.promotionBatchSize as number }),
         ...(raw.workflow.candidateEnvironment !== undefined
           ? {
               candidateEnvironment: raw.workflow.candidateEnvironment as string,

@@ -19,6 +19,8 @@ async function probe(
     count?: number;
     rejected?: boolean;
     invalidCredentials?: boolean;
+    invalidOrigin?: boolean;
+    rejectionMessage?: string;
     brandedWall?: boolean;
     passwordTransition?: "delayed" | "stuck" | "redirect";
     confirmationAfterClose?: "missing" | "hidden" | "ambiguous";
@@ -121,7 +123,23 @@ async function probe(
       const code = callback.toString();
       if (code.includes("document.title")) return options.brandedWall === true;
       if (code.includes("aria-live"))
-        return options.invalidCredentials === true;
+        return runInNewContext(`(${code})()`, {
+          document: {
+            querySelectorAll: () => [
+              {
+                getClientRects: () => [{}],
+                textContent:
+                  options.rejectionMessage ??
+                  (options.invalidOrigin
+                    ? "Invalid origin"
+                    : options.invalidCredentials
+                      ? "Invalid email or password."
+                      : "Something went wrong: private-user"),
+              },
+            ],
+          },
+          getComputedStyle: () => ({ visibility: "visible" }),
+        });
       return undefined;
     }),
     screenshot: async () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]),
@@ -336,6 +354,37 @@ describe("environment browser probe", () => {
         .result.diagnosis.code,
     ).toBe("success_not_found");
   });
+  it("identifies a rejected preview origin separately from incorrect credentials", async () => {
+    const { result } = await probe({
+      access: true,
+      field: "#home",
+      rejected: true,
+      invalidOrigin: true,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.diagnosis).toEqual({
+      code: "login_origin_rejected",
+      origin: "https://app.test",
+    });
+    expect(environmentDiagnosis(result.diagnosis)).toMatchObject({
+      action: "edit_login",
+      origin: "https://app.test",
+    });
+    expect(
+      (await probe({ access: true, field: "#home", invalidOrigin: true }))
+        .result.diagnosis.code,
+    ).toBe("success_not_found");
+    expect(
+      (
+        await probe({
+          access: true,
+          field: "#home",
+          rejected: true,
+          rejectionMessage: "Invalid origin: private-user token=secret",
+        })
+      ).result.diagnosis.code,
+    ).toBe("login_rejected");
+  });
   it("returns a fixed network diagnosis without raw exception details", async () => {
     const { result, exitCode } = await probe({ network: true });
     expect(result.diagnosis.code).toBe("environment_unreachable");
@@ -389,6 +438,14 @@ describe("safe environment diagnostics", () => {
         matchCount: 10001,
       },
       { code: "vercel_protection", matchCount: 1 },
+      { code: "login_origin_rejected", origin: "https://user:secret@app.test" },
+      {
+        code: "login_origin_rejected",
+        origin: "https://app.test?token=secret",
+      },
+      { code: "login_origin_rejected", origin: "https://app.test/path" },
+      { code: "login_origin_rejected", origin: "javascript:secret" },
+      { code: "login_rejected", origin: "https://app.test" },
     ])
       expect(environmentDiagnosis(diagnosis)).toBeUndefined();
     expect(

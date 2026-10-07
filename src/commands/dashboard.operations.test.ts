@@ -67,6 +67,7 @@ it("resumes saved promotion intent on startup once, preserves a newer review and
   expect(preparePromotion).toHaveBeenCalledTimes(1);
   expect(preparePromotion.mock.calls[0]![0]).toBe("app");
   expect(preparePromotion.mock.calls[0]![1].area).toBe("core");
+  expect(preparePromotion.mock.calls[0]![1].automatic).toBe(true);
   automatic.enqueue("app", "core", "c".repeat(64));
   automatic.enqueue("app", "other", "d".repeat(64));
   finish!([{ text: "Waiting for trusted candidate evidence." }]);

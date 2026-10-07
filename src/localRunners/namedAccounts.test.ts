@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as environmentAccess from "../setup/environmentAccess.ts";
 import {
   mkdtempSync,
   readFileSync,
@@ -136,6 +137,10 @@ function accounts() {
   return { linear, vercel, linearFor, vercelFor };
 }
 beforeEach(async () => {
+  vi.spyOn(environmentAccess, "environmentVerificationStatus").mockReturnValue({
+    status: "passed",
+    message: "Synthetic verified account-routing deployment",
+  });
   vi.spyOn(globalThis, "fetch").mockRejectedValue(
     new Error(
       "Unexpected provider request in an isolated account-routing test.",
@@ -148,6 +153,7 @@ beforeEach(async () => {
       repo: `owner/${name}`,
     });
     change(name, (data) => {
+      data.workflow = { kind: "promotion", approvalPolicy: "ticket" };
       data.linear = { connectionId: name, workspaceId: workspace[name] };
       data.verification = { mode: "browser", environment: "qa" };
       data.environments = {

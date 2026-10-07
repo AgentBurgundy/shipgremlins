@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import * as environmentAccess from "../setup/environmentAccess.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mkdtempSync,
@@ -23,8 +24,11 @@ import { validatePayload } from "./docker.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
 import { baseBranch } from "../projectCapabilities.ts";
+import { approveEpic } from "../epics.ts";
 import { saveConnections } from "../setup/connections.ts";
 import type { TestAccess } from "../testAccess.ts";
+import { deliveryConfiguration } from "../delivery/index.ts";
+import type { DeliveryRecord } from "../delivery/types.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -95,6 +99,10 @@ function edit(
   writeFileSync(path, JSON.stringify(raw));
 }
 beforeEach(() => {
+  vi.spyOn(environmentAccess, "environmentVerificationStatus").mockReturnValue({
+    status: "passed",
+    message: "Synthetic verified environment for admission tests",
+  });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL | Request) => {
@@ -130,6 +138,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   rmSync(root, { recursive: true, force: true });
 });
@@ -156,6 +165,172 @@ function chooseBrowserAccess(access: TestAccess = { kind: "public" }) {
   });
 }
 describe("local job preparation", () => {
+  it("lets admitted promotion repairs prepare without waiting on their own staging sync", async () => {
+    const beforePmStart = vi.fn(async () => {
+      throw new LocalJobDeferredError(
+        "An admitted repair is active",
+        "environment-wait",
+      );
+    });
+    const beforeDeveloper = vi.fn(async (_job, payload) => payload);
+    const prepared = createJobPreparation({
+      root,
+      env,
+      beforePmStart,
+      beforeDeveloper,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [ticket],
+      }),
+      preview: async () => "https://app-preview.vercel.app",
+    });
+    await prepared.prepareJob({
+      ...job,
+      developerKind: "port",
+      idempotencyKey: "promotion-repair:admitted",
+    });
+    expect(beforePmStart).not.toHaveBeenCalled();
+    expect(beforeDeveloper).toHaveBeenCalled();
+  });
+  it.each(["repository", "untested"] as const)(
+    "blocks promotion coding at admission and pickup for a %s deployment",
+    async (condition) => {
+      chooseBrowserAccess();
+      if (condition === "repository")
+        edit("project.json", (raw) => {
+          raw.verification = { mode: "repository" };
+        });
+      else
+        vi.mocked(
+          environmentAccess.environmentVerificationStatus,
+        ).mockReturnValue({
+          status: "untested",
+          message: "Test this deployment",
+        });
+      const prepared = setup();
+      await expect(
+        prepared.validate({ ...job, runOnce: true }),
+      ).rejects.toThrow(/integration deployment/);
+      await expect(
+        prepared.selectDeveloperTicket(
+          { type: "developer", project: "app", runOnce: true },
+          [],
+        ),
+      ).rejects.toThrow(/integration deployment/);
+      expect(
+        (await prepared.scheduledJobs()).some(
+          (input) => input.type === "developer",
+        ),
+      ).toBe(false);
+      expect(prepared.getTicket).not.toHaveBeenCalled();
+    },
+  );
+  it("defers ordinary coding before provider leases while staging is being reconciled", async () => {
+    const beforePmStart = vi.fn(async () => {
+      throw new LocalJobDeferredError(
+        "Staging sync checks are still running.",
+        "environment-wait",
+      );
+    });
+    const lookup = vi.fn(async () => ticket);
+    const prepared = createJobPreparation({
+      root,
+      env,
+      beforePmStart,
+      linear: () => ({ getTicket: lookup, listTickets: async () => [ticket] }),
+    });
+    await expect(prepared.prepareJob(job)).rejects.toMatchObject({
+      category: "environment-wait",
+    });
+    expect(beforePmStart).toHaveBeenCalledWith(job);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+  it.each(["untested", "testing", "failed"] as const)(
+    "blocks manual and scheduled browser PMs with a %s access probe without blocking code discovery",
+    async (status) => {
+      chooseBrowserAccess();
+      vi.mocked(
+        environmentAccess.environmentVerificationStatus,
+      ).mockReturnValue({ status, message: "Sign-in has not passed" });
+      const prepared = setup();
+      const input = {
+        type: "pm" as const,
+        project: "app",
+        area: "core",
+        runOnce: true,
+      };
+      await expect(prepared.validate(input)).rejects.toThrow(
+        /Test the environment/,
+      );
+      expect(
+        (await prepared.scheduledJobs()).some((input) => input.type === "pm"),
+      ).toBe(false);
+      await expect(
+        prepared.validate({ ...input, pmMode: "discovery" }),
+      ).resolves.toMatchObject({ area: { key: "core" } });
+    },
+  );
+
+  it("gates manual pickup, scheduled pickup and launch on the current parent epic approval", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "promotion", approvalPolicy: "epic" };
+    });
+    chooseBrowserAccess();
+    const parent: LinearTicket = {
+      ...ticket,
+      id: "epic-id",
+      identifier: "APP-1",
+      title: "Reliable forms",
+      labels: ["pm:core", "pm-epic", "pm-approved"],
+    };
+    const child = { ...ticket, parentId: parent.id };
+    const prepared = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket: async (id) => (id === parent.id ? parent : child),
+        listTickets: async () => [child],
+      }),
+      now: () => new Date("2026-10-04T09:00:45Z"),
+    });
+    await expect(prepared.validate({ ...job, runOnce: true })).rejects.toThrow(
+      /parent epic/,
+    );
+    expect(
+      (await prepared.scheduledJobs()).filter(
+        (input) => input.type === "developer",
+      ),
+    ).toHaveLength(0);
+    await expect(
+      prepared.selectDeveloperTicket(
+        { type: "developer", project: "app", runOnce: true },
+        [],
+      ),
+    ).rejects.toThrow(/No approved tickets/);
+    const project = loadProject(root, "app");
+    approveEpic(root, project, project.areas[0]!, parent);
+    await expect(
+      prepared.validate({ ...job, runOnce: true }),
+    ).resolves.toMatchObject({ ticket: { id: child.id } });
+    expect(
+      (await prepared.scheduledJobs()).filter(
+        (input) => input.type === "developer",
+      ),
+    ).toHaveLength(1);
+    await expect(
+      prepared.selectDeveloperTicket(
+        { type: "developer", project: "app", runOnce: true },
+        [],
+      ),
+    ).resolves.toMatchObject({ ticket: child.identifier });
+    parent.description += "\nChange billing too.";
+    await expect(prepared.prepareJob(job)).rejects.toThrow(/parent epic/);
+    expect(
+      (await prepared.scheduledJobs()).filter(
+        (input) => input.type === "developer",
+      ),
+    ).toHaveLength(0);
+  });
   it("requires an explicit test-login choice for manual and scheduled browser PMs before preview preparation", async () => {
     const beforePmStart = vi.fn(async () => {});
     const prepared = createJobPreparation({ root, env, beforePmStart });
@@ -1042,6 +1217,7 @@ describe("local job preparation", () => {
       },
     };
     edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "pm-staging" };
       raw.verification = { mode: "browser", environment: "test" };
       raw.environments = { test: target };
     });
@@ -1713,8 +1889,8 @@ describe("local job preparation", () => {
   it("prepares promotion approval labels and hands ordinary scoped work to coding without an owner step", async () => {
     edit("project.json", (raw) => {
       raw.workflow = { kind: "promotion" };
-      raw.verification = { mode: "repository" };
     });
+    chooseBrowserAccess();
     const ensureLabels = vi.fn(async () => {});
     const getTicket = vi.fn(async () => ({
       ...ticket,
@@ -1723,6 +1899,7 @@ describe("local job preparation", () => {
     const prepared = createJobPreparation({
       root,
       env,
+      preview: async () => "https://app-preview.vercel.app",
       linear: () => ({
         getTicket,
         listTickets: async () => [await getTicket()],
@@ -1745,6 +1922,7 @@ describe("local job preparation", () => {
       "pm:core",
       "pm-proposal",
       "pm-approved",
+      "pm-epic",
       "pm-tier-a",
       "pm-tier-b",
       "pm-tier-c",
@@ -1757,9 +1935,9 @@ describe("local job preparation", () => {
       "never remove pm-needs-human",
       "Preserve explicit owner review-only instructions",
       "tiers.hubOwnerOnly",
-      "size alone does not require per-ticket human approval",
-      "one combined promotion PR",
-      "Do not ask the owner to review ordinary coding drafts",
+      "Size alone does not require per-ticket human approval",
+      "your own area's promotion PR",
+      "Do not ask anyone to manage internal PRs",
     ])
       expect(payload.prompt).toContain(instruction);
     expect(payload.prompt).not.toContain("Never self-approve tickets.");
@@ -1967,6 +2145,85 @@ describe("local job preparation", () => {
       "developer:app:urgent",
       "developer:app:low",
     ]);
+  });
+  it("reaches a ten-ticket promotion target with two WIP slots without recoding verified tickets", async () => {
+    const areasFile = join(root, "projects/app/areas.json");
+    const areas = JSON.parse(readFileSync(areasFile, "utf8"));
+    areas.areas.core.wipLimit = 2;
+    writeFileSync(areasFile, JSON.stringify(areas));
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "promotion", promotionBatchSize: 10 };
+    });
+    const project = loadProject(root, "app"),
+      area = project.areas[0]!;
+    const tickets = Array.from({ length: 10 }, (_, index) => ({
+      ...ticket,
+      id: `ticket-${index}`,
+      identifier: `APP-${index}`,
+      priority: 1,
+      createdAt: `2026-10-01T00:${String(index).padStart(2, "0")}:00Z`,
+    }));
+    const history: LocalJob[] = [];
+    const records: DeliveryRecord[] = [];
+    const scheduler = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket: async (id) => tickets.find((item) => item.id === id) ?? null,
+        listTickets: async () => tickets,
+      }),
+      deliveryRecords: () => records,
+      now: () => new Date("2026-10-04T09:00:45Z"),
+    });
+    for (let round = 0; round < 5; round++) {
+      const next = (await scheduler.scheduledJobs(history)).filter(
+        (input) => input.type === "developer",
+      );
+      expect(next.map((input) => input.ticket)).toEqual([
+        `APP-${round * 2}`,
+        `APP-${round * 2 + 1}`,
+      ]);
+      for (const input of next) {
+        const item = tickets.find(
+          (candidate) => candidate.id === input.linearBinding!.ticketId,
+        )!;
+        const nextJob = {
+          ...input,
+          id: `job-${item.id}`,
+          runId: history.length + 1,
+          status: "succeeded" as const,
+          createdAt: "2026-10-04T09:00:00Z",
+        };
+        history.push(nextJob);
+        records.push({
+          jobId: nextJob.id,
+          area: area.key,
+          ticket: item,
+          scopeHash: ticketScopeHash(item),
+          configuration: deliveryConfiguration(project, area.key),
+          status: "awaiting-review",
+          implementation: { mergeSha: "a".repeat(40) },
+        } as unknown as DeliveryRecord);
+      }
+      expect(
+        (await scheduler.scheduledJobs(history)).filter(
+          (input) => input.type === "developer",
+        ),
+      ).toEqual([]);
+      for (const record of records) {
+        record.status = "verified";
+        record.review = {
+          verdict: "passed",
+          manifestHash: "trusted-review",
+        } as DeliveryRecord["review"];
+      }
+    }
+    expect(records).toHaveLength(10);
+    expect(
+      (await scheduler.scheduledJobs(history)).filter(
+        (input) => input.type === "developer",
+      ),
+    ).toEqual([]);
   });
 });
 

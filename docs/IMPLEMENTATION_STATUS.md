@@ -1,7 +1,18 @@
 # ShipGremlins alpha implementation status
 
-Updated October 5, 2026. The master plan is a product roadmap, not a statement that
+Updated October 7, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
+
+The managed crew workflow now connects source, suggests up to four area PMs from
+bounded source inspection, guides Linear/hosting/test-account/worker setup, and
+requires a real saved browser-access check before browser patrols. New projects
+use controller-recorded epic approval; native child tickets run without separate
+human approval. Internal integration PRs and bounded repairs are automatic. PM QA
+writes idempotent Linear feedback; verified tickets accumulate in separate PM
+promotion batches (default ten tickets, configurable). Verified work frees coding
+WIP slots. Managed completion audits exact production provenance without a third
+owner declaration. Existing approval policies remain unchanged until migrated.
+The [workflow diagrams](AUTONOMOUS_WORKFLOW.md) document each branch and stop.
 
 The primary workflow improves existing applications. Outcome-led missions bind
 investigations, exact owner-approved ticket plans, prerequisite merge checks,
@@ -81,20 +92,20 @@ explicit apply/save; the first patrol does not rewrite ownership. Tests cover
 draft validation and the real Docker isolation path with a synthetic model;
 production model output remains dependent on the connected Claude account.
 
-| Capability       | Current state                                                                                                                                                                                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                                 |
-| Recovery         | Durable queue, startup backoff, ambiguous-launch holds and confirmed cancellation. Reproducible PM QA failures can trigger one automatic coding repair per original change. Failed runs, missing evidence and infrastructure blockers remain visible for review.      |
-| Promotion        | Local projects automatically check and integrate approved drafts, run owning-PM QA against the exact deployment, and publish one project promotion PR after assembled checks. A separately configured candidate browser verifier remains an additional required gate. |
-| Linear Done      | Read-only CLI audit, explicit CLI reconciliation, and dashboard polling after owner confirmation of the complete deliverable scope; actual production merge and Git-tree proof required.                                                                              |
-| Test fixtures    | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                                                                                |
-| Setup            | Global `gremlins` command (`shipgremlins` / `hub` compatibility aliases), compact ASCII greeting, resumable initialization, LAN dashboard, validated config editor, file locations and connection tokens; PMs start disabled                                          |
-| Updates          | CLI and dashboard checks/install/rollback; pinned official commit with successful CI, isolated runtime installation, startup/config validation, atomic selection and supervised dashboard restart                                                                     |
-| Local hosting    | Foreground dashboard/controller or `gremlins start`, `stop`, and `status`; explicit LAN mode; manual service-manager setup for reboot persistence. Runtime upgrades preserve configuration and running Docker jobs.                                                   |
-| Runners          | Local or enrolled remote Docker capacity, project-scoped credentials, revocation and expiring execution leases. Real Chromium readiness checks. One job per worker, up to four total slots. No provider CI registration required.                                     |
-| Activity history | Local Docker PostgreSQL store with idempotent run/event persistence, visible tool activity, summaries, checks, redacted logs, and bounded artifact retention. Queue control still uses private local files.                                                           |
-| Slack            | Branded PM and developer lifecycle notifications, instance-wide incoming webhook/OAuth connection and per-project override. Attempts are durably claimed before sending; no repeat after restart, no guaranteed delivery. See [Slack setup and limits](SLACK.md).     |
-| Website          | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                                                                               |
+| Capability       | Current state                                                                                                                                                                                                                                                                             |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                                                     |
+| Recovery         | Durable queue, startup backoff, ambiguous-launch holds and confirmed cancellation. Reproducible PM QA failures can trigger one automatic coding repair per original change. Failed runs, missing evidence and infrastructure blockers remain visible for review.                          |
+| Promotion        | Local projects automatically check and integrate approved drafts, run owning-PM QA against the exact deployment, and publish one promotion PR per PM after its batch target and assembled checks. A separately configured candidate browser verifier remains an additional required gate. |
+| Linear Done      | Managed epic delivery derives finite scope automatically; legacy/manual declarations remain supported. Actual production merge and Git-tree proof are required.                                                                                                                           |
+| Test fixtures    | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                                                                                                    |
+| Setup            | Global `gremlins` command (`shipgremlins` / `hub` compatibility aliases), compact ASCII greeting, resumable initialization, LAN dashboard, validated config editor, file locations and connection tokens; PMs start disabled                                                              |
+| Updates          | CLI and dashboard checks/install/rollback; pinned official commit with successful CI, isolated runtime installation, startup/config validation, atomic selection and supervised dashboard restart                                                                                         |
+| Local hosting    | Foreground dashboard/controller or `gremlins start`, `stop`, and `status`; explicit LAN mode; manual service-manager setup for reboot persistence. Runtime upgrades preserve configuration and running Docker jobs.                                                                       |
+| Runners          | Local or enrolled remote Docker capacity, project-scoped credentials, revocation and expiring execution leases. Real Chromium readiness checks. One job per worker, up to four total slots. No provider CI registration required.                                                         |
+| Activity history | Local Docker PostgreSQL store with idempotent run/event persistence, visible tool activity, summaries, checks, redacted logs, and bounded artifact retention. Queue control still uses private local files.                                                                               |
+| Slack            | Branded PM and developer lifecycle notifications, instance-wide incoming webhook/OAuth connection and per-project override. Attempts are durably claimed before sending; no repeat after restart, no guaranteed delivery. See [Slack setup and limits](SLACK.md).                         |
+| Website          | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                                                                                                   |
 
 Version 0.9.2 separates live activity, logs, and artifact loading, keeps unchanged
 timeline entries in place, and bounds slow dashboard reads. Newly created PM
