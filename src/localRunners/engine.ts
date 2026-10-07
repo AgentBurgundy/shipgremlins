@@ -6,6 +6,7 @@ import { loadProject } from "../config.ts";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -49,6 +50,7 @@ import {
   type DockerJobPayload,
   type DockerRunners,
 } from "./docker.ts";
+import { RunnerWorkspaceError } from "./workspace.ts";
 import type {
   LocalJob,
   LocalJobInput,
@@ -812,7 +814,27 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       try {
         const fd = openSync(file, "wx", 0o600);
         try {
-          writeFileSync(fd, JSON.stringify({ pid: process.pid, owner }));
+          const created = fstatSync(fd, { bigint: true });
+          try {
+            writeFileSync(fd, JSON.stringify({ pid: process.pid, owner }));
+          } catch (error) {
+            // ENOSPC can leave an empty/partial lock that has no readable owner.
+            // Keep our descriptor open to prevent inode reuse, and remove only
+            // the exact file this invocation exclusively created.
+            try {
+              const current = lstatSync(file, { bigint: true });
+              if (
+                current.isFile() &&
+                current.nlink === 1n &&
+                current.dev === created.dev &&
+                current.ino === created.ino
+              )
+                unlinkSync(file);
+            } catch {
+              /* Preserve an unknown/replaced lock and the original write error. */
+            }
+            throw error;
+          }
         } finally {
           closeSync(fd);
         }
@@ -1310,7 +1332,15 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
               result,
               docker,
             );
-          } catch {
+          } catch (error) {
+            if (error instanceof RunnerWorkspaceError) {
+              // The agent already ran; preserve its work and consumed budget.
+              // A new independent review cannot start until storage is repaired.
+              const message = `${error.message} Completed work and evidence are retained; delivery verification did not finish.`;
+              failed(state, job, worker, message, 0, "infrastructure");
+              if (worker) worker.message = message;
+              return;
+            }
             job.reconciliationAttempts = (job.reconciliationAttempts ?? 0) + 1;
             if (job.reconciliationAttempts < 3) {
               job.failure = {
@@ -1424,12 +1454,15 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         await docker.ensureImage();
         imageReady = true;
       }
-    } catch {
+    } catch (error) {
       if (stopping) {
         await keepQueued();
         return;
       }
-      retryBeforeLaunch(state, job, worker);
+      if (error instanceof RunnerWorkspaceError) {
+        failed(state, job, worker, error.message, undefined, "infrastructure");
+        worker.message = error.message;
+      } else retryBeforeLaunch(state, job, worker);
       save(state);
       await releaseResources(job);
       return;
@@ -1540,22 +1573,32 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       job.message = "Running in an isolated Docker container.";
       job.failure = undefined;
       worker.status = "busy";
-    } catch {
-      try {
-        const container = await docker.inspectJob(job.id);
-        if (container.exists) {
-          state.launched[job.id] = true;
-          await reconcile(state, job);
-        } else retryBeforeLaunch(state, job, worker);
-      } catch {
-        // An ambiguous launch is reconciled by deterministic container ID on the
-        // next tick; it must never be blindly retried while Docker is unreachable.
-        job.message = "Waiting for Docker to confirm whether this job started.";
-        job.failure = {
-          category: "ambiguous-launch",
-          at: now(),
-          retryable: false,
-        };
+    } catch (error) {
+      if (error instanceof RunnerWorkspaceError) {
+        // Workspace admission fails before Docker receives an agent container or
+        // its credentials. Retain the work and require an explicit new run after
+        // the operator repairs storage; elapsed time cannot fix this condition.
+        settleBudget(job, (state.usage ??= {}), clock(), true);
+        failed(state, job, worker, error.message, undefined, "infrastructure");
+        worker.message = error.message;
+      } else {
+        try {
+          const container = await docker.inspectJob(job.id);
+          if (container.exists) {
+            state.launched[job.id] = true;
+            await reconcile(state, job);
+          } else retryBeforeLaunch(state, job, worker);
+        } catch {
+          // An ambiguous launch is reconciled by deterministic container ID on the
+          // next tick; it must never be blindly retried while Docker is unreachable.
+          job.message =
+            "Waiting for Docker to confirm whether this job started.";
+          job.failure = {
+            category: "ambiguous-launch",
+            at: now(),
+            retryable: false,
+          };
+        }
       }
     }
     save(state);

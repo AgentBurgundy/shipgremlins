@@ -24,6 +24,7 @@ import {
 } from "./worker.ts";
 import { startLeaseWatchdog } from "../../runner-local/lease.mjs";
 import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
+import { RunnerWorkspaceError } from "../localRunners/workspace.ts";
 import type {
   DockerArtifacts,
   DockerJobInspection,
@@ -830,6 +831,143 @@ describe("remote worker process", () => {
       await f.close();
     }
   }, 15000);
+  it.each(["storage", "untrusted"])(
+    "reports %s independent-review failure safely without replaying completed work",
+    async (failure) => {
+      const f = await serverFixture();
+      try {
+        const registration = f.hub.createEnrollment({
+            name: "Review process",
+            projects: ["alpha"],
+          }),
+          docker = dockerFixture(),
+          workerRoot = root(),
+          worker = createRemoteWorker({
+            root: workerRoot,
+            controller: f.origin,
+            docker: docker.docker,
+          });
+        const storageMessage =
+          "Runner storage has less than 5 GiB free. Free space on its storage drive before starting another job. Retained work and evidence were not deleted.";
+        const verifyReview = vi.fn(async () => {
+          throw failure === "storage"
+            ? new RunnerWorkspaceError(storageMessage)
+            : Object.assign(
+                new Error("private path and unexpected credential"),
+                {
+                  name: "RunnerWorkspaceError",
+                },
+              );
+        });
+        docker.docker.verifyReview = verifyReview;
+        vi.mocked(docker.docker.inspectJob).mockImplementation(async (id) => ({
+          ...(docker.jobs.get(id) ?? {
+            exists: false,
+            running: false,
+            status: "missing",
+          }),
+        }));
+        const plan: PmReviewPlan = {
+          schema: 1,
+          id: "review-plan",
+          jobId: "job-one",
+          project: "alpha",
+          area: "core",
+          configuration: "c".repeat(64),
+          createdAt: new Date().toISOString(),
+          deployment: {
+            id: "deployment-one",
+            url: "https://preview.example.com",
+            sha: "a".repeat(40),
+            branch: "pm-staging",
+            provider: "vercel",
+            state: "READY",
+          },
+          deliveries: [
+            {
+              id: "delivery-one",
+              ticket: {
+                id: "ticket-one",
+                identifier: "APP-1",
+                title: "Show feature",
+                description: "Show the approved feature.",
+                projectId: "linear-project",
+                teamId: "linear-team",
+              },
+              implementationPr: 1,
+              mergeSha: "a".repeat(40),
+              scopeHash: "d".repeat(64),
+              criteria: ["Shows the feature"],
+            },
+          ],
+        };
+        await worker.enroll(registration.code);
+        await f.adapter.prepareWorker!("worker-process", registration.id);
+        await f.adapter.startJob({
+          id: "job-one",
+          workerId: "worker-process",
+          payload: {
+            ...payload,
+            nonce: "job-one",
+            browserVerification: true,
+            reviewPlan: plan,
+          },
+        });
+        await worker.step();
+        docker.jobs.set("job-one", {
+          exists: true,
+          running: false,
+          status: "exited",
+          exitCode: 0,
+          workerId: "worker-process",
+        });
+        await worker.step();
+
+        const expectedMessage =
+          failure === "storage"
+            ? `${storageMessage} Completed work and evidence are retained; independent browser review did not finish. Promotion remains blocked.`
+            : "Independent browser review could not complete. Promotion remains blocked.";
+        expect(await f.adapter.inspectJob("job-one")).toMatchObject({
+          running: false,
+          exitCode: 1,
+        });
+        const artifacts = await f.adapter.artifacts("job-one");
+        expect(artifacts.result).toEqual({
+          ok: false,
+          kind: "pm",
+          error: expectedMessage,
+        });
+        expect(artifacts.files).toMatchObject([
+          { name: "screenshot.png", png: true },
+          { name: "screenshots/check.png", png: true },
+        ]);
+        const logs = await f.adapter.logs("job-one");
+        expect(logs).toContain(expectedMessage);
+        expect(logs).not.toContain("private path and unexpected credential");
+        await expect(f.adapter.verifyReview!("job-one", plan)).rejects.toThrow(
+          /no independent/,
+        );
+
+        const restarted = createRemoteWorker({
+          root: workerRoot,
+          controller: f.origin,
+          docker: docker.docker,
+        });
+        await restarted.step();
+        expect(verifyReview).toHaveBeenCalledOnce();
+        expect(docker.docker.startJob).toHaveBeenCalledOnce();
+        expect(docker.docker.removeJob).not.toHaveBeenCalled();
+        expect(docker.docker.stopJob).not.toHaveBeenCalled();
+        expect(docker.jobs.get("job-one")).toMatchObject({
+          status: "exited",
+          exitCode: 0,
+        });
+      } finally {
+        await f.close();
+      }
+    },
+    15000,
+  );
   it("never replays an ambiguous attempted launch after worker restart", async () => {
     const f = await serverFixture();
     try {
