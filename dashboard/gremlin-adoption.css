@@ -285,6 +285,19 @@
   justify-content: center;
   margin-top: 6px;
 }
+.adoption-hosting-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  max-width: 460px;
+}
+.adoption-hosting-choice > button {
+  min-width: 0;
+  white-space: normal;
+}
+.adoption-hosting-choice > .button-dark {
+  grid-column: 1 / -1;
+}
 .adoption-welcome .form-message {
   width: 100%;
   margin: 0;

@@ -1,0 +1,127 @@
+.linear-onboarding {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(720px, calc(100dvh - 40px));
+  padding: 0;
+  overflow: auto;
+  color: var(--ink, #15392c);
+  background: var(--paper, #fcfdf9);
+  border: 1px solid #dce5d9;
+  border-radius: 24px;
+  box-shadow: 0 24px 90px #102b2940;
+}
+.linear-onboarding::backdrop {
+  background: #102b2966;
+  backdrop-filter: blur(5px);
+}
+.linear-onboarding-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px 28px 18px;
+  border-bottom: 1px solid #e3e9df;
+}
+.linear-onboarding-header .eyebrow {
+  margin: 0 0 9px;
+  color: #697967;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+.linear-onboarding-header h2 {
+  margin: 0;
+  max-width: 330px;
+  font-size: clamp(21px, 3vw, 26px);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+.linear-onboarding-header > button {
+  flex: none;
+}
+.linear-onboarding-body {
+  display: grid;
+  gap: 16px;
+  padding: 24px 28px 30px;
+}
+.linear-onboarding-body h3 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.25;
+}
+.linear-onboarding-body p {
+  margin: 0;
+  line-height: 1.65;
+}
+.linear-onboarding-project {
+  color: #667567;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.linear-onboarding-account {
+  color: #667567;
+  font-size: 13px;
+}
+.linear-onboarding-error {
+  padding: 13px 15px;
+  color: #853b23;
+  background: #fff2e8;
+  border: 1px solid #f0d2be;
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.linear-onboarding-team-card {
+  padding: 16px 18px;
+  border: 1px solid #dce6d5;
+  border-radius: 14px;
+  background: #f0f6e9;
+  font-weight: 600;
+}
+.linear-onboarding-team-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: -8px;
+}
+.linear-onboarding-team {
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid #cedccc;
+  border-radius: 11px;
+  padding: 10px 12px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+.linear-onboarding-actions {
+  display: flex;
+  gap: 12px;
+  padding-top: 4px;
+}
+.linear-onboarding-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: #234b31;
+  background: #e1efce;
+  font-size: 24px;
+}
+.linear-onboarding-progress {
+  color: #667567;
+}
+@media (max-width: 520px) {
+  .linear-onboarding {
+    border-radius: 18px;
+  }
+  .linear-onboarding-header {
+    padding: 22px 20px 16px;
+    gap: 12px;
+  }
+  .linear-onboarding-body {
+    padding: 20px;
+  }
+  .linear-onboarding-actions > button {
+    width: 100%;
+  }
+}

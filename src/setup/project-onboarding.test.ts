@@ -68,10 +68,17 @@ type Panel = {
   forget(project: string): void;
   destroy(): void;
   isDirty(): boolean;
+  isBusy(): boolean;
+  resumeHosting(project: string): Promise<void>;
 };
 function fixture(
-  api = vi.fn(async (_path: string, _body?: unknown) => state()),
+  api = vi.fn(async (_path: string, _body?: unknown): Promise<object> =>
+    state(),
+  ),
   getStatus: () => object | null = () => null,
+  onConnectHosting = vi.fn(
+    async (_project: object, _connectionId: string) => {},
+  ),
 ) {
   const document = {
     activeElement: new Element(),
@@ -135,8 +142,9 @@ function fixture(
     getStatus,
     onSaved: saved,
     onCreatePm: created,
+    onConnectHosting,
   });
-  return { window, document, panel, api, saved, created };
+  return { window, document, panel, api, saved, created, onConnectHosting };
 }
 const state = () => ({
   project: "shop",
@@ -494,6 +502,328 @@ describe("automatic Vercel environment setup", () => {
     message: "Connecting private preview access.",
     configurationRevision: "config-1",
   };
+  it("offers first-use OAuth without starting setup and keeps another-host setup accessible", async () => {
+    const api = vi.fn(async () => ({
+      ...state(),
+      environmentSetupSupported: true,
+    }));
+    const f = fixture(api, () => ({ serviceConnections: [] })),
+      root = new Element();
+    const project = {
+      name: "shop",
+      repo: "owner/shop",
+      instanceId: "project-one",
+    };
+    f.panel.mount(root, project);
+    await settle();
+    expect(automatic(root).hidden).toBe(false);
+    expect(text(automatic(root))).toContain("Let your gremlins see the app.");
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(f.onConnectHosting).not.toHaveBeenCalled();
+    f.onConnectHosting.mockImplementation(async () => {
+      expect(f.panel.isBusy()).toBe(false);
+    });
+    await walk(root)
+      .find((item) => item.textContent === "Connect Vercel")!
+      .fire("click");
+    expect(f.onConnectHosting).toHaveBeenCalledWith(project, "default");
+    expect(api).toHaveBeenCalledTimes(1);
+    await walk(root)
+      .find(
+        (item) => item.textContent === "Use another host or local environment",
+      )!
+      .fire("click");
+    expect(automatic(root).hidden).toBe(true);
+    expect(
+      walk(root).find((item) => item.className === "onboarding-choice")?.hidden,
+    ).toBe(false);
+    f.panel.destroy();
+  });
+  it("reconnects the saved Vercel account and surfaces rejected authorization without losing edits", async () => {
+    const f = fixture(
+        vi.fn(async () => ({
+          ...vercelState({ connectionId: "testing" }),
+          environmentSetupSupported: true,
+        })),
+        () => ({
+          serviceConnections: [
+            { provider: "vercel", id: "default", connected: true },
+            {
+              provider: "vercel",
+              id: "testing",
+              connected: false,
+              needsReconnect: true,
+            },
+          ],
+        }),
+      ),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(f.api).toHaveBeenCalledTimes(1);
+    await walk(root)
+      .find(
+        (item) => item.textContent === "Use another host or local environment",
+      )!
+      .fire("click");
+    const access = walk(root).find(
+      (item) => item.id === "onboarding-shop-access",
+    )!;
+    access.value = "password";
+    access.fire("change");
+    const input = walk(root).find(
+      (item) => item.id === "onboarding-shop-successSelector",
+    )!;
+    input.value = "#signed-in-account";
+    input.fire("input");
+    f.onConnectHosting.mockRejectedValue(
+      new Error(
+        "Save or discard your unsaved edits before authorizing Vercel.",
+      ),
+    );
+    await walk(root)
+      .find((item) => item.textContent === "Reconnect Vercel")!
+      .fire("click");
+    expect(f.onConnectHosting).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "shop" }),
+      "testing",
+    );
+    expect(text(root)).toContain("Save or discard your unsaved edits");
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-successSelector")
+        ?.value,
+    ).toBe("#signed-in-account");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(f.api).toHaveBeenCalledTimes(1);
+    f.panel.destroy();
+  });
+  it("reconnects the account that actually failed, then resumes setup once without reconnecting the healthy default", async () => {
+    let expired = true;
+    const blocked = () => ({
+      ...state(),
+      environmentSetupSupported: true,
+      environmentSetup: {
+        status: "needs_input",
+        step: "find_preview",
+        action: "connect_vercel",
+        connectionId: "team-previews",
+        message: "The Vercel account needs to be reconnected.",
+      },
+    });
+    const api = vi.fn(async (path: string, _body?: unknown) =>
+      path.endsWith("/prepare-environment")
+        ? { ...blocked(), environmentSetup: preparing }
+        : blocked(),
+    );
+    const f = fixture(api, () => ({
+        serviceConnections: [
+          { provider: "vercel", id: "default", connected: true },
+          {
+            provider: "vercel",
+            id: "team-previews",
+            name: "Team previews",
+            connected: !expired,
+            needsReconnect: expired,
+          },
+        ],
+      })),
+      root = new Element();
+    const project = { name: "shop", repo: "owner/shop" };
+    f.panel.mount(root, project);
+    await settle();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(text(automatic(root))).toContain("Vercel account: Team previews");
+    expect(text(automatic(root))).toContain(
+      "The Vercel account needs to be reconnected.",
+    );
+    await walk(root)
+      .find((item) => item.textContent === "Reconnect Vercel")!
+      .fire("click");
+    expect(f.onConnectHosting).toHaveBeenCalledExactlyOnceWith(
+      project,
+      "team-previews",
+    );
+    expired = false;
+    f.panel.syncConnections();
+    await f.panel.resumeHosting("shop");
+    await settle();
+    await f.panel.resumeHosting("shop");
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toEqual([
+      [
+        "/api/projects/shop/onboarding/prepare-environment",
+        { configurationRevision: "config-1", force: true },
+      ],
+    ]);
+    f.panel.destroy();
+  });
+  it("does not replace a saved non-Vercel environment with a hosting prompt", async () => {
+    const api = vi.fn(async () => ({
+      ...state(),
+      environmentSetupSupported: true,
+      environment: {
+        name: "staging",
+        profile: "hosted",
+        target: {
+          kind: "url",
+          role: "staging",
+          url: "https://staging.example",
+        },
+      },
+    }));
+    const f = fixture(api, () => ({ serviceConnections: [] })),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await f.panel.resumeHosting("shop");
+    expect(automatic(root).hidden).toBe(true);
+    expect(text(root)).not.toContain("Connect Vercel");
+    expect(api).toHaveBeenCalledTimes(1);
+    f.panel.destroy();
+  });
+  it("keeps an implicit default account binding instead of using a different connected Vercel account", async () => {
+    const f = fixture(
+        vi.fn(async () => ({
+          ...vercelState(),
+          environmentSetupSupported: true,
+        })),
+        () => ({
+          serviceConnections: [
+            {
+              provider: "vercel",
+              id: "default",
+              connected: false,
+              needsReconnect: true,
+            },
+            { provider: "vercel", id: "other-account", connected: true },
+          ],
+        }),
+      ),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(f.api).toHaveBeenCalledTimes(1);
+    await walk(root)
+      .find((item) => item.textContent === "Reconnect Vercel")!
+      .fire("click");
+    expect(f.onConnectHosting).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "shop" }),
+      "default",
+    );
+    f.panel.destroy();
+  });
+  it("resumes a prior OAuth blocker once with freshly loaded configuration after return", async () => {
+    let connected = false,
+      revision = "config-before-oauth";
+    const blocked = () => ({
+      ...state(),
+      configurationRevision: revision,
+      environmentSetupSupported: true,
+      environmentSetup: {
+        status: "needs_input",
+        step: "find_preview",
+        action: "connect_vercel",
+        message: "Connect Vercel first.",
+        configurationRevision: revision,
+      },
+    });
+    const api = vi.fn(async (path: string, _body?: unknown) =>
+      path.endsWith("/prepare-environment")
+        ? { ...blocked(), environmentSetup: preparing }
+        : blocked(),
+    );
+    const f = fixture(api, () => ({
+        serviceConnections: [{ provider: "vercel", id: "default", connected }],
+      })),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    connected = true;
+    revision = "config-after-oauth";
+    await f.panel.resumeHosting("shop");
+    await settle();
+    expect(api).toHaveBeenCalledWith(
+      "/api/projects/shop/onboarding/prepare-environment",
+      { configurationRevision: "config-after-oauth", force: true },
+    );
+    await f.panel.resumeHosting("shop");
+    await settle();
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(1);
+    f.panel.destroy();
+  });
+  it("joins the initial fresh read on OAuth return without duplicating automatic setup", async () => {
+    let resolveRead!: (value: object) => void;
+    const api = vi.fn(async (path: string, _body?: unknown): Promise<object> =>
+      path.endsWith("/prepare-environment")
+        ? {
+            ...state(),
+            environmentSetupSupported: true,
+            environmentSetup: preparing,
+          }
+        : new Promise((resolve) => {
+            resolveRead = resolve;
+          }),
+    );
+    const f = fixture(api, () => ({
+      serviceConnections: [
+        { provider: "vercel", id: "default", connected: true },
+      ],
+    }));
+    f.panel.mount(new Element(), {
+      name: "shop",
+      repo: "owner/shop",
+      instanceId: "one",
+    });
+    await f.panel.resumeHosting("shop");
+    resolveRead({ ...state(), environmentSetupSupported: true });
+    await settle();
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(1);
+    expect(api).toHaveBeenCalledWith(
+      "/api/projects/shop/onboarding/prepare-environment",
+      { configurationRevision: "config-1" },
+    );
+    f.panel.destroy();
+  });
+  it("abandons a pending OAuth resume when its project is removed or the fresh read fails", async () => {
+    for (const removed of [true, false]) {
+      let failRead!: (error: Error) => void,
+        completeRead!: (value: object) => void;
+      const api = vi.fn(
+        async (_path: string, _body?: unknown): Promise<object> =>
+          new Promise((resolve, reject) => {
+            completeRead = resolve;
+            failRead = reject;
+          }),
+      );
+      const f = fixture(api, () => ({
+        serviceConnections: [
+          { provider: "vercel", id: "default", connected: true },
+        ],
+      }));
+      f.panel.mount(new Element(), {
+        name: "shop",
+        repo: "owner/shop",
+        instanceId: "one",
+      });
+      await f.panel.resumeHosting("shop");
+      if (removed) {
+        f.panel.forget("shop");
+        completeRead({ ...state(), environmentSetupSupported: true });
+      } else failRead(new Error("Refresh failed"));
+      await settle();
+      expect(
+        api.mock.calls.filter(([path]) =>
+          path.endsWith("/prepare-environment"),
+        ),
+      ).toEqual([]);
+      f.panel.destroy();
+    }
+  });
 
   it("prepares a saved Vercel environment once and never retries a blocker on polls or return", async () => {
     let data = managed();

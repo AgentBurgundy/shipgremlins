@@ -221,7 +221,16 @@
     return root;
   };
   window.createProjectWorkspace = (root, options) => {
-    const { api, pages, onSaved, onJob, onCreatePm, getJobs } = options;
+    const {
+      api,
+      pages,
+      onSaved,
+      onJob,
+      onCreatePm,
+      onSetupLinear,
+      onSetupHosting,
+      getJobs,
+    } = options;
     const setupSuggestions = window.createSetupSuggestions?.({
       api,
       onSaved,
@@ -785,6 +794,100 @@
           ),
         );
     }
+    const needsHosting = (project) =>
+      Boolean(onSetupHosting) &&
+      project.areas?.length > 0 &&
+      !project.foundation?.needed &&
+      !(
+        project.verification?.mode === "browser" &&
+        project.environments?.[project.verification.environment]
+      );
+    const linearSetupLabel = (project) => {
+      if (!project?.areas?.length || project.foundation?.needed) return "";
+      const steps = project.readiness?.steps || [];
+      if (
+        steps.some(
+          (step) => step.id === "linear_connection" && step.ready === false,
+        )
+      )
+        return "Connect Linear";
+      return steps.some(
+        (step) => step.id === "linear_mapping" && step.ready === false,
+      ) ||
+        project.areas.some(
+          (area) =>
+            !area.linearProjectId?.trim() ||
+            /^(?:PASTE_|CHANGE_|<)/i.test(area.linearProjectId),
+        )
+        ? "Set up Linear"
+        : "";
+    };
+    const nextSetup = (project) =>
+      onSetupLinear && linearSetupLabel(project)
+        ? "linear"
+        : needsHosting(project)
+          ? "hosting"
+          : "";
+    function hostingAction(project) {
+      const setup = nextSetup(project);
+      const identity = JSON.stringify([
+        project.instanceId ?? null,
+        project.provider || "github",
+        project.serverUrl ?? null,
+        project.repo,
+      ]);
+      const connect = button(
+        setup === "linear"
+          ? linearSetupLabel(project)
+          : "Connect a test environment",
+        async () => {
+          const current = status?.projects?.find(
+            (item) => item.name === project.name,
+          );
+          if (
+            locked ||
+            !current ||
+            nextSetup(current) !== setup ||
+            JSON.stringify([
+              current.instanceId ?? null,
+              current.provider || "github",
+              current.serverUrl ?? null,
+              current.repo,
+            ]) !== identity
+          )
+            return;
+          await (setup === "linear" ? onSetupLinear : onSetupHosting)(
+            project.name,
+            connect,
+          );
+        },
+        "button button-dark",
+      );
+      connect.disabled = locked;
+      return connect;
+    }
+    function hostingInvitation(project) {
+      const card = node("section", "project-hosting-invitation"),
+        copy = node("div");
+      copy.append(
+        node(
+          "h2",
+          "",
+          nextSetup(project) === "linear"
+            ? "Give your crew a home for its work."
+            : "Let your crew see the app, too.",
+        ),
+        node(
+          "p",
+          "",
+          nextSetup(project) === "linear"
+            ? "Set up Linear so your gremlins can organize improvements and hand tickets to coding agents. Code-only investigations can continue while you set it up."
+            : "Connect a test environment for real browser walkthroughs. You can keep investigating the code while you set it up.",
+        ),
+      );
+      card.append(copy, hostingAction(project));
+      root.append(card);
+    }
     function home(project) {
       const step =
         window.projectFirstStep?.(project, getJobs?.() || []) ||
@@ -802,6 +905,7 @@
             operation: options.getCodingAction?.(project.name),
           }),
         );
+      if (step === "mission" && nextSetup(project)) hostingInvitation(project);
       const recent = node("section", "project-recent-activity");
       recent.append(
         node("h2", "", "Recent work"),
@@ -838,6 +942,8 @@
       const readiness = project.readiness?.areas?.find(
         (item) => item.key === area.key,
       )?.discovery;
+      const setup = nextSetup(project),
+        offerHosting = Boolean(setup);
       const card = node(
           "section",
           "project-first-investigation mission-current",
@@ -862,10 +968,15 @@
         node(
           "p",
           "",
-          "Discovery reads the code and brings back a map of the product, its important journeys, and the gaps worth investigating. Then you can choose what should get better.",
+          setup === "linear"
+            ? "First, give your gremlin a home for its work in Linear. We’ll connect the account and prepare its project. A code-only investigation can start without Linear or a test environment."
+            : offerHosting
+              ? "Connect a test environment so your gremlin can walk through the app like a user. A code-only investigation can start now; it maps the repository without opening the app."
+              : "Discovery reads the code and brings back a map of the product, its important journeys, and the gaps worth investigating. Then you can choose what should get better.",
         ),
       );
       card.append(image, heading);
+      if (offerHosting) actions.append(hostingAction(project));
       if (active) {
         card.append(
           node(
@@ -880,7 +991,7 @@
           button(
             "Follow the investigation",
             () => options.onActivity?.(active.id),
-            "button button-dark",
+            offerHosting ? "small-button" : "button button-dark",
           ),
         );
       } else {
@@ -899,9 +1010,11 @@
               ? "Starting investigation…"
               : failed
                 ? "Retry the investigation"
-                : "Explore the codebase",
+                : offerHosting
+                  ? "Start with code only"
+                  : "Explore the codebase",
             () => discover(project.name, area.key).catch(() => {}),
-            "button button-dark",
+            offerHosting ? "small-button" : "button button-dark",
           );
           start.disabled = locked || launching;
           actions.append(start);
@@ -925,7 +1038,7 @@
                   setupStep: blocker.id,
                   setupArea: area.key,
                 },
-                "button button-dark",
+                offerHosting ? "small-button" : "button button-dark",
               ),
             );
         }
@@ -954,7 +1067,7 @@
         node(
           "p",
           "mission-note",
-          "This first look does not file tickets or start coding. Linear and a test environment can wait until the work needs them.",
+          "Connecting an environment does not start a run. Code-only discovery does not file tickets or start coding.",
         ),
       );
       root.append(card);

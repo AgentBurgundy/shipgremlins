@@ -59,6 +59,8 @@
     getJobs = () => [],
     onDraft,
     onFirstTask,
+    onSetupLinear,
+    onSetupHosting,
     onOpenHome,
     onOpenSignals,
     onRefreshReadiness,
@@ -276,6 +278,76 @@
       )
         onOpenHome(accepted);
     });
+    const needsHosting = (project) =>
+      !project?.foundation?.needed &&
+      !(
+        project?.verification?.mode === "browser" &&
+        project.environments?.[project.verification.environment]
+      );
+    const linearSetupLabel = (project) => {
+      if (!project || project.foundation?.needed) return "";
+      const steps = project.readiness?.steps || [];
+      if (
+        steps.some(
+          (step) => step.id === "linear_connection" && step.ready === false,
+        )
+      )
+        return "Connect Linear";
+      const area = project.areas?.find((item) => item.key === accepted?.key),
+        mapping = area?.linearProjectId?.trim();
+      return steps.some(
+        (step) => step.id === "linear_mapping" && step.ready === false,
+      ) ||
+        (area && (!mapping || /^(?:PASTE_|CHANGE_|<)/i.test(mapping)))
+        ? "Set up Linear"
+        : "";
+    };
+    const nextSetup = (project) =>
+      onSetupLinear && linearSetupLabel(project)
+        ? "linear"
+        : onSetupHosting && needsHosting(project)
+          ? "hosting"
+          : "";
+    const setupHosting = button(
+      "Connect a test environment",
+      async () => {
+        const project = getProject(accepted?.project);
+        const step = nextSetup(project);
+        if (
+          !step ||
+          busy ||
+          firstBusy ||
+          isLocked() ||
+          !window.isCurrentGremlinAdoption(accepted, project)
+        )
+          return;
+        if (
+          setupHosting.textContent !==
+          (step === "linear"
+            ? linearSetupLabel(project)
+            : "Connect a test environment")
+        ) {
+          render();
+          return;
+        }
+        firstBusy = true;
+        render();
+        try {
+          await (step === "linear" ? onSetupLinear : onSetupHosting)(
+            accepted.project,
+            setupHosting,
+          );
+        } catch (error) {
+          welcomeWarning =
+            error.message ||
+            "Project setup could not open. Your gremlin is adopted.";
+        } finally {
+          firstBusy = false;
+          render();
+        }
+      },
+      true,
+    );
     const signals = el("section", "adoption-signals"),
       signalActions = el("div", "adoption-signal-actions"),
       signalButtons = [];
@@ -341,15 +413,15 @@
         render();
       }
     });
-    welcomeActions.append(firstTask, openHome);
+    welcomeActions.append(setupHosting, firstTask, openHome);
     welcome.append(
       welcomeImage,
       welcomeTitle,
       welcomeJob,
       welcomeStatus,
       welcomeNotice,
-      signals,
       welcomeActions,
+      signals,
       retryReadiness,
       el(
         "p",
@@ -475,6 +547,9 @@
           accepted,
           savedProject,
         );
+        const setup = currentAdoption ? nextSetup(savedProject) : "",
+          offerSetup = Boolean(setup),
+          offerHosting = setup === "hosting";
         const replaced = Boolean(
           savedProject &&
           ((savedProject.instanceId ?? null) !==
@@ -501,9 +576,13 @@
           ? "This project or PM was replaced after adoption. Open the current project from the sidebar to review its crew."
           : savedProject?.foundation?.needed
             ? "First, build the app’s foundation. Your PM’s brief is saved and ready for when there is something to investigate."
-            : savedArea
-              ? `Their brief is saved. Let them explore the codebase and bring back what they learn. Automation is ${savedArea.enabled ? "on" : "off"}.`
-              : "Their brief is saved. Refresh readiness to see the first task options.";
+            : setup === "linear"
+              ? "Give your gremlin a home for its work in Linear. We’ll connect the account and prepare its project. You can also start a code-only investigation while setup waits."
+              : offerHosting
+                ? "Give your gremlin a test environment to walk through the app like a user. Or start with a code-only investigation; it reads the repository without opening the app."
+                : savedArea
+                  ? `Their brief is saved. Let them explore the codebase and bring back what they learn. Automation is ${savedArea.enabled ? "on" : "off"}.`
+                  : "Their brief is saved. Refresh readiness to see the first task options.";
         welcomeNotice.textContent =
           welcomeWarning || accepted.setupMessage || "";
         welcomeNotice.hidden = !welcomeNotice.textContent;
@@ -516,12 +595,28 @@
               : active
                 ? "View current task"
                 : ready?.discovery?.canRun
-                  ? Object.keys(savedProject?.telemetry || {}).length
+                  ? !offerSetup &&
+                    Object.keys(savedProject?.telemetry || {}).length
                     ? "Explore the codebase"
                     : "Start with code only"
                   : "Prepare first mission";
         signals.hidden =
-          Boolean(savedProject?.foundation?.needed) || !onOpenSignals;
+          !currentAdoption ||
+          Boolean(onSetupLinear && linearSetupLabel(savedProject)) ||
+          needsHosting(savedProject) ||
+          Boolean(savedProject?.foundation?.needed) ||
+          !onOpenSignals;
+        setupHosting.textContent =
+          setup === "linear"
+            ? linearSetupLabel(savedProject)
+            : "Connect a test environment";
+        setupHosting.hidden = !offerSetup;
+        setupHosting.disabled =
+          firstBusy || busy || isLocked() || !currentAdoption;
+        firstTask.className = offerSetup
+          ? "small-button"
+          : "button button-dark";
+        welcomeActions.className = `adoption-welcome-actions${offerSetup ? " adoption-hosting-choice" : ""}`;
         for (const choice of signalButtons)
           choice.disabled = firstBusy || busy || isLocked() || !currentAdoption;
         firstTask.disabled =

@@ -418,9 +418,59 @@ describe("automatic environment preparation", () => {
     expect(state).toMatchObject({
       status: "needs_input",
       action: "connect_vercel",
+      connectionId: "second",
     });
     expect(h.connect).not.toHaveBeenCalled();
     expect(JSON.stringify(state)).not.toContain("private-token");
+  });
+  it("identifies the expired secondary account and completes setup after that account is reconnected", async () => {
+    const h = harness();
+    let expired = true;
+    h.options.connectionIds = () => ["default", "team-previews"];
+    const original = h.discover.getMockImplementation()!;
+    h.discover.mockImplementation(async (name, input) => {
+      if (input?.connectionId === "team-previews" && expired)
+        throw new VercelSetupError(
+          "The Vercel account needs to be reconnected.",
+          401,
+          "connection",
+        );
+      return original(name, input);
+    });
+    expect((await run(h)).state).toMatchObject({
+      status: "needs_input",
+      action: "connect_vercel",
+      connectionId: "team-previews",
+    });
+    expect(createEnvironmentSetup(h.options).status("app")).toMatchObject({
+      connectionId: "team-previews",
+    });
+    expect(h.connect).not.toHaveBeenCalled();
+    expect(h.verify).not.toHaveBeenCalled();
+    expired = false;
+    const { state } = await run(h, { force: true });
+    expect(state?.status).toBe("ready");
+    expect(state?.connectionId).toBeUndefined();
+    expect(h.connect).toHaveBeenCalledOnce();
+    expect(h.verify).toHaveBeenCalledOnce();
+  });
+  it("asks for a preview choice rather than reconnecting a healthy account when discovery is truncated", async () => {
+    const h = harness();
+    const original = h.discover.getMockImplementation()!;
+    h.discover.mockImplementation(async (name, input) => {
+      const result = await original(name, input);
+      return {
+        ...result,
+        inventory: { ...result.inventory!, truncated: true },
+      };
+    });
+    const { state } = await run(h);
+    expect(state).toMatchObject({
+      status: "needs_input",
+      action: "choose_preview",
+    });
+    expect(state?.connectionId).toBeUndefined();
+    expect(h.connect).not.toHaveBeenCalled();
   });
   it("has a current-evidence fast path and supports explicit retesting", async () => {
     useTarget(target);

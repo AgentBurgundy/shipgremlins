@@ -157,7 +157,7 @@ type Adoption = {
   setWelcomeWarning(value: string): void;
   accepted: Adopted | null;
 };
-function fixture() {
+function fixture(linear = false) {
   let focused: Element | null = null;
   const node = (tag: string, id = "", className = "") =>
     Object.assign(
@@ -213,11 +213,18 @@ function fixture() {
   const project = {
     name: "shop",
     instanceId: null as string | null,
-    areas: [] as { key: string; instanceId?: string | null }[],
+    areas: [] as {
+      key: string;
+      instanceId?: string | null;
+      linearProjectId?: string;
+    }[],
     readiness: {
+      steps: [] as { id: string; ready: boolean }[],
       areas: [] as { key: string; discovery: { canRun: boolean } }[],
     },
     foundation: { needed: false },
+    verification: { mode: "repository", environment: "preview" },
+    environments: {} as Record<string, object>,
   };
   const window = {} as {
     createGremlinAdoption(options: object): Adoption;
@@ -241,6 +248,8 @@ function fixture() {
   });
   const draft = vi.fn(),
     firstTask = vi.fn(),
+    setupHosting = vi.fn(),
+    setupLinear = vi.fn(),
     openHome = vi.fn(),
     openSignals = vi.fn(),
     refresh = vi.fn();
@@ -257,6 +266,8 @@ function fixture() {
     getProject: () => project,
     onDraft: draft,
     onFirstTask: firstTask,
+    onSetupHosting: setupHosting,
+    onSetupLinear: linear ? setupLinear : undefined,
     onOpenHome: openHome,
     onOpenSignals: openSignals,
     onRefreshReadiness: refresh,
@@ -285,6 +296,8 @@ function fixture() {
     project,
     draft,
     firstTask,
+    setupHosting,
+    setupLinear,
     openHome,
     openSignals,
     refresh,
@@ -304,6 +317,69 @@ const adopted = {
 };
 
 describe("gremlin adoption", () => {
+  it("guides Linear account then PM project then hosting, without launching work during setup", async () => {
+    const f = fixture(true);
+    f.project.areas.push({
+      key: "moss",
+      linearProjectId: "PASTE_LINEAR_PROJECT_ID",
+    });
+    f.project.readiness.areas.push({
+      key: "moss",
+      discovery: { canRun: true },
+    });
+    f.project.readiness.steps = [
+      { id: "linear_connection", ready: false },
+      { id: "linear_mapping", ready: false },
+    ];
+    f.helper.adopted(adopted);
+    const connect = f.button("Connect Linear");
+    expect(connect.hidden).toBe(false);
+    expect(connect.className).toContain("button-dark");
+    expect(f.button("Start with code only").className).not.toContain(
+      "button-dark",
+    );
+    expect(
+      f.dialog.all().find((node) => node.className === "adoption-signals")
+        ?.hidden,
+    ).toBe(true);
+    expect(f.setupLinear).not.toHaveBeenCalled();
+    expect(f.firstTask).not.toHaveBeenCalled();
+    await connect.click();
+    expect(f.setupLinear).toHaveBeenCalledWith("shop", connect);
+    f.project.readiness.steps[0]!.ready = true;
+    f.helper.refresh();
+    expect(f.button("Set up Linear").hidden).toBe(false);
+    await f.button("Set up Linear").click();
+    expect(f.setupLinear).toHaveBeenCalledTimes(2);
+    // Mapping some other PM does not resolve this newly adopted PM's placeholder.
+    f.project.readiness.steps[1]!.ready = true;
+    f.helper.refresh();
+    expect(f.button("Set up Linear").hidden).toBe(false);
+    f.project.areas[0]!.linearProjectId = "linear-project-moss";
+    f.helper.refresh();
+    await f.button("Connect a test environment").click();
+    expect(f.setupHosting).toHaveBeenCalledOnce();
+    expect(f.firstTask).not.toHaveBeenCalled();
+    expect(f.helper.accepted).toEqual(adopted);
+  });
+
+  it("does not offer Linear ahead of a foundation or act on a replaced adoption", async () => {
+    const f = fixture(true);
+    f.project.areas.push({ key: "moss" });
+    f.helper.adopted(adopted);
+    const setup = f.button("Set up Linear");
+    f.project.foundation.needed = true;
+    f.helper.refresh();
+    expect(setup.hidden).toBe(true);
+    await setup.click();
+    expect(f.setupLinear).not.toHaveBeenCalled();
+    f.project.foundation.needed = false;
+    f.helper.refresh();
+    f.project.instanceId = "replacement";
+    await setup.click();
+    expect(f.setupLinear).not.toHaveBeenCalled();
+    expect(f.setupHosting).not.toHaveBeenCalled();
+  });
   it("shows one question at a time and keeps project choice reachable", async () => {
     const f = fixture();
     const original = f.get("pm-mandate");
@@ -413,8 +489,97 @@ describe("gremlin adoption", () => {
     expect(f.firstTask).toHaveBeenCalledWith(adopted, expect.any(Element));
   });
 
+  it("offers hosting before signals while keeping code-only investigation an explicit choice", async () => {
+    const f = fixture();
+    f.project.areas.push({ key: "moss" });
+    f.project.readiness.areas.push({
+      key: "moss",
+      discovery: { canRun: true },
+    });
+    f.helper.adopted(adopted);
+    const connect = f.button("Connect a test environment"),
+      code = f.button("Start with code only");
+    expect(connect.hidden).toBe(false);
+    expect(connect.className).toContain("button-dark");
+    expect(code.className).not.toContain("button-dark");
+    expect(
+      f.dialog.all().find((node) => node.className === "adoption-signals")
+        ?.hidden,
+    ).toBe(true);
+    expect(
+      f.dialog
+        .all()
+        .some((node) => node.textContent.includes("without opening the app")),
+    ).toBe(true);
+    expect(f.setupHosting).not.toHaveBeenCalled();
+    expect(f.firstTask).not.toHaveBeenCalled();
+    await connect.click();
+    expect(f.setupHosting).toHaveBeenCalledWith("shop", connect);
+    expect(f.helper.accepted).toEqual(adopted);
+    expect(f.firstTask).not.toHaveBeenCalled();
+    await code.click();
+    expect(f.firstTask).toHaveBeenCalledOnce();
+  });
+
+  it("keeps adoption saved if opening hosting fails and respects busy and foundation states", async () => {
+    const f = fixture();
+    f.project.areas.push({ key: "moss" });
+    f.helper.adopted(adopted);
+    const connect = f.button("Connect a test environment");
+    f.lock(true);
+    await connect.click();
+    expect(f.setupHosting).not.toHaveBeenCalled();
+    f.lock(false);
+    f.setupHosting.mockRejectedValueOnce(
+      new Error("Save your current edits first."),
+    );
+    await connect.click();
+    expect(
+      f.dialog
+        .all()
+        .some((node) =>
+          node.textContent.includes("Save your current edits first"),
+        ),
+    ).toBe(true);
+    expect(f.helper.accepted).toEqual(adopted);
+    f.project.foundation.needed = true;
+    f.helper.refresh();
+    expect(connect.hidden).toBe(true);
+    await connect.click();
+    expect(f.setupHosting).toHaveBeenCalledOnce();
+    expect(f.firstTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["vercel", "url", "local"])(
+    "keeps configured %s browser targets out of the missing-hosting prompt",
+    async (kind) => {
+      const f = fixture();
+      f.project.areas.push({ key: "moss" });
+      f.project.verification.mode = "browser";
+      f.project.environments.preview = { kind, role: "preview" };
+      f.helper.adopted(adopted);
+      expect(f.button("Connect a test environment").hidden).toBe(true);
+      await f.button("Connect a test environment").click();
+      expect(f.setupHosting).not.toHaveBeenCalled();
+      expect(
+        f.dialog.all().find((node) => node.className === "adoption-signals")
+          ?.hidden,
+      ).toBe(false);
+      // A saved but unselected target does not enable a browser walkthrough.
+      f.project.verification.mode = "repository";
+      f.helper.refresh();
+      expect(f.button("Connect a test environment").hidden).toBe(false);
+    },
+  );
+
   it("offers optional project-scoped signals without starting work or losing the accepted gremlin", async () => {
     const f = fixture();
+    f.project.verification.mode = "browser";
+    f.project.environments.preview = {
+      kind: "url",
+      role: "preview",
+      url: "https://preview.example.com",
+    };
     f.project.areas.push({ key: "moss" });
     f.project.readiness.areas.push({
       key: "moss",
@@ -481,6 +646,7 @@ describe("gremlin adoption", () => {
       };
       f.helper.adopted(original);
       const start = f.button("Start with code only");
+      const connect = f.button("Connect a test environment");
       const signal = f.dialog
         .all()
         .find(
@@ -491,6 +657,7 @@ describe("gremlin adoption", () => {
       if (kind === "project") f.project.instanceId = "project-replacement";
       else f.project.areas[0]!.instanceId = "pm-replacement";
       await signal.click();
+      await connect.click();
       await start.click();
       await f.button("Visit their home").click();
       f.helper.open({ preselected: true });
@@ -498,6 +665,7 @@ describe("gremlin adoption", () => {
       expect(f.firstTask).not.toHaveBeenCalled();
       expect(f.openSignals).not.toHaveBeenCalled();
       expect(f.openHome).not.toHaveBeenCalled();
+      expect(f.setupHosting).not.toHaveBeenCalled();
       expect(
         f.dialog
           .all()

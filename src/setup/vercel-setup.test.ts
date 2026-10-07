@@ -131,6 +131,7 @@ type Panel = {
   refresh(): Promise<void>;
   isBusy(): boolean;
   destroy(): void;
+  syncConnections(): void;
 };
 const panels: Panel[] = [];
 const settle = async () => {
@@ -140,6 +141,11 @@ function fixture(
   data: object = initial(),
   implementation?: (path: string, body?: unknown) => Promise<object>,
   onConfigured?: () => Promise<void>,
+  options: {
+    getStatus?: () => object | null;
+    onConnectHosting?: (project: object, connectionId: string) => Promise<void>;
+    project?: object;
+  } = {},
 ) {
   const api = vi.fn(implementation || (async () => data)),
     selected = vi.fn(),
@@ -165,33 +171,36 @@ function fixture(
   const root = new Element(),
     panel = window.createVercelSetup({
       api,
-      project: { name: "forevermods" },
+      project: options.project || { name: "forevermods" },
       onSelect: selected,
       onConfigured,
-      getStatus: () => ({
-        serviceConnections: [
-          {
-            provider: "vercel",
-            id: "default",
-            label: "Personal token",
-            method: "token",
-            connected: true,
-          },
-          {
-            provider: "vercel",
-            id: "test-team",
-            label: "Testing account",
-            workspace: { name: "My team" },
-            method: "oauth",
-            connected: true,
-          },
-          {
-            provider: "linear",
-            id: "linear-other",
-            label: "Different provider",
-          },
-        ],
-      }),
+      onConnectHosting: options.onConnectHosting,
+      getStatus:
+        options.getStatus ||
+        (() => ({
+          serviceConnections: [
+            {
+              provider: "vercel",
+              id: "default",
+              label: "Personal token",
+              method: "token",
+              connected: true,
+            },
+            {
+              provider: "vercel",
+              id: "test-team",
+              label: "Testing account",
+              workspace: { name: "My team" },
+              method: "oauth",
+              connected: true,
+            },
+            {
+              provider: "linear",
+              id: "linear-other",
+              label: "Different provider",
+            },
+          ],
+        })),
     });
   panels.push(panel);
   panel.mount(root);
@@ -207,6 +216,132 @@ afterEach(() => {
 });
 
 describe("Vercel setup conversation", () => {
+  it("asks for OAuth before discovery when no Vercel connection exists", async () => {
+    const connect = vi.fn(
+        async (_project: object, _connectionId: string) => {},
+      ),
+      project = {
+        name: "forevermods",
+        instanceId: "current-project",
+        repo: "owner/app",
+      };
+    const f = fixture(initial(), undefined, undefined, {
+      project,
+      getStatus: () => ({ serviceConnections: [] }),
+      onConnectHosting: connect,
+    });
+    await settle();
+    expect(f.find("Connect Vercel")).toBeDefined();
+    expect(f.find("Find my Vercel environment")).toBeUndefined();
+    expect(f.api).toHaveBeenCalledTimes(1);
+    expect(connect).not.toHaveBeenCalled();
+    connect.mockImplementation(async () => {
+      expect(f.panel.isBusy()).toBe(false);
+    });
+    await f.find("Connect Vercel").fire("click");
+    expect(connect).toHaveBeenCalledWith(project, "default");
+    expect(f.api).toHaveBeenCalledTimes(1);
+  });
+  it("reconnects the exact selected account and keeps rejected authorization visible", async () => {
+    const connect = vi.fn(async () => {
+      throw new Error("Save your unsaved environment edits first.");
+    });
+    const f = fixture(discovered(), undefined, undefined, {
+      getStatus: () => ({
+        serviceConnections: [
+          { provider: "vercel", id: "default", connected: true },
+          {
+            provider: "vercel",
+            id: "test-team",
+            label: "Testing account",
+            connected: false,
+            needsReconnect: true,
+          },
+        ],
+      }),
+      onConnectHosting: connect,
+    });
+    await settle();
+    expect(f.find("Use this preview")).toBeUndefined();
+    await f.find("Reconnect Vercel").fire("click");
+    expect(connect).toHaveBeenCalledWith({ name: "forevermods" }, "test-team");
+    expect(text(f.root)).toContain(
+      "Save your unsaved environment edits first.",
+    );
+    expect(f.find("Reconnect Vercel").disabled).toBe(false);
+    expect(f.api).toHaveBeenCalledTimes(1);
+    expect(f.selected).not.toHaveBeenCalled();
+  });
+  it("updates unknown connection status into a prompt and lets a connected account be selected", async () => {
+    let status: object | null = null;
+    const f = fixture(initial(), undefined, undefined, {
+      getStatus: () => status,
+    });
+    await settle();
+    expect(f.find("Connect Vercel")).toBeUndefined();
+    status = { serviceConnections: [] };
+    f.panel.syncConnections();
+    expect(f.find("Connect Vercel")).toBeDefined();
+    status = {
+      serviceConnections: [
+        {
+          provider: "vercel",
+          id: "default",
+          connected: false,
+          needsReconnect: true,
+        },
+        { provider: "vercel", id: "testing", connected: true },
+      ],
+    };
+    f.panel.syncConnections();
+    expect(f.find("Find my Vercel environment")).toBeDefined();
+    expect(f.find("Reconnect Vercel")).toBeUndefined();
+    await f.find("Find my Vercel environment").fire("click");
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/projects/forevermods/onboarding/vercel/discover",
+      { revision: "r1", connectionId: "testing" },
+    );
+  });
+  it("retains a saved default account binding when another account is connected", async () => {
+    const connect = vi.fn(async () => {});
+    const f = fixture(initial(), undefined, undefined, {
+      project: { name: "forevermods", vercel: { projectId: "prj_saved" } },
+      getStatus: () => ({
+        serviceConnections: [
+          {
+            provider: "vercel",
+            id: "default",
+            connected: false,
+            needsReconnect: true,
+          },
+          { provider: "vercel", id: "other", connected: true },
+        ],
+      }),
+      onConnectHosting: connect,
+    });
+    await settle();
+    await f.find("Reconnect Vercel").fire("click");
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "forevermods" }),
+      "default",
+    );
+    expect(f.find("Find my Vercel environment")).toBeUndefined();
+  });
+  it("clears the previous account's resource choices when selecting another hosting account", async () => {
+    const f = fixture(discovered());
+    await settle();
+    const connection = walk(f.root).find((item) =>
+      item.id.endsWith("vercel-connection"),
+    )!;
+    connection.value = "default";
+    connection.fire("change");
+    expect(f.find("Use this preview")).toBeUndefined();
+    await f.find("Find my Vercel environment").fire("click");
+    expect(f.api).toHaveBeenLastCalledWith(
+      "/api/projects/forevermods/onboarding/vercel/discover",
+      { revision: "r1", connectionId: "default" },
+    );
+  });
   it("waits for a created preview to become READY before applying its reviewed workflow once", async () => {
     vi.useFakeTimers();
     let reads = 0,

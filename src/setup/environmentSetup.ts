@@ -54,6 +54,8 @@ export interface EnvironmentSetupState {
   step: EnvironmentSetupStep;
   message: string;
   action?: EnvironmentSetupAction;
+  /** The account that needs authorization, when action is connect_vercel. */
+  connectionId?: string;
   configurationRevision: string;
   updatedAt: string;
   choices?: EnvironmentSetupChoice[];
@@ -227,6 +229,8 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
             "manage_credentials",
             "retry",
           ].includes(state.action)) ||
+        (state.connectionId !== undefined &&
+          !validConnectionId(state.connectionId)) ||
         (state.choices !== undefined &&
           (!Array.isArray(state.choices) || state.choices.length > 40))
       )
@@ -253,6 +257,7 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
         message:
           "Project settings changed. Continue setup with the current saved settings.",
         choices: undefined,
+        connectionId: undefined,
       };
     if (
       current.status === "preparing" &&
@@ -359,6 +364,11 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
               ? initialProject.config.branches.integration
               : "pm-staging")));
     let expected = initial.revision;
+    let activeConnectionId =
+      explicit?.connectionId ??
+      (verification.mode === "browser" && verification.target.kind === "vercel"
+        ? (verification.target.connectionId ?? "default")
+        : undefined);
     let state: EnvironmentSetupState = {
       status: "preparing",
       step: "find_preview",
@@ -398,7 +408,15 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
       message: string,
       action: EnvironmentSetupAction,
       choices?: EnvironmentSetupChoice[],
-    ) => save({ status: "needs_input", message, action, choices });
+      connectionId?: string,
+    ) =>
+      save({
+        status: "needs_input",
+        message,
+        action,
+        choices,
+        connectionId: action === "connect_vercel" ? connectionId : undefined,
+      });
     safeOAuthPath(lock);
     mkdirSync(dirname(lock), { recursive: true, mode: 0o700 });
     const previousLock = readPrivate(lock, 1024);
@@ -484,6 +502,7 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
           teamId?: string | null,
         ) => {
           current();
+          activeConnectionId = connectionId;
           const result = await options.vercelSetup.discover(name, {
             connectionId,
             ...(projectId ? { projectId } : {}),
@@ -573,7 +592,12 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
             inventory: VercelInventory;
           }> = [];
           let incomplete = false;
-          let discoveryFailure: ReturnType<typeof trustedVercelFailure>;
+          let discoveryFailure:
+            | {
+                connectionId: string;
+                trusted?: NonNullable<ReturnType<typeof trustedVercelFailure>>;
+              }
+            | undefined;
           for (const connectionId of connections) {
             try {
               const inventory = await discover(connectionId);
@@ -590,7 +614,9 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
             } catch (error) {
               current();
               incomplete = true;
-              discoveryFailure ??= trustedVercelFailure(error);
+              const trusted = trustedVercelFailure(error);
+              if (!discoveryFailure || (!discoveryFailure.trusted && trusted))
+                discoveryFailure = { connectionId, trusted };
             }
           }
           const choices: EnvironmentSetupChoice[] = found
@@ -628,15 +654,16 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
               }
             }
             stop(
-              discoveryFailure?.message ??
+              discoveryFailure?.trusted?.message ??
                 (incomplete
                   ? "Some Vercel accounts could not be checked completely. Choose the correct project or reconnect the account."
                   : found.length
                     ? "More than one Vercel project matches this repository. Choose the app you want to test."
                     : "No connected Vercel project matches this repository. Choose an account or prepare a test preview."),
-              discoveryFailure?.action ??
-                (incomplete ? "connect_vercel" : "choose_preview"),
+              discoveryFailure?.trusted?.action ??
+                (discoveryFailure ? "connect_vercel" : "choose_preview"),
               choices,
+              discoveryFailure?.connectionId,
             );
             return;
           }
@@ -659,6 +686,7 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
           chosen = selectedTarget;
         }
         if (!chosen) throw Error();
+        activeConnectionId = chosen.connectionId ?? "default";
         // Preserve the saved app login when a provider-only choice has no new login fields.
         if (
           verification.mode === "browser" &&
@@ -841,16 +869,19 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
         const inUse = error instanceof LocalRunnerError && error.status === 409;
         const stale =
           error instanceof EnvironmentSetupError && error.status === 409;
+        const action =
+          trusted?.action ??
+          (stale || inUse
+            ? "retry"
+            : state.step === "find_preview" || state.step === "connect_access"
+              ? "connect_vercel"
+              : "retry");
         save({
           status:
             trusted?.status ?? (stale || inUse ? "needs_input" : "failed"),
-          action:
-            trusted?.action ??
-            (stale || inUse
-              ? "retry"
-              : state.step === "find_preview" || state.step === "connect_access"
-                ? "connect_vercel"
-                : "retry"),
+          action,
+          connectionId:
+            action === "connect_vercel" ? activeConnectionId : undefined,
           message:
             trusted?.message ??
             (inUse

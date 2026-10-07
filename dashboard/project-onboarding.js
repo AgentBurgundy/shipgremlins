@@ -202,6 +202,7 @@
     onSaved = async () => {},
     isLocked = () => false,
     onCreatePm,
+    onConnectHosting,
     loadImage,
   }) => {
     const entries = new Map();
@@ -211,7 +212,8 @@
       `/api/projects/${encodeURIComponent(s.project.name)}/onboarding${action ? `/${action}` : ""}`;
     const dirty = (s) =>
       Boolean(s.draft && JSON.stringify(s.draft) !== s.baseline);
-    const disabled = (s) => isLocked() || s.busy || ongoing(s.data);
+    const disabled = (s) =>
+      isLocked() || s.busy || s.hostingConnecting || ongoing(s.data);
     const vercelTargetIdentity = (target) =>
       target?.kind === "vercel"
         ? JSON.stringify([
@@ -543,6 +545,8 @@
         )
           s.reviewed = false;
         s.data = data;
+        if (s.hostingResume?.identity === projectIdentity(s.project))
+          s.hostingResume.loaded = true;
         s.loaded = true;
         s.error = "";
         const savedPreparation = acceptPreparedDraft(s, data);
@@ -572,6 +576,8 @@
         )
           s.preparingSaved = false;
       } catch (error) {
+        if (s.hostingResume) s.environmentActivated = false;
+        s.hostingResume = null;
         if (generation === s.generation)
           s.error = error.message || "Environment setup could not be loaded.";
       } finally {
@@ -583,12 +589,86 @@
         }
       }
     }
+    function hostingConnection(s) {
+      const status = getStatus(),
+        connections = (status?.serviceConnections || []).filter(
+          (connection) => connection.provider === "vercel",
+        ),
+        target = s.data?.environment?.target || s.draft?.existingTarget,
+        reconnectId =
+          s.data?.environmentSetup?.action === "connect_vercel"
+            ? s.data.environmentSetup.connectionId
+            : undefined,
+        id =
+          reconnectId ||
+          (target?.kind === "vercel" && (target.connectionId || "default")) ||
+          (s.project.vercel && (s.project.vercel.connectionId || "default")) ||
+          connections.find(
+            (connection) =>
+              connection.id === "default" &&
+              connection.connected &&
+              !connection.needsReconnect,
+          )?.id ||
+          connections.find(
+            (connection) => connection.connected && !connection.needsReconnect,
+          )?.id ||
+          connections.find((connection) => connection.id === "default")?.id ||
+          connections[0]?.id ||
+          "default",
+        connection = connections.find((item) => item.id === id);
+      return {
+        id,
+        label: connection?.name || id,
+        known: Array.isArray(status?.serviceConnections),
+        ready: Boolean(connection?.connected && !connection.needsReconnect),
+        reconnect: Boolean(connection?.needsReconnect || reconnectId),
+      };
+    }
+    async function connectHosting(s, connectionId = hostingConnection(s).id) {
+      if (
+        active !== s ||
+        destroyed ||
+        disabled(s) ||
+        entries.get(s.project.name) !== s
+      )
+        return;
+      const identity = projectIdentity(s.project),
+        current = () =>
+          !destroyed &&
+          entries.get(s.project.name) === s &&
+          projectIdentity(s.project) === identity;
+      s.hostingConnecting = true;
+      s.error = "";
+      paint(s);
+      try {
+        if (onConnectHosting) await onConnectHosting(s.project, connectionId);
+        else if (
+          !window.dashboardPages?.navigate("/connections#vercel-connection")
+        )
+          window.location.assign("/connections#vercel-connection");
+      } catch (error) {
+        if (current())
+          s.error =
+            error.message ||
+            "Vercel authorization could not start. Your environment edits are kept.";
+      } finally {
+        if (current()) {
+          s.hostingConnecting = false;
+          paint(s);
+        }
+      }
+    }
     function canPrepareEnvironment(s) {
       if (!s.data?.environmentSetupSupported) return false;
       if (s.project.ideaPlanId && s.data.foundation?.stage !== "ready")
         return false;
-      if (s.data.environment)
-        return s.data.environment.target.kind === "vercel";
+      if (s.data.environment) {
+        const connection = hostingConnection(s);
+        return (
+          s.data.environment.target.kind === "vercel" &&
+          (!connection.known || connection.ready)
+        );
+      }
       return (getStatus()?.serviceConnections || []).some(
         (connection) =>
           connection.provider === "vercel" &&
@@ -597,6 +677,34 @@
       );
     }
     function maybePrepareEnvironment(s) {
+      if (s.hostingResume?.loaded && !s.loading) {
+        const resume = s.hostingResume;
+        s.hostingResume = null;
+        if (
+          active !== s ||
+          destroyed ||
+          entries.get(s.project.name) !== s ||
+          resume.identity !== projectIdentity(s.project) ||
+          dirty(s) ||
+          disabled(s) ||
+          !canPrepareEnvironment(s) ||
+          !hostingConnection(s).ready ||
+          s.data.environment?.verification?.status === "passed" ||
+          (s.data.environmentSetup &&
+            s.data.environmentSetup.action !== "connect_vercel") ||
+          s.hostingResumedRevision === s.data.configurationRevision
+        )
+          return;
+        s.environmentActivated = false;
+        s.autoPreparedRevision = s.hostingResumedRevision =
+          s.data.configurationRevision;
+        void prepareEnvironment(
+          s,
+          undefined,
+          s.data.environmentSetup?.action === "connect_vercel",
+        );
+        return;
+      }
       if (!s.environmentActivated || !s.loaded || s.loading || disabled(s))
         return;
       s.environmentActivated = false;
@@ -1290,6 +1398,8 @@
               project: s.project,
               getStatus,
               isLocked: () => disabled(s),
+              onConnectHosting: (_project, connectionId) =>
+                connectHosting(s, connectionId),
               onConfigured: async () => {
                 s.data = await api(endpoint(s));
                 s.draft = initialDraft(s);
@@ -1915,10 +2025,21 @@
     function paintAutomatic(s) {
       const setup = s.data?.environmentSetup,
         available = s.data?.environmentSetupSupported,
+        connection = hostingConnection(s),
+        needsConnection =
+          connection.known &&
+          !connection.ready &&
+          (!s.data?.environment ||
+            s.data.environment.target.kind === "vercel") &&
+          (!s.showForm || s.data?.environment?.target.kind === "vercel"),
         preparing = s.preparePending || setup?.status === "preparing",
         blocked = ["needs_input", "failed"].includes(setup?.status),
         suggested = !setup && !s.data?.environment && canPrepareEnvironment(s),
-        visible = available && (preparing || blocked || suggested);
+        visible =
+          available &&
+          (!s.data?.environment ||
+            s.data.environment.target.kind === "vercel") &&
+          (preparing || blocked || suggested || needsConnection);
       s.automatic.hidden = !visible;
       s.prepareControls = [];
       if (!visible) return;
@@ -1937,11 +2058,13 @@
             : undefined,
         title = preparing
           ? "Getting your crew connected."
-          : suggested
-            ? "We’ll find your test environment."
-            : setup.action === "choose_preview"
-              ? "Choose the app your crew should test."
-              : diagnosis?.title || "One thing needs your help.";
+          : needsConnection
+            ? "Let your gremlins see the app."
+            : suggested
+              ? "We’ll find your test environment."
+              : setup.action === "choose_preview"
+                ? "Choose the app your crew should test."
+                : diagnosis?.title || "One thing needs your help.";
       copy.append(
         node("h3", title),
         node(
@@ -1949,20 +2072,38 @@
           preparing
             ? (setup?.status === "preparing" && setup.message) ||
                 "Finding the right preview, connecting access and checking it from the runner."
-            : suggested
-              ? "Your Vercel account is connected. We’ll match this repository to a preview and check that your gremlins can use it."
-              : diagnosis?.detail || setup.message,
+            : needsConnection
+              ? setup?.action === "connect_vercel"
+                ? setup.message
+                : "Connect Vercel and we’ll find this repository’s test preview, prepare access and check it from your runner. Using another host? Add its test address instead."
+              : suggested
+                ? "Your Vercel account is connected. We’ll match this repository to a preview and check that your gremlins can use it."
+                : diagnosis?.detail || setup.message,
         ),
       );
       heading.append(
         copy,
         node(
           "span",
-          preparing ? "Preparing" : blocked ? "Your turn" : "Automatic setup",
+          preparing
+            ? "Preparing"
+            : needsConnection
+              ? "Connect hosting"
+              : blocked
+                ? "Your turn"
+                : "Automatic setup",
           `environment-result-badge ${blocked && !preparing ? "attention" : "testing"}`,
         ),
       );
       s.automatic.append(heading);
+      if (
+        !preparing &&
+        setup?.action === "connect_vercel" &&
+        setup.connectionId
+      )
+        s.automatic.append(
+          node("p", `Vercel account: ${connection.label}`, "onboarding-help"),
+        );
       if (preparing) {
         const steps = [
             ["find_preview", "Find the right preview"],
@@ -2027,7 +2168,19 @@
           s.data.environment.target,
           s.automatic,
         );
-      if (setup?.action === "choose_preview" && setup.choices?.length) {
+      if (needsConnection || setup?.action === "connect_vercel")
+        actions.append(
+          action(
+            s.hostingConnecting
+              ? "Opening Vercel…"
+              : connection.reconnect
+                ? "Reconnect Vercel"
+                : "Connect Vercel",
+            () => connectHosting(s, connection.id),
+            false,
+          ),
+        );
+      else if (setup?.action === "choose_preview" && setup.choices?.length) {
         const choices = node("div", undefined, "environment-preview-choices");
         for (const choice of setup.choices) {
           const select = action("", () => choosePreview(s, choice));
@@ -2050,15 +2203,7 @@
           choices.append(select);
         }
         s.automatic.append(choices);
-      } else if (setup?.action === "connect_vercel")
-        actions.append(
-          action(
-            "Connect Vercel",
-            () => navigate("/connections#vercel-connection"),
-            false,
-          ),
-        );
-      else if (setup?.action === "manage_credentials")
+      } else if (setup?.action === "manage_credentials")
         actions.append(
           action(
             "Add test credentials",
@@ -2087,6 +2232,7 @@
         );
       if (
         blocked &&
+        !needsConnection &&
         ["connect_vercel", "manage_credentials", "edit_login"].includes(
           setup.action,
         )
@@ -2103,7 +2249,9 @@
       const manual = action(
         s.showForm
           ? "Hide environment settings"
-          : "Review environment settings",
+          : needsConnection
+            ? "Use another host or local environment"
+            : "Review environment settings",
         () => {
           s.showForm = !s.showForm;
           paint(s);
@@ -2745,6 +2893,7 @@
     }
     function deactivate() {
       for (const s of entries.values()) {
+        s.hostingResume = null;
         clearTimeout(s.timer);
         s.vercelSetup?.setActive(false);
       }
@@ -2768,9 +2917,27 @@
     return {
       syncConnections() {
         if (active) {
-          paintConnections(active);
+          paint(active);
           active.vercelSetup?.syncConnections();
         }
+      },
+      async resumeHosting(projectName) {
+        const s = entries.get(projectName);
+        if (
+          !s ||
+          active !== s ||
+          destroyed ||
+          dirty(s) ||
+          disabled(s) ||
+          s.data?.environment?.verification?.status === "passed" ||
+          (s.data?.environment && s.data.environment.target.kind !== "vercel")
+        )
+          return;
+        s.hostingResume = {
+          identity: projectIdentity(s.project),
+          loaded: false,
+        };
+        if (!s.loading) await load(s, true);
       },
       mount(container, project) {
         const s = entry(project),
