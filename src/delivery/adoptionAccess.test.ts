@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { makeProject, FakeLinear } from "../services/fakes.ts";
@@ -15,7 +15,7 @@ afterEach(() => {
 it.each(["repository", "Linear"])(
   "persists an early %s access blocker and automatically retries without exposing credentials",
   async (unavailable) => {
-    const root = mkdtempSync(join(tmpdir(), "adoption-access-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "adoption-access-")));
     roots.push(root);
     const project = makeProject({
       config: { workflow: { kind: "promotion" }, linear: { teamId: "team-1" } },

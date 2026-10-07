@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  realpathSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeForge } from "../forge/fake.ts";
@@ -24,7 +30,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function world() {
-  const root = mkdtempSync(join(tmpdir(), "draft-adoption-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "draft-adoption-")));
   roots.push(root);
   const project = makeProject({
     config: {
