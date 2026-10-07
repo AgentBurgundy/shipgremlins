@@ -54,6 +54,7 @@
     <link rel="stylesheet" href="/project-wizard.css" />
     <script src="/project-wizard.js" defer></script>
     <script src="/first-run.js" defer></script>
+    <script src="/auth.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
     <script src="/interface.js" defer></script>
@@ -69,8 +70,16 @@
     <link rel="stylesheet" href="/project-mission.css" />
     <link rel="stylesheet" href="/project-welcome.css" />
     <link rel="stylesheet" href="/project-settings-dialog.css" />
+    <link rel="stylesheet" href="/auth.css" />
   </head>
-  <body>
+  <body class="auth-pending">
+    <div id="dashboard-sign-in" aria-live="polite">
+      <section class="auth-card">
+        <div class="auth-brand">ShipGremlins</div>
+        <h1>Your crew is waiting.</h1>
+        <p class="auth-description">Checking your session&hellip;</p>
+      </section>
+    </div>
     <a class="skip-link" href="#main">Skip to content</a>
     <button
       id="nav-backdrop"
@@ -198,6 +207,8 @@
           <span class="breadcrumbs"
             >Workspace <span class="topbar-separator">/</span>
             <strong data-page-title>Overview</strong></span
+          ><a class="auth-account-link" href="/settings#account-access"
+            >Account</a
           ><span class="local-pill"
             ><span aria-hidden="true"></span> Self-hosted</span
           >
@@ -2561,6 +2572,8 @@
                 >{}</span
               >
             </div>
+
+            <section id="account-access" aria-label="Account access"></section>
 
             <section
               class="updates-card"

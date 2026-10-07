@@ -35,6 +35,36 @@
     }
   }
 
+  let ideaRestored = false;
+  const auth = window.createDashboardAuth({
+    bootstrapToken: sessionToken,
+    sessionKey,
+    onAuthenticated: async () => {
+      await initialize();
+      if (auth.isAuthenticated()) {
+        if (!ideaRestored) {
+          ideaRestored = true;
+          void ideaCrew.restore();
+        }
+        jobOutputSuspended = false;
+        resumeBackgroundChecks();
+      }
+    },
+    onLocked: () => {
+      lockForms(true);
+      pauseJobOutput();
+      updateBanner.stopRefresh();
+      clearTimeout(updatePollTimer);
+      clearTimeout(runnerPollTimer);
+    },
+    hasUnsavedInputs,
+    onSignedOut: () => {
+      restartReloadApproved = true;
+      window.location.reload();
+    },
+  });
+  sessionToken = "";
+
   const $ = (id) => document.getElementById(id);
   const pages = window.createDashboardPages({
     initialPage:
@@ -397,15 +427,15 @@
     if (signal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(path, {
+      const response = await auth.request(path, {
         method,
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
-          ...(body ? { "Content-Type": "application/json" } : {}),
+          ...(!["GET", "HEAD"].includes(method.toUpperCase())
+            ? { "Content-Type": "application/json" }
+            : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
         cache: "no-store",
-        credentials: "omit",
         signal: controller.signal,
       });
       let result;
@@ -417,24 +447,13 @@
         );
       }
       if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          sessionToken = "";
-          try {
-            sessionStorage.removeItem(sessionKey);
-          } catch {
-            /* Nothing persisted. */
-          }
-          lockForms(true);
-          throw new Error(
-            "This dashboard session has expired. Run gremlins dashboard to open a fresh session.",
-          );
-        }
         const error = new Error(
           typeof result.error === "string"
             ? result.error
             : "The request could not be completed. Please try again.",
         );
         error.status = response.status;
+        error.code = result.code;
         throw error;
       }
       return result;
@@ -746,28 +765,13 @@
 
   async function initialize() {
     if (loading) return;
-    if (!sessionToken) {
-      message(
-        $("global-message"),
-        "Open this dashboard from your CLI with gremlins dashboard. The launch link creates a private session for this tab.",
-        true,
-      );
-      $("connections-summary").textContent = "Session required";
-      $("projects-summary").textContent = "Session required";
-      $("config-directory").textContent = "Session required";
-      $("configuration-path").textContent = "Session required";
-      $("installation-path").textContent = "Session required";
-      $("config-file").replaceChildren(new Option("Session required", ""));
-      for (const badge of document.querySelectorAll("[data-connection]"))
-        badge.textContent = "Session required";
-      return;
-    }
+    if (!auth.isAuthenticated()) return;
     loading = true;
     lockForms(true);
     message($("global-message"), "");
     try {
       await refreshStatus();
-      lockForms(false);
+      lockForms(!auth.isAuthenticated());
       try {
         await refreshConfigFiles();
       } catch (error) {
@@ -799,7 +803,7 @@
       $("installation-path").textContent = "Unavailable";
       for (const badge of document.querySelectorAll("[data-connection]"))
         badge.textContent = "Unavailable";
-      if (sessionToken) {
+      if (auth.isAuthenticated()) {
         const retry = document.createElement("button");
         retry.type = "button";
         retry.textContent = "Try again";
@@ -884,7 +888,7 @@
       message($("connections-message"), error.message, true);
     } finally {
       for (const key of Object.keys(values)) delete values[key];
-      lockForms(!sessionToken);
+      lockForms(!auth.isAuthenticated());
       $("save-connections").textContent = "Save Claude token";
     }
   });
@@ -973,7 +977,6 @@
     onProviderChange: () => refreshRepositories(),
   });
   $("project-start").addEventListener("change", renderStartingPoint);
-  if (sessionToken) void ideaCrew.restore();
   $("project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const fromIdea = $("project-start").value === "idea";
@@ -1113,7 +1116,7 @@
     } catch (error) {
       message($("project-message"), error.message, true);
     } finally {
-      lockForms(!sessionToken);
+      lockForms(!auth.isAuthenticated());
       restoreButton("add-project", "Add project", "+");
       renderStartingPoint();
     }
@@ -1301,7 +1304,7 @@
       );
       if (connected) connectedCount += 1;
       const badge = $(`${provider}-source-state`);
-      badge.textContent = !sessionToken
+      badge.textContent = !auth.isAuthenticated()
         ? "Session required"
         : sourceLoading && !status
           ? "Checking…"
@@ -1389,7 +1392,7 @@
     $("source-refresh").disabled = formsLocked || sourceLoading;
   }
   async function refreshSources() {
-    if (!sessionToken || sourceLoading) return;
+    if (!auth.isAuthenticated() || sourceLoading) return;
     sourceLoading = true;
     renderSourceControls();
     message($("source-message"), "");
@@ -1429,7 +1432,7 @@
   }
   async function pollSource(provider) {
     const flow = sourceFlows.get(provider);
-    if (!flow || sourceBusy.has(provider) || !sessionToken) return;
+    if (!flow || sourceBusy.has(provider) || !auth.isAuthenticated()) return;
     clearTimeout(sourceTimers.get(provider));
     if (Date.parse(flow.expiresAt) <= Date.now()) {
       endSourceFlow(provider);
@@ -1617,7 +1620,7 @@
       message($("source-token-message"), error.message, true);
     } finally {
       for (const key of Object.keys(values)) delete values[key];
-      lockForms(!sessionToken);
+      lockForms(!auth.isAuthenticated());
       $("save-source-tokens").textContent = "Save source tokens";
     }
   });
@@ -1633,7 +1636,7 @@
   async function refreshRepositories() {
     const provider = $("project-provider").value;
     const manual = $("manual-repository").checked;
-    if (!sessionToken || manual) return;
+    if (!auth.isAuthenticated() || manual) return;
     const revision = ++repositoryRevision;
     const select = $("repository-select");
     const previous = select.value;
@@ -1841,7 +1844,8 @@
       return;
     }
     const button = event.target.closest("[data-verify-project]");
-    if (!button || button.disabled || formsLocked || !sessionToken) return;
+    if (!button || button.disabled || formsLocked || !auth.isAuthenticated())
+      return;
     const name = button.dataset.verifyProject;
     projectChecks.set(name, {
       busy: true,
@@ -1957,7 +1961,7 @@
     close.focus();
   }
   function updateRunnerControls() {
-    const locked = formsLocked || !sessionToken || restarting;
+    const locked = formsLocked || !auth.isAuthenticated() || restarting;
     $("refresh-runners").disabled = locked || runnerLoading;
     $("create-runner").disabled =
       locked ||
@@ -2257,7 +2261,7 @@
     ].sort((a, b) => a.runId - b.runId);
   }
   async function refreshHistory(earlier = false) {
-    if (historyLoading || !sessionToken) return;
+    if (historyLoading || !auth.isAuthenticated()) return;
     historyLoading = true;
     $("load-history").disabled = true;
     try {
@@ -2283,7 +2287,7 @@
         `Saved history could not load. ${error.message}`;
     } finally {
       historyLoading = false;
-      $("load-history").disabled = !sessionToken;
+      $("load-history").disabled = !auth.isAuthenticated();
     }
   }
   $("load-history").addEventListener("click", () => refreshHistory(true));
@@ -2383,7 +2387,7 @@
   }
   function scheduleRunnerPoll() {
     clearTimeout(runnerPollTimer);
-    if (!sessionToken || restarting) return;
+    if (!auth.isAuthenticated() || restarting) return;
     const active =
       runnerStatus?.operation?.phase === "working" ||
       runnerStatus?.jobs?.some((job) =>
@@ -2395,7 +2399,7 @@
     );
   }
   async function refreshRunners() {
-    if (!sessionToken || runnerLoading || restarting) return;
+    if (!auth.isAuthenticated() || runnerLoading || restarting) return;
     runnerLoading = true;
     updateRunnerControls();
     try {
@@ -2418,7 +2422,7 @@
     scheduleRunnerPoll();
   }
   async function runWorkerAction(action, id = "") {
-    if (!sessionToken || runnerOperationBusy() || formsLocked) return;
+    if (!auth.isAuthenticated() || runnerOperationBusy() || formsLocked) return;
     const runner = runnerStatus?.runners?.find((item) => item.id === id);
     if (id && (!runner || runner.busy)) return;
     runnerRequestBusy = true;
@@ -2495,7 +2499,7 @@
     renderJobs(runnerStatus?.jobs || []),
   );
   async function queueManualJob(input) {
-    if (formsLocked || runnerRequestBusy || !sessionToken) return;
+    if (formsLocked || runnerRequestBusy || !auth.isAuthenticated()) return;
     const { type, project } = input;
     const body = { type, project };
     if (type === "pm") body.area = input.area;
@@ -2589,10 +2593,8 @@
     if (signal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+      const response = await auth.request(url, {
         cache: "no-store",
-        credentials: "omit",
         redirect: "error",
         signal: controller.signal,
       });
@@ -2632,7 +2634,7 @@
         const download = element("button", "small-button", "Download artifact");
         download.type = "button";
         download.addEventListener("click", async () => {
-          if (selectedJobId !== jobId || !sessionToken) return;
+          if (selectedJobId !== jobId || !auth.isAuthenticated()) return;
           download.disabled = true;
           try {
             const blob = await fetchArtifact(jobId, file);
@@ -2746,7 +2748,7 @@
   function jobOutputVisible() {
     return Boolean(
       selectedJobId &&
-      sessionToken &&
+      auth.isAuthenticated() &&
       !restarting &&
       !jobOutputSuspended &&
       !document.hidden &&
@@ -2902,7 +2904,8 @@
       renderOutputMessages();
     },
     onBusy: (busy) => {
-      $("refresh-job-output").disabled = !sessionToken || !selectedJobId;
+      $("refresh-job-output").disabled =
+        !auth.isAuthenticated() || !selectedJobId;
       $("job-detail").setAttribute("aria-busy", String(busy));
     },
   });
@@ -3411,7 +3414,7 @@
     pmAdoption?.setBusy(pmCreating || pmPlanning);
   }
   async function refreshLinearResources() {
-    if (!sessionToken) return;
+    if (!auth.isAuthenticated()) return;
     if (linearResourcesLoading) {
       linearResourcesQueued = true;
       return;
@@ -3681,7 +3684,7 @@
     getJobs: mergedJobs,
     isLocked: () =>
       formsLocked ||
-      !sessionToken ||
+      !auth.isAuthenticated() ||
       restarting ||
       !currentStatus?.projects?.length,
     onDraft: () => {
@@ -4067,7 +4070,8 @@
     for (const [provider, config] of Object.entries(serviceProviders)) {
       const status = serviceStatuses.get(provider);
       const busy = serviceBusy.has(provider);
-      const locked = formsLocked || !sessionToken || busy || restarting;
+      const locked =
+        formsLocked || !auth.isAuthenticated() || busy || restarting;
       const connected = status?.connected && !status.needsReconnect;
       profileControls.get(provider)?.setLocked(locked);
       $(`${provider}-token-form`).closest("details").hidden =
@@ -4127,7 +4131,7 @@
     renderLinearSetup();
   }
   async function refreshService(provider, refreshAvailability = false) {
-    if (!sessionToken || serviceBusy.has(provider)) return;
+    if (!auth.isAuthenticated() || serviceBusy.has(provider)) return;
     serviceBusy.add(provider);
     renderServiceControls();
     try {
@@ -4186,7 +4190,7 @@
     }
   }
   async function initializeService(provider) {
-    if (!sessionToken) return;
+    if (!auth.isAuthenticated()) return;
     const envelope = serviceEnvelopes[provider];
     if (!envelope) {
       await refreshService(provider);
@@ -4225,7 +4229,12 @@
   }
   async function connectService(provider, { project, connectionId } = {}) {
     const config = serviceProviders[provider];
-    if (serviceBusy.has(provider) || !sessionToken || formsLocked || restarting)
+    if (
+      serviceBusy.has(provider) ||
+      !auth.isAuthenticated() ||
+      formsLocked ||
+      restarting
+    )
       throw new Error("Wait for the current connection check, then try again.");
     if (hasUnsavedInputs())
       throw new Error(
@@ -4235,7 +4244,7 @@
     if (!validProfileId(selected))
       throw new Error("Choose a valid saved connection.");
     try {
-      sessionStorage.setItem(sessionKey, sessionToken);
+      auth.prepareRedirect();
     } catch {
       throw new Error(
         "This browser cannot retain the dashboard session during authorization. Allow session storage or use the manual-token fallback in Connections.",
@@ -4315,7 +4324,7 @@
       $(`${provider}-disconnect-prompt`).hidden = true;
     });
     $(`${provider}-confirm-disconnect`).addEventListener("click", async () => {
-      if (serviceBusy.has(provider) || !sessionToken) return;
+      if (serviceBusy.has(provider) || !auth.isAuthenticated()) return;
       serviceBusy.add(provider);
       renderServiceControls();
       try {
@@ -4388,7 +4397,8 @@
 
   function renderSlackControls() {
     renderConnectionSummary();
-    const locked = formsLocked || !sessionToken || slackBusy || restarting;
+    const locked =
+      formsLocked || !auth.isAuthenticated() || slackBusy || restarting;
     const connected = slackStatus?.connected || slackStatus?.webhookConfigured;
     $("slack-connection").classList.toggle("is-connected", Boolean(connected));
     $("slack-connect").disabled = locked || !slackStatus?.available;
@@ -4438,7 +4448,7 @@
         : "One-click Slack installation is not available for this instance yet. You can still connect an incoming webhook below.");
   }
   async function refreshSlack() {
-    if (!sessionToken || slackBusy) return;
+    if (!auth.isAuthenticated() || slackBusy) return;
     slackBusy = true;
     renderSlackControls();
     try {
@@ -4454,7 +4464,7 @@
     }
   }
   async function initializeSlack() {
-    if (!sessionToken) return;
+    if (!auth.isAuthenticated()) return;
     if (slackEnvelope) {
       slackBusy = true;
       renderSlackControls();
@@ -4481,7 +4491,7 @@
   }
   $("slack-refresh").addEventListener("click", refreshSlack);
   $("slack-connect").addEventListener("click", async () => {
-    if (slackBusy || !sessionToken || !slackStatus?.available) return;
+    if (slackBusy || !auth.isAuthenticated() || !slackStatus?.available) return;
     if (hasUnsavedInputs()) {
       message(
         $("slack-message"),
@@ -4491,7 +4501,7 @@
       return;
     }
     try {
-      sessionStorage.setItem(sessionKey, sessionToken);
+      auth.prepareRedirect();
     } catch {
       message(
         $("slack-message"),
@@ -4529,7 +4539,7 @@
     $("slack-disconnect-prompt").hidden = true;
   });
   $("slack-confirm-disconnect").addEventListener("click", async () => {
-    if (slackBusy || !sessionToken) return;
+    if (slackBusy || !auth.isAuthenticated()) return;
     slackBusy = true;
     renderSlackControls();
     try {
@@ -4548,7 +4558,7 @@
   });
   $("slack-webhook-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (slackBusy || !sessionToken) return;
+    if (slackBusy || !auth.isAuthenticated()) return;
     const url = $("slack-webhook").value.trim();
     if (!url) return;
     slackBusy = true;
@@ -4680,7 +4690,7 @@
       } catch (error) {
         message($("folder-message"), error.message, true);
       } finally {
-        button.disabled = !sessionToken;
+        button.disabled = !auth.isAuthenticated();
       }
     });
   }
@@ -4695,7 +4705,8 @@
     const dirty = isEditorDirty();
     $("connections-fields").disabled = formsLocked || editor.busy;
     $("project-fields").disabled = formsLocked || editor.busy;
-    $("config-fields").disabled = formsLocked || !sessionToken || editor.busy;
+    $("config-fields").disabled =
+      formsLocked || !auth.isAuthenticated() || editor.busy;
     $("config-content").disabled = !editor.path;
     $("config-save").disabled = !editor.path || !dirty;
     $("copy-draft").disabled = !editor.path || editor.busy;
@@ -4779,7 +4790,7 @@
   }
 
   async function requestEditorAction(action, path = editor.path) {
-    if (editor.busy || formsLocked || !sessionToken) return;
+    if (editor.busy || formsLocked || !auth.isAuthenticated()) return;
     window.revealDashboardSetting?.($("advanced-settings"));
     if (isEditorDirty()) {
       pendingEditorAction = { action, path };
@@ -4978,21 +4989,21 @@
       status.phase === "error" && !restarting,
     );
     $("update-check").disabled =
-      busy || !sessionToken || status.restartRequired;
+      busy || !auth.isAuthenticated() || status.restartRequired;
     $("update-apply").hidden =
       status.phase !== "available" || status.restartRequired;
-    $("update-apply").disabled = busy || !sessionToken;
+    $("update-apply").disabled = busy || !auth.isAuthenticated();
     $("update-rollback").hidden = !status.canRollback;
-    $("update-rollback").disabled = busy || !sessionToken;
+    $("update-rollback").disabled = busy || !auth.isAuthenticated();
     $("update-restart").hidden = !status.restartRequired || !status.canRestart;
-    $("update-restart").disabled = busy || !sessionToken;
+    $("update-restart").disabled = busy || !auth.isAuthenticated();
     $("update-restart-note").hidden = !status.restartRequired;
     $("update-restart-note").textContent = status.canRestart
       ? "The staged runtime is ready. Restart this dashboard to use it. Your saved configuration and credentials stay in place."
       : "The staged runtime is ready. Restart the ShipGremlins process on your server to use it. For a CLI session, stop the current process and run gremlins dashboard again.";
     updateBanner.render(status, {
       busy,
-      authenticated: Boolean(sessionToken),
+      authenticated: Boolean(auth.isAuthenticated()),
       restarting,
     });
   }
@@ -5011,7 +5022,7 @@
     clearTimeout(updatePollTimer);
     updatePollTimer = null;
     if (
-      !sessionToken ||
+      !auth.isAuthenticated() ||
       restarting ||
       !["checking", "installing"].includes(updateStatus?.phase)
     )
@@ -5027,7 +5038,7 @@
   }
 
   async function runUpdateAction(action) {
-    if (!sessionToken || updateRequestBusy || restarting) return;
+    if (!auth.isAuthenticated() || updateRequestBusy || restarting) return;
     clearTimeout(updatePollTimer);
     updateRequestBusy = true;
     renderUpdates(
@@ -5055,7 +5066,7 @@
   }
 
   async function initializeUpdates() {
-    if (updatesStarted || !sessionToken) return;
+    if (updatesStarted || !auth.isAuthenticated()) return;
     updatesStarted = true;
     try {
       const status = await api("/api/updates");
@@ -5069,12 +5080,12 @@
     resumeBackgroundChecks();
   }
   function resumeBackgroundChecks() {
-    if (!sessionToken || restarting) return;
+    if (!auth.isAuthenticated() || restarting) return;
     updateBanner.startRefresh({
       check: () => runUpdateAction("check"),
       getStatus: () => updateStatus,
       canCheck: () =>
-        Boolean(sessionToken) && !updateRequestBusy && !restarting,
+        Boolean(auth.isAuthenticated()) && !updateRequestBusy && !restarting,
     });
     scheduleUpdatePoll();
     scheduleRunnerPoll();
@@ -5536,7 +5547,7 @@
 
   async function restartDashboard(discardConfirmed = false) {
     if (
-      !sessionToken ||
+      !auth.isAuthenticated() ||
       restarting ||
       !updateStatus?.canRestart ||
       !updateStatus?.restartRequired
@@ -5574,9 +5585,9 @@
             return;
           }
         } catch {
-          if (!sessionToken)
+          if (!auth.isAuthenticated())
             throw new Error(
-              "The new dashboard needs a fresh session. Run gremlins dashboard on your server to open it.",
+              "Your session ended during the restart. Sign in again to continue.",
             );
           // A short connection gap is expected while the supervisor restarts.
         }
@@ -5586,7 +5597,7 @@
       );
     } catch (error) {
       restarting = false;
-      lockForms(!sessionToken);
+      lockForms(!auth.isAuthenticated());
       updateFailure(error);
       resumeBackgroundChecks();
     }
@@ -5640,16 +5651,8 @@
       input.value = "";
   });
   window.addEventListener("pageshow", (event) => {
-    if (!event.persisted || !sessionToken || restarting) return;
-    jobOutputSuspended = false;
-    resumeBackgroundChecks();
-    Promise.allSettled([
-      refreshStatus(),
-      refreshRunners(),
-      refreshSources(),
-      refreshSlack(),
-      ...Object.keys(serviceProviders).map(refreshService),
-    ]);
+    if (!event.persisted || restarting) return;
+    void auth.start();
   });
   function openDeletion(target) {
     const scope = `projects/${target.project}/`;
@@ -5669,7 +5672,7 @@
   }
   workspaceDeletion = window.createWorkspaceDeletion({
     api,
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
     onDeleted: async (result) => {
       projectChecks.delete(result.project);
       mappingMessages.delete(result.project);
@@ -5731,13 +5734,13 @@
   deletedResources = window.createDeletedResources($("deleted-resources"), {
     api,
     pages,
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
     onRestore: (target) => openDeletion(target),
   });
   window.createWorkspaceUsage?.($("usage"), {
     api,
     pages,
-    canRead: () => Boolean(sessionToken) && !restarting,
+    canRead: () => Boolean(auth.isAuthenticated()) && !restarting,
   });
   projectOperations = window.createProjectOperations({
     getCodingAction: (name) => codingActions?.getState(name),
@@ -5747,7 +5750,7 @@
     inbox: $("inbox-content"),
     getProject: (name) =>
       currentStatus?.projects?.find((project) => project.name === name),
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
     onChanged: refreshStatus,
     onDiscover: (project, area) =>
       projectWorkspace.discover(project, area).catch(() => {}),
@@ -5762,7 +5765,7 @@
   remoteWorkers = window.createRemoteWorkers($("remote-workers"), {
     api,
     pages,
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
   });
   document.addEventListener("gremlins:create-pm", (event) => {
     if (formsLocked || pmCreating) return;
@@ -5771,7 +5774,7 @@
   linearOnboarding = window.createLinearOnboarding({
     api,
     getStatus: () => currentStatus,
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
     onConnect: (project, connectionId) =>
       connectProjectService("linear", project, connectionId),
     onSaved: refreshStatus,
@@ -5803,7 +5806,7 @@
   projectOnboarding = window.createProjectOnboarding({
     api,
     getStatus: () => currentStatus,
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
     onConnectHosting: (project, connectionId) =>
       connectProjectService("vercel", project, connectionId),
     onSaved: async (project) => {
@@ -5824,10 +5827,8 @@
         url.password
       )
         throw new Error("The environment screenshot address is invalid.");
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+      const response = await auth.request(url, {
         cache: "no-store",
-        credentials: "omit",
         redirect: "error",
         signal: AbortSignal.timeout(20000),
       });
@@ -5876,7 +5877,7 @@
     getProject: (name) =>
       currentStatus?.projects?.find((project) => project.name === name),
     getJobs: mergedJobs,
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
     onState: () => renderStatus(currentStatus),
     onFinished: (project, area, mode) => {
       if (
@@ -5906,7 +5907,7 @@
     api,
     getProject: (name) =>
       currentStatus?.projects?.find((project) => project.name === name),
-    isLocked: () => formsLocked || !sessionToken || restarting,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
     onState: () => renderStatus(currentStatus),
     onChanged: refreshRunners,
     onJob: (job) => {
@@ -5915,5 +5916,5 @@
     },
     onFinished: scheduleRunnerPoll,
   });
-  initialize();
+  void auth.start();
 })();

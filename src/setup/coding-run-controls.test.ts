@@ -43,7 +43,7 @@ function controlsFixture(blockers: { id: string; message: string }[] = []) {
   const context = {
     $,
     formsLocked: false,
-    sessionToken: "test",
+    auth: { isAuthenticated: () => true },
     restarting: false,
     runnerLoading: false,
     runnerRequestBusy: false,
@@ -87,7 +87,7 @@ function queueFixture(
     },
     formsLocked: false,
     runnerRequestBusy: false,
-    sessionToken: "test-session",
+    auth: { isAuthenticated: () => true },
     updateRunnerControls: vi.fn(),
     scheduleRunnerPoll: vi.fn(),
     refreshRunners: vi.fn(async () => {}),
@@ -170,10 +170,10 @@ describe("manual coding queue controls", () => {
     f.update();
     expect(f.$("run-job").disabled).toBe(true);
     f.$("job-area").value = "core";
-    f.context.sessionToken = "";
+    f.context.auth.isAuthenticated = () => false;
     f.update();
     expect(f.$("run-job").disabled).toBe(true);
-    f.context.sessionToken = "test";
+    f.context.auth.isAuthenticated = () => true;
     f.context.runnerStatus.runners = [];
     f.update();
     expect(f.$("run-job").disabled).toBe(true);
@@ -185,7 +185,7 @@ describe("manual coding queue controls", () => {
     const context = {
       $,
       formsLocked: false,
-      sessionToken: "test",
+      auth: { isAuthenticated: () => true },
       restarting: false,
       runnerLoading: false,
       runnerRequestBusy: false,

@@ -191,12 +191,41 @@ export function createSourceStore(root: string) {
     safePath(lockFile);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     let handle: Awaited<ReturnType<typeof open>> | undefined;
+    let release: (() => Promise<void>) | undefined;
     for (let attempt = 0; attempt < 200; attempt++)
       try {
         handle = await open(lockFile, "wx", 0o600);
-        await handle.writeFile(
-          JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
-        );
+        const opened = handle;
+        try {
+          const created = await opened.stat({ bigint: true });
+          release = async () => {
+            try {
+              const current = await lstat(lockFile, { bigint: true });
+              if (
+                current.isFile() &&
+                current.nlink === 1n &&
+                current.dev === created.dev &&
+                current.ino === created.ino
+              )
+                await unlink(lockFile);
+            } catch {
+              /* Preserve an unknown/replaced lock. */
+            } finally {
+              await opened.close();
+            }
+          };
+          await opened.writeFile(
+            JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
+          );
+        } catch (error) {
+          // A full disk can leave an empty or partial lock. Retain the descriptor
+          // until identity-checked cleanup so we never remove a replacement file.
+          if (release) await release().catch(() => {});
+          else await opened.close().catch(() => {});
+          handle = undefined;
+          release = undefined;
+          throw error;
+        }
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST")
@@ -239,8 +268,7 @@ export function createSourceStore(root: string) {
     try {
       return await fn(await read(), save);
     } finally {
-      await handle.close();
-      await unlink(lockFile).catch(() => {});
+      await release!();
     }
   }
   return { read, locked };

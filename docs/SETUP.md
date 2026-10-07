@@ -14,7 +14,7 @@ gremlins setup
 
 This installs from the official GitHub repository; an npm registry package is not published yet. `gremlins` works from any directory on PowerShell, macOS, and Linux. `shipgremlins` and `hub` remain compatibility aliases.
 
-**On a homelab server, use `gremlins setup --lan`.** Open a printed session link from your laptop or phone. Workers, configuration, and connections stay on the server. See [server use](#server-use).
+**On a homelab server, use `gremlins setup --lan`.** Open the private launch link once to set your dashboard password. After setup, bookmark the normal server URL and sign in there. Workers, configuration, and connections stay on the server. See [server use](#server-use).
 
 ## Your first adoption
 
@@ -363,7 +363,21 @@ For a foreground dashboard on your trusted LAN:
 gremlins setup --lan
 ```
 
-LAN mode uses port **4311**, prints private IPv4/Tailscale session links, and skips opening a browser on the server. Include `#session=...` on the first visit; the browser removes it after connecting. Keep the link private. This is a private operator dashboard, not a public multi-user service.
+LAN mode uses port **4311** and skips opening a browser on the server. Open the private launch link once to prove you own the installation and set a dashboard password. The browser removes the launch credential from the address bar. Someone who only knows the server URL cannot claim an unconfigured dashboard.
+
+After setup, open the normal URL, such as `http://192.168.1.3:4311`, and sign in with your password. Use at least 15 characters; a memorable passphrase works well. **Remember this device** keeps that browser signed in for up to 30 days across tabs and browser or controller restarts. Otherwise, the server session expires after eight hours and the browser uses a session cookie. You can revoke either kind of session sooner. Passwords and browser session tokens are not stored in browser local storage. This is one operator account for your installation, not a multi-user account system.
+
+Use **Account access** to change the password, sign out, or revoke remembered devices. Changing the password revokes existing browser sessions. Sign-out does not stop your workers or queued jobs. Keep your private CLI launch link protected: it remains an owner credential for local administration.
+
+Forgotten password? On the server, run `gremlins dashboard --reset-password`, then `gremlins status` and open the existing controller's private owner link to set a new password. The reset command exits without starting another dashboard. It revokes all browser sessions and clears the trusted-LAN HTTP choice; projects, provider connections and running jobs remain intact. If the controller is stopped, start it normally before opening its owner link.
+
+### Choose the connection security
+
+Password sign-in is available over HTTPS and loopback HTTP by default. A trusted private LAN can explicitly opt into HTTP during owner-authorized setup. This choice is off by default and is limited to private-network connections; public HTTP password sign-in is not supported.
+
+HTTP does not encrypt passwords or session cookies. A password prevents unauthenticated dashboard access, but someone able to observe or alter LAN traffic could steal that access. Use HTTPS or an SSH tunnel on a shared or untrusted network. Enabling **Remember this device** does not change this transport limitation.
+
+For HTTPS, terminate TLS with a reverse proxy on the same server and forward to the loopback dashboard. Start the controller with `SHIPGREMLINS_DASHBOARD_URL` set to its exact HTTPS origin, for example `https://gremlins.example.com`, and preserve the original Host header. Configuring this HTTPS origin disables password sign-in through the old plain-LAN HTTP address. ShipGremlins does not infer a trusted public origin from forwarded headers. Certificate issuance, DNS and proxy installation remain your hosting configuration.
 
 Allow inbound TCP 4311 only from your trusted subnet if needed. The CLI does not change firewall rules. LAN mode uses HTTP; do not port-forward it to the internet. `--port 4312` selects another fixed port; `--port 0` selects an available one.
 
@@ -437,7 +451,7 @@ For an older installation without `update`, stop its dashboard once, repeat the 
 | Corrupt runner state                           | Keep `.run/local-runners/state.json` and Docker outputs for recovery. The controller refuses to erase/recreate corrupt state automatically. |
 | Legacy setup asks for an automation repository | Choose local execution; advanced CI modes still need their operational repository.                                                          |
 | Invalid project ID                             | Use a lowercase ID such as `example-com`, not a domain or URL.                                                                              |
-| Expired dashboard session                      | Use `gremlins status` for the background link or reopen foreground setup.                                                                   |
+| Expired dashboard session                      | Sign in again at the normal dashboard URL. The CLI launch link remains available for owner access.                                          |
 | Missing provider settings                      | Complete Configuration and Connections, then rerun doctor before enabling the PM.                                                           |
 
 ## Advanced CI installations

@@ -174,7 +174,7 @@ A deleted PM's visible ID can be reused for a fresh, paused PM with separate
 learned context and delivery ownership; its old recovery copy remains available.
 [Delete, disconnect, and restore →](docs/RESOURCE_LIFECYCLE.md)
 
-On a homelab server, run `gremlins setup --lan` and open the printed private-network link from your laptop or phone. Edit configuration in the dashboard and find both installation and settings folders under File locations. LAN mode uses HTTP on your trusted network; see the [server guide](docs/SETUP.md#server-use) for firewall and encrypted SSH-tunnel access.
+On a homelab server, run `gremlins setup --lan` and open the private launch link once to set a dashboard password. Then bookmark the normal server URL; **Remember this device** keeps your browser signed in. HTTPS is supported through a local reverse proxy. Plain HTTP on a trusted private LAN requires an explicit setup choice and does not encrypt passwords or sessions. See the [server guide](docs/SETUP.md#server-use) for sign-in, HTTPS and SSH-tunnel access.
 
 Install future updates from the dashboard's **Updates** panel or with `gremlins update`. New code is staged and checked before activation; your existing projects, PM mandates, and credentials stay in place. The previous runtime remains available for rollback.
 

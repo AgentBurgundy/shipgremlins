@@ -221,7 +221,12 @@ function fixture(path = "/overview") {
   add(providerNodes["source-control"]!, "span", "source-count").textContent =
     "2";
   const settings = add(body, "section", "configuration");
-  for (const id of ["updates", "deleted-resources", "advanced-settings"])
+  for (const id of [
+    "account-access",
+    "updates",
+    "deleted-resources",
+    "advanced-settings",
+  ])
     add(settings, "section", id);
   const runners = add(body, "section", "runners");
   add(add(runners, "div", "", "panel-heading"), "a", "worker-shortcut");
@@ -528,6 +533,7 @@ describe("dashboard interface surfaces", () => {
   });
 
   it.each([
+    ["/settings#account-access", "account-access"],
     ["/settings#deleted-resources", "deleted-resources"],
     ["/settings#configuration", "advanced-settings"],
     ["/settings#advanced-settings", "advanced-settings"],
@@ -537,9 +543,12 @@ describe("dashboard interface surfaces", () => {
     (path, selected) => {
       const f = fixture(path);
       expect(
-        ["updates", "deleted-resources", "advanced-settings"].filter(
-          (id) => !f.get(id).hidden,
-        ),
+        [
+          "account-access",
+          "updates",
+          "deleted-resources",
+          "advanced-settings",
+        ].filter((id) => !f.get(id).hidden),
       ).toEqual([selected]);
     },
   );
