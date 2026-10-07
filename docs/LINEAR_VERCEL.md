@@ -53,6 +53,13 @@ The app's team is recorded in `projects/APP/project.json` under `linear`; each P
 
 If setup stops halfway, your local app and PM remain saved. Use **Retry Linear setup**. The operation stores UUIDs before requesting remote creation, then looks up those same IDs on retry. A lost response or controller restart therefore does not create another team or project. The recovery journal is `.run/linear/provisioning/`; keep it in backups. Corrupt journals or a different connected workspace block new creation rather than replacing mappings. Fix access or restore the journal before retrying.
 
+Setup errors identify the failed step and distinguish rejected input, expired
+access, missing permissions, rate limits and provider outages. Unknown failures
+do not claim that permissions or team limits are the cause. Project icons use
+Linear's emoji shortcode format. If Linear rejects only the decorative icon,
+setup checks the reserved project ID and retries once without that icon; other
+creation failures keep the saved intent for an explicit retry.
+
 For new projects whose journal proves ShipGremlins reserved and created them,
 retry also fills missing brief or branding fields before completing setup.
 Populated fields are preserved in case someone edited Linear during the

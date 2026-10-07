@@ -35,10 +35,11 @@ import {
 import { buildLinearProjectContent } from "./linearProjectContent.ts";
 import { LABELS } from "../dispatcher/notes.ts";
 import { parsePmCharter, type PmCharter } from "../pmCharter.ts";
-import type {
-  LinearApi,
-  LinearTeam,
-  LinearProjectResource,
+import {
+  LinearApiError,
+  type LinearApi,
+  type LinearTeam,
+  type LinearProjectResource,
 } from "../services/linear.ts";
 
 export type LinearProvisioningClient = Pick<
@@ -113,6 +114,49 @@ interface RepairTransaction {
 const UUID =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const missingId = (value: string) => value === "PASTE_LINEAR_PROJECT_ID";
+const rejectedIcon = (error: unknown) =>
+  error instanceof LinearApiError &&
+  error.category === "validation" &&
+  error.fields.length === 1 &&
+  error.fields[0] === "icon";
+function provisioningFailure(error: unknown, step: string) {
+  let guidance = "Retry to resume this step.";
+  let status = 502;
+  if (error instanceof LinearApiError) {
+    switch (error.category) {
+      case "auth":
+        guidance =
+          "Linear sign-in expired or was revoked. Reconnect this account, then retry.";
+        status = 401;
+        break;
+      case "permission":
+        guidance =
+          step === "preparing issue labels"
+            ? "Allow the selected connection to read and create issue labels in this team, then retry."
+            : "Linear denied this operation. Check this account's access to the selected team and its permission to create projects, then retry.";
+        status = 403;
+        break;
+      case "rate-limit":
+        guidance = "Linear is limiting API requests. Wait briefly, then retry.";
+        status = 429;
+        break;
+      case "limit":
+        guidance =
+          "Linear reported a workspace resource limit. Free capacity or reuse an existing team or project, then retry.";
+        break;
+      case "validation":
+        guidance = `Linear rejected the setup details${error.fields.length ? ` (${error.fields.join(", ")})` : ""}. Correct those fields and retry.`;
+        break;
+      case "unavailable":
+        guidance = "Linear is temporarily unavailable. Retry shortly.";
+        break;
+    }
+  }
+  return new LinearProvisioningError(
+    `Linear setup stopped while ${step}. ${guidance} Saved resource IDs prevent duplicate creation.`,
+    status,
+  );
+}
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 function safe(path: string) {
@@ -742,6 +786,7 @@ export function createLinearProvisioning(options: {
           "Choose a Linear team UUID from this workspace.",
         );
       const client = await options.client(project);
+      let step = "checking the Linear workspace";
       try {
         const workspace = await client.organization();
         if (!UUID.test(workspace.id)) throw new Error();
@@ -761,6 +806,7 @@ export function createLinearProvisioning(options: {
             409,
           );
         const legacy: LinearProjectResource[] = [];
+        step = "checking existing PM projects";
         for (const area of config.areas)
           if (!missingId(area.linearProjectId)) {
             const resource = await client.getProject(area.linearProjectId);
@@ -786,6 +832,7 @@ export function createLinearProvisioning(options: {
             reuse = common[0];
           }
           if (reuse) {
+            step = "checking the selected team";
             team = await client.getTeam(reuse);
             if (!team)
               throw new LinearProvisioningError(
@@ -802,6 +849,7 @@ export function createLinearProvisioning(options: {
                 .toUpperCase() || "SG"
             }${id.replaceAll("-", "").slice(0, 4).toUpperCase()}`;
           if (!team) {
+            step = "finding an available team key";
             const used = new Set(
               (await client.resources()).teams.map((existing) =>
                 existing.key.toUpperCase(),
@@ -838,6 +886,7 @@ export function createLinearProvisioning(options: {
             "The chosen team does not contain every existing PM project. Existing projects will not be moved.",
             409,
           );
+        step = "checking the saved team";
         team ??= await client.getTeam(state.team.id);
         if (!team) {
           if (state.team.created || state.team.reuse)
@@ -845,6 +894,7 @@ export function createLinearProvisioning(options: {
               "The saved Linear team is unavailable. Restore access instead of creating a replacement.",
               409,
             );
+          step = "creating the Linear team";
           team = await client.createTeam({
             id: state.team.id,
             key: state.team.key,
@@ -856,6 +906,7 @@ export function createLinearProvisioning(options: {
         state.team.created = true;
         state.connectionId = connectionId;
         state.team.name = team.name;
+        step = "saving the team mapping";
         atomic(statePath(project), state);
         edit(project, "project.json", (value) => {
           const existing = value.linear;
@@ -877,14 +928,8 @@ export function createLinearProvisioning(options: {
         });
         for (const area of selectedAreas) {
           if (client.ensureLabels) {
-            try {
-              await client.ensureLabels(team.id, [area.label, LABELS.proposal]);
-            } catch {
-              throw new LinearProvisioningError(
-                "Linear labels could not be prepared in this app's team. Allow the selected connection to read and create issue labels, then retry. Your team and PM mappings were preserved.",
-                502,
-              );
-            }
+            step = "preparing issue labels";
+            await client.ensureLabels(team.id, [area.label, LABELS.proposal]);
           }
           let intent = Object.hasOwn(state.areas, area.key)
             ? state.areas[area.key]
@@ -934,6 +979,8 @@ export function createLinearProvisioning(options: {
               ? readFileSync(mandateFile, "utf8")
               : "");
           const brief = buildLinearProjectContent(config, area, mandate);
+          let omitIcon = false;
+          step = "checking the reserved PM project";
           let remote = await client.getProject(intent.id);
           if (!remote) {
             if (intent.created)
@@ -945,12 +992,27 @@ export function createLinearProvisioning(options: {
             // reconcile this exact ID. Historical/reused projects lack this proof.
             intent.managedBrief = { version: 1, applied: false };
             atomic(statePath(project), state);
-            await client.createProject({
+            step = "creating the PM project";
+            const input = {
               id: intent.id,
               teamId: team.id,
               name: area.name,
               ...brief,
-            });
+            };
+            try {
+              await client.createProject(input);
+            } catch (error) {
+              if (!rejectedIcon(error)) throw error;
+              // Decoration must not block setup. Reconcile the reserved ID before
+              // one retry, and never retry permission, transport or other input errors.
+              remote = await client.getProject(intent.id);
+              if (!remote) {
+                const { icon: _icon, ...withoutIcon } = input;
+                await client.createProject(withoutIcon);
+              }
+              omitIcon = true;
+            }
+            step = "confirming the PM project";
             remote = await client.getProject(intent.id);
           }
           if (!remote || !remote.teamIds.includes(team.id)) throw new Error();
@@ -964,14 +1026,34 @@ export function createLinearProvisioning(options: {
               "icon",
               "color",
             ] as const) {
+              if (field === "icon" && omitIcon) continue;
               if (!remote[field]?.trim()) missing[field] = brief[field];
             }
-            if (Object.keys(missing).length)
-              await client.updateProject(intent.id, missing);
+            if (Object.keys(missing).length) {
+              step = "saving the PM project brief";
+              try {
+                await client.updateProject(intent.id, missing);
+              } catch (error) {
+                if (!missing.icon || !rejectedIcon(error)) throw error;
+                delete missing.icon;
+                // Re-read after the rejected mutation so newer human edits win.
+                const latest = await client.getProject(intent.id);
+                if (!latest || !latest.teamIds.includes(team.id)) throw error;
+                for (const field of [
+                  "description",
+                  "content",
+                  "color",
+                ] as const)
+                  if (latest[field]?.trim()) delete missing[field];
+                if (Object.keys(missing).length)
+                  await client.updateProject(intent.id, missing);
+              }
+            }
             intent.managedBrief.applied = true;
           }
           intent.created = true;
           atomic(statePath(project), state);
+          step = "saving the PM project mapping";
           edit(project, "areas.json", (value) => {
             if (!object(value.areas) || !object(value.areas[area.key]))
               throw new LinearProvisioningError(
@@ -1004,10 +1086,7 @@ export function createLinearProvisioning(options: {
           atomic(statePath(project), state);
         }
         if (error instanceof LinearProvisioningError) throw error;
-        throw new LinearProvisioningError(
-          "Linear setup did not finish. Check workspace permissions and team limits, then retry. Saved resource IDs prevent duplicate creation.",
-          502,
-        );
+        throw provisioningFailure(error, step);
       }
     });
   }

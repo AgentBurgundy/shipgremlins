@@ -18,7 +18,11 @@ import {
   createLinearProvisioning,
   type LinearProvisioningClient,
 } from "../setup/linearProvisioning.ts";
-import type { LinearProjectResource, LinearTeam } from "../services/linear.ts";
+import {
+  LinearApiError,
+  type LinearProjectResource,
+  type LinearTeam,
+} from "../services/linear.ts";
 import type { LocalRunners } from "../localRunners/engine.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 import type { OAuthConnection } from "../oauthConnection/types.ts";
@@ -84,8 +88,7 @@ async function fixture(
       return project;
     }),
     ensureLabels: vi.fn(async () => {
-      if (options.permissionDenied)
-        throw new Error("forbidden Bearer private-linear-token");
+      if (options.permissionDenied) throw new LinearApiError("permission");
     }),
   };
   const provisioning = createLinearProvisioning({
