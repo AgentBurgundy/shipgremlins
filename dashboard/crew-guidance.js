@@ -15,6 +15,7 @@
     worker: "Set up a worker",
     mandate: "Review PM settings",
     config: "Edit project settings",
+    environment: "Set up app sign-in",
   };
   function action(project, code, label, stepId) {
     const button = el(
@@ -241,6 +242,8 @@
     heading.append(add);
     root.append(heading);
     const areas = project.areas || [];
+    if (areas.length && window.renderPatrolPlan)
+      root.append(window.renderPatrolPlan(project, { compact: true }));
     if (!areas.length)
       root.append(
         el(

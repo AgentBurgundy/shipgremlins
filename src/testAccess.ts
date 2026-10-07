@@ -153,3 +153,49 @@ export function resolveTestAccess(
     }),
   };
 }
+
+/** A saved hosting connection does not establish how to sign in to the app. */
+export function inspectTestAccess(
+  access: TestAccess | undefined,
+  saved: Record<string, string | undefined>,
+  legacyDatabaseSecret?: string,
+): { ready: boolean; message: string } {
+  if (access?.kind === "public")
+    return {
+      ready: true,
+      message:
+        "Public-only testing is selected. Signed-in journeys will remain untested.",
+    };
+  if (access?.kind === "password") {
+    try {
+      resolveTestAccess(access, saved);
+      return {
+        ready: true,
+        message:
+          "Test-account credentials are saved. Test access checks whether sign-in actually works.",
+      };
+    } catch {
+      return {
+        ready: false,
+        message:
+          "Finish Test login in Environment: save the selected test-account username and password in Connections, then test sign-in before running a browser PM.",
+      };
+    }
+  }
+  if (legacyDatabaseSecret)
+    return saved[legacyDatabaseSecret]?.trim()
+      ? {
+          ready: true,
+          message: "The existing sign-in recipe and its credential are saved.",
+        }
+      : {
+          ready: false,
+          message:
+            "Finish Test login in Environment: restore the saved credential for this app's existing sign-in recipe in Connections, then test access.",
+        };
+  return {
+    ready: false,
+    message:
+      "Choose Test login in Environment before running a browser PM: add a dedicated test account, or explicitly choose public-only testing. Connecting hosting opens the preview but does not sign in to your app.",
+  };
+}

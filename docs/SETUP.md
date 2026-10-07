@@ -114,10 +114,18 @@ The dashboard provides pause/resume, browser verification, repair, idle-worker r
 
 Optional [project telemetry](TELEMETRY.md) lets PMs read scoped Sentry logs/errors, Datadog logs, and Mixpanel Insights reports. Provider accounts still require live validation.
 
-For browser work, configure [test accounts](TEST_ACCOUNTS.md) after choosing the
-test environment. Password values go in Connections, never the secret-reference
-fields. The current guided checker does not complete email-code, magic-link,
-MFA, or external SSO flows.
+Before the first browser patrol, **App sign-in** asks whether your gremlin should
+use a dedicated test account or test **public pages only**. Connecting Vercel
+opens the preview; it does not sign into your app. An unanswered choice stays
+visible as a setup step, including after adoption. Code-only Discovery can run
+while you finish this step.
+
+For signed-in work, create a dedicated identity in your test app and configure
+[test accounts](TEST_ACCOUNTS.md). Password values go in Connections, never the
+secret-reference fields. Saving credentials makes the setup available; use
+**Test environment** to check that login actually works. Explicit public-only
+patrols cannot verify account features. The current guided checker does not
+complete email-code, magic-link, MFA, or external SSO flows.
 
 Connect an optional [Slack channel](SLACK.md) once for PM patrol results, coding drafts ready for review, and blockers from every project. Choose Add to Slack in Connections, or save an incoming webhook when the OAuth broker is unavailable. Projects inherit that channel; leave optional project overrides empty unless a project needs a different channel. Slack is not required to run gremlins. Browser readiness checks do not post messages.
 

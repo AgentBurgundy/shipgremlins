@@ -24,6 +24,7 @@ import { projectRuntimeKey } from "../projectIdentity.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
 import { baseBranch } from "../projectCapabilities.ts";
 import { saveConnections } from "../setup/connections.ts";
+import type { TestAccess } from "../testAccess.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -67,6 +68,7 @@ function edit(
     workflow?: unknown;
     verification?: unknown;
     environments?: unknown;
+    signIn?: unknown;
     branches?: { production: string; staging: string; integration: string };
     provider?: string;
     serverUrl?: string;
@@ -145,7 +147,168 @@ function setup(value: LinearTicket | null = ticket) {
     }),
   };
 }
+function chooseBrowserAccess(access: TestAccess = { kind: "public" }) {
+  edit("project.json", (raw) => {
+    raw.verification = { mode: "browser", environment: "integration" };
+    raw.environments = {
+      integration: { kind: "vercel", role: "preview", ...raw.vercel, access },
+    };
+  });
+}
 describe("local job preparation", () => {
+  it("requires an explicit test-login choice for manual and scheduled browser PMs before preview preparation", async () => {
+    const beforePmStart = vi.fn(async () => {});
+    const prepared = createJobPreparation({ root, env, beforePmStart });
+    for (const runOnce of [true, false])
+      await expect(
+        prepared.validate({
+          type: "pm",
+          project: "app",
+          area: "core",
+          runOnce,
+        }),
+      ).rejects.toThrow("Choose Test login in Environment");
+    await expect(
+      prepared.prepareJob({
+        ...job,
+        type: "pm",
+        area: "core",
+        ticket: undefined,
+      }),
+    ).rejects.toThrow("Choose Test login in Environment");
+    expect(beforePmStart).not.toHaveBeenCalled();
+    expect((await setup().scheduledJobs()).map((input) => input.type)).toEqual([
+      "developer",
+    ]);
+  });
+
+  it("allows explicitly public PM coverage and reports authenticated flows as untested", async () => {
+    chooseBrowserAccess();
+    // A former login recipe must not override the owner's new public-only choice.
+    edit("project.json", (raw) => {
+      raw.signIn = {
+        kind: "neon-auth-otp",
+        email: "test@example.test",
+        path: "/login",
+        databaseUrlSecret: "RETIRED_DATABASE",
+      };
+    });
+    const prepared = setup();
+    await expect(
+      prepared.validate({
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+      }),
+    ).resolves.toMatchObject({ area: { key: "core" } });
+    expect(
+      (await prepared.scheduledJobs()).some((input) => input.type === "pm"),
+    ).toBe(true);
+    const payload = await prepared.prepareJob({
+      ...job,
+      type: "pm",
+      area: "core",
+      ticket: undefined,
+    });
+    expect(payload.prompt).toContain(
+      "owner explicitly selected public-only testing",
+    );
+    expect(payload.prompt).toContain(
+      "Signed-in flows, account permissions, private data and billing actions are untested",
+    );
+    expect(payload.prompt).not.toContain(
+      "No password test account is configured",
+    );
+    expect(payload.prompt).not.toContain("neon-auth-otp");
+    expect(payload.credentials).not.toHaveProperty(
+      "GREMLINS_PREVIEW_DATABASE_URL",
+    );
+  });
+
+  it("rechecks password credentials at admission and immediately before a queued browser PM starts", async () => {
+    chooseBrowserAccess({
+      kind: "password",
+      loginPath: "/login",
+      usernameSelector: "#email",
+      passwordSelector: "#password",
+      submitSelector: "button",
+      successSelector: "#account",
+      accounts: [
+        {
+          name: "Member",
+          usernameSecret: "TEST_EMAIL",
+          passwordSecret: "TEST_PASSWORD",
+        },
+      ],
+    });
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      area: "core",
+      runOnce: true,
+    };
+    const prepared = setup();
+    await expect(prepared.validate(input)).rejects.toThrow(
+      "save the selected test-account",
+    );
+    expect(
+      (await prepared.scheduledJobs()).some((queued) => queued.type === "pm"),
+    ).toBe(false);
+    saveConnections(root, {
+      TEST_EMAIL: "private-user",
+      TEST_PASSWORD: "private-password",
+    });
+    await expect(prepared.validate(input)).resolves.toMatchObject({
+      area: { key: "core" },
+    });
+    const payload = await prepared.prepareJob({
+      ...job,
+      ...input,
+      ticket: undefined,
+    });
+    expect(payload.credentials?.GREMLINS_TEST_PASSWORD_1).toBe(
+      "private-password",
+    );
+    expect(payload.prompt).not.toContain("private-password");
+    writeFileSync(join(root, ".env"), "TEST_EMAIL=private-user\n");
+    await expect(
+      prepared.prepareJob({ ...job, ...input, ticket: undefined }),
+    ).rejects.toThrow("save the selected test-account");
+  });
+
+  it("preserves legacy OTP browser login without requiring a second test-access selection", async () => {
+    edit("project.json", (raw) => {
+      raw.signIn = {
+        kind: "neon-auth-otp",
+        email: "test@example.test",
+        path: "/login",
+        databaseUrlSecret: "TEST_DATABASE",
+      };
+    });
+    saveConnections(root, { TEST_DATABASE: "private-database-url" });
+    const prepared = setup();
+    await expect(
+      prepared.validate({
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+      }),
+    ).resolves.toMatchObject({ area: { key: "core" } });
+    const payload = await prepared.prepareJob({
+      ...job,
+      type: "pm",
+      area: "core",
+      ticket: undefined,
+    });
+    expect(payload.prompt).toContain("Use the existing sign-in recipe below");
+    expect(payload.credentials?.GREMLINS_PREVIEW_DATABASE_URL).toBe(
+      "private-database-url",
+    );
+    expect(payload.prompt).not.toContain("private-database-url");
+  });
+
   it("reconciles managed preview access before handing credentials to the worker", async () => {
     saveConnections(root, { VERCEL_BYPASS_APP: "obsolete-private-bypass" });
     const heal = vi.fn(async () => {
@@ -346,6 +509,7 @@ describe("local job preparation", () => {
   ] as const)(
     "schedules patrol=%s independently from coding=%s",
     async (enabled, codingEnabled, types) => {
+      chooseBrowserAccess();
       edit("areas.json", (raw) => {
         Object.assign(raw.areas.core, { enabled, codingEnabled });
       });
@@ -506,6 +670,7 @@ describe("local job preparation", () => {
   });
 
   it("runs a saved Grumblin on the real selected test app without Linear, full-doctor setup, telemetry, or publication", async () => {
+    chooseBrowserAccess();
     edit("project.json", (raw) => {
       raw.verified = null;
     });
@@ -1095,6 +1260,7 @@ describe("local job preparation", () => {
           serviceId: "web",
           branch: "develop",
           tokenSecret: "RAILWAY_QA",
+          access: { kind: "public" },
         },
         unused: { kind: "vercel", role: "preview", projectId: "prj_unused" },
       };
@@ -1354,6 +1520,7 @@ describe("local job preparation", () => {
     ).rejects.toThrow("must be open, approved");
   });
   it("keeps scheduled PMs paused while permitting explicit one-off PM and approved Coding runs", async () => {
+    chooseBrowserAccess();
     edit("areas.json", (raw) => {
       raw.areas.core.enabled = false;
     });
@@ -1398,6 +1565,7 @@ describe("local job preparation", () => {
     await expect(setup().validate(job)).rejects.toThrow("doctor");
   });
   it("does not let Run once bypass missing mapping, mandate, or AI credentials", async () => {
+    chooseBrowserAccess();
     const input = {
       type: "pm" as const,
       project: "app",
@@ -1424,6 +1592,7 @@ describe("local job preparation", () => {
     await expect(missingAi.validate(input)).rejects.toThrow("Claude Code");
   });
   it("checks manual PM mapping ownership and pins its workspace again before launch", async () => {
+    chooseBrowserAccess();
     const projectPath = join(root, "projects/app/project.json");
     const raw = JSON.parse(readFileSync(projectPath, "utf8"));
     raw.linear = { teamId: "11111111-1111-4111-8111-111111111111" };
@@ -1620,6 +1789,7 @@ describe("local job preparation", () => {
     expect(payload.prompt).not.toContain("you may self-approve");
   });
   it("does not automatically relabel proposals when another app shares the Linear project", async () => {
+    chooseBrowserAccess();
     initializeSetup(root, packageRoot, {
       project: "second-app",
       repo: "owner/second",
@@ -1659,6 +1829,7 @@ describe("local job preparation", () => {
   it.each(["permission", "ambiguous"])(
     "prevents an unroutable PM launch after a %s label setup failure",
     async (failure) => {
+      chooseBrowserAccess();
       const ensureLabels = vi.fn(async () => {
         throw new Error("provider secret must not leak");
       });
@@ -1731,6 +1902,7 @@ describe("local job preparation", () => {
     expect(payload.credentials?.GITLAB_TOKEN).toBe(env.GITLAB_TOKEN);
   });
   it("produces stable schedule identities and one approved-ticket identity across polls", async () => {
+    chooseBrowserAccess();
     const scheduler = setup();
     const first = await scheduler.scheduledJobs();
     expect(first).toEqual(await scheduler.scheduledJobs());

@@ -4,6 +4,12 @@ Set up a login only when a PM or Grumblin needs to use a signed-in part of your
 test app. Repository Discovery needs no browser account. First choose a preview,
 staging, or isolated Docker environment; use dedicated test identities and data.
 
+The project's **Environment → App sign-in** asks you to choose signed-in testing
+or **public pages only** before a browser patrol. There is no implicit public
+default. This choice also appears after adopting your gremlin and beside its
+run controls. Vercel deployment access is separate from your application's
+login. You can still start a code-only Discovery while preparing the account.
+
 The guided checker currently supports a **same-origin password form with the
 username and password available before one submit**. It does not create the
 account, assign a role, read an inbox, or establish an SSO session for you.
@@ -12,8 +18,10 @@ account, assign a role, read an inbox, or establish an SSO session for you.
 
 1. Create a dedicated account through your test app's normal account-management
    process. Give it the permissions needed for the journey you want to test.
-2. In the project's **Environment → Test accounts**, choose **Password login ·
-   dedicated test accounts** and describe the account and form.
+2. In the project's **Environment → App sign-in**, choose **Yes, test signed-in
+   flows** and describe the account and form. Credential reference names are
+   generated for you; open **Credential reference names** only if you need to use
+   values already saved under other names.
 
 | Field                      | What to enter                                                                           | Example                            |
 | -------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------- |
@@ -29,7 +37,7 @@ account, assign a role, read an inbox, or establish an SSO session for you.
    If the page has another form, scope the submit selector to the sign-in dialog,
    for example `[role="dialog"] button[type="submit"]`. The environment test
    reports ambiguous selectors and takes you directly to the field to repair.
-4. Choose **Save environment**, then open **Connections → Project access**.
+4. Choose **Save & add test credentials** to open **Connections → App access**.
    The saved references appear with the account's name. Enter the actual test
    username/email and password there. Values stay in the controller's private
    configuration `.env`; the environment recipe contains only their names.

@@ -52,7 +52,11 @@ import {
 } from "../pmKnowledge/prompts.ts";
 import { createProjectKnowledge } from "../projectKnowledge/index.ts";
 import type { ExecutionLimits } from "../execution.ts";
-import { resolveTestAccess, type TestAccess } from "../testAccess.ts";
+import {
+  inspectTestAccess,
+  resolveTestAccess,
+  type TestAccess,
+} from "../testAccess.ts";
 import { resolveRepositoryHead } from "../projectOnboarding/repository.ts";
 import { foundationNeeded } from "../ideaCrew/foundation.ts";
 import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
@@ -168,7 +172,10 @@ function projectSecrets(
     verification.target.kind === "vercel"
       ? verification.target.bypassSecret
       : undefined;
-  const names = [bypass, project.config.signIn?.databaseUrlSecret].filter(
+  const legacySignIn = verification.target.access
+    ? null
+    : project.config.signIn;
+  const names = [bypass, legacySignIn?.databaseUrlSecret].filter(
     (name): name is string => !!name,
   );
   assertBrowserSecretSafety(project.config, root);
@@ -212,9 +219,16 @@ function projectSecrets(
   return result;
 }
 
-function accessInstruction(access: TestAccess | undefined): string {
-  if (!access || access.kind === "public")
-    return "No password test account is configured for this environment.";
+function accessInstruction(
+  access: TestAccess | undefined,
+  legacySignIn = false,
+): string {
+  if (access?.kind === "public")
+    return "The owner explicitly selected public-only testing. Explore only signed-out and guest journeys. Signed-in flows, account permissions, private data and billing actions are untested unless independently verified with authorized test access. Report these coverage limits in the outcome; opening a landing page is not a full application walkthrough. Do not ask for a test account as though this choice were an accidental omission.";
+  if (!access)
+    return legacySignIn
+      ? "Use the existing sign-in recipe below. Report actual sign-in results and leave any inaccessible journeys explicitly unverified."
+      : "No app sign-in method has been selected. Signed-in journeys remain untested; report this coverage limit explicitly.";
   return `Use only these dedicated test accounts for the selected environment. Playwright MCP privately resolves secret names: pass the plain string GREMLINS_TEST_USERNAME_1 or GREMLINS_TEST_PASSWORD_1 as the browser_fill_form or browser_type value (use the matching number for each account; do not wrap the name in tags). Do not read, print or paste the actual values into tool calls. Private browser access blocks navigation and writes outside the selected app origin, including external SSO. Distinguish those worker restrictions from application defects. Login recipe: ${JSON.stringify({ ...access, accounts: access.accounts.map((account, index) => ({ name: account.name, usernameVariable: `GREMLINS_TEST_USERNAME_${index + 1}`, passwordVariable: `GREMLINS_TEST_PASSWORD_${index + 1}` })) })}. This login configuration is not proof of RBAC correctness; test roles and isolation explicitly.`;
 }
 
@@ -284,6 +298,21 @@ export function createJobPreparation(options: JobPreparationOptions) {
       Object.entries(env).filter(([, value]) => value !== undefined),
     ),
   });
+  function pmTestAccess(project: Project) {
+    const verification = effectiveVerification(project.config);
+    return verification.mode === "repository"
+      ? { ready: true, message: "Repository-only investigation." }
+      : inspectTestAccess(
+          verification.target.access,
+          connections(),
+          project.config.signIn?.databaseUrlSecret,
+        );
+  }
+  function assertPmTestAccess(project: Project, input: LocalJobInput) {
+    if (input.type !== "pm" || input.pmMode === "discovery") return;
+    const access = pmTestAccess(project);
+    if (!access.ready) throw new JobReadinessError(access.message);
+  }
   const knowledge = createPmKnowledge({
     root,
     secrets: () => {
@@ -446,6 +475,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new JobReadinessError(
         "This project was replaced after the job was queued. Review the new project and start a fresh run.",
       );
+    assertPmTestAccess(project, input);
     if (input.pmMode === "discovery" || input.pmMode === "grumblin") {
       if (
         input.type !== "pm" ||
@@ -845,6 +875,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
         : undefined;
     const verification = effectiveVerification(project.config);
     const workflow = effectiveWorkflow(project.config);
+    const signIn =
+      verification.mode === "browser" && !verification.target.access
+        ? project.config.signIn
+        : null;
     const branch = baseBranch(project.config);
     const deployedBranch = inspectionBranch(project.config);
     const checkoutBranch = job.type === "pm" ? deployedBranch : branch;
@@ -928,8 +962,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
       `Ownership paths and gates: ${JSON.stringify({ paths: area.paths, sharedTouchpoints: area.sharedTouchpoints, tiers: project.tiers, commands: project.config.commands })}`,
       ...(verification.mode === "browser"
         ? [
-            accessInstruction(verification.target.access),
-            `Playwright MCP is already configured to apply saved Vercel preview access privately to the selected environment only. Navigate directly to the clean preview URL. With private access configured, external navigation and writes are blocked; report worker restrictions separately from app defects. Never put bypass credentials in URLs, tool calls, screenshots or logs. If Vercel still asks for sign-in, report preview access as blocked; curl access does not prove a browser walkthrough. Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
+            accessInstruction(verification.target.access, !!signIn),
+            `Playwright MCP is already configured to apply saved Vercel preview access privately to the selected environment only. Navigate directly to the clean preview URL. With private access configured, external navigation and writes are blocked; report worker restrictions separately from app defects. Never put bypass credentials in URLs, tool calls, screenshots or logs. If Vercel still asks for sign-in, report preview access as blocked; curl access does not prove a browser walkthrough. Sign-in recipe: ${JSON.stringify(signIn ? { ...signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
           ]
         : []),
       ticket
@@ -1087,11 +1121,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
               ...(grumblin ? [] : [instructions.at(-1)]),
               ...(verification.mode === "browser"
                 ? [
-                    accessInstruction(verification.target.access),
+                    accessInstruction(verification.target.access, !!signIn),
                     "Playwright MCP automatically applies saved Vercel preview access privately to the selected app only. With private access configured, external navigation and writes are blocked; report worker restrictions separately from app defects. Navigate directly to its clean URL; never put bypass credentials in URLs or browser tool calls. If Vercel sign-in still appears, report the browser check blocked. curl responses are not browser evidence.",
                     grumblin
                       ? "No database or hosting credentials are available; use the browser's normal sign-in with the supplied test account placeholders."
-                      : `Sign-in recipe: ${JSON.stringify(project.config.signIn ? { ...project.config.signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
+                      : `Sign-in recipe: ${JSON.stringify(signIn ? { ...signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
                   ]
                 : []),
             ].join("\n\n")
@@ -1192,8 +1226,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
           );
         return await options.prepareSyncRepair(job);
       }
-      if (job.type === "pm" && job.pmMode !== "discovery")
+      if (job.type === "pm" && job.pmMode !== "discovery") {
+        assertPmTestAccess(projectFor(job), job);
         await options.beforePmStart?.(job);
+      }
       const payload = await prepare(job);
       if (
         job.type === "pm" &&
@@ -1243,6 +1279,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         if (
           area.enabled &&
           !foundationNeeded(root, project) &&
+          pmTestAccess(project).ready &&
           scheduledThisMinute(area.schedule, now)
         )
           jobs.push({

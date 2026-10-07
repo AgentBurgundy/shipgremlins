@@ -15,6 +15,7 @@
     worker: "Set up a runner",
     mandate: "Review PM brief",
     config: "Open project settings",
+    environment: "Set up app sign-in",
   };
   const sameProject = (job, project) =>
     job.type === "developer" &&
@@ -74,7 +75,10 @@
       active.find((job) => job.status === "running") ||
       active[0] ||
       (!confirmed ? operation?.job : null);
-    const blocker = project.readiness?.blockers?.[0];
+    // Test login limits browser patrols; approved coding can still proceed.
+    const blocker = project.readiness?.blockers?.find(
+      (item) => item.id !== "test_access",
+    );
     const path = `/projects/${encodeURIComponent(project.name)}`;
     const promotion = project.workflow?.kind === "promotion";
     root.dataset.state = "ready";

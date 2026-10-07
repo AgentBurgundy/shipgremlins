@@ -304,6 +304,9 @@ describe("environment diagnosis and recovery", () => {
       walk(resultPanel(root)).find((item) => item.tagName === "TIME")
         ?.textContent,
     ).toContain("Last checked");
+    await walk(root)
+      .find((item) => item.textContent === "Edit test account setup")!
+      .fire("click");
     const login = walk(root).find(
       (item) => item.id === "onboarding-shop-loginPath",
     )!;
@@ -436,6 +439,9 @@ describe("environment diagnosis and recovery", () => {
       root = new Element();
     f.panel.mount(root, { name: "shop", repo: "owner/shop" });
     await settle();
+    await walk(root)
+      .find((item) => item.textContent === "Edit test account setup")!
+      .fire("click");
     const input = walk(root).find(
       (item) => item.id === "onboarding-shop-loginPath",
     )!;
@@ -567,10 +573,9 @@ describe("automatic Vercel environment setup", () => {
       )!
       .fire("click");
     const access = walk(root).find(
-      (item) => item.id === "onboarding-shop-access",
+      (item) => item.id === "onboarding-shop-access-password",
     )!;
-    access.value = "password";
-    access.fire("change");
+    access.fire("click");
     const input = walk(root).find(
       (item) => item.id === "onboarding-shop-successSelector",
     )!;
@@ -1306,6 +1311,9 @@ describe("automatic Vercel environment setup", () => {
       root = new Element();
     f.panel.mount(root, { name: "shop", repo: "owner/shop" });
     await settle();
+    await walk(root)
+      .find((item) => item.textContent === "Edit test account setup")!
+      .fire("click");
     const input = walk(root).find(
       (item) => item.id === "onboarding-shop-loginPath",
     )!;
@@ -1373,6 +1381,9 @@ describe("automatic Vercel environment setup", () => {
       root = new Element();
     f.panel.mount(root, { name: "shop", repo: "owner/shop" });
     await settle();
+    await walk(root)
+      .find((item) => item.id === "onboarding-shop-access-public")!
+      .fire("click");
     const choice = walk(automatic(root)).find(
       (item) => item.className === "environment-preview-choice",
     )!;
@@ -1423,6 +1434,470 @@ const vercelState = (target: Record<string, unknown> = {}) => ({
       ...target,
     },
   },
+});
+
+describe("explicit app sign-in onboarding", () => {
+  const accessPanel = (root: Element) =>
+    walk(root).find((item) => item.className === "onboarding-app-access")!;
+  const chooseAccess = (root: Element, kind: string) =>
+    walk(root)
+      .find((item) => item.id === `onboarding-shop-access-${kind}`)!
+      .fire("click");
+
+  it("asks about app sign-in before hosting settings without defaulting to public access", async () => {
+    const f = fixture(),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const access = accessPanel(root);
+    expect(access.hidden).toBe(false);
+    expect(text(access)).toContain("Does your app have a sign-in?");
+    expect(text(access)).toContain(
+      "Connecting Vercel opens the preview; it does not sign them into your app.",
+    );
+    const choices = walk(access).filter(
+      (item) =>
+        item.className.startsWith("onboarding-access-choice ") ||
+        item.className === "onboarding-access-choice",
+    );
+    expect(choices).toHaveLength(2);
+    expect(
+      choices.every((item) => item.attributes.get("aria-pressed") === "false"),
+    ).toBe(true);
+    expect(walk(root).indexOf(access)).toBeLessThan(
+      walk(root).findIndex((item) => item.className === "onboarding-automatic"),
+    );
+    expect(
+      walk(root).find((item) => item.textContent === "Save environment")!
+        .disabled,
+    ).toBe(true);
+    expect(() =>
+      f.window.readOnboardingTarget({ ...hosted(), accessKind: undefined }),
+    ).toThrow("Choose how your gremlins should access the app");
+    f.panel.destroy();
+  });
+
+  it("keeps the app sign-in choice visible after a saved Vercel preview passed its public browser check", async () => {
+    const data = vercelState({ access: undefined });
+    const current = {
+      ...data,
+      environment: { ...data.environment, verification: { status: "passed" } },
+      previewAccess: { status: "verified" },
+    };
+    const f = fixture(vi.fn(async () => current)),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      areas: [{ name: "product" }],
+    });
+    await settle();
+    expect(accessPanel(root).hidden).toBe(false);
+    expect(f.window.onboardingStep(current)).toBe(2);
+    expect(text(root)).toContain("Your app sign-in is not set up yet.");
+    expect(text(root)).not.toContain("Your crew can explore.");
+    expect(walk(root).some((item) => item.textContent === "Open project")).toBe(
+      false,
+    );
+    expect(
+      walk(root).find((item) => item.textContent === "Test environment")!
+        .disabled,
+    ).toBe(true);
+    await walk(root)
+      .find((item) => item.textContent === "Set up app sign-in")!
+      .fire("click");
+    expect(accessPanel(root).scrollIntoView).toHaveBeenCalled();
+    expect(f.api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+    f.panel.destroy();
+  });
+
+  it("saves generated credential references before opening the secure Connections form", async () => {
+    let current = vercelState({ access: undefined });
+    const api = vi.fn(async (path: string, body?: unknown) => {
+      if (path.endsWith("/configure")) {
+        current = {
+          ...current,
+          configurationRevision: "config-saved",
+          environment: {
+            ...current.environment,
+            target: (body as { target: typeof current.environment.target })
+              .target,
+          },
+        };
+      }
+      return current;
+    });
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      instanceId: "new-instance",
+      repo: "owner/shop",
+    });
+    await settle();
+    await chooseAccess(root, "password");
+    expect(text(accessPanel(root))).toContain(
+      "Create a dedicated user in your test app",
+    );
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-account-0-name")!
+        .value,
+    ).toBe("Test user");
+    await walk(root)
+      .find((item) => item.textContent === "Save & add test credentials")!
+      .fire("click");
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+    const success = walk(root).find(
+      (item) => item.id === "onboarding-shop-successSelector",
+    )!;
+    success.value = '[data-testid="account-menu"]';
+    success.fire("input");
+    await walk(root)
+      .find((item) => item.textContent === "Save & add test credentials")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      expect.objectContaining({
+        target: expect.objectContaining({
+          access: expect.objectContaining({
+            kind: "password",
+            accounts: [
+              {
+                name: "Test user",
+                usernameSecret: "APP_SHOP_NEWINSTANCE_TEST_USER_USERNAME",
+                passwordSecret: "APP_SHOP_NEWINSTANCE_TEST_USER_PASSWORD",
+              },
+            ],
+          }),
+        }),
+      }),
+    );
+    expect(f.window.dashboardPages.navigate).toHaveBeenCalledWith(
+      "/connections#project-access",
+    );
+    expect(JSON.stringify(api.mock.calls)).not.toContain('"password":');
+    f.panel.destroy();
+  });
+
+  it("keeps credential setup on the page when saving fails", async () => {
+    const current = vercelState({ access: undefined }),
+      api = vi.fn(async (path: string) => {
+        if (path.endsWith("/configure"))
+          throw new Error("The project changed. Refresh before saving.");
+        return current;
+      }),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await chooseAccess(root, "password");
+    const success = walk(root).find(
+      (item) => item.id === "onboarding-shop-successSelector",
+    )!;
+    success.value = "#account-menu";
+    success.fire("input");
+    await walk(root)
+      .find((item) => item.textContent === "Save & add test credentials")!
+      .fire("click");
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    expect(success.value).toBe("#account-menu");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(text(root)).toContain("The project changed. Refresh before saving.");
+    f.panel.destroy();
+  });
+
+  it.each([
+    {
+      profile: "hosted",
+      target: {
+        kind: "url",
+        role: "preview",
+        url: "https://preview.example.test/path",
+      },
+    },
+    {
+      profile: "docker",
+      target: {
+        kind: "docker",
+        role: "preview",
+        recipe: { kind: "image", image: "example/app:latest" },
+        port: 3000,
+        start: ["npm", "start"],
+        env: { APP_KEY: "TEST_APP_KEY" },
+        seed: ["npm", "run", "seed"],
+      },
+    },
+  ])(
+    "preserves a saved $profile environment's exact identity and settings when adding app access",
+    async ({ profile, target }) => {
+      const data = {
+          ...state(),
+          environment: { name: "customer-preview", profile, target },
+        },
+        api = vi.fn(async (_path: string, _body?: unknown) => data),
+        f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+      await settle();
+      await chooseAccess(root, "password");
+      const success = walk(root).find(
+        (item) => item.id === "onboarding-shop-successSelector",
+      )!;
+      success.value = "#account-menu";
+      success.fire("input");
+      // Merely opening the environment form does not make this an environment
+      // replacement or normalize its optional fields.
+      await walk(root)
+        .find((item) => item.textContent === "Change environment")!
+        .fire("click");
+      await walk(root)
+        .find((item) => item.textContent === "Save & add test credentials")!
+        .fire("click");
+      expect(api).toHaveBeenLastCalledWith(
+        "/api/projects/shop/onboarding/configure",
+        {
+          configurationRevision: "config-1",
+          profile,
+          environment: "customer-preview",
+          target: {
+            ...target,
+            access: expect.objectContaining({
+              kind: "password",
+              successSelector: "#account-menu",
+            }),
+          },
+        },
+      );
+      f.panel.destroy();
+    },
+  );
+
+  it.each([
+    {
+      profile: "hosted",
+      target: {
+        kind: "url",
+        role: "preview",
+        url: "https://preview.example.test/",
+      },
+      field: "url",
+      value: "https://edited.example.test/",
+      expected: { url: "https://edited.example.test/" },
+    },
+    {
+      profile: "docker",
+      target: {
+        kind: "docker",
+        role: "preview",
+        recipe: { kind: "image", image: "example/app:latest" },
+        port: 3000,
+        seed: ["npm", "run", "seed"],
+      },
+      field: "advanced",
+      value: "{}",
+      expected: {
+        recipe: { kind: "image", image: "example/app:latest" },
+        port: 3000,
+        healthPath: "/",
+      },
+    },
+  ])(
+    "applies edited $profile settings to the saved environment when saving account access",
+    async ({ profile, target, field, value, expected }) => {
+      const data = {
+          ...state(),
+          environment: { name: "customer-preview", profile, target },
+        },
+        api = vi.fn(async (_path: string, _body?: unknown) => data),
+        f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+      await settle();
+      await chooseAccess(root, "public");
+      await walk(root)
+        .find((item) => item.textContent === "Change environment")!
+        .fire("click");
+      const input = walk(root).find(
+        (item) => item.id === `onboarding-shop-${field}`,
+      )!;
+      input.value = value;
+      input.fire("input");
+      await walk(root)
+        .find((item) => item.textContent === "Save public-pages access")!
+        .fire("click");
+      expect(api).toHaveBeenLastCalledWith(
+        "/api/projects/shop/onboarding/configure",
+        {
+          configurationRevision: "config-1",
+          profile,
+          environment: "customer-preview",
+          target: {
+            kind: target.kind,
+            role: "preview",
+            ...expected,
+            access: { kind: "public" },
+          },
+        },
+      );
+      f.panel.destroy();
+    },
+  );
+
+  it("prompts for actual credentials when only the login recipe has been saved", async () => {
+    const target = {
+        access: {
+          kind: "password",
+          loginPath: "/login",
+          usernameSelector: 'input[type="email"]',
+          passwordSelector: 'input[type="password"]',
+          submitSelector: 'button[type="submit"]',
+          successSelector: "#account-menu",
+          accounts: [
+            {
+              name: "Test user",
+              usernameSecret: "SHOP_TEST_USER",
+              passwordSecret: "SHOP_TEST_PASSWORD",
+            },
+          ],
+        },
+      },
+      f = fixture(vi.fn(async () => vercelState(target))),
+      root = new Element(),
+      project = {
+        name: "shop",
+        repo: "owner/shop",
+        readiness: { steps: [{ id: "test_access", ready: false }] },
+      };
+    f.panel.mount(root, project);
+    await settle();
+    expect(text(accessPanel(root))).toContain(
+      "Test account details saved. Add its email and password in Connections before browser patrols.",
+    );
+    const add = walk(accessPanel(root)).find(
+      (item) => item.textContent === "Add test credentials",
+    )!;
+    expect(add.className).toBe("button button-dark");
+    expect((add as Element & { href: string }).href).toBe(
+      "/connections#project-access",
+    );
+    f.panel.mount(root, {
+      ...project,
+      readiness: { steps: [{ id: "test_access", ready: true }] },
+    });
+    await settle();
+    expect(text(accessPanel(root))).not.toContain("Add its email and password");
+    expect(text(accessPanel(root))).toContain("whether sign-in is verified");
+    f.panel.destroy();
+  });
+
+  it("keeps the chosen login settings when Vercel finishes attaching the test preview", async () => {
+    let current: object = state();
+    const api = vi.fn(async (_path: string, _body?: unknown) => current),
+      f = fixture(api),
+      root = new Element();
+    let configured!: () => Promise<void>;
+    f.window.createVercelSetup = (options) => {
+      configured = options.onConfigured;
+      return {
+        mount() {},
+        setActive() {},
+        destroy() {},
+        syncConnections() {},
+        isBusy: () => false,
+      };
+    };
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await chooseAccess(root, "password");
+    const login = walk(root).find(
+      (item) => item.id === "onboarding-shop-loginPath",
+    )!;
+    login.value = "/sign-in/password";
+    login.fire("input");
+    await walk(root)
+      .find((item) => item.textContent === "Choose a test environment")!
+      .fire("click");
+    await walk(root)
+      .find((item) => item.textContent === "Find a preview with Vercel")!
+      .fire("click");
+    current = {
+      ...vercelState({ access: undefined }),
+      configurationRevision: "config-preview-ready",
+    };
+    await configured();
+    // onConfigured hides the environment editor; the inline account question
+    // and the owner's draft remain available as the next step.
+    expect(accessPanel(root).hidden).toBe(false);
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-loginPath")!.value,
+    ).toBe("/sign-in/password");
+    expect(
+      walk(root)
+        .find((item) => item.id === "onboarding-shop-access-password")!
+        .attributes.get("aria-pressed"),
+    ).toBe("true");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(api.mock.calls.some(([, body]) => Boolean(body))).toBe(false);
+    f.panel.destroy();
+  });
+
+  it("requires and saves an explicit public-only choice with honest coverage", async () => {
+    let current = vercelState({ access: undefined });
+    const api = vi.fn(async (path: string, body?: unknown) => {
+        if (path.endsWith("/configure"))
+          current = {
+            ...current,
+            environment: {
+              ...current.environment,
+              target: (body as { target: typeof current.environment.target })
+                .target,
+            },
+          };
+        return current;
+      }),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await chooseAccess(root, "public");
+    expect(text(accessPanel(root))).toContain(
+      "Signed-in journeys will not be verified.",
+    );
+    await walk(root)
+      .find((item) => item.textContent === "Save public-pages access")!
+      .fire("click");
+    expect(current.environment.target.access).toEqual({ kind: "public" });
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    f.panel.destroy();
+  });
+
+  it("preserves legacy sign-in recipes without labeling them as public-only", async () => {
+    const environment = {
+      ...vercelState({ access: undefined }).environment,
+      legacySignIn: true,
+      legacySignInSummary: "Existing browser login recipe retained.",
+      verification: { status: "passed" },
+    };
+    const f = fixture(vi.fn(async () => ({ ...state(), environment }))),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(
+      walk(root)
+        .find((item) => item.id === "onboarding-shop-access-legacy")!
+        .attributes.get("aria-pressed"),
+    ).toBe("true");
+    expect(text(accessPanel(root))).toContain(
+      "Existing browser login recipe retained.",
+    );
+    expect(f.window.onboardingStep({ environment })).toBe(3);
+    expect(
+      f.window.readOnboardingTarget({ ...hosted(), accessKind: "legacy" })
+        .target,
+    ).not.toHaveProperty("access");
+    f.panel.destroy();
+  });
 });
 
 describe("Vercel preview access", () => {
@@ -1529,10 +2004,9 @@ describe("Vercel preview access", () => {
     });
     await settle();
     const select = walk(root).find(
-      (item) => item.id === "onboarding-shop-access",
+      (item) => item.id === "onboarding-shop-access-password",
     )!;
-    select.value = "password";
-    select.fire("change");
+    select.fire("click");
     for (const [id, value] of [
       ["onboarding-shop-loginPath", "/sign-in"],
       ["onboarding-shop-successSelector", '[data-testid="account-menu"]'],
@@ -1578,10 +2052,9 @@ describe("Vercel preview access", () => {
     f.panel.mount(root, { name: "shop", repo: "owner/shop" });
     await settle();
     const select = walk(root).find(
-      (item) => item.id === "onboarding-shop-access",
+      (item) => item.id === "onboarding-shop-access-password",
     )!;
-    select.value = "password";
-    select.fire("change");
+    select.fire("click");
     await walk(root)
       .find((item) => item.textContent === "Save & connect preview access")!
       .fire("click");
@@ -1591,8 +2064,10 @@ describe("Vercel preview access", () => {
       "Set a login path and a signed-in success selector",
     );
     expect(
-      walk(root).find((item) => item.id === "onboarding-shop-access")?.value,
-    ).toBe("password");
+      walk(root)
+        .find((item) => item.id === "onboarding-shop-access-password")
+        ?.attributes.get("aria-pressed"),
+    ).toBe("true");
     f.panel.destroy();
   });
   it("keeps a stale draft and stops when saving conflicts", async () => {
@@ -1750,7 +2225,7 @@ describe("Vercel preview access", () => {
         api.mock.calls.filter(([path]) => path.endsWith("/vercel/access")),
       ).toHaveLength(1);
       expect(
-        walk(root).find((item) => item.id === "onboarding-shop-access")
+        walk(root).find((item) => item.id === "onboarding-shop-access-password")
           ?.disabled,
       ).toBe(true);
       if (operation === "destroy") f.panel.destroy();
@@ -1878,6 +2353,9 @@ describe("Vercel preview access", () => {
     input.value = "MY_MANUAL_BYPASS";
     input.fire("input");
     await walk(root)
+      .find((item) => item.id === "onboarding-shop-access-public")!
+      .fire("click");
+    await walk(root)
       .find((item) => item.textContent === "Save environment")!
       .fire("click");
     expect(api).toHaveBeenLastCalledWith(
@@ -1961,6 +2439,9 @@ describe("guided environment target review", () => {
     expect(text(root)).toContain("don’t need to enter a separate Test URL");
     expect(api).toHaveBeenCalledTimes(1);
     await walk(root)
+      .find((item) => item.id === "onboarding-shop-access-public")!
+      .fire("click");
+    await walk(root)
       .find((item) => item.textContent === "Save environment")!
       .fire("click");
     expect(api).toHaveBeenLastCalledWith(
@@ -1976,6 +2457,9 @@ describe("guided environment target review", () => {
     const input = walk(root).find((item) => item.id === "onboarding-shop-url")!;
     input.value = "https://manual.example.test/";
     input.fire("input");
+    await walk(root)
+      .find((item) => item.id === "onboarding-shop-access-public")!
+      .fire("click");
     await walk(root)
       .find((item) => item.textContent === "Save environment")!
       .fire("click");
@@ -2055,6 +2539,9 @@ describe("guided environment target review", () => {
     expect(f.api).toHaveBeenCalledTimes(1);
     expect(f.api.mock.calls[0]?.[1]).toBeUndefined();
     await walk(root)
+      .find((item) => item.id === "onboarding-shop-access-public")!
+      .fire("click");
+    await walk(root)
       .find((item) => item.textContent === "Save environment")!
       .fire("click");
     expect(f.api).toHaveBeenLastCalledWith(
@@ -2110,7 +2597,7 @@ describe("guided environment target review", () => {
       areas: [{ key: "foundation" }],
     });
     await settle();
-    expect(text(root)).toContain("Your crew can explore.");
+    expect(text(root)).toContain("Public pages are ready to explore.");
     expect(text(root)).not.toContain("Create a PM");
     await walk(root)
       .find((item) => item.textContent === "Open project")!
@@ -2307,6 +2794,9 @@ describe("guided environment target review", () => {
       },
       label: "New preview",
     });
+    await walk(root)
+      .find((item) => item.id === "onboarding-shop-access-public")!
+      .fire("click");
     await walk(root)
       .find((item) => item.textContent === "Save environment")!
       .fire("click");
@@ -2515,22 +3005,19 @@ describe("guided environment target review", () => {
     });
     await settle();
     const access = walk(root).find(
-      (item) =>
-        item.tagName === "SELECT" &&
-        item.children.some((option) => option.value === "password"),
+      (item) => item.id === "onboarding-shop-access-password",
     )!;
-    access.value = "password";
-    access.fire("change");
+    access.fire("click");
     expect(
       walk(root).find(
         (item) => item.id === "onboarding-shop-account-0-usernameSecret",
       )?.value,
-    ).toBe("APP_SHOP_A1B2C3_TEST_ADMIN_USERNAME");
+    ).toBe("APP_SHOP_A1B2C3_TEST_USER_USERNAME");
     expect(
       walk(root).find(
         (item) => item.id === "onboarding-shop-account-0-passwordSecret",
       )?.value,
-    ).toBe("APP_SHOP_A1B2C3_TEST_ADMIN_PASSWORD");
+    ).toBe("APP_SHOP_A1B2C3_TEST_USER_PASSWORD");
     f.panel.destroy();
   });
   it("never treats repository analysis or saved settings as verified browser access", () => {
@@ -2557,7 +3044,10 @@ describe("guided environment target review", () => {
     expect(
       window.onboardingStep({
         ...state(),
-        environment: { verification: { status: "passed" } },
+        environment: {
+          target: { access: { kind: "public" } },
+          verification: { status: "passed" },
+        },
       }),
     ).toBe(3);
   });
@@ -2711,6 +3201,9 @@ describe("onboarding draft and request safety", () => {
     expect(input.value).toBe("https://my-preview.example.test");
     expect(f.panel.isDirty()).toBe(true);
     expect(text(root)).toContain("changed elsewhere");
+    await walk(root)
+      .find((item) => item.id === "onboarding-shop-access-public")!
+      .fire("click");
     await walk(root)
       .find((item) => item.textContent === "Save environment")!
       .fire("click");

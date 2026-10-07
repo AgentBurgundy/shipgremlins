@@ -82,6 +82,110 @@ function fixture() {
   };
 }
 describe("PM readiness and automation controls", () => {
+  it("blocks browser PM launches and automation until test access is explicitly chosen", async () => {
+    const f = fixture();
+    const raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    raw.verification = { mode: "browser", environment: "preview" };
+    raw.environments = {
+      preview: {
+        kind: "url",
+        role: "preview",
+        url: "https://preview.example.test",
+      },
+    };
+    writeFileSync(f.projectFile, JSON.stringify(raw));
+    expect(f.inspect()).toMatchObject({
+      configured: false,
+      canRun: false,
+      canEnable: false,
+      blockers: [
+        expect.objectContaining({ id: "test_access", action: "environment" }),
+      ],
+      areas: [{ coding: { canEnable: true } }],
+    });
+    await expect(
+      setPmAutomation(f.root, "demo", "core", f.input(true), {
+        context: async () => f.context,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      blockers: [expect.objectContaining({ id: "test_access" })],
+    });
+    raw.environments.preview.access = { kind: "public" };
+    writeFileSync(f.projectFile, JSON.stringify(raw));
+    expect(f.inspect()).toMatchObject({ canRun: true, canEnable: true });
+    expect(f.inspect().steps).toContainEqual(
+      expect.objectContaining({
+        id: "test_access",
+        ready: true,
+        message: expect.stringContaining(
+          "Signed-in journeys will remain untested",
+        ),
+      }),
+    );
+  });
+
+  it("checks saved password values rather than treating secret references as credentials", () => {
+    const f = fixture();
+    const raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    raw.verification = { mode: "browser", environment: "preview" };
+    raw.environments = {
+      preview: {
+        kind: "url",
+        role: "preview",
+        url: "https://preview.example.test",
+        access: {
+          kind: "password",
+          loginPath: "/login",
+          usernameSelector: "#email",
+          passwordSelector: "#password",
+          submitSelector: "button",
+          successSelector: "#account",
+          accounts: [
+            {
+              name: "Member",
+              usernameSecret: "TEST_EMAIL",
+              passwordSecret: "TEST_PASSWORD",
+            },
+          ],
+        },
+      },
+    };
+    writeFileSync(f.projectFile, JSON.stringify(raw));
+    expect(f.inspect().canRun).toBe(false);
+    f.context.env.TEST_EMAIL = "private-user";
+    expect(f.inspect().canRun).toBe(false);
+    f.context.env.TEST_PASSWORD = "private-password";
+    expect(f.inspect().canRun).toBe(true);
+    expect(JSON.stringify(f.inspect())).not.toContain("private-password");
+  });
+
+  it("preserves legacy OTP and repository-only projects", () => {
+    const f = fixture();
+    expect(f.inspect().canRun).toBe(true);
+    expect(f.inspect().steps.some((step) => step.id === "test_access")).toBe(
+      false,
+    );
+    const raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    raw.vercel = {
+      projectId: "prj_preview",
+      teamId: null,
+      bypassSecret: "TEST_BYPASS",
+    };
+    delete raw.verification;
+    raw.signIn = {
+      kind: "neon-auth-otp",
+      email: "test@example.test",
+      path: "/login",
+      databaseUrlSecret: "TEST_DATABASE",
+    };
+    writeFileSync(f.projectFile, JSON.stringify(raw));
+    f.context.env.VERCEL_TOKEN = "hosting-token";
+    f.context.env.TEST_BYPASS = "private-preview-bypass";
+    f.context.env.TEST_DATABASE = "private-database-url";
+    expect(f.inspect().canRun).toBe(true);
+  });
+
   it("enables approved coding independently of an invalid PM schedule and preserves that choice when pausing PMs", async () => {
     const f = fixture();
     const raw = JSON.parse(readFileSync(f.areasFile, "utf8"));

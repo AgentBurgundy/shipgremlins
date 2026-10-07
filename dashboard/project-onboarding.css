@@ -328,6 +328,94 @@
 .onboarding-automatic[hidden] {
   display: none;
 }
+.onboarding-app-access {
+  padding: 26px 28px;
+  margin: 22px 0 18px;
+  border: 1px solid #cfdcc8;
+  border-radius: 16px;
+  background: linear-gradient(140deg, #f4f8ee, #fff 70%);
+  min-width: 0;
+}
+.onboarding-app-access[hidden] {
+  display: none;
+}
+.onboarding-app-access > .eyebrow {
+  display: block;
+  margin-bottom: 10px;
+}
+.project-onboarding .onboarding-app-access > h3 {
+  font-size: clamp(20px, 3vw, 25px);
+  line-height: 1.3;
+  margin-bottom: 10px;
+}
+.onboarding-access-intro {
+  max-width: 650px;
+  margin: 0;
+  color: #5f7162;
+}
+.onboarding-access-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 22px 0;
+}
+.onboarding-access-choice {
+  min-width: 0;
+  text-align: left;
+  padding: 17px 18px;
+  border: 1px solid #d5e0d1;
+  border-radius: 10px;
+  background: #fff;
+  color: #254631;
+  cursor: pointer;
+}
+.onboarding-access-choice:hover {
+  border-color: #77956b;
+  background: #f8fbf5;
+}
+.onboarding-access-choice.selected {
+  border-color: #396342;
+  box-shadow: inset 0 0 0 1px #396342;
+  background: #edf5e7;
+}
+.onboarding-access-choice:focus-visible {
+  outline: 3px solid #a8c894;
+  outline-offset: 3px;
+}
+.onboarding-access-choice strong,
+.onboarding-access-choice span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.onboarding-access-choice strong {
+  font-size: 14px;
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+.onboarding-access-choice span {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #617265;
+}
+.onboarding-access-choice:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.onboarding-app-access > .field {
+  margin-top: 18px;
+}
+.onboarding-access-status {
+  margin: 0 0 14px;
+  color: #546b59;
+}
+.onboarding-app-access > a {
+  display: inline-block;
+  font-size: 12px;
+  margin-top: 12px;
+}
+.onboarding-account .onboarding-settings-link {
+  margin-bottom: 0;
+}
 .environment-setup-progress {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -928,6 +1016,16 @@
   }
 }
 @media (max-width: 760px) {
+  .onboarding-app-access {
+    padding: 22px 18px;
+  }
+  .onboarding-access-choices {
+    grid-template-columns: 1fr;
+  }
+  .onboarding-app-access .onboarding-actions > button {
+    width: 100%;
+    white-space: normal;
+  }
   .project-top-tabs:has(a[href*="tab=environment"]) {
     gap: 3px;
   }

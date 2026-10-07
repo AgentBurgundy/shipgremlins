@@ -56,8 +56,20 @@
     );
     return { section, content, dialog };
   }
+  const hasAppAccess = (environment) =>
+    Boolean(environment?.target?.access || environment?.legacySignIn);
+  const appAccessDraftKeys = [
+    "accessKind",
+    "accounts",
+    "loginPath",
+    "usernameSelector",
+    "passwordSelector",
+    "submitSelector",
+    "successSelector",
+  ];
   window.onboardingStep = (data) =>
-    data?.environment?.verification?.status === "passed"
+    data?.environment?.verification?.status === "passed" &&
+    hasAppAccess(data.environment)
       ? 3
       : data?.environment
         ? 2
@@ -65,10 +77,13 @@
           ? 1
           : 0;
   function withAccess(target, draft) {
-    if (draft.accessKind === "legacy" || draft.accessKind === undefined)
-      return target;
+    if (draft.accessKind === "legacy") return target;
     if (draft.accessKind === "public")
       return { ...target, access: { kind: "public" } };
+    if (draft.accessKind !== "password")
+      throw new Error(
+        "Choose how your gremlins should access the app: a dedicated test account or public pages only.",
+      );
     const secret = /^[A-Z][A-Z0-9_]*$/;
     if (!draft.accounts?.length)
       throw new Error("Add at least one named test account.");
@@ -367,7 +382,7 @@
       const prefix = `APP_${project.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}${instanceId ? `_${instanceId.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}` : ""}`;
       const access = target?.access;
       return {
-        accessKind: access?.kind || (legacy ? "legacy" : "public"),
+        accessKind: access?.kind || (legacy ? "legacy" : ""),
         loginPath: access?.loginPath || "/login",
         usernameSelector: access?.usernameSelector || 'input[type="email"]',
         passwordSelector: access?.passwordSelector || 'input[type="password"]',
@@ -376,9 +391,9 @@
         accounts: structuredClone(
           access?.accounts || [
             {
-              name: "Admin",
-              usernameSecret: `${prefix}_TEST_ADMIN_USERNAME`,
-              passwordSecret: `${prefix}_TEST_ADMIN_PASSWORD`,
+              name: "Test user",
+              usernameSecret: `${prefix}_TEST_USER_USERNAME`,
+              passwordSecret: `${prefix}_TEST_USER_PASSWORD`,
             },
           ],
         ),
@@ -447,6 +462,55 @@
         advanced: JSON.stringify(advanced, null, 2),
       };
     }
+    function readAppAccessTarget(s) {
+      const saved = s.data?.environment;
+      if (!saved) return window.readOnboardingTarget(s.draft);
+      const hostingFields = (draft) =>
+        Object.fromEntries(
+          Object.entries(draft).filter(
+            ([key]) => !appAccessDraftKeys.includes(key),
+          ),
+        );
+      if (
+        JSON.stringify(hostingFields(s.draft)) ===
+        JSON.stringify(hostingFields(JSON.parse(s.baseline)))
+      )
+        return {
+          profile: saved.profile,
+          environment: saved.name,
+          target: withAccess(structuredClone(saved.target), s.draft),
+        };
+      const input = window.readOnboardingTarget(s.draft);
+      if (
+        !input.environment &&
+        input.target.kind === saved.target.kind &&
+        ["url", "docker"].includes(input.target.kind)
+      ) {
+        // These controls edit the selected environment. Keep its identity and
+        // non-editable options while applying every edited field, including
+        // removal of optional runtime settings from the advanced draft.
+        const target = structuredClone(saved.target);
+        for (const key of input.target.kind === "url"
+          ? ["url"]
+          : [
+              "recipe",
+              "port",
+              "healthPath",
+              "start",
+              "env",
+              "services",
+              "migrate",
+              "seed",
+            ])
+          delete target[key];
+        return {
+          ...input,
+          environment: saved.name,
+          target: { ...target, ...input.target, role: saved.target.role },
+        };
+      }
+      return input;
+    }
     function protectionDraft(target, project) {
       const name = project.name.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
       const instance = project.instanceId
@@ -508,6 +572,8 @@
         s.message.setAttribute("role", "status");
         s.analysis = node("section", undefined, "onboarding-analysis");
         s.automatic = node("section", undefined, "onboarding-automatic");
+        s.appAccess = node("section", undefined, "onboarding-app-access");
+        s.appAccess.id = "project-app-access";
         s.form = node("section", undefined, "onboarding-choice");
         s.verification = node("section", undefined, "onboarding-verification");
         s.proposal = node("section", undefined, "onboarding-proposal");
@@ -516,6 +582,7 @@
           s.foundation,
           s.steps,
           s.message,
+          s.appAccess,
           s.automatic,
           s.analysis,
           s.form,
@@ -573,7 +640,11 @@
         )
           s.notice =
             "Project settings changed elsewhere. Your draft is kept; discard and reload before applying it to the newer configuration.";
-        if (!wasDirty && !s.form.contains(document.activeElement)) {
+        if (
+          !wasDirty &&
+          !s.form.contains(document.activeElement) &&
+          !s.appAccess.contains(document.activeElement)
+        ) {
           s.draft = initialDraft(s);
           s.baseline = JSON.stringify(s.draft);
           s.draftRevision = data.configurationRevision;
@@ -1214,9 +1285,16 @@
         !s.draft.providerTarget &&
         !s.draft.existing;
       if (s.save)
-        s.save.disabled = disabled(s) || !s.data || !s.draft || choosingPreview;
+        s.save.disabled =
+          disabled(s) || !s.data || !s.draft?.accessKind || choosingPreview;
+      if (s.accessSave) s.accessSave.disabled = disabled(s) || s.loading;
+      for (const choice of s.appAccess?.querySelectorAll(
+        "button,input,select,textarea",
+      ) || [])
+        choice.disabled = disabled(s) || s.loading;
       if (s.test)
-        s.test.disabled = disabled(s) || dirty(s) || !s.data?.environment;
+        s.test.disabled =
+          disabled(s) || dirty(s) || !hasAppAccess(s.data?.environment);
       if (s.create) s.create.disabled = isLocked() || s.busy || dirty(s);
       const accessConnected =
         !previewNeedsSave(s) &&
@@ -1252,7 +1330,9 @@
             ? "Suggested from your saved Vercel settings · save this choice, then test access. It is not verified yet."
             : dirty(s)
               ? "Unsaved changes · save this choice before testing."
-              : "Credentials stay in Connections. Saving does not start a PM or enable automation.";
+              : !s.draft?.accessKind
+                ? "Choose app sign-in access above before saving."
+                : "Credentials stay in Connections. Saving does not start a PM or enable automation.";
       if (s.verificationDraftNotice) {
         s.verificationDraftNotice.hidden = !dirty(s);
         s.verificationDraftNotice.textContent =
@@ -1385,6 +1465,10 @@
         s.draft.accessKind,
         s.draft.vercelBypassEnabled,
         s.draft.accounts.length,
+        s.editAppAccess,
+        s.data?.configurationRevision,
+        s.project.readiness?.steps?.find((step) => step.id === "test_access")
+          ?.ready,
         s.showVercel,
         Object.keys(s.project.environments || {}),
       ]);
@@ -1459,9 +1543,17 @@
               onConnectHosting: (_project, connectionId) =>
                 connectHosting(s, connectionId, true),
               onConfigured: async () => {
+                const pendingAccess = s.draft;
                 s.data = await api(endpoint(s));
                 s.draft = initialDraft(s);
                 s.baseline = JSON.stringify(s.draft);
+                if (
+                  !hasAppAccess(s.data.environment) &&
+                  pendingAccess.accessKind
+                ) {
+                  for (const key of appAccessDraftKeys)
+                    s.draft[key] = structuredClone(pendingAccess[key]);
+                }
                 s.draftRevision = s.data.configurationRevision;
                 s.showVercel = s.showForm = false;
                 s.formSignature = "";
@@ -1700,52 +1792,80 @@
         );
         s.form.append(advanced.section);
       }
-      const access = node(
-        "section",
-        undefined,
-        "onboarding-advanced onboarding-access",
-      );
+      const access = s.appAccess;
+      access.replaceChildren();
       access.append(
+        node("span", "APP SIGN-IN", "eyebrow muted"),
+        node("h3", "Does your app have a sign-in?"),
         node(
-          "h4",
-          s.draft.accessKind === "password"
-            ? `Test accounts · ${s.draft.accounts.length}`
-            : s.draft.accessKind === "legacy"
-              ? "Test access · existing sign-in recipe"
-              : "Test access · public app",
+          "p",
+          "Give your gremlins a dedicated test account to explore what your customers see after signing in. Connecting Vercel opens the preview; it does not sign them into your app.",
+          "onboarding-access-intro",
         ),
       );
-      const accessLabel = node("label", "How should the gremlin sign in?"),
-        accessSelect = node("select");
-      accessSelect.id = `onboarding-${s.project.name}-access`;
-      accessLabel.htmlFor = accessSelect.id;
-      accessSelect.append(
-        new Option("Public app · no sign-in needed", "public"),
-        new Option("Password login · dedicated test accounts", "password"),
-      );
-      if (s.data?.environment?.legacySignIn)
-        accessSelect.append(
-          new Option("Keep existing sign-in recipe", "legacy"),
+      const accessChoices = node("div", undefined, "onboarding-access-choices");
+      accessChoices.setAttribute("role", "group");
+      accessChoices.setAttribute("aria-label", "App sign-in access");
+      for (const [kind, title, description] of [
+        [
+          "password",
+          "Yes, test signed-in flows",
+          "Connect a dedicated account for the parts behind sign-in.",
+        ],
+        [
+          "public",
+          "Public pages only",
+          "Skip sign-in. Account, billing and other private flows stay untested.",
+        ],
+        ...(s.data?.environment?.legacySignIn
+          ? [
+              [
+                "legacy",
+                "Keep existing sign-in recipe",
+                "Keep the project's current login instructions.",
+              ],
+            ]
+          : []),
+      ]) {
+        const choice = button("", () => {
+          if (disabled(s)) return;
+          s.draft.accessKind = kind;
+          s.editAppAccess = true;
+          s.formSignature = "";
+          paint(s);
+        });
+        choice.id = `onboarding-${s.project.name}-access-${kind}`;
+        choice.className = `onboarding-access-choice${s.draft.accessKind === kind ? " selected" : ""}`;
+        choice.setAttribute(
+          "aria-pressed",
+          String(s.draft.accessKind === kind),
         );
-      accessSelect.value = s.draft.accessKind;
-      accessSelect.addEventListener("change", () => {
-        s.draft.accessKind = accessSelect.value;
-        s.accessOpen = true;
-        s.formSignature = "";
-        paintForm(s);
-      });
-      const accessWrap = node("div", undefined, "field");
-      accessWrap.append(accessLabel, accessSelect);
-      access.append(accessWrap);
-      if (s.draft.accessKind === "password") {
+        choice.append(node("strong", title), node("span", description));
+        accessChoices.append(choice);
+      }
+      access.append(accessChoices);
+      const editingAccess =
+          s.editAppAccess || !hasAppAccess(s.data?.environment),
+        needsTestCredentials = s.project.readiness?.steps?.some(
+          (step) => step.id === "test_access" && step.ready === false,
+        );
+      if (s.draft.accessKind === "password" && editingAccess) {
         access.append(
+          node("h4", "Connect a test account"),
           node(
             "p",
-            "Create a dedicated test user in your app first. This form does not create accounts or assign roles. After saving, add its username and password values in Connections using the secret names below. Email codes, magic links, and SSO are not supported by this password check.",
+            "Create a dedicated user in your test app with the role you want checked. Save these settings, then enter its email and password securely in Connections. Your personal account is not needed.",
           ),
         );
         for (const [index, account] of s.draft.accounts.entries()) {
-          const row = node("section", undefined, "onboarding-account");
+          const row = node("section", undefined, "onboarding-account"),
+            references = settingsSheet("Credential reference names");
+          references.content.append(
+            node(
+              "p",
+              "These names are generated for your project. Keep them unless you already saved credentials under different names. Enter the actual username and password only in Connections.",
+            ),
+          );
           for (const [key, label] of [
             ["name", "Account name / role"],
             ["usernameSecret", "Username secret reference"],
@@ -1764,8 +1884,10 @@
               updateFormActions(s);
             });
             wrap.append(caption, input);
-            row.append(wrap);
+            if (key === "name") row.append(wrap);
+            else references.content.append(wrap);
           }
+          row.append(references.section);
           if (s.draft.accounts.length > 1)
             row.append(
               button("Remove account", () => {
@@ -1778,10 +1900,12 @@
         }
         access.append(
           button("Add test account", () => {
+            const accountNumber = s.draft.accounts.length + 1,
+              prefix = `APP_${s.project.name.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}${s.project.instanceId ? `_${s.project.instanceId.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}` : ""}_TEST_${accountNumber}`;
             s.draft.accounts.push({
-              name: "",
-              usernameSecret: "",
-              passwordSecret: "",
+              name: `Test account ${accountNumber}`,
+              usernameSecret: `${prefix}_USERNAME`,
+              passwordSecret: `${prefix}_PASSWORD`,
             });
             s.formSignature = "";
             paintForm(s);
@@ -1812,6 +1936,28 @@
             field(s, key, label, "CSS selector used by the browser test."),
           );
         access.append(selectors.section);
+        access.append(
+          node(
+            "p",
+            "Uses email and password login. For apps using only email codes, magic links or SSO, first enable a password login for a dedicated test user, or explicitly choose public pages only.",
+            "onboarding-help",
+          ),
+        );
+      } else if (s.draft.accessKind === "password") {
+        access.append(
+          node(
+            "p",
+            needsTestCredentials
+              ? "Test account details saved. Add its email and password in Connections before browser patrols."
+              : `${s.draft.accounts.length} test account${s.draft.accounts.length === 1 ? "" : "s"} saved. The environment check below shows whether sign-in is verified.`,
+            "onboarding-access-status",
+          ),
+          button("Edit test account setup", () => {
+            s.editAppAccess = true;
+            s.formSignature = "";
+            paint(s);
+          }),
+        );
       } else if (s.draft.accessKind === "legacy")
         access.append(
           node(
@@ -1820,17 +1966,86 @@
               "Existing sign-in recipe retained. This environment test does not exercise the legacy login flow.",
           ),
         );
+      else if (s.draft.accessKind === "public")
+        access.append(
+          node(
+            "p",
+            "Public pages only. Your gremlins can investigate pages that do not require an account. Signed-in journeys will not be verified.",
+            "onboarding-access-status",
+          ),
+        );
       else
         access.append(
           node(
             "p",
-            "This checks only the public app. Password login can check a dedicated test account. Email codes, magic links, and SSO need a login method this verifier does not yet support; a public check does not verify signed-in flows.",
+            "Choose an option before your gremlins start browser testing.",
+            "onboarding-help",
           ),
         );
-      s.form.append(access);
-      const connections = node("a", "Manage test credentials in Connections →");
-      connections.href = "/connections#project-access";
-      s.form.append(connections);
+      s.accessSave = null;
+      if (s.draft.accessKind && editingAccess) {
+        const actions = node("div", undefined, "onboarding-actions"),
+          canSave = Boolean(
+            s.data?.environment ||
+            s.draft.existingTarget ||
+            s.draft.providerTarget,
+          );
+        s.accessSave = button(
+          canSave
+            ? s.draft.accessKind === "password"
+              ? "Save & add test credentials"
+              : s.draft.accessKind === "legacy"
+                ? "Save sign-in recipe"
+                : "Save public-pages access"
+            : "Choose a test environment",
+          async () => {
+            if (disabled(s)) return;
+            if (!canSave) {
+              s.showForm = true;
+              paint(s);
+              s.form.scrollIntoView?.({ block: "start", behavior: "smooth" });
+              return;
+            }
+            try {
+              const password = s.draft.accessKind === "password",
+                input = readAppAccessTarget(s);
+              // Save the account references before opening Connections so its
+              // secure credential form can offer this project's test identity.
+              await run(s, "configure", {
+                configurationRevision: s.draftRevision,
+                ...input,
+              });
+              if (s.error || destroyed || entries.get(s.project.name) !== s)
+                return;
+              s.editAppAccess = false;
+              s.formSignature = "";
+              paint(s);
+              if (password) {
+                const path = "/connections#project-access";
+                if (!window.dashboardPages?.navigate(path))
+                  window.location.assign(path);
+              }
+            } catch (error) {
+              s.error = error.message;
+              paint(s);
+            }
+          },
+          true,
+        );
+        actions.append(s.accessSave);
+        access.append(actions);
+      }
+      if (s.draft.accessKind === "password" && !editingAccess) {
+        const connections = node(
+          "a",
+          needsTestCredentials
+            ? "Add test credentials"
+            : "Manage test credentials in Connections →",
+          needsTestCredentials ? "button button-dark" : "",
+        );
+        connections.href = "/connections#project-access";
+        access.append(connections);
+      }
       const actions = node("div", undefined, "onboarding-actions");
       s.save = button(
         s.data?.environmentSetupSupported &&
@@ -1877,6 +2092,17 @@
     }
     function editEnvironment(s, diagnosis) {
       if (disabled(s) || s.loading) return;
+      if (diagnosis?.action === "choose_access") {
+        s.appAccess.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        s.appAccess
+          .querySelectorAll("button")[0]
+          ?.focus({ preventScroll: true });
+        return;
+      }
+      if (diagnosis?.action === "edit_login" && !s.editAppAccess) {
+        s.editAppAccess = true;
+        s.formSignature = "";
+      }
       s.showForm = true;
       s.showAnalysis = false;
       paint(s);
@@ -2031,7 +2257,8 @@
       }
     }
     async function choosePreview(s, choice, repair = false) {
-      if (disabled(s) || dirty(s)) return;
+      if (disabled(s) || (dirty(s) && (!choice?.target || s.data?.environment)))
+        return;
       if (choice?.target && !repair) {
         try {
           await prepareEnvironment(s, withAccess(choice.target, s.draft));
@@ -2286,7 +2513,11 @@
       else if (setup?.action === "choose_preview" && setup.choices?.length) {
         const choices = node("div", undefined, "environment-preview-choices");
         for (const choice of setup.choices) {
-          const select = action("", () => choosePreview(s, choice));
+          const select = action(
+            "",
+            () => choosePreview(s, choice),
+            Boolean(s.data?.environment),
+          );
           select.className = "environment-preview-choice";
           select.append(
             node("strong", choice.name || "Vercel app"),
@@ -2384,6 +2615,7 @@
         s.project.ideaPlanId && s.data?.foundation?.stage !== "ready",
       );
       s.foundation.hidden = !buildFirst;
+      s.appAccess.hidden = buildFirst || !s.draft;
       s.automatic.hidden = true;
       s.steps.hidden = buildFirst;
       s.verification.hidden = buildFirst;
@@ -2627,35 +2859,45 @@
           result = environment.verification,
           hasCrew = Boolean(s.project.areas?.length),
           target = environment.target,
-          ready = result?.status === "passed",
+          accessKnown = hasAppAccess(environment),
+          ready = result?.status === "passed" && accessKnown,
           testing = result?.status === "testing",
           preview = s.data.previewAccess,
           diagnosis =
             !ready &&
             !testing &&
-            (result?.diagnosis ||
-              (preview?.status === "missing"
-                ? {
-                    title: "The preview bypass credential is missing.",
-                    detail:
-                      "A credential name is saved, but the credential itself is not in Connections. Connect preview access to repair this without turning off protection.",
-                    action: "connect_preview",
-                  }
-                : result?.status === "failed"
+            (!accessKnown
+              ? {
+                  title: "Your app sign-in is not set up yet.",
+                  detail:
+                    "Opening a preview only checks public pages. Add a test account to explore signed-in flows, or explicitly choose public pages only.",
+                  action: "choose_access",
+                }
+              : result?.diagnosis ||
+                (preview?.status === "missing"
                   ? {
-                      title: "Browser access could not be verified.",
+                      title: "The preview bypass credential is missing.",
                       detail:
-                        result.message ||
-                        "The last test did not complete. Run it again for a current diagnosis, then review the saved environment if it still fails.",
-                      action: "retry",
+                        "A credential name is saved, but the credential itself is not in Connections. Connect preview access to repair this without turning off protection.",
+                      action: "connect_preview",
                     }
-                  : null)),
+                  : result?.status === "failed"
+                    ? {
+                        title: "Browser access could not be verified.",
+                        detail:
+                          result.message ||
+                          "The last test did not complete. Run it again for a current diagnosis, then review the saved environment if it still fails.",
+                        action: "retry",
+                      }
+                    : null)),
           header = node("div", undefined, "environment-result-heading"),
           heading = node("div"),
           badge = node(
             "span",
             ready
-              ? "Ready"
+              ? target.access?.kind === "public"
+                ? "Public pages only"
+                : "Ready"
               : testing
                 ? "Testing"
                 : diagnosis
@@ -2669,9 +2911,11 @@
           node(
             "h3",
             ready
-              ? hasCrew
-                ? "Your crew can explore."
-                : "Ready for a PM."
+              ? target.access?.kind === "public"
+                ? "Public pages are ready to explore."
+                : hasCrew
+                  ? "Your crew can explore."
+                  : "Ready for a PM."
               : testing
                 ? "Checking the runner’s access…"
                 : diagnosis
@@ -2709,7 +2953,14 @@
                 "Sign-in",
                 `${target.access.accounts?.length || 1} test account${target.access.accounts?.length === 1 ? "" : "s"} · ${target.access.loginPath}`,
               ]
-            : ["Access", "Public app"],
+            : [
+                "Access",
+                target.access?.kind === "public"
+                  ? "Public pages only"
+                  : environment.legacySignIn
+                    ? "Existing sign-in recipe"
+                    : "Not chosen",
+              ],
         ].filter(Boolean)) {
           const row = node("div");
           row.append(node("dt", label), node("dd", value));
@@ -2801,9 +3052,11 @@
           s.recoveryAction = button(
             credentials
               ? "Add test credentials"
-              : diagnosis.action === "edit_login"
-                ? "Fix sign-in settings"
-                : "Review environment settings",
+              : diagnosis.action === "choose_access"
+                ? "Set up app sign-in"
+                : diagnosis.action === "edit_login"
+                  ? "Fix sign-in settings"
+                  : "Review environment settings",
             () => {
               if (credentials) {
                 const path = "/connections#project-access";
@@ -2853,6 +3106,10 @@
             s.showForm ? "Hide environment settings" : "Change environment",
             () => {
               s.showForm = !s.showForm;
+              if (s.showForm) {
+                s.editAppAccess = true;
+                s.formSignature = "";
+              }
               paint(s);
               if (s.showForm) s.form.scrollIntoView?.({ block: "start" });
             },
@@ -2872,7 +3129,7 @@
         for (const action of editActions.children)
           action.classList.add("onboarding-text-button");
         s.verification.append(editActions);
-        if (result?.status === "passed") {
+        if (ready) {
           s.create = button(
             hasCrew ? "Open project" : "Create a PM",
             () => {

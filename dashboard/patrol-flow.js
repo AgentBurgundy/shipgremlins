@@ -31,13 +31,18 @@
       header = node("div", "patrol-plan-heading"),
       copy = node("div", "patrol-plan-copy"),
       actions = node("div", "patrol-plan-actions"),
-      mode = project.verification?.mode,
+      legacyEnvironment = !project.verification && project.vercel,
+      mode = project.verification?.mode || (legacyEnvironment && "browser"),
       browser = mode === "browser",
-      environment = project.verification?.environment,
+      environment =
+        project.verification?.environment ||
+        (legacyEnvironment && "integration"),
       target =
         browser && Object.hasOwn(project.environments || {}, environment)
           ? project.environments[environment]
-          : null,
+          : legacyEnvironment
+            ? { ...legacyEnvironment, kind: "vercel", role: "preview" }
+            : null,
       valid =
         target &&
         ["docker", "vercel", "railway", "url", "cloud-run"].includes(
@@ -46,21 +51,39 @@
         target.role !== "production",
       docker = valid && target.kind === "docker",
       repository = mode === "repository",
+      accounts =
+        valid && target.access?.kind === "password"
+          ? (target.access.accounts || []).map((item) => item.name)
+          : [],
+      legacySignIn =
+        valid && !target.access && project.signIn?.kind === "neon-auth-otp",
+      signedIn = accounts.length > 0 || legacySignIn,
+      publicOnly = valid && target.access?.kind === "public",
+      coverageTitle = legacySignIn
+        ? "Existing email-code sign-in recipe"
+        : signedIn
+          ? "Signed-in testing planned"
+          : publicOnly
+            ? "Public pages only"
+            : "Choose how your gremlin signs in",
       href = `/projects/${encodeURIComponent(project.name)}?tab=environment`,
       origin = valid && target.kind === "url" ? publicOrigin(target.url) : null;
     root.setAttribute("aria-label", "Patrol plan");
+    root.dataset.compact = String(compact);
     copy.append(
       node("span", "patrol-plan-kicker", "PATROL PLAN"),
       node(
         "h3",
         "",
-        valid
-          ? docker
-            ? "Run a fresh app. Test it in the browser."
-            : "Visit your staging app. Test real workflows."
-          : repository
-            ? "Inspect the code. Run repository checks."
-            : "Choose where this crew will test.",
+        compact && valid
+          ? coverageTitle
+          : valid
+            ? docker
+              ? "Run a fresh app. Test it in the browser."
+              : "Visit your staging app. Test real workflows."
+            : repository
+              ? "Inspect the code. Run repository checks."
+              : "Choose where this crew will test.",
       ),
     );
     const providers = {
@@ -81,27 +104,12 @@
             : "The testing mode or environment needs configuration.",
       ),
     );
-    if (valid) {
-      const accounts =
-        target.access?.kind === "password"
-          ? (target.access.accounts || []).map((item) => item.name)
-          : [];
-      copy.append(
-        node(
-          "p",
-          "patrol-plan-access",
-          accounts.length
-            ? `Test accounts: ${accounts.join(" · ")}`
-            : target.access?.kind === "public"
-              ? "Public access · No sign-in configured."
-              : "Test accounts: no environment login recipe configured.",
-        ),
-      );
-    }
     actions.append(
       link(
         valid
-          ? "Environment & accounts"
+          ? signedIn
+            ? "Environment & accounts"
+            : "Set up app sign-in"
           : repository
             ? "Add browser testing"
             : "Set up environment",
@@ -119,6 +127,39 @@
     }
     header.append(copy, actions);
     root.append(header);
+    if (valid) {
+      const coverage = node(
+        "div",
+        compact ? "patrol-plan-access-summary" : "patrol-plan-coverage",
+      );
+      coverage.dataset.tone = signedIn ? "neutral" : "attention";
+      if (!compact)
+        coverage.append(
+          node("strong", "patrol-plan-coverage-title", coverageTitle),
+        );
+      coverage.append(
+        node(
+          "p",
+          "patrol-plan-access",
+          legacySignIn
+            ? "Your gremlin will attempt the saved email-code login. Check browser evidence to confirm sign-in and signed-in features actually work."
+            : signedIn
+              ? `Test accounts: ${accounts.join(" · ")}. The gremlin will attempt sign-in. Saved accounts do not prove that login or signed-in features work.`
+              : publicOnly
+                ? "Your gremlin can explore public pages. To test anything behind a login, add a dedicated test account."
+                : "Tell us whether your app needs sign-in before starting a browser patrol. Signed-in features need a dedicated test account.",
+        ),
+      );
+      if (target.kind === "vercel")
+        coverage.append(
+          node(
+            "p",
+            "patrol-plan-access",
+            "Vercel access opens the preview. A test account signs the gremlin into your app.",
+          ),
+        );
+      (compact ? copy : root).append(coverage);
+    }
     if (!compact && (valid || repository)) {
       const steps = node("ol", "patrol-plan-steps");
       steps.setAttribute(
@@ -134,8 +175,16 @@
           ]
         : [
             "Read mandate & memory",
-            docker ? "Start app & open browser" : "Open app & sign in",
-            "Exercise flows & capture evidence",
+            signedIn
+              ? docker
+                ? "Start app & attempt sign-in"
+                : "Open app & attempt sign-in"
+              : docker
+                ? "Start app & open browser"
+                : "Open public pages",
+            signedIn
+              ? "Exercise flows & capture evidence"
+              : "Explore public flows & capture evidence",
             "Propose & remember",
           ];
       for (const [index, label] of labels.entries()) {
