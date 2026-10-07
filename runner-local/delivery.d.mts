@@ -27,9 +27,13 @@ export function runCheckedDelivery(input: {
   onCheck?: (name: string, status: "running" | "succeeded" | "failed") => void;
   report?: unknown;
   syncRepair?: { stagingSha: string };
+  promotionRepair?: import("./promotion-repair.mjs").PromotionRepair;
+  nonce?: string;
 }): Promise<{
   checks: string[];
   prUrl?: string;
   noChanges?: boolean;
   headSha?: string;
+  promotionSourceSha?: string;
+  promotionBaseSha?: string;
 }>;

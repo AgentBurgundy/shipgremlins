@@ -120,6 +120,8 @@ describe("addProject", () => {
     expect(p.config.vercel).toBeUndefined();
     expect(p.config.workflow).toEqual({
       kind: "promotion",
+      approvalPolicy: "epic",
+      promotionBatchSize: 10,
     });
     expect(p.config.verification).toEqual({ mode: "repository" });
     expect(p.areas[0]!.enabled).toBe(true);

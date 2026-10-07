@@ -31,12 +31,19 @@
   const running = (data) => ["analyzing", "publishing"].includes(data?.status);
   const identity = (project) =>
     `${project.name}/${project.instanceId ?? "legacy"}`;
+  const suggestions = (proposal) =>
+    proposal?.suggestedPms?.length
+      ? proposal.suggestedPms
+      : proposal?.firstPm
+        ? [proposal.firstPm]
+        : [];
 
   window.createProjectWelcome = ({
     api,
     pages,
     isLocked = () => false,
     onCreatePm,
+    onSetupLinear,
     onSaved = async () => {},
   }) => {
     const entries = new Map();
@@ -152,6 +159,264 @@
       }
       return result;
     }
+    function setupJourney(s) {
+      const project = s.project,
+        readiness = project.readiness,
+        ready = (id) =>
+          readiness?.steps?.find((item) => item.id === id)?.ready === true,
+        hasCrew = Boolean(project.areas?.length),
+        needsPromotionEnvironment = readiness?.areas?.some((area) =>
+          area.coding?.enableBlockers?.some(
+            (item) => item.id === "promotion_environment",
+          ),
+        ),
+        allReady =
+          hasCrew &&
+          project.areas.every((area) => {
+            const state = readiness?.areas?.find(
+              (item) => item.key === area.key,
+            );
+            return state?.canRun && state.canEnable && state.coding?.canEnable;
+          }),
+        canVerifyAndActivate =
+          hasCrew &&
+          !allReady &&
+          project.areas.every((area) => {
+            const state = readiness?.areas?.find(
+              (item) => item.key === area.key,
+            );
+            const onlyVerification = (items) =>
+              items?.length > 0 &&
+              items.every((item) => item.id === "verification");
+            return (
+              state &&
+              (state.canRun || onlyVerification(state.blockers)) &&
+              (state.canEnable || onlyVerification(state.enableBlockers)) &&
+              (state.coding?.canEnable ||
+                onlyVerification(state.coding?.enableBlockers))
+            );
+          }),
+        activeCrew =
+          hasCrew &&
+          project.areas.every(
+            (area) => area.enabled && (area.codingEnabled ?? area.enabled),
+          ),
+        steps = [
+          [
+            "Connect repository",
+            ready("source_connection"),
+            "/connections#source-control",
+          ],
+          [
+            "Prepare AI and runner",
+            ready("ai_connection") && ready("worker"),
+            ready("ai_connection")
+              ? "/runners#workers"
+              : "/connections#model-connections",
+          ],
+          [
+            "Inspect source",
+            Boolean(s.data?.report?.projectSetup),
+            `/projects/${encodeURIComponent(project.name)}?tab=setup`,
+          ],
+          [
+            "Review and adopt your crew",
+            hasCrew,
+            `/projects/${encodeURIComponent(project.name)}?tab=crew`,
+          ],
+          [
+            "Set up Linear",
+            hasCrew &&
+              ready("linear_connection") &&
+              readiness?.areas?.every(
+                (area) =>
+                  !area.blockers?.some((item) => item.id === "linear_mapping"),
+              ),
+            "linear",
+          ],
+          [
+            needsPromotionEnvironment
+              ? "Prepare integration deployment"
+              : project.verification?.mode === "repository"
+                ? "Confirm repository checks"
+                : "Test app access",
+            !needsPromotionEnvironment &&
+              (project.verification?.mode === "repository"
+                ? ready("verification")
+                : ready("test_access") && ready("browser_verification")),
+            `/projects/${encodeURIComponent(project.name)}?tab=environment`,
+          ],
+          ["Activate daily patrols", activeCrew && allReady, "activate"],
+        ],
+        section = el("section", undefined, "welcome-setup-journey"),
+        list = el("ol", undefined, "welcome-setup-steps");
+      if (s.suggestionsOnly && activeCrew && allReady) return null;
+      section.append(
+        el("span", "CREW SETUP", "eyebrow muted"),
+        el(
+          "h2",
+          allReady ? "Your crew is ready." : "Finish setting up your crew.",
+        ),
+      );
+      list.setAttribute("aria-label", "Project setup progress");
+      for (const [label, done] of steps) {
+        const item = el("li", undefined, done ? "complete" : "pending");
+        item.append(el("span", done ? "✓" : "○"), el("span", label));
+        list.append(item);
+      }
+      section.append(list);
+      const next = steps.find(([, done]) => !done);
+      if ((allReady && !activeCrew) || canVerifyAndActivate) {
+        const activate = button(
+          s.busy
+            ? "Checking crew…"
+            : canVerifyAndActivate
+              ? "Verify & activate crew"
+              : "Activate ready crew",
+          async () => {
+            if (unavailable(s) || !current(s)) return;
+            s.busy = true;
+            s.error = "";
+            s.notice = "";
+            paint(s);
+            try {
+              if (canVerifyAndActivate) {
+                const verification = await api(
+                  `/api/projects/${encodeURIComponent(project.name)}/verify`,
+                  {},
+                  "POST",
+                  90000,
+                );
+                if (!current(s)) return;
+                if (!verification.ok) {
+                  const failed = (verification.checks || [])
+                    .filter((check) => !check.ok)
+                    .map(
+                      (check) =>
+                        `${check.name || "Connection"}: ${check.detail || check.message || "could not be verified"}`,
+                    );
+                  throw new Error(
+                    failed.join(" · ") ||
+                      "Project connections could not be verified. Your crew stays paused.",
+                  );
+                }
+              }
+              const snapshot = await api(
+                `/api/projects/${encodeURIComponent(project.name)}/readiness`,
+              );
+              if (!current(s)) return;
+              const result = await api(
+                `/api/projects/${encodeURIComponent(project.name)}/crew/activate`,
+                {
+                  projectRevision: snapshot.projectRevision,
+                  areasRevision: snapshot.areasRevision,
+                },
+              );
+              if (!current(s)) return;
+              s.notice =
+                result.message ||
+                "Your ready crew is active. No epic was approved by activation.";
+              try {
+                await onSaved(project.name);
+              } catch {
+                s.notice += " Refresh the dashboard to see the saved status.";
+              }
+            } catch (error) {
+              if (current(s)) s.error = error.message;
+            } finally {
+              if (current(s)) {
+                s.busy = false;
+                paint(s);
+              }
+            }
+          },
+          true,
+        );
+        activate.disabled = unavailable(s);
+        section.append(activate);
+      } else if (next) {
+        const [label, , destination] = next;
+        if (destination === "linear" && onSetupLinear) {
+          const configure = button("Set up Linear", () =>
+            onSetupLinear(project.name),
+          );
+          configure.disabled = unavailable(s);
+          section.append(configure);
+        } else if (destination === "activate") {
+          const blocker = readiness?.areas
+            ?.flatMap((area) => area.enableBlockers || [])
+            .find(Boolean);
+          section.append(
+            el(
+              "p",
+              blocker?.message ||
+                "Finish the remaining setup checks before daily patrols can start.",
+              "welcome-note",
+            ),
+          );
+          const review = link(
+            "Review readiness",
+            `/projects/${encodeURIComponent(project.name)}?tab=crew`,
+          );
+          section.append(review);
+        } else
+          section.append(
+            link(
+              label,
+              destination === "linear"
+                ? "/connections#linear-connection"
+                : destination,
+            ),
+          );
+      }
+      section.append(
+        el(
+          "p",
+          project.workflow?.kind === "promotion" &&
+            project.workflow.approvalPolicy === "epic"
+            ? "Approve epics, then review your PMs’ promotion batches. Activate daily PMs and coding for approved epic work; without an approved epic, PMs investigate only. Activation does not approve any epic."
+            : "Patrols start only after setup is ready and you activate the crew. Review your configured delivery policy before enabling coding.",
+          "welcome-note",
+        ),
+      );
+      return section;
+    }
+    function crewSuggestions(s, proposal, reviewed, disabled) {
+      const section = el("section", undefined, "welcome-recommendation");
+      section.append(el("span", "YOUR SUGGESTED CREW", "eyebrow muted"));
+      section.append(
+        el(
+          "p",
+          "Adopt the responsibilities you want. Remaining suggestions stay here for later; adopting one does not start daily patrols.",
+          "welcome-note",
+        ),
+      );
+      for (const suggestion of suggestions(proposal)) {
+        const adopted = s.project.areas?.some(
+            (area) => area.mandate?.trim() === suggestion.mandate.trim(),
+          ),
+          card = el("article", undefined, "welcome-crew-suggestion");
+        card.append(el("h3", suggestion.name), el("p", suggestion.mandate));
+        if (!reviewed) card.append(evidence(suggestion.evidence));
+        if (adopted)
+          card.append(el("p", "Already in your crew", "welcome-note"));
+        else if (reviewed) {
+          const meet = button(
+            `Meet ${suggestion.name}`,
+            () =>
+              onCreatePm?.(s.project.name, {
+                name: suggestion.name,
+                mandate: suggestion.mandate,
+              }),
+            true,
+          );
+          meet.disabled = disabled;
+          card.append(meet);
+        }
+        section.append(card);
+      }
+      return section;
+    }
     function paint(s) {
       if (!current(s)) return;
       const data = s.data,
@@ -168,10 +433,58 @@
           s.notice,
           s.busy,
           isLocked(),
+          s.suggestionsOnly,
+          s.project.areas?.map((area) => [area.key, area.mandate]),
+          s.project.readiness,
+          s.project.areas?.map((area) => area.enabled),
         ]);
       if (signature === s.signature) return;
       s.signature = signature;
       s.node.replaceChildren();
+      const journey = setupJourney(s);
+      if (journey) s.node.append(journey);
+      if (s.suggestionsOnly) {
+        if (s.notice) s.node.append(el("p", s.notice, "welcome-note"));
+        if (s.error) {
+          const error = el("p", s.error, "welcome-error");
+          error.setAttribute("role", "alert");
+          s.node.append(error);
+        }
+        if (journey && !proposal) return;
+        s.node.append(el("h2", "Grow your crew"));
+        if (proposal) {
+          s.node.append(
+            crewSuggestions(
+              s,
+              proposal,
+              confirmed || Boolean(data.setupConfirmation?.confirmedAt),
+              disabled,
+            ),
+          );
+          if (data.stale)
+            s.node.append(
+              el(
+                "p",
+                "These suggestions come from the saved source inspection. Review their scope against the current app before adoption.",
+                "welcome-note",
+              ),
+            );
+        } else
+          s.node.append(
+            el(
+              "p",
+              "Inspect the app once to get PM suggestions grounded in its code.",
+              "welcome-note",
+            ),
+          );
+        s.node.append(
+          link(
+            "Review app setup",
+            `/projects/${encodeURIComponent(s.project.name)}?tab=setup`,
+          ),
+        );
+        return;
+      }
       const progress = el("ol", undefined, "welcome-progress");
       progress.setAttribute("aria-label", "Project introduction");
       ["Inspect your app", "Review setup", "Meet your gremlin"].forEach(
@@ -352,14 +665,9 @@
           );
         s.node.append(commands);
       }
-      const gremlin = el("section", undefined, "welcome-recommendation");
-      gremlin.append(
-        el("span", "YOUR SUGGESTED FIRST GREMLIN", "eyebrow muted"),
-        el("h3", proposal.firstPm.name),
-        el("p", proposal.firstPm.mandate),
+      s.node.append(
+        crewSuggestions(s, proposal, confirmed, disabled || Boolean(s.error)),
       );
-      if (!confirmed) gremlin.append(evidence(proposal.firstPm.evidence));
-      s.node.append(gremlin);
       if (!confirmed && report.warnings?.length) {
         const notes = el("section", undefined, "welcome-open-questions");
         notes.append(el("h3", "Still to check"));
@@ -370,20 +678,17 @@
       }
       const actions = el("div", undefined, "welcome-actions");
       if (confirmed) {
-        const meet = button(
-            `Meet ${proposal.firstPm.name}`,
-            () =>
-              onCreatePm?.(s.project.name, {
-                name: proposal.firstPm.name,
-                mandate: proposal.firstPm.mandate,
-              }),
-            true,
+        const own = button("Choose a different gremlin", () =>
+          onCreatePm?.(s.project.name),
+        );
+        own.disabled = disabled || Boolean(s.error);
+        actions.append(
+          own,
+          link(
+            "Review your crew",
+            `/projects/${encodeURIComponent(s.project.name)}?tab=crew`,
           ),
-          own = button("Choose a different gremlin", () =>
-            onCreatePm?.(s.project.name),
-          );
-        meet.disabled = own.disabled = disabled || Boolean(s.error);
-        actions.append(meet, own);
+        );
       } else {
         const confirm = button(
             s.busy ? "Saving reviewed setup…" : "Confirm setup",
@@ -433,7 +738,7 @@
         (pages.current !== "project" ||
           pages.project !== active.project.name ||
           pages.pm ||
-          !["", "overview", "brief"].includes(pages.tab || ""))
+          !["", "overview", "brief", "crew", "setup"].includes(pages.tab || ""))
       )
         deactivate();
     }
@@ -446,7 +751,7 @@
     window.addEventListener("pagehide", deactivate);
     document.addEventListener("visibilitychange", visibility);
     return {
-      mount(container, project) {
+      mount(container, project, { suggestionsOnly = false } = {}) {
         let s = entries.get(project.name);
         if (s && identity(s.project) !== identity(project)) {
           forget(project.name);
@@ -469,6 +774,7 @@
           entries.set(project.name, s);
         }
         s.project = project;
+        s.suggestionsOnly = suggestionsOnly;
         if (active !== s) deactivate();
         active = s;
         container.append(s.node);
@@ -486,6 +792,7 @@
           if (!p || identity(p) !== identity(s.project)) forget(name);
           else if (
             active === s &&
+            !s.suggestionsOnly &&
             (p.areas?.length ||
               p.onboardingProgress?.hasMissions ||
               p.onboardingProgress?.investigated)

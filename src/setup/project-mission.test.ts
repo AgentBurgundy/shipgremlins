@@ -155,6 +155,92 @@ function fixture(api: Api, onSaved = vi.fn(async () => {})) {
   };
 }
 describe("outcome-led project missions", () => {
+  it("routes epic-governed mission proposals to the shared epic approval without a build-epic action", async () => {
+    const f = fixture(async (path) =>
+      path.endsWith("/mission-1")
+        ? {
+            mission: mission(),
+            approvalPolicy: "epic",
+            candidates: [candidate()],
+            observations: [],
+          }
+        : {
+            workflow: { kind: "promotion", approvalPolicy: "epic" },
+            missions: [mission()],
+            changes: [],
+          },
+    );
+    await settle();
+    expect(text(f.root)).toContain(
+      "Approve the product direction once in Epic review",
+    );
+    expect(byText(f.root, "Review this PM's epics").href).toBe(
+      "http://localhost/projects/large-app?tab=review",
+    );
+    expect(text(f.root)).not.toContain("Approve and build");
+    expect(text(f.root)).not.toContain("Choose this change");
+  });
+  it("shows each PM's promotion and collection target with only final batch review links", async () => {
+    const url = "https://github.com/org/app/pull/21";
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      promotionBatches: {
+        areas: [
+          {
+            area: "core",
+            name: "Core",
+            target: 10,
+            verifiedTicketCount: 4,
+            batch: null,
+          },
+          {
+            area: "billing",
+            name: "Billing",
+            target: 3,
+            verifiedTicketCount: 0,
+            batch: {
+              number: 21,
+              url,
+              headSha: "billing-head",
+              state: "open",
+              ticketCount: 3,
+              draft: false,
+            },
+          },
+        ],
+        legacy: [
+          {
+            number: 19,
+            url: "https://github.com/org/app/pull/19",
+            state: "merged",
+            ticketCount: 12,
+          },
+        ],
+      },
+      missions: [],
+      changes: [
+        {
+          jobId: "billing-job",
+          status: "succeeded",
+          delivery: {
+            status: "promoted",
+            area: "billing",
+            ticket: { identifier: "APP-7", title: "Receipt improvement" },
+            promotion: { number: 21, url, headSha: "billing-head" },
+          },
+        },
+      ],
+    }));
+    await settle();
+    expect(text(f.root)).toContain("Your PM promotion batches");
+    expect(text(f.root)).toContain("4/10");
+    expect(byText(f.root, "Review Billing promotion").href).toBe(url);
+    expect(byText(f.root, "Open earlier combined batch").href).toContain(
+      "/pull/19",
+    );
+    expect(text(f.root)).not.toContain("could not be matched");
+    expect(text(f.root)).not.toContain("Review pull request");
+  });
   it.each([
     ["queued", "Integration repair queued"],
     ["running", "Coder repairing integration"],

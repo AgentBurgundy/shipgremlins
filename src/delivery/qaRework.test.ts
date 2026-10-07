@@ -237,6 +237,85 @@ async function failed() {
 }
 
 describe("bounded owning-PM QA repairs", () => {
+  it("publishes exact QA evidence to Linear once across controller restarts and queues the repair", async () => {
+    const w = await failed();
+    await w.controller().reconcileQaRework("game");
+    await w.controller().reconcileQaRework("game");
+    const comments = w.linear.commentsOf(w.ticket.id);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("Owning PM QA: acceptance check failed");
+    expect(comments[0]).toContain(DEPLOY);
+    expect(comments[0]).toContain("The saved name is visible.");
+    expect(comments[0]).toContain(screenshot.sha256);
+    expect(w.linear.labelsOf(w.ticket.id)).toContain("pm-test-failed");
+    expect(w.linear.labelsOf(w.ticket.id)).toContain("pm-approved");
+    expect(w.linear.stateUpdates).toEqual([]);
+    expect(w.enqueue).toHaveBeenCalledTimes(1);
+    expect(w.create().list()[0]!.review!.feedback?.status).toBe("sent");
+  });
+
+  it("recovers a lost Linear comment response without duplication or delaying coding", async () => {
+    const w = await failed();
+    const add = w.linear.addComment.bind(w.linear);
+    vi.spyOn(w.linear, "addComment").mockImplementationOnce(
+      async (id, body) => {
+        await add(id, body);
+        throw new Error("Lost provider response");
+      },
+    );
+    await w.controller().reconcileQaRework("game");
+    expect(w.create().list()[0]!.review!.feedback?.status).toBe("retrying");
+    expect(w.jobs).toHaveLength(1);
+    await w.controller().reconcileQaRework("game");
+    expect(w.linear.commentsOf(w.ticket.id)).toHaveLength(1);
+    expect(w.create().list()[0]!.review!.feedback?.status).toBe("sent");
+  });
+
+  it("keeps infrastructure and missing proof blocked without inventing a code defect", async () => {
+    const w = world();
+    await w.register();
+    await w.review("blocked");
+    await w.controller().reconcileQaRework("game");
+    expect(w.linear.commentsOf(w.ticket.id)[0]).toContain(
+      "No coding defect has been established",
+    );
+    expect(w.linear.labelsOf(w.ticket.id)).not.toContain("pm-test-failed");
+    expect(w.enqueue).not.toHaveBeenCalled();
+    expect(w.create().list()[0]!.review!.assertions![0]!.status).toBe(
+      "blocked",
+    );
+  });
+
+  it("retries Linear feedback after label failure and records verified evidence without Done", async () => {
+    const w = world();
+    await w.register();
+    await w.review("passed");
+    vi.spyOn(w.linear, "addLabel").mockRejectedValueOnce(
+      new Error("Provider unavailable"),
+    );
+    await w.controller().reconcileQaRework("game");
+    expect(w.create().list()[0]!.status).toBe("verified");
+    expect(w.create().list()[0]!.review!.feedback?.status).toBe("retrying");
+    await w.controller().reconcileQaRework("game");
+    expect(w.linear.commentsOf(w.ticket.id)).toHaveLength(1);
+    expect(w.linear.labelsOf(w.ticket.id)).toContain("pm-verified");
+    expect(w.linear.stateUpdates).toEqual([]);
+    expect(w.jobs).toEqual([]);
+  });
+
+  it("does not send QA feedback to a remapped ticket or leak configured secret text", async () => {
+    const w = await failed();
+    w.ticket.projectId = "another-project";
+    await w.create().reconcileQaFeedback();
+    expect(w.linear.commentsOf(w.ticket.id)).toEqual([]);
+    w.ticket.projectId = "lin_core";
+    await w.create().reconcileQaFeedback(["preview.example", "The saved name"]);
+    const body = w.linear.commentsOf(w.ticket.id)[0]!;
+    expect(body).not.toContain("preview.example");
+    expect(body).not.toContain("The saved name");
+    expect(body).toContain("[redacted]");
+  });
+
   it.each(["failed", "blocked", "wrong origin", "missing screenshot"])(
     "uses only the independent replay boundary for coder admission: %s",
     async (outcome) => {
@@ -572,6 +651,12 @@ describe("bounded owning-PM QA repairs", () => {
     expect(later).toBeNull();
     await w.controller().reconcileQaRework("game");
     expect(w.jobs).toHaveLength(1);
+    expect(w.linear.commentsOf(w.ticket.id)).toHaveLength(2);
+    expect(w.linear.commentsOf(w.ticket.id)[1]).toContain(
+      "Owning PM QA: verified",
+    );
+    expect(w.linear.labelsOf(w.ticket.id)).toContain("pm-verified");
+    expect(w.linear.labelsOf(w.ticket.id)).not.toContain("pm-test-failed");
   });
   it("stops after one automatic QA repair and preserves both implementation attempts", async () => {
     const w = await failed();

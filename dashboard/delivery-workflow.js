@@ -171,7 +171,7 @@
         el("h3", "Integration → staging"),
         el(
           "p",
-          "The owning PM tests each integrated change. Passing work is collected into a project promotion PR; failed acceptance checks return to coding. Any blocker remains visible in Delivery.",
+          "Each PM tests its changes and collects a separate promotion after its configured number of tickets pass QA. Failed checks return to coding. You can explicitly prepare a smaller batch below; every verification check still applies.",
           "runner-guidance",
         ),
       );
@@ -185,7 +185,7 @@
         area.append(option);
       }
       s.area = area;
-      s.promote = button("Prepare staging promotion", () =>
+      s.promote = button("Prepare a smaller PM batch", () =>
         confirm(s, "promote"),
       );
       s.advance = button("Advance approved implementation", () =>
@@ -439,11 +439,13 @@
           "p",
           action === "advance"
             ? "Advance one approved ShipGremlins implementation? This may merge its exact reviewed PR into the integration branch. It does not merge staging or production."
-            : "Prepare a staging promotion for this PM? The controller assembles PM-verified changes and runs its checks before publishing the promotion. Any configured candidate verifier must also pass.",
+            : "Prepare this PM's current tested tickets now, even if fewer than its automatic batch target? The controller still checks the assembled candidate and any configured browser verifier before publishing. This does not merge staging or production.",
         ),
       );
       const accept = button(
-        action === "advance" ? "Advance approved work" : "Prepare promotion",
+        action === "advance"
+          ? "Advance approved work"
+          : "Prepare this PM's batch now",
         async () => {
           if (s.busy || isLocked()) return;
           s.busy = true;
@@ -488,8 +490,9 @@
       s.declarations.hidden = s.trackingOpen;
       s.openTracking.disabled = disabled;
       const sync = s.data?.stagingSync;
-      s.sync.hidden = !sync || sync.phase === "disabled";
+      s.sync.hidden = !sync || (sync.phase === "disabled" && !available);
       const syncLabels = {
+        disabled: "Finish setup to keep the test branch current",
         checking: "Checking the test branch",
         current: "Test branch is up to date",
         "waiting-checks": "Waiting for branch checks",
@@ -584,9 +587,14 @@
           (target) => target.name === s.candidateSelect.value,
         );
       const operation = s.data?.operation;
+      const activeOperation = ["running", "error", "held"].includes(
+        operation?.phase,
+      );
       message(
         s.notice,
         s.error ||
+          (activeOperation && operation?.message) ||
+          (sync && sync.phase !== "current" && sync.message) ||
           operation?.message ||
           s.data?.message ||
           (!s.data ? "Loading delivery controls…" : ""),

@@ -181,6 +181,59 @@ async function world() {
   };
 }
 
+async function supersededWorld() {
+  const w = await world();
+  await w.controller().reconcileIntegrationRepairs("game");
+  w.forge.seedPull(
+    TEST_REPO,
+    {
+      number: 2,
+      headRef: "gremlins/job-repair",
+      headSha: FIX,
+      baseRef: "pm-staging",
+      mergeableState: "clean",
+    },
+    ["app/name.ts"],
+  );
+  w.forge.seedChecks(TEST_REPO, FIX, { status: "success", failedJobs: [] });
+  await w.ledger().register({
+    ...w.input,
+    jobId: "job-repair",
+    pullNumber: 2,
+    integrationRepairKey: w.jobs[0]!.idempotencyKey,
+  });
+  return w;
+}
+
+async function addOtherImplementation(w: Awaited<ReturnType<typeof world>>) {
+  const ticket = w.linear.seedTicket({
+    projectId: "lin_core",
+    labels: ["pm:core", "pm-approved"],
+    description: "## Acceptance criteria\n- Another saved field appears.",
+  });
+  w.forge.seedPull(
+    TEST_REPO,
+    {
+      number: 3,
+      headRef: "gremlins/job-other",
+      headSha: "d".repeat(40),
+      baseRef: "pm-staging",
+      mergeableState: "behind",
+    },
+    ["app/name.ts"],
+  );
+  w.forge.seedChecks(TEST_REPO, "d".repeat(40), {
+    status: "success",
+    failedJobs: [],
+  });
+  return w.ledger().register({
+    ...w.input,
+    jobId: "job-other",
+    pullNumber: 3,
+    ticket,
+  });
+}
+
 describe("bounded replacement drafts for pre-merge repair", () => {
   it("recovers lost queue replies and restart without duplicating a repair", async () => {
     const w = await world();
@@ -208,6 +261,42 @@ describe("bounded replacement drafts for pre-merge repair", () => {
       expect(w.executed).toHaveBeenCalledWith(BASE);
     },
   );
+  it.each(["success", "none"] as const)(
+    "updates an outdated implementation automatically with %s provider checks",
+    async (status) => {
+      const w = await world();
+      w.forge.patchPull(TEST_REPO, 1, { mergeableState: "behind" });
+      w.forge.seedChecks(TEST_REPO, HEAD, { status, failedJobs: [] });
+      await w.controller().reconcileIntegrationRepairs("game");
+      await w.controller().reconcileIntegrationRepairs("game");
+      expect(w.enqueue).toHaveBeenCalledOnce();
+      expect(w.jobs[0]).toMatchObject({ developerKind: "rc" });
+      expect(w.ledger().list()[0]!.integrationRepair).toMatchObject({
+        kind: "behind",
+        integrationSha: BASE,
+        headSha: HEAD,
+      });
+      const payload = await w
+        .controller()
+        .beforeDeveloper(w.jobs[0]!, w.payload(), w.ticket);
+      expect(payload.expectedCommitSha).toBe(BASE);
+      expect(payload.syncRepair).toEqual({ stagingSha: HEAD });
+      expect(payload.prompt).toContain(
+        "include the current integration branch",
+      );
+      expect(payload.prompt).toContain("without adding unrelated code changes");
+      expect(w.forge.merged).toEqual([]);
+      expect(w.linear.stateUpdates).toEqual([]);
+    },
+  );
+  it("does not treat an outdated branch with provider access failures as a coding defect", async () => {
+    const w = await world();
+    w.forge.patchPull(TEST_REPO, 1, { mergeableState: "behind" });
+    w.forge.seedChecks(TEST_REPO, HEAD, { status: "failure", failedJobs: [] });
+    await w.controller().reconcileIntegrationRepairs("game");
+    expect(w.jobs).toEqual([]);
+    expect(w.ledger().list()[0]!.integrationRepair).toBeUndefined();
+  });
   it.each(["pending", "permission", "baseline", "hub files"])(
     "does not launch for %s",
     async (reason) => {
@@ -398,7 +487,180 @@ describe("bounded replacement drafts for pre-merge repair", () => {
     await w.controller().reconcileIntegrationRepairs("game");
     expect(w.enqueue).toHaveBeenCalledTimes(1);
     expect(w.ledger().list()[1]!.message).toContain(
-      "one automatic pre-merge repair",
+      "one allowed coding attempt",
     );
+    expect(w.ledger().list()[1]!.status).toBe("blocked");
+  });
+  it("serializes repair admission and holds unrelated integration merges until its replacement", async () => {
+    const w = await world();
+    const other = await addOtherImplementation(w);
+    await w.controller().reconcileIntegrationRepairs("game");
+    expect(w.enqueue).toHaveBeenCalledOnce();
+    expect(w.controller().deliveryStatus("game").integrationRepairActive).toBe(
+      true,
+    );
+    expect(
+      await w.ledger().reserveIntegrationRepair({
+        deliveryId: other.id,
+        kind: "behind",
+        integrationSha: BASE,
+      }),
+    ).toBeNull();
+    w.forge.patchPull(TEST_REPO, 3, { mergeableState: "clean" });
+    await w.ledger().advanceIntegration(async () => true);
+    expect(w.forge.merged).toEqual([]);
+    w.forge.seedPull(
+      TEST_REPO,
+      {
+        number: 2,
+        headRef: "gremlins/job-repair",
+        headSha: FIX,
+        baseRef: "pm-staging",
+        mergeableState: "clean",
+      },
+      ["app/name.ts"],
+    );
+    w.forge.seedChecks(TEST_REPO, FIX, { status: "success", failedJobs: [] });
+    await w.ledger().register({
+      ...w.input,
+      jobId: "job-repair",
+      pullNumber: 2,
+      integrationRepairKey: w.jobs[0]!.idempotencyKey,
+    });
+    await w.controller().reconcileIntegrationRepairs("game");
+    expect(w.enqueue).toHaveBeenCalledOnce();
+    await w.ledger().advanceIntegration(async () => true);
+    expect(w.forge.merged).toEqual([2]);
+    expect(w.controller().deliveryStatus("game").integrationRepairActive).toBe(
+      false,
+    );
+  });
+  it("ends the active repair family honestly when external updates make its replacement outdated", async () => {
+    const w = await supersededWorld();
+    w.forge.patchPull(TEST_REPO, 2, { mergeableState: "behind" });
+    await w.controller().reconcileIntegrationRepairs("game");
+    await w.controller().reconcileIntegrationRepairs("game");
+    expect(w.enqueue).toHaveBeenCalledOnce();
+    expect(w.ledger().list()[1]).toMatchObject({ status: "blocked" });
+    expect(w.ledger().list()[1]!.message).toContain("repair stopped");
+    expect(w.controller().deliveryStatus("game").integrationRepairActive).toBe(
+      false,
+    );
+  });
+  it.each(["queued", "replacement"])(
+    "does not let a stale %s repair family hold current integration work",
+    async (phase) => {
+      const w =
+        phase === "replacement" ? await supersededWorld() : await world();
+      if (phase === "queued")
+        await w.controller().reconcileIntegrationRepairs("game");
+      expect(
+        w.controller().deliveryStatus("game").integrationRepairActive,
+      ).toBe(true);
+      w.project.config.commands.test = "npm run revised-test";
+      expect(
+        w.controller().deliveryStatus("game").integrationRepairActive,
+      ).toBe(false);
+      await addOtherImplementation(w);
+      w.forge.patchPull(TEST_REPO, 3, { mergeableState: "clean" });
+      await w.ledger().advanceIntegration(async () => true);
+      expect(w.forge.merged).toEqual([3]);
+      const stale = w
+        .ledger()
+        .list()
+        .find(
+          (record) =>
+            record.id === (phase === "queued" ? "job-original" : "job-repair"),
+        )!;
+      expect(stale.status).toBe("blocked");
+      if (phase === "queued")
+        expect(stale.integrationRepair?.phase).toBe("stopped");
+    },
+  );
+  it("does not let stale repair admission prevent a new current repair", async () => {
+    const w = await world();
+    await w.controller().reconcileIntegrationRepairs("game");
+    w.project.config.commands.test = "npm run revised-test";
+    const other = await addOtherImplementation(w);
+    const admitted = await w.ledger().reserveIntegrationRepair({
+      deliveryId: other.id,
+      kind: "behind",
+      integrationSha: BASE,
+    });
+    expect(admitted?.integrationRepair?.phase).toBe("queued");
+  });
+});
+
+describe("automatic superseded draft cleanup", () => {
+  it("closes only the registered original and preserves branches and both delivery records", async () => {
+    const w = await supersededWorld();
+    await addOtherImplementation(w);
+    await w.controller().reconcileIntegrationRepairs("game");
+    expect(w.forge.closed).toEqual([1]);
+    expect(w.forge.deletedBranches).toEqual([]);
+    expect(w.ledger().list()).toHaveLength(3);
+    expect(w.ledger().list()[0]!.supersededClosedAt).toBeDefined();
+    const read = vi.spyOn(w.forge, "getPull");
+    await w.ledger().retireSupersededDrafts();
+    expect(read).not.toHaveBeenCalled();
+    expect(w.forge.closed).toEqual([1]);
+  });
+  it.each([
+    "head",
+    "branch",
+    "base",
+    "author",
+    "merged",
+    "replacement",
+    "history",
+    "configuration",
+  ])("preserves superseded drafts when %s has changed", async (change) => {
+    const w = await supersededWorld();
+    if (change === "head") w.forge.patchPull(TEST_REPO, 1, { headSha: FIX });
+    if (change === "branch")
+      w.forge.patchPull(TEST_REPO, 1, { headRef: "external/branch" });
+    if (change === "base") w.forge.patchPull(TEST_REPO, 1, { baseRef: "main" });
+    if (change === "author")
+      w.forge.patchPull(TEST_REPO, 1, { author: "someone-else" });
+    if (change === "merged")
+      w.forge.patchPull(TEST_REPO, 1, {
+        state: "merged",
+        mergeCommitSha: BASE,
+      });
+    if (change === "replacement")
+      w.forge.patchPull(TEST_REPO, 2, { headSha: BASE });
+    if (change === "history")
+      w.forge.seedCompare(TEST_REPO, HEAD, FIX, { aheadBy: 1, behindBy: 1 });
+    if (change === "configuration") w.project.config.commands.test = "changed";
+    await w.ledger().retireSupersededDrafts();
+    expect(w.forge.closed).toEqual([]);
+    expect(w.ledger().list()[0]!.supersededClosedAt).toBeUndefined();
+  });
+  it.each([false, true])(
+    "retries cleanup after a provider failure (lost response: %s)",
+    async (lostResponse) => {
+      const w = await supersededWorld();
+      const close = w.forge.closePull.bind(w.forge);
+      const closeSpy = vi
+        .spyOn(w.forge, "closePull")
+        .mockImplementationOnce(async (...args) => {
+          if (lostResponse) await close(...args);
+          throw new Error("private provider response");
+        });
+      await w.ledger().retireSupersededDrafts();
+      expect(w.ledger().list()[0]!.supersededClosedAt).toBeUndefined();
+      expect(w.ledger().list()[0]!.message).not.toContain("private provider");
+      await w.ledger().retireSupersededDrafts();
+      expect(w.ledger().list()[0]!.supersededClosedAt).toBeDefined();
+      expect(w.forge.closed).toEqual([1]);
+      expect(closeSpy).toHaveBeenCalledTimes(lostResponse ? 1 : 2);
+    },
+  );
+  it("rechecks current configuration immediately before closure", async () => {
+    const w = await supersededWorld();
+    const current = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    await w.ledger().retireSupersededDrafts(current);
+    expect(w.forge.closed).toEqual([]);
+    expect(current).toHaveBeenCalledTimes(2);
   });
 });

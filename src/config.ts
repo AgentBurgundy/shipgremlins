@@ -88,6 +88,8 @@ export interface ProjectConfig extends ProjectCapabilities {
 }
 
 export interface AreaConfig {
+  /** Distinct PM-tested tickets required before an automatic promotion is opened. */
+  promotionBatchSize?: number;
   /** Controller-issued identity for a fresh PM that reuses a deleted key. */
   instanceId?: string;
   /** A dashboard-authored mandate, in addition to the versioned mandate.md. */
@@ -620,6 +622,17 @@ export function loadProject(root: string, name: string): Project {
       ),
       label,
       wipLimit: need(af, a, "wipLimit", isPosInt, "a positive integer"),
+      ...(a.promotionBatchSize === undefined
+        ? {}
+        : {
+            promotionBatchSize: need(
+              af,
+              a,
+              "promotionBatchSize",
+              (value): value is number => isPosInt(value) && value <= 100,
+              "an integer from 1 to 100",
+            ),
+          }),
       metric: need(
         af,
         a,

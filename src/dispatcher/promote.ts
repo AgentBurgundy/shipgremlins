@@ -1,4 +1,4 @@
-// Promotion: the project's verified work, and nothing else, as one PR into
+// Promotion: each PM's verified work, and nothing else, as its own PR into
 // staging. A promotion is BUILT with cherry-picks, never pointed at the
 // integration branch — git ships everything behind a commit, and pm-staging
 // carries every area's work including merges that failed their test.
@@ -19,6 +19,7 @@ import type { PullRequest } from "../forge/types.ts";
 import { branchesOf, repoOf, type Ctx, type DigestRow } from "./context.ts";
 import { dispatchPort } from "./port.ts";
 import { integrationHealth } from "./stopTheLine.ts";
+import { promotionBatchSize } from "../delivery/batching.ts";
 import {
   candidateEvidenceError,
   trustedVerdict,
@@ -40,6 +41,8 @@ export interface PromoteOpts {
   checkoutDir: string;
   /** promote only this area key (the CLI's --area); every area when absent */
   area?: string;
+  /** Automatic collection waits for the configured distinct-ticket target. */
+  automatic?: boolean;
   /** Mandatory runtime gate: install, lint, typecheck, tests and application build.
    *  change can apply cleanly and still not build: it imports a file that a
    *  held change added. When given, a batch that fails is rebuilt one change
@@ -50,11 +53,24 @@ export interface PromoteOpts {
     candidate: CandidateVerification,
   ) => Promise<CandidateVerificationResult>;
   /** Controller ledger authority for local delivery; never inferred from worker comments. */
-  candidateVerdict?: (
-    pull: PullRequest,
-  ) => Promise<{ area: string; verdict: Verdict } | null>;
+  candidateVerdict?: (pull: PullRequest) => Promise<{
+    area: string;
+    verdict: Verdict;
+    ticketId?: string;
+    sourceSha?: string;
+    sourcePaths?: string[];
+    rebuildingBatch?: boolean;
+  } | null>;
+  /** Exact admitted local PRs, independent of the legacy provider search window. */
+  candidatePullNumbers?: (area?: string) => Promise<number[]>;
   /** Local workers do not dispatch legacy CI port jobs. Conflicts remain held. */
   local?: boolean;
+  /** Durable controller admission for an isolated, bounded ticket port. */
+  onPromotionConflict?: (input: {
+    pullNumber: number;
+    stagingSha: string;
+  }) => Promise<boolean>;
+  currentPromotion?: (pull: PullRequest) => Promise<boolean>;
   /** Publish owning-PM-reviewed, build-checked changes without an external
    * signer. A supplied verifyCandidate always remains a required gate. */
   publishReviewedCandidate?: boolean;
@@ -68,6 +84,7 @@ export interface PromoteOpts {
 const REMOTE = "origin";
 const LOOKBACK_DAYS = 60;
 const MAX_MERGES = 100;
+export const MAX_MANAGED_CANDIDATES = 300;
 const MAX_BRANCH_SUFFIX = 20;
 const TRAILER_RE = /\(cherry picked from commit ([0-9a-f]{7,40})\)/g;
 
@@ -81,6 +98,9 @@ interface Candidate {
   verdict: Verdict;
   /** position in merge order, oldest = 0 */
   order: number;
+  ticketId?: string;
+  standaloneSource?: boolean;
+  rebuildingBatch?: boolean;
 }
 
 interface Held {
@@ -276,7 +296,7 @@ async function collectCandidates(
   const since = new Date(
     ctx.now().getTime() - LOOKBACK_DAYS * 86_400_000,
   ).toISOString();
-  const merged = (await ctx.forge.listMergedPulls(repo, integration, since))
+  const recent = (await ctx.forge.listMergedPulls(repo, integration, since))
     .filter(
       (p) =>
         (p.author === ctx.botLogin || p.labels.includes(LABELS.owner)) &&
@@ -287,14 +307,61 @@ async function collectCandidates(
         !p.headRef.startsWith(SYNC_BRANCH_PREFIX) &&
         p.mergeCommitSha,
     )
-    .slice(0, MAX_MERGES)
-    .reverse();
+    .slice(0, MAX_MERGES);
+  const exact = opts.candidatePullNumbers
+    ? await opts.candidatePullNumbers(opts.area)
+    : [];
+  if (
+    !Array.isArray(exact) ||
+    exact.length > MAX_MANAGED_CANDIDATES ||
+    exact.some((number) => !Number.isSafeInteger(number) || number < 1)
+  )
+    throw new Error(
+      `A managed PM promotion can inspect at most ${MAX_MANAGED_CANDIDATES} admitted implementation PRs at once.`,
+    );
+  const byNumber = new Map(recent.map((pull) => [pull.number, pull]));
+  // Cap concurrent provider reads; never treat missing or changed exact PRs as
+  // the stale search result returned earlier in this reconciliation.
+  const numbers = [...new Set(exact)];
+  for (let offset = 0; offset < numbers.length; offset += 8) {
+    const current = await Promise.all(
+      numbers.slice(offset, offset + 8).map(async (number) => ({
+        number,
+        pull: await ctx.forge.getPull(repo, number),
+      })),
+    );
+    for (const { number, pull } of current) {
+      byNumber.delete(number);
+      if (pull?.number === number) byNumber.set(number, pull);
+    }
+  }
+  const merged = [...byNumber.values()]
+    .filter(
+      (pull) =>
+        pull.state === "merged" &&
+        pull.baseRef === integration &&
+        pull.mergeCommitSha &&
+        pull.mergedAt &&
+        (pull.author === ctx.botLogin || pull.labels.includes(LABELS.owner)) &&
+        pull.headRef !== staging &&
+        !pull.headRef.startsWith(SYNC_BRANCH_PREFIX),
+    )
+    .sort(
+      (a, b) => a.mergedAt!.localeCompare(b.mergedAt!) || a.number - b.number,
+    );
   const out: Candidate[] = [];
   for (const pr of merged) {
     const files = await ctx.forge.listPullFiles(repo, pr.number);
     const tracked = opts.candidateVerdict
       ? await opts.candidateVerdict(pr)
       : null;
+    if (
+      opts.candidatePullNumbers &&
+      tracked &&
+      (!opts.area || tracked.area === opts.area) &&
+      !numbers.includes(pr.number)
+    )
+      continue;
     const area = tracked
       ? (ctx.project.areas.find((a) => a.key === tracked.area) ?? null)
       : areaOf(files, ctx.project.areas);
@@ -304,13 +371,16 @@ async function collectCandidates(
       : await ctx.forge.listPullComments(repo, pr.number);
     out.push({
       pr,
-      sha: pr.mergeCommitSha!,
-      files,
+      sha: tracked?.sourceSha ?? pr.mergeCommitSha!,
+      files: tracked?.sourcePaths ?? files,
+      ...(tracked?.sourceSha ? { standaloneSource: true } : {}),
+      ...(tracked?.rebuildingBatch ? { rebuildingBatch: true } : {}),
       area,
       verdict: opts.candidateVerdict
         ? (tracked?.verdict ?? "untested")
         : trustedVerdict(comments, ctx.botLogin, pr.mergeCommitSha!),
       order: out.length,
+      ...(tracked?.ticketId ? { ticketId: tracked.ticketId } : {}),
     });
   }
   return out;
@@ -370,21 +440,67 @@ export async function runPromote(
   const { staging } = branchesOf(ctx);
   await repo.must(["fetch", REMOTE]);
   const candidates = await collectCandidates(ctx, opts);
+  for (const candidate of candidates.filter(
+    (c) => c.standaloneSource && c.verdict === "verified",
+  )) {
+    if (
+      (await repo.run(["cat-file", "-e", `${candidate.sha}^{commit}`])).code !==
+      0
+    ) {
+      // Squash merging and deleting the coding branch can leave the isolated
+      // source reachable only from the provider's retained implementation ref.
+      const fetched = await repo.run([
+        "fetch",
+        "--no-tags",
+        REMOTE,
+        candidate.pr.headSha,
+      ]);
+      if (fetched.code !== 0) {
+        const ref =
+          ctx.project.config.provider === "gitlab"
+            ? `refs/merge-requests/${candidate.pr.number}/head`
+            : `refs/pull/${candidate.pr.number}/head`;
+        await repo.must(["fetch", "--no-tags", REMOTE, ref]);
+        if (
+          (await repo.out(["rev-parse", "FETCH_HEAD"])).trim() !==
+          candidate.pr.headSha
+        )
+          throw new Error(
+            "The retained implementation ref moved; its isolated source cannot authorize promotion.",
+          );
+      }
+    }
+    const paths = splitLines(
+      await repo.out([
+        "diff",
+        "--name-only",
+        `${candidate.sha}^`,
+        candidate.sha,
+      ]),
+    );
+    if (
+      !paths.length ||
+      paths.some((path) => !candidate.files.includes(path)) ||
+      (
+        await repo.out([
+          "diff",
+          "--name-only",
+          candidate.sha,
+          candidate.pr.mergeCommitSha!,
+          "--",
+          ...paths,
+        ])
+      ).trim()
+    )
+      throw new Error(
+        `The isolated source for #${candidate.pr.number} differs from its PM-tested integration result. Promotion stopped; preserved evidence cannot verify different code.`,
+      );
+  }
   const onStaging = await promotedOnStaging(repo, staging, candidates);
   const rows: DigestRow[] = [];
-  // Automatic promotion batches all owning PMs into a single project PR.
-  // --area remains an explicit compatibility escape hatch for manual operation.
   const areas = opts.area
     ? ctx.project.areas.filter((area) => area.key === opts.area)
-    : opts.local
-      ? [
-          {
-            ...ctx.project.areas[0]!,
-            key: "combined",
-            name: ctx.project.config.name,
-          },
-        ]
-      : ctx.project.areas;
+    : ctx.project.areas;
   for (const area of areas) {
     const check = () => opts.check!(opts.checkoutDir);
     rows.push(
@@ -413,7 +529,7 @@ async function promoteArea(
 ): Promise<DigestRow[]> {
   const forgeRepo = repoOf(ctx);
   const { staging, integration } = branchesOf(ctx);
-  const combined = !!opts.local && !opts.area;
+  const combined = false;
   const say = (m: string) => ctx.log(`promote (${area.name}): ${m}`);
   const isoDate = ctx.now().toISOString().slice(0, 10);
   const nothing = (held: Held[]): DigestRow[] => [
@@ -429,16 +545,15 @@ async function promoteArea(
     (p) => p.author === ctx.botLogin && p.headRef.startsWith("pm-release/"),
   );
   if (
-    combined &&
-    openPromotions.some(
-      (p) => !p.headRef.startsWith(releaseBranch("combined", "")),
+    openPromotions.some((p) =>
+      p.headRef.startsWith(releaseBranch("combined", "")),
     )
   )
     return [
       {
         rule: "promote",
-        needsYou: true,
-        text: "Finish or close existing per-PM promotion PRs before starting the combined promotion. Their branches and reviews were preserved.",
+        pending: true,
+        text: `${area.name}: the existing combined promotion is still open for final review. Its contents are preserved; per-PM batches resume after that PR is merged or closed, without duplicating its tickets.`,
       },
     ];
   const matching = openPromotions.filter((p) =>
@@ -459,6 +574,14 @@ async function promoteArea(
         p.headRef.startsWith(releaseBranch(area.key, "")),
     ) ?? null,
   );
+  if (openPr && opts.currentPromotion && !(await opts.currentPromotion(openPr)))
+    return [
+      {
+        rule: "promote",
+        needsYou: true,
+        text: `${area.name}: the open promotion no longer matches its recorded head. Its contents are preserved; unrecognized changes will not be overwritten.`,
+      },
+    ];
   // The promotion branch in progress: the open PR's, or — when a developer
   // ported changes onto a branch that has no PR yet — the newest release
   // branch that carries work staging does not have.
@@ -467,7 +590,7 @@ async function promoteArea(
   // developer, or its PR was merged): its name is reused from staging's tip
   // rather than piling up `-2`, `-3` beside a port in progress.
   let emptyBranch: string | null = null;
-  if (!existingBranch) {
+  if (!existingBranch && !opts.local) {
     const heads = splitLines(
       await repo.out([
         "ls-remote",
@@ -604,8 +727,50 @@ async function promoteArea(
     return nothing(held);
   }
 
+  const requiredTickets = promotionBatchSize(ctx.project, area.key);
+  const countTickets = (items: Candidate[]) =>
+    new Set(
+      items.flatMap((item) =>
+        item.ticketId
+          ? [item.ticketId]
+          : opts.local
+            ? []
+            : [`pull:${item.pr.number}`],
+      ),
+    ).size;
+  const waitingForBatch = (count: number): DigestRow[] => [
+    {
+      rule: "promote",
+      text: `${area.name}: ${count}/${requiredTickets} PM-tested tickets ready. The crew is collecting this PM's next promotion batch.`,
+    },
+  ];
+  // A minimum-size batch must not trap an older prerequisite below its target:
+  // A1 -> B1 -> A2 can otherwise leave both PMs waiting forever. Only already
+  // eligible, verified changes may unblock a different PM's verified work.
+  const unblocksAnotherPm = (items: Candidate[]) =>
+    items.some((item) =>
+      candidates.some(
+        (other) =>
+          other.area &&
+          other.area.key !== area.key &&
+          other.verdict === "verified" &&
+          !onStaging.has(other.sha) &&
+          other.order > item.order &&
+          other.files.some((file) => item.files.includes(file)),
+      ),
+    );
+  if (
+    opts.automatic &&
+    !openPr &&
+    countTickets([...carried, ...toPick]) < requiredTickets &&
+    !unblocksAnotherPm([...carried, ...toPick]) &&
+    ![...carried, ...toPick].some((c) => c.rebuildingBatch)
+  )
+    return waitingForBatch(countTickets([...carried, ...toPick]));
+
   let branch: string;
   let updatedBase = false;
+  let rebuilt = false;
   if (existingBranch) {
     branch = existingBranch;
     await repo.must(["checkout", "-B", branch, `${REMOTE}/${branch}`]);
@@ -628,13 +793,20 @@ async function promoteArea(
       ]);
       if (rebased.code !== 0) {
         await repo.run(["merge", "--abort"]);
-        return [
-          {
-            rule: "promote",
-            needsYou: true,
-            text: `${area.name}: promotion blocked — candidate conflicts with current ${staging}; resolve and reverify`,
-          },
-        ];
+        if (opts.local && opts.onPromotionConflict) {
+          await repo.must(["reset", "--hard", `${REMOTE}/${staging}`]);
+          toPick.unshift(...carried);
+          carried = [];
+          rebuilt = true;
+        } else {
+          return [
+            {
+              rule: "promote",
+              needsYou: true,
+              text: `${area.name}: promotion blocked — candidate conflicts with current ${staging}; resolve and reverify`,
+            },
+          ];
+        }
       }
       updatedBase = true;
     }
@@ -676,7 +848,12 @@ async function promoteArea(
       port(c, `goes with the port of earlier work on ${behind}`);
       continue;
     }
-    const r = await repo.run(["cherry-pick", "-x", ...pickArgs, c.sha]);
+    const r = await repo.run([
+      "cherry-pick",
+      "-x",
+      ...(c.standaloneSource ? [] : pickArgs),
+      c.sha,
+    ]);
     if (r.code === 0) {
       picked.push(c);
       continue;
@@ -693,11 +870,30 @@ async function promoteArea(
     );
   }
 
+  if (opts.local && opts.onPromotionConflict && toPort.length && !ctx.dryRun) {
+    const stagingSha = (
+      await repo.out(["rev-parse", `${REMOTE}/${staging}`])
+    ).trim();
+    for (const candidate of toPort) {
+      const admitted = await opts.onPromotionConflict({
+        pullNumber: candidate.pr.number,
+        stagingSha,
+      });
+      if (admitted && openPr)
+        return [
+          {
+            rule: "promote",
+            pending: true,
+            text: `${area.name}: the conflicted promotion is being retired and preserved in history. A bounded port and fresh PM QA will rebuild a mergeable final batch.`,
+          },
+        ];
+    }
+  }
+
   // Applying cleanly is not building. If the batch does not build, find out
   // which changes cannot stand on staging without work that is not promoted,
   // and hold exactly those — an open promotion PR must never be red because
   // of how it was assembled.
-  let rebuilt = false;
   if (picked.length > 0 || carried.length > 0) {
     const whole = await check();
     if (!whole.ok) {
@@ -754,7 +950,12 @@ async function promoteArea(
           const r = await repo.run(
             source
               ? ["cherry-pick", source]
-              : ["cherry-pick", "-x", ...pickArgs, c.sha],
+              : [
+                  "cherry-pick",
+                  "-x",
+                  ...(c.standaloneSource ? [] : pickArgs),
+                  c.sha,
+                ],
           );
           if (r.code !== 0) {
             await repo.run(["cherry-pick", "--abort"]);
@@ -803,6 +1004,14 @@ async function promoteArea(
   const ships = [...carried, ...picked]
     .sort((a, b) => a.order - b.order)
     .map((c) => c.pr);
+  if (
+    opts.automatic &&
+    !openPr &&
+    countTickets([...carried, ...picked]) < requiredTickets &&
+    !unblocksAnotherPm([...carried, ...picked]) &&
+    ![...carried, ...picked].some((c) => c.rebuildingBatch)
+  )
+    return waitingForBatch(countTickets([...carried, ...picked]));
   if (openPr && ships.length === 0)
     return [
       {
@@ -821,8 +1030,17 @@ async function promoteArea(
     tests: testChanges(nameStatus, ctx.project.tiers),
     combined,
   });
+  const prerequisiteBatch =
+    opts.automatic &&
+    countTickets([...carried, ...picked]) < requiredTickets &&
+    unblocksAnotherPm([...carried, ...picked]);
+  if (prerequisiteBatch)
+    body += `\n## Prerequisite batch\n\nThis smaller batch unblocks verified shared-file dependencies owned by another PM. The normal target is ${requiredTickets} distinct tickets; this batch contains ${countTickets([...carried, ...picked])}. All included work has the same owning-PM QA and candidate checks as a full batch. No other PM's changes are included.\n`;
+  if ([...carried, ...picked].some((c) => c.rebuildingBatch))
+    body +=
+      "\n## Rebuilt batch\n\nThis batch replaces an unchanged controller-owned promotion that conflicted with newer staging work. The previous PR is preserved in delivery history. Isolated ported sources passed fresh integration PM QA; unchanged sources retain their exact recorded QA. The assembled replacement passed the configured checks. Rebuilding preserves the earlier batch's eligibility even below the normal ticket target.\n";
   const title = promotionTitle(area.name, isoDate, ships.length);
-  const summary = `${picked.length} new, ${ships.length} total, ${held.length} held`;
+  const summary = `${picked.length} new, ${ships.length} total, ${held.length} held${prerequisiteBatch ? "; smaller prerequisite batch to unblock another PM" : ""}`;
   const publishReviewed =
     opts.local === true &&
     opts.publishReviewedCandidate === true &&
@@ -1084,8 +1302,10 @@ async function promoteArea(
     if (opts.local)
       rows.push({
         rule: "promote",
-        needsYou: true,
-        text: `${area.name}: ${toPort.length} changes need a reviewed port onto ${staging}; they remain excluded from the promotion.`,
+        needsYou: !opts.onPromotionConflict,
+        text: opts.onPromotionConflict
+          ? `${area.name}: ${toPort.length} changes await a bounded automatic promotion port and fresh owning-PM QA. Their original scope is preserved; stopped attempts are shown in Delivery.`
+          : `${area.name}: ${toPort.length} changes need a reviewed port onto ${staging}; they remain excluded from the promotion.`,
       });
     else rows.push(await dispatchPort(ctx, area, branch, portChanges));
   }

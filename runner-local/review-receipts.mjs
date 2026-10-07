@@ -14,6 +14,12 @@ import { installBrowserAccess } from "./browser-access.mjs";
 
 const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+// Fixed, recorded sizes make layout evidence comparable across runs. Model
+// recipes select names, never arbitrary browser/device emulation options.
+const REVIEW_VIEWPORTS = {
+  desktop: { width: 1280, height: 800 },
+  mobile: { width: 390, height: 844 },
+};
 const text = (v, max) =>
   typeof v === "string" && !!v.trim() && v.length <= max && !v.includes("\0");
 const loginPath = (path) =>
@@ -205,8 +211,14 @@ export async function runReviewReceipts({
           ? draft.checks.filter((c) => c?.criterion === criterion)
           : [];
         const check = checks.length === 1 ? checks[0] : undefined;
+        const viewports = check?.viewports ?? ["desktop"];
         const valid =
           check &&
+          Array.isArray(viewports) &&
+          viewports.length >= 1 &&
+          viewports.length <= 2 &&
+          new Set(viewports).size === viewports.length &&
+          viewports.every((name) => name === "desktop" || name === "mobile") &&
           text(check.path, 1000) &&
           /^\/(?!\/)/.test(check.path) &&
           !/[?#\\]/.test(check.path) &&
@@ -235,112 +247,144 @@ export async function runReviewReceipts({
           at: now().toISOString(),
         };
         if (valid) {
-          let context;
-          try {
-            const state = storageState(check.session ?? draft.session);
-            context = await browser.newContext({
-              serviceWorkers: "block",
-              ...(state ? { storageState: state } : {}),
-            });
-            const page = await context.newPage();
-            // The shared CDP guard intercepts every redirect hop, including
-            // public reviews that have no bypass credential or private session.
-            await installBrowserAccess(page, {
-              url: target.href,
-              bypass: bypass || "",
-              restrictLogin: true,
-            });
-            page.setDefaultTimeout(10_000);
-            const response = await page.goto(new URL(check.path, target).href, {
-              waitUntil: "domcontentloaded",
-              timeout: 15_000,
-            });
-            if (
-              !response ||
-              response.status() >= 400 ||
-              new URL(page.url()).origin !== target.origin
-            )
-              throw new Error("Target unavailable.");
-            const intentionalPath =
-              check.kind === "url-path" && loginPath(check.expected)
-                ? check.expected
-                : check.path;
-            requireApplicationPage(page, intentionalPath);
-            const steps = check.steps ?? [];
-            if (!Array.isArray(steps) || steps.length > 12)
-              throw new Error("Review recipe is too large.");
-            for (const step of steps) {
+          const views = [];
+          for (const viewportName of viewports) {
+            const view = {
+              ...receipt,
+              viewport: {
+                name: viewportName,
+                ...REVIEW_VIEWPORTS[viewportName],
+              },
+            };
+            let context;
+            try {
+              const state = storageState(check.session ?? draft.session);
+              context = await browser.newContext({
+                serviceWorkers: "block",
+                viewport: REVIEW_VIEWPORTS[viewportName],
+                ...(state ? { storageState: state } : {}),
+              });
+              const page = await context.newPage();
+              // The shared CDP guard intercepts every redirect hop, including
+              // public reviews that have no bypass credential or private session.
+              await installBrowserAccess(page, {
+                url: target.href,
+                bypass: bypass || "",
+                restrictLogin: true,
+              });
+              page.setDefaultTimeout(10_000);
+              const response = await page.goto(
+                new URL(check.path, target).href,
+                {
+                  waitUntil: "domcontentloaded",
+                  timeout: 15_000,
+                },
+              );
               if (
-                !step ||
-                !text(step.selector, 500) ||
-                !["click", "fill", "select", "check", "uncheck"].includes(
-                  step.action,
-                )
+                !response ||
+                response.status() >= 400 ||
+                new URL(page.url()).origin !== target.origin
               )
-                throw new Error("Unsupported review action.");
-              const locator = page.locator(step.selector);
-              if ((await locator.count()) !== 1)
-                throw new Error("Review action target is ambiguous.");
-              if (step.action === "fill" || step.action === "select") {
-                if (typeof step.value !== "string" || step.value.length > 4000)
-                  throw new Error("Invalid review action value.");
-                if (step.action === "fill") await locator.fill(step.value);
-                else await locator.selectOption(step.value);
-              } else if (step.action === "click") await locator.click();
-              else if (step.action === "check") await locator.check();
-              else await locator.uncheck();
-              if (new URL(page.url()).origin !== target.origin)
-                throw new Error("Review action left its admitted deployment.");
+                throw new Error("Target unavailable.");
+              const intentionalPath =
+                check.kind === "url-path" && loginPath(check.expected)
+                  ? check.expected
+                  : check.path;
               requireApplicationPage(page, intentionalPath);
+              const steps = check.steps ?? [];
+              if (!Array.isArray(steps) || steps.length > 12)
+                throw new Error("Review recipe is too large.");
+              for (const step of steps) {
+                if (
+                  !step ||
+                  !text(step.selector, 500) ||
+                  !["click", "fill", "select", "check", "uncheck"].includes(
+                    step.action,
+                  )
+                )
+                  throw new Error("Unsupported review action.");
+                const locator = page.locator(step.selector);
+                if ((await locator.count()) !== 1)
+                  throw new Error("Review action target is ambiguous.");
+                if (step.action === "fill" || step.action === "select") {
+                  if (
+                    typeof step.value !== "string" ||
+                    step.value.length > 4000
+                  )
+                    throw new Error("Invalid review action value.");
+                  if (step.action === "fill") await locator.fill(step.value);
+                  else await locator.selectOption(step.value);
+                } else if (step.action === "click") await locator.click();
+                else if (step.action === "check") await locator.check();
+                else await locator.uncheck();
+                if (new URL(page.url()).origin !== target.origin)
+                  throw new Error(
+                    "Review action left its admitted deployment.",
+                  );
+                requireApplicationPage(page, intentionalPath);
+              }
+              let passed = false;
+              if (check.kind === "url-path")
+                passed = new URL(page.url()).pathname === check.expected;
+              else {
+                const locator = check.kind.startsWith("text-")
+                  ? page.getByText(check.text, { exact: true })
+                  : page.locator(check.selector);
+                if (check.kind.endsWith("-absent"))
+                  passed = (await locator.count()) === 0;
+                else
+                  passed =
+                    (await locator.count()) === 1 &&
+                    (await locator.isVisible());
+              }
+              view.status = passed ? "passed" : "failed";
+              // Query strings may contain application tokens; they are never evidence.
+              const observedUrl = new URL(page.url());
+              observedUrl.search = "";
+              observedUrl.hash = "";
+              view.url = observedUrl.href;
+              view.check = {
+                kind: check.kind,
+                path: check.path,
+                ...(check.text ? { text: check.text } : {}),
+                ...(check.selector ? { selector: check.selector } : {}),
+                ...(check.expected ? { expected: check.expected } : {}),
+              };
+              const screenshotName = `review-screenshots/${receipt.id}-${viewportName}.png`;
+              const bytes = await page.screenshot({
+                fullPage: true,
+                timeout: 15_000,
+              });
+              if (
+                bytes.length > 10 * 1024 * 1024 ||
+                !bytes
+                  .subarray(0, 8)
+                  .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+              )
+                throw new Error("Invalid screenshot.");
+              writeFileSync(join(outputDirectory, screenshotName), bytes, {
+                flag: "wx",
+                mode: 0o600,
+              });
+              view.screenshot = {
+                name: screenshotName,
+                sha256: digest(bytes),
+              };
+              row.screenshots.push(view.screenshot);
+            } catch {
+              view.status = "blocked";
+            } finally {
+              await context?.close();
             }
-            let passed = false;
-            if (check.kind === "url-path")
-              passed = new URL(page.url()).pathname === check.expected;
-            else {
-              const locator = check.kind.startsWith("text-")
-                ? page.getByText(check.text, { exact: true })
-                : page.locator(check.selector);
-              if (check.kind.endsWith("-absent"))
-                passed = (await locator.count()) === 0;
-              else
-                passed =
-                  (await locator.count()) === 1 && (await locator.isVisible());
-            }
-            receipt.status = passed ? "passed" : "failed";
-            receipt.url = page.url();
-            receipt.check = {
-              kind: check.kind,
-              path: check.path,
-              ...(check.text ? { text: check.text } : {}),
-              ...(check.selector ? { selector: check.selector } : {}),
-              ...(check.expected ? { expected: check.expected } : {}),
-            };
-            const screenshotName = `review-screenshots/${receipt.id}.png`;
-            const bytes = await page.screenshot({
-              fullPage: true,
-              timeout: 15_000,
-            });
-            if (
-              bytes.length > 10 * 1024 * 1024 ||
-              !bytes
-                .subarray(0, 8)
-                .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-            )
-              throw new Error("Invalid screenshot.");
-            writeFileSync(join(outputDirectory, screenshotName), bytes, {
-              flag: "wx",
-              mode: 0o600,
-            });
-            receipt.screenshot = {
-              name: screenshotName,
-              sha256: digest(bytes),
-            };
-            row.screenshots.push(receipt.screenshot);
-          } catch {
-            receipt.status = "blocked";
-          } finally {
-            await context?.close();
+            views.push(view);
           }
+          // A partial layout review is not a reproducible code failure. All
+          // requested views must replay before a failed predicate can admit repair.
+          const representative =
+            views.find((v) => v.status === "blocked") ??
+            views.find((v) => v.status === "failed") ??
+            views[0];
+          Object.assign(receipt, representative, { views });
         }
         row.assertions.push({
           criterion,

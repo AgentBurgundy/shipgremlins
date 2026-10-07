@@ -36,10 +36,10 @@ reads and per-project credentials. [Connect project telemetry →](docs/TELEMETR
 Sentry, Datadog, and Mixpanel have their own Connections cards. Configure project
 scopes and each PM's Mixpanel report in the dashboard, then save credentials there.
 
-**Keep the crew in your Slack channel.** PMs report their patrols; Coding Gremlins announce drafts ready for review and flag blockers. Updates carry the project, mandate or ticket, and run number. [Connect Slack →](docs/SLACK.md)
+**Keep the crew in your Slack channel.** PMs report their patrols; Coding Gremlins report implementation progress and blockers. Updates carry the project, mandate or ticket, and run number. [Connect Slack →](docs/SLACK.md)
 
 > [!NOTE]
-> **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. Start with a GitHub/GitLab repository and configured checks. Browser testing is optional: use a direct URL or Vercel, Railway, or Cloud Run discovery. Full live provider certification remains pending. The opt-in promotion flow can merge eligible approved work into integration; you control staging and production merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
+> **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. New projects use epic approval and per-PM promotions. Finish Linear, agent-service and verified integration deployment setup before activating the crew. Source discovery can start earlier; explicit direct-PR projects can stay repository-only. Full live provider certification remains pending. You control promotion merges into staging and your normal production release. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
 
 ## When to bring in the gremlins
 
@@ -48,11 +48,11 @@ with one outcome: make the first import easier, close an account-isolation gap,
 or investigate a feature your current workflow is missing. You set direction;
 the crew investigates and implements the work you approve.
 
-| Where you are                          | Where ShipGremlins fits                                                                                        |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.                     |
-| An app with a growing backlog          | Approve a bounded ticket. Your coder implements it, your PM tests it, and passing work becomes a promotion PR. |
-| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity.        |
+| Where you are                          | Where ShipGremlins fits                                                                                                       |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.                                    |
+| An app with a growing backlog          | Approve a bounded epic. Coders implement its tickets, the owning PM tests them, and passing work becomes its promotion batch. |
+| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity.                       |
 
 Start with **one PM, one outcome, one useful change**. Your project home collects
 integration checks, PM QA, coding follow-ups, promotion PRs, and the next improvement.
@@ -98,20 +98,20 @@ simulated preferences and assumptions stay separate. [Meet your Grumblins →](d
 ```mermaid
 flowchart LR
     A[Explore the app] --> B[Findings + screenshots]
-    B --> C[Approve tickets]
+    B --> C[Approve an epic]
     C --> D[Build a fix]
     D --> E[Verify the candidate]
-    E --> F[Review + merge]
+    E --> F[Review each PM's promotion batch]
     F --> G[Production audit]
 ```
 
-| Step        | What actually happens                                                                                                                                                                                                                                                               |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                                                             |
-| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Promotion projects use their integration branch.                                                                                                  |
-| **Recover** | Durable queues, bounded startup retries and cancellation preserve existing work. An ambiguous launch or publication is held for review, not blindly repeated.                                                                                                                       |
-| **Verify**  | The controller checks and merges eligible coding drafts into integration. The owning PM tests the exact deployed app using independent browser receipts. Failed acceptance criteria return to a coder with evidence, with at most one automatic coding repair per original change.  |
-| **Ship**    | Verified work is collected into one project promotion PR after checks on the assembled changes. A configured candidate browser verifier remains an extra gate. You control staging and production merges; production reconciliation requires an explicitly reviewed complete scope. |
+| Step        | What actually happens                                                                                                                                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                                                            |
+| **Approve** | Approve a bounded epic once. Its PM creates testable child tickets, and coders implement eligible work on your agent services. The controller owns internal drafts and merges into `pm-staging`.                                                                                   |
+| **Recover** | Durable queues, bounded startup retries and cancellation preserve existing work. An ambiguous launch or publication is held for review, not blindly repeated.                                                                                                                      |
+| **Verify**  | The controller checks and merges eligible coding drafts into integration. The owning PM tests the exact deployed app using independent browser receipts. Failed acceptance criteria return to a coder with evidence, with at most one automatic coding repair per original change. |
+| **Ship**    | Each PM collects verified tickets into its own selective promotion to staging: 10 tickets by default, configurable per project or PM. Assembled checks must pass. You review the promotion, then use your normal production release process.                                       |
 
 **“Trust me” isn't a test.** Missing or stale evidence blocks promotion. A staging merge does not close a ticket. [Read the verification model →](docs/VERIFICATION.md)
 
@@ -203,6 +203,9 @@ enable **Look for new improvements** for scheduled patrols or **Automatically
 build approved work** for approved-ticket pickup. These controls are independent.
 Turning either off stops its new automatic work; manual runs remain separate. A manual
 Coding run still requires an open, approved ticket in the PM's Linear project.
+For new managed projects, that ticket must be a native child of a currently
+approved epic. **Activate ready crew** can enable the ready PMs and coding together;
+it does not approve any epic. [Complete workflow and recovery diagrams →](docs/AUTONOMOUS_WORKFLOW.md)
 
 Choose **Adopt a PM Gremlin** on your project's page. Describe what it should
 take care of and choose **Meet my gremlin**, or **Write the brief myself**. AI fills
@@ -287,9 +290,10 @@ gremlins --env-file .env doctor my-app
 Verification is a milestone. Staging is a milestone. **Done means every approved deliverable is merged into the configured production branch.**
 
 For promotion projects, **Delivery** tracks drafts, deployment, PM review and
-selective promotion. Confirm the complete ticket scope and its staging-to-production
-PR once; the controller can then reconcile actual production merges into Linear.
-It never merges production for you. [GitLab/Railway and GitHub/Vercel delivery →](docs/DELIVERY_WORKFLOW.md)
+selective promotion. The managed epic workflow derives each child ticket's finite
+delivery scope from its verified promotion and audits actual production merges
+before closing it in Linear. Legacy/manual completion declarations remain available.
+It never merges production for you. [The complete workflow and recovery flowcharts →](docs/AUTONOMOUS_WORKFLOW.md)
 
 Start with a read-only audit:
 

@@ -9,6 +9,7 @@ import { validateGrumblinPayload } from "../../runner-local/grumblin-runtime.mjs
 import { browserOrigin } from "../../runner-local/browser-access.mjs";
 import { validateCommitIdentity } from "../../runner-local/runtime.mjs";
 import { validateSyncRepairPayload } from "../../runner-local/sync-repair.mjs";
+import { validatePromotionRepairPayload } from "../../runner-local/promotion-repair.mjs";
 import {
   createRunnerWorkspaceStorage,
   RunnerWorkspaceError,
@@ -46,6 +47,7 @@ export interface DockerJobPayload {
   expectedCommitSha?: string;
   /** Trusted controller intent for a conflict repair; never accepted from the queue API. */
   syncRepair?: { stagingSha: string };
+  promotionRepair?: import("../../runner-local/promotion-repair.mjs").PromotionRepair;
   testEnvironment?: {
     target: DockerEnvironmentTarget;
     env?: Record<string, string>;
@@ -259,6 +261,7 @@ export function validatePayload(payload: DockerJobPayload): string {
           "reviewPlan",
           "expectedCommitSha",
           "syncRepair",
+          "promotionRepair",
           "testEnvironment",
           "credentials",
           "commands",
@@ -282,6 +285,7 @@ export function validatePayload(payload: DockerJobPayload): string {
   if (payload.kind === "developer" || payload.commitIdentity !== undefined)
     validateCommitIdentity(payload.commitIdentity, payload.provider);
   validateSyncRepairPayload({ ...payload });
+  validatePromotionRepairPayload({ ...payload });
   if (
     payload.expectedCommitSha !== undefined &&
     !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(payload.expectedCommitSha)

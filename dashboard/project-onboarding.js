@@ -67,6 +67,29 @@
     "submitSelector",
     "successSelector",
   ];
+  function loginFailureContext(diagnosis, target) {
+    const access = target?.access;
+    if (diagnosis?.action !== "edit_login" || access?.kind !== "password")
+      return null;
+    const labels = {
+      usernameSelector: "Username field",
+      passwordSelector: "Password field",
+      submitSelector: "Submit button",
+      successSelector: "Signed-in confirmation",
+    };
+    const label = labels[diagnosis.field];
+    return [
+      diagnosis.code === "login_origin_rejected" && diagnosis.origin
+        ? `Preview origin: ${diagnosis.origin}.`
+        : "",
+      `Tested login path: ${access.loginPath}.`,
+      label && access[diagnosis.field]
+        ? `${label}: ${access[diagnosis.field]}.${Number.isSafeInteger(diagnosis.matchCount) ? ` Matched ${diagnosis.matchCount} element${diagnosis.matchCount === 1 ? "" : "s"}; exactly one is required.` : ""}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
   window.onboardingStep = (data) =>
     data?.environment?.verification?.status === "passed" &&
     hasAppAccess(data.environment)
@@ -94,6 +117,14 @@
     if (!draft.loginPath?.startsWith("/") || !draft.successSelector?.trim())
       throw new Error(
         "Set a login path and a signed-in success selector to verify test accounts.",
+      );
+    if (
+      ["usernameSelector", "passwordSelector", "submitSelector"].some(
+        (key) => !draft[key]?.trim(),
+      )
+    )
+      throw new Error(
+        "Detect sign-in from code, or set the username, password and submit controls in Advanced login selectors. We do not guess your app’s login form.",
       );
     for (const account of draft.accounts)
       if (
@@ -387,10 +418,10 @@
       const access = target?.access;
       return {
         accessKind: access?.kind || (legacy ? "legacy" : ""),
-        loginPath: access?.loginPath || "/login",
-        usernameSelector: access?.usernameSelector || 'input[type="email"]',
-        passwordSelector: access?.passwordSelector || 'input[type="password"]',
-        submitSelector: access?.submitSelector || 'button[type="submit"]',
+        loginPath: access?.loginPath || "",
+        usernameSelector: access?.usernameSelector || "",
+        passwordSelector: access?.passwordSelector || "",
+        submitSelector: access?.submitSelector || "",
         successSelector: access?.successSelector || "",
         accounts: structuredClone(
           access?.accounts || [
@@ -1471,6 +1502,8 @@
         s.draft.accounts.length,
         s.editAppAccess,
         s.data?.configurationRevision,
+        s.data?.revision,
+        s.data?.stale,
         s.project.readiness?.steps?.find((step) => step.id === "test_access")
           ?.ready,
         s.showVercel,
@@ -1807,6 +1840,101 @@
           "onboarding-access-intro",
         ),
       );
+      const loginHint =
+          (!s.data?.stale || s.data?.setupConfirmation?.confirmedAt) &&
+          s.data?.report?.projectSetup?.appAccess,
+        detectedRecipe = loginHint?.kind === "password" && loginHint.password,
+        detectedMatches =
+          detectedRecipe &&
+          [
+            "loginPath",
+            "usernameSelector",
+            "passwordSelector",
+            "submitSelector",
+            "successSelector",
+          ].every((key) => s.draft[key] === detectedRecipe[key]);
+      if (loginHint) {
+        const detection = node(
+          "section",
+          undefined,
+          "onboarding-login-detection",
+        );
+        detection.append(
+          node("h4", "What the code tells us"),
+          node("p", loginHint.summary),
+        );
+        if (s.data.stale)
+          detection.append(
+            node(
+              "p",
+              "This suggestion comes from your previously reviewed source inspection. Check it against the current app; a live sign-in test is still required.",
+              "onboarding-help",
+            ),
+          );
+        if (detectedRecipe) {
+          detection.append(
+            node(
+              "p",
+              "We found a password login route and its browser controls. Use this suggestion, then test with your dedicated account; source inspection alone does not verify sign-in.",
+            ),
+          );
+          const use = button(
+            detectedMatches && s.draft.accessKind === "password"
+              ? "Detected login selected"
+              : "Use detected password login",
+            () => {
+              if (disabled(s)) return;
+              for (const key of [
+                "loginPath",
+                "usernameSelector",
+                "passwordSelector",
+                "submitSelector",
+                "successSelector",
+              ])
+                s.draft[key] = detectedRecipe[key];
+              s.draft.accessKind = "password";
+              s.editAppAccess = true;
+              s.formSignature = "";
+              paint(s);
+            },
+            true,
+          );
+          detection.append(use);
+        } else if (["email-code", "sso"].includes(loginHint.kind))
+          detection.append(
+            node(
+              "p",
+              "This login cannot be checked by the password verifier. Use an existing supported login recipe, enable a dedicated password test login in your app, or explicitly select public pages only.",
+            ),
+          );
+        else if (loginHint.kind === "unknown" || loginHint.kind === "password")
+          detection.append(
+            node(
+              "p",
+              "The inspected source did not establish a complete password login recipe. Review the login route and controls below; no sign-in was tested.",
+            ),
+          );
+        else
+          detection.append(
+            node(
+              "p",
+              "The source suggests public flows. Confirm public-only coverage below; this is not a verified browser result.",
+            ),
+          );
+        access.append(detection);
+      } else {
+        const inspect = button("Detect sign-in from code", () =>
+          run(s, "discover", {}),
+        );
+        access.append(
+          node(
+            "p",
+            "Let Setup Gremlin inspect the login before entering browser details.",
+            "onboarding-help",
+          ),
+          inspect,
+        );
+      }
       const accessChoices = node("div", undefined, "onboarding-access-choices");
       accessChoices.setAttribute("role", "group");
       accessChoices.setAttribute("aria-label", "App sign-in access");
@@ -1920,26 +2048,40 @@
             s,
             "loginPath",
             "Login path",
-            "A route on this test app, such as /login.",
-          ),
-          field(
-            s,
-            "successSelector",
-            "Signed-in success selector",
-            "A stable element visible only after successful sign-in, such as [data-testid=account-menu].",
+            "The actual password sign-in route on this test app. Detect it from code above, or enter the route your app uses.",
           ),
         );
+        if (!detectedMatches)
+          access.append(
+            field(
+              s,
+              "successSelector",
+              "Signed-in success selector",
+              "A stable element visible only after successful sign-in, such as [data-testid=account-menu].",
+            ),
+          );
         const selectors = settingsSheet("Advanced login selectors");
         s.loginSelectors = selectors;
         for (const [key, label] of [
           ["usernameSelector", "Username field"],
           ["passwordSelector", "Password field"],
           ["submitSelector", "Submit button"],
+          ...(detectedMatches
+            ? [["successSelector", "Signed-in success selector"]]
+            : []),
         ])
           selectors.content.append(
             field(s, key, label, "CSS selector used by the browser test."),
           );
         access.append(selectors.section);
+        if (detectedMatches)
+          access.append(
+            node(
+              "p",
+              "Login controls are filled from the source inspection. Test access checks the real sign-in result; use Advanced login selectors to review them.",
+              "onboarding-help",
+            ),
+          );
         access.append(
           node(
             "p",
@@ -2400,6 +2542,12 @@
         ),
       );
       s.automatic.append(heading);
+      const loginFailure = loginFailureContext(
+        diagnosis,
+        s.data?.environment?.target,
+      );
+      if (loginFailure)
+        s.automatic.append(node("p", loginFailure, "onboarding-help"));
       if (manualPreviewAccess)
         s.automatic.append(
           node(
@@ -2978,6 +3126,8 @@
             node("h4", diagnosis.title),
             node("p", diagnosis.detail),
           );
+          const loginFailure = loginFailureContext(diagnosis, target);
+          if (loginFailure) issue.append(node("p", loginFailure));
           s.verification.append(issue);
         } else if (!ready && !testing && target.kind === "vercel") {
           const previewMessage = ["saved", "connected"].includes(

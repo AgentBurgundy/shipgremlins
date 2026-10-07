@@ -1,7 +1,11 @@
 {
-  "$comment": "Coders target pm-staging; PMs test its deployment; verified work is cherry-picked into one promotion PR to staging. The owner releases staging to main. Connect a test environment before enabling delivery. Secret fields contain environment-variable NAMES, never values.",
+  "$comment": "Approve epics once. Coders target pm-staging; each PM tests its deployment and batches verified tickets into its own promotion PR to staging. The owner releases staging to main. Connect a test environment before enabling browser patrols. Secret fields contain environment-variable NAMES, never values.",
   "repo": "{{repo}}",
-  "workflow": { "kind": "promotion" },
+  "workflow": {
+    "kind": "promotion",
+    "approvalPolicy": "epic",
+    "promotionBatchSize": 10
+  },
   "branches": {
     "production": "main",
     "staging": "staging",

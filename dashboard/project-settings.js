@@ -299,7 +299,7 @@
       node(
         "p",
         "runner-guidance",
-        "Your coding agents prepare changes for review. Choose their destination branch.",
+        "The controller integrates coding drafts and PMs test them. You review each PM's promotion batch.",
       ),
     );
     sections.get("delivery").append(deliveryHeading);
@@ -308,7 +308,7 @@
       workflowGrid,
       "workflow",
       "How changes are reviewed",
-      "Normal projects open a draft PR or MR to your chosen base branch.",
+      "Managed delivery handles internal PRs automatically. Pull-request-only projects use your chosen review branch.",
       [
         ["promotion", "PM staging → staging → production (recommended)"],
         ["pull-request", "Pull request / merge request only"],
@@ -326,10 +326,34 @@
       node(
         "p",
         "runner-guidance",
-        "Coders work in pm-staging. PMs test the deployed work and combine verified changes into a promotion PR to staging. You review staging and release to production.",
+        "Coders work in pm-staging. Each PM tests its tickets and collects a separate promotion PR to staging. You review each PM's completed batch; ordinary staging and production development can continue.",
       ),
     );
     const branches = node("div", "project-form-grid");
+    field(
+      promotion,
+      "approvalPolicy",
+      "Approve work before coding",
+      "Approve an epic once, then let the crew implement and QA its child tickets. Existing projects retain their saved ticket policy until changed.",
+      [
+        ["epic", "Approve epics (recommended)"],
+        ["ticket", "Legacy ticket policy"],
+      ],
+    );
+    fields.approvalPolicy.value = config.workflow?.approvalPolicy ?? "ticket";
+    field(
+      promotion,
+      "promotionBatchSize",
+      "Tested tickets per PM promotion",
+      "Each PM opens a promotion after this many distinct tickets pass QA. A PM can override this target in its full configuration. You can also prepare a smaller batch explicitly.",
+    );
+    fields.promotionBatchSize.type = "number";
+    fields.promotionBatchSize.min = "1";
+    fields.promotionBatchSize.max = "100";
+    fields.promotionBatchSize.step = "1";
+    fields.promotionBatchSize.value = String(
+      config.workflow?.promotionBatchSize ?? 10,
+    );
     for (const name of ["production", "staging", "integration"])
       field(branches, name, `${name[0].toUpperCase() + name.slice(1)} branch`);
     promotion.append(branches);
@@ -456,6 +480,9 @@
           !fields[key].disabled && requiredKeys[kind]?.includes(key);
       }
       promotion.hidden = fields.workflow.value !== "promotion";
+      fields.approvalPolicy.disabled = promotion.hidden;
+      fields.promotionBatchSize.disabled = promotion.hidden;
+      fields.promotionBatchSize.required = !promotion.hidden;
       baseWrapper.hidden = !promotion.hidden;
       fields.baseBranch.disabled = !promotion.hidden;
       fields.baseBranch.required = promotion.hidden;
@@ -540,19 +567,35 @@
             throw new Error("Complete the highlighted project setting.");
         const result = {
           environments: structuredClone(environments),
-          workflow: { kind: fields.workflow.value },
+          workflow: {
+            ...(fields.workflow.value === "promotion" &&
+            config.workflow?.kind === "promotion"
+              ? config.workflow
+              : {}),
+            kind: fields.workflow.value,
+          },
           commands: {},
           verification: { mode: "repository" },
         };
         if (fields.workflow.value === "pull-request")
           result.workflow.baseBranch = fields.baseBranch.value.trim();
-        else
+        else {
+          result.workflow.promotionBatchSize = Number(
+            fields.promotionBatchSize.value,
+          );
+          // Do not silently migrate a legacy project during an unrelated edit.
+          if (
+            config.workflow?.approvalPolicy ||
+            fields.approvalPolicy.value !== "ticket"
+          )
+            result.workflow.approvalPolicy = fields.approvalPolicy.value;
           result.branches = Object.fromEntries(
             ["production", "staging", "integration"].map((name) => [
               name,
               fields[name].value.trim(),
             ]),
           );
+        }
         for (const name of ["install", "test", "lint", "typecheck", "build"])
           result.commands[name] =
             fields[`command-${name}`].value.trim() || null;

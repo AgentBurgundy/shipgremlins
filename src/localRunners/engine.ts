@@ -126,7 +126,7 @@ export interface LocalRunnersOptions {
   completeJob?: (job: LocalJob, docker: DockerRunners) => Promise<void>;
   beforeLaunch?: () => Promise<void>;
   releaseJobResources?: (jobId: string) => Promise<void>;
-  scheduledJobs?: () => Promise<LocalJobInput[]>;
+  scheduledJobs?: (previousJobs: LocalJob[]) => Promise<LocalJobInput[]>;
   activityStore?: ActivityStore;
   notify?: (event: JobNotificationEvent) => Promise<NotificationResult>;
   clock?: () => Date;
@@ -1668,7 +1668,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       ) {
         lastScheduled = clock().getTime();
         try {
-          const scheduled = await options.scheduledJobs();
+          const scheduled = await options.scheduledJobs(state.jobs);
           for (const input of stopping ? [] : scheduled) {
             if (!input.idempotencyKey) throw new Error();
             try {

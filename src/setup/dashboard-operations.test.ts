@@ -675,6 +675,37 @@ describe("explicit review controls", () => {
 });
 
 describe("remote and delivery controls", () => {
+  it.each(["disabled", "waiting-deployment"])(
+    "shows current %s sync readiness instead of a historical completed operation",
+    async (phase) => {
+      const api = vi.fn(async (path: string) =>
+        path.endsWith("/states")
+          ? { states: [] }
+          : {
+              enabled: true,
+              operation: { phase: "idle", message: "Previous sync completed." },
+              stagingSync: {
+                phase,
+                message: "Current deployment is not ready for testing.",
+              },
+            },
+      );
+      const { window } = fixture(api),
+        root = new Element("section");
+      const helper = window.createDeliveryWorkflow({
+        api,
+        pages: { current: "project", project: "alpha", tab: "delivery" },
+        isLocked: () => false,
+      });
+      helper.mount(root, { name: "alpha", areas: [] });
+      await flush();
+      expect(root.querySelector(".delivery-staging-sync")!.hidden).toBe(false);
+      expect(text(root)).toContain(
+        "Current deployment is not ready for testing.",
+      );
+      expect(text(root)).not.toContain("Previous sync completed.");
+    },
+  );
   it("shows staging sync progress, prevents duplicate retries and reports retry failures inline", async () => {
     const initial = {
       enabled: true,

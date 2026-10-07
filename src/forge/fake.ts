@@ -35,6 +35,8 @@ export class FakeForge implements Forge {
   readonly hubRepo: string;
   /** PR numbers merged, in order */
   readonly merged: number[] = [];
+  /** Superseded PRs closed without merging or deleting their branches. */
+  readonly closed: number[] = [];
   /** PR numbers marked ready, in order */
   readonly readied: number[] = [];
   /** PR numbers auto-merge was enabled on */
@@ -284,6 +286,14 @@ export class FakeForge implements Forge {
   async markReady(repo: RepoRef, number: number): Promise<void> {
     this.patchPull(repo, number, { draft: false });
     this.readied.push(number);
+  }
+  async closePull(repo: RepoRef, number: number): Promise<void> {
+    const pull = this.pull(repo, number);
+    if (pull.state === "merged") throw new Error("Already merged");
+    if (pull.state === "open") {
+      this.patchPull(repo, number, { state: "closed" });
+      this.closed.push(number);
+    }
   }
   async mergePull(
     repo: RepoRef,

@@ -438,6 +438,12 @@ export class GitHubForge implements Forge {
     );
   }
 
+  async closePull(repo: RepoRef, number: number): Promise<void> {
+    await this.rest("PATCH", `/repos/${repo}/pulls/${number}`, {
+      state: "closed",
+    });
+  }
+
   async mergePull(
     repo: RepoRef,
     number: number,

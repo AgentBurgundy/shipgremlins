@@ -35,14 +35,17 @@ For an existing import feature:
    home. The mission retains the outcome and links the investigation, proposed
    tickets, and implementation runs. Connect Linear for ticketed work; configure
    isolated staging for browser investigation.
-4. **Approve the actual proposal.** Read the evidence and finite acceptance
-   checklist. Approval is tied to the ticket revision you reviewed. A mission is
-   not blanket permission to invent and implement unlimited work.
-5. **Review the change.** Follow the draft PR/MR, checks, and limitations. Re-run
-   the relevant journey against the changed app before deciding it improved.
-6. **Expand when useful.** Enable patrols, automatic coding pickup, or additional
-   PMs independently. Existing work, dependencies, WIP limits, and project budgets
-   continue to govern admission.
+4. **Approve an epic.** Read its evidence, outcome, finite acceptance criteria and
+   exclusions. Approval binds the exact scope. Its PM creates the child tickets;
+   expanding the epic needs new approval.
+5. **Review a tested batch.** Coders implement and the owning PM tests the deployed
+   changes. The controller manages internal PRs and returns genuine QA failures
+   to coding. You review that PM's promotion into staging, normally at 10 tickets.
+6. **Expand when useful.** Activate the ready crew or manage PM and coding schedules
+   independently. Dependencies, WIP limits and project budgets govern admission.
+
+This is the default managed flow. Existing direct-PR and ticket-policy projects
+retain their saved behavior until migrated. [All workflow situations →](AUTONOMOUS_WORKFLOW.md)
 
 [The mission workflow →](IMPROVEMENT_MISSIONS.md)
 

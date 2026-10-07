@@ -291,6 +291,50 @@ describe("patrol plan and evidence", () => {
       ),
     ).toContain("Waiting for browser activity");
   });
+  it("explains a pre-start environment wait without reporting missing browser evidence", () => {
+    const ui = fixture(),
+      input = {
+        job: { status: "queued", failure: { category: "environment-wait" } },
+        activityState: "partial",
+        artifactState: "partial",
+        activity: {
+          events: [
+            {
+              id: "lifecycle:queued",
+              type: "progress",
+              title: "Run queued",
+            },
+          ],
+          checks: [],
+        },
+        artifacts: [],
+      },
+      pending = ui.renderPatrolEvidence(input);
+    expect(text(pending)).toContain("Preparing the test environment");
+    expect(text(pending)).toContain("do not start another AI run");
+    expect(text(pending)).not.toMatch(/incomplete|unavailable|0 passed/);
+    expect(pending.dataset.tone).toBe("neutral");
+    expect(all(pending).some((item) => item.tagName === "button")).toBe(false);
+    expect(
+      text(ui.renderPatrolEvidence({ ...input, job: { status: "queued" } })),
+    ).toContain("Waiting to start");
+
+    // Evidence from an earlier attempt must remain visible even while requeued.
+    const prior = ui.renderPatrolEvidence({
+      ...input,
+      activity: { checks: [{ name: "Login", status: "failed" }] },
+    });
+    expect(text(prior)).not.toContain("has not started yet");
+    expect(text(prior)).toContain("1 failed");
+    expect(
+      text(
+        ui.renderPatrolEvidence({
+          ...input,
+          job: { ...input.job, startedAt: "2026-10-07T19:37:00Z" },
+        }),
+      ),
+    ).toContain("Browser activity is incomplete");
+  });
   it("links directly to recorded actions and files and labels images as possible fixtures", () => {
     const onTab = vi.fn(),
       root = fixture().renderPatrolEvidence({

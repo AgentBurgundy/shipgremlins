@@ -327,11 +327,30 @@
         (recordedUrls.length === 1
           ? { url: recordedUrls[0], state: "unknown" }
           : null);
+      const batches = s.data?.promotionBatches;
+      const currentBatches = batches
+        ? [
+            ...list(batches.areas)
+              .map((item) => item.batch)
+              .filter(Boolean),
+            ...list(batches.legacy),
+          ]
+        : batch
+          ? [batch]
+          : [];
       const stageFor = (change) => {
         const stage = promotionStage(change);
         if (stage !== "promotion") return stage;
         const recorded = change.delivery.promotion;
-        if (!batch || batch.state === "unknown") return "batch-unknown";
+        const batch = currentBatches.find(
+          (item) =>
+            item.url === recorded?.url && item.number === recorded?.number,
+        );
+        if (batch?.state === "unknown") return "batch-unknown";
+        if (!batch)
+          return batches || !currentBatches.length
+            ? "batch-unknown"
+            : "earlier-promotion";
         if (
           batch.state !== "open" ||
           recorded?.url !== batch.url ||
@@ -370,9 +389,13 @@
       const titles = el("div");
       titles.append(
         el("span", "NEXT STAGING RELEASE", "eyebrow muted"),
-        el("h2", "Your promotion batch"),
+        el(
+          "h2",
+          batches ? "Your PM promotion batches" : "Your promotion batch",
+        ),
       );
       const batchLink =
+        !batches &&
         batch &&
         safeLink(
           batch.state === "open"
@@ -387,7 +410,7 @@
         batchHeader,
         el(
           "p",
-          "Your PMs test each ticket on the app. Passing work collects into one PR for you to review.",
+          "Each PM tests its tickets on the app and collects a separate promotion PR for you to review.",
           "promotion-batch-intro",
         ),
       );
@@ -402,6 +425,59 @@
         totals.append(stat);
       }
       batchCard.append(totals);
+      if (batches) {
+        const rows = el("div", undefined, "promotion-pm-batches");
+        for (const item of list(batches.areas)) {
+          const row = el("section", undefined, "promotion-pm-batch"),
+            description = el("div"),
+            open = item.batch?.state === "open";
+          description.append(
+            el("h3", item.name),
+            el(
+              "p",
+              open
+                ? `${item.batch.ticketCount} tested tickets in this PM's promotion${item.batch.prerequisiteBatch ? " · Smaller prerequisite batch" : ""}${item.batch.rebuiltBatch ? " · Rebuilt for current staging" : ""}${item.batch.draft ? " · Preparing final checks" : " · Ready for your review"}`
+                : `${item.verifiedTicketCount}/${item.target} tested tickets · ${item.verifiedTicketCount >= item.target ? "Preparing this PM's next promotion" : "Collecting the next batch"}`,
+            ),
+          );
+          row.append(description);
+          if (item.batch) {
+            const link = safeLink(
+              open
+                ? `Review ${item.name} promotion`
+                : `Open ${item.name} previous batch`,
+              item.batch.url,
+              open && !item.batch.draft,
+            );
+            if (link) row.append(link);
+          }
+          rows.append(row);
+        }
+        for (const previous of list(batches.legacy)) {
+          const row = el("section", undefined, "promotion-pm-batch");
+          const description = el("div");
+          description.append(
+            el("h3", "Existing combined promotion"),
+            el(
+              "p",
+              previous.state === "open"
+                ? "This earlier batch is preserved for your final review. Per-PM batches will resume after it closes or merges."
+                : "Earlier combined batch history is preserved; new promotions belong to individual PMs.",
+            ),
+          );
+          row.append(description);
+          const link = safeLink(
+            previous.state === "open"
+              ? "Review existing promotion"
+              : "Open earlier combined batch",
+            previous.url,
+            previous.state === "open" && !previous.draft,
+          );
+          if (link) row.append(link);
+          rows.append(row);
+        }
+        batchCard.append(rows);
+      }
       if (s.data?.promotionBatchError)
         batchCard.append(
           el("p", s.data.promotionBatchError, "promotion-batch-notice is-held"),
@@ -418,7 +494,7 @@
         );
         notice.setAttribute("role", held ? "alert" : "status");
         batchCard.append(notice);
-      } else if (!batchLink) {
+      } else if (!batches && !batchLink) {
         batchCard.append(
           el(
             "p",
@@ -428,7 +504,7 @@
             "promotion-batch-notice",
           ),
         );
-      } else if (batch.state !== "open") {
+      } else if (!batches && batch?.state !== "open") {
         batchCard.append(
           el(
             "p",
@@ -996,6 +1072,9 @@
         );
       if (item.status === "needs-review" && !item.plan) {
         const candidates = list(s.detail?.candidates);
+        const epicApproval =
+          s.detail?.approvalPolicy === "epic" ||
+          s.data?.workflow?.approvalPolicy === "epic";
         if (s.detail?.candidateError) {
           const error = el("p", s.detail.candidateError, "mission-error");
           error.setAttribute("role", "alert");
@@ -1004,7 +1083,21 @@
             button("Check proposals again", () => void refresh(s, true)),
           );
         }
-        if (candidates.length) {
+        if (epicApproval) {
+          section.append(
+            el(
+              "p",
+              "Approve the product direction once in Epic review. Your PM will split it into bounded child tickets, coders will implement them, and PM QA will collect the passing work into its promotion batch.",
+              "mission-note",
+            ),
+          );
+          const review = safeLink(
+            "Review this PM's epics",
+            `/projects/${encodeURIComponent(s.project.name)}?tab=review`,
+            true,
+          );
+          if (review) section.append(review);
+        } else if (candidates.length) {
           section.append(
             el(
               "p",

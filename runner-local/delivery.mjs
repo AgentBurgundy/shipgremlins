@@ -2,6 +2,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateCommitIdentity } from "./runtime.mjs";
 import { verifySyncRepairAncestry } from "./sync-repair.mjs";
+import { verifyPromotionRepairSource } from "./promotion-repair.mjs";
 
 /** A model-authored report is evidence to review, never an executable action. */
 export function readImplementationReport(directory, redact = (text) => text) {
@@ -147,6 +148,8 @@ export async function runCheckedDelivery({
   onCheck = () => {},
   report,
   syncRepair,
+  promotionRepair,
+  nonce,
 }) {
   validateDelivery(delivery);
   validateCommitIdentity(commitIdentity, provider);
@@ -210,7 +213,8 @@ export async function runCheckedDelivery({
   ).trim();
   // A merge can reconcile ancestry without changing the tree (for example when
   // staging independently contains the same fix). That merge must still ship.
-  if (!changed && !syncRepair) return { checks, noChanges: true };
+  if (!changed && !syncRepair && !promotionRepair)
+    return { checks, noChanges: true };
   const evidence = implementationReport(report, delivery.acceptanceCriteria);
   // A model may have committed everything already. Normalize the final commit's
   // identity without changing its tested tree; never publish an invented author.
@@ -231,6 +235,15 @@ export async function runCheckedDelivery({
       stagingSha: syncRepair.stagingSha,
       run,
     });
+  const promotionSource = promotionRepair
+    ? await verifyPromotionRepairSource({
+        integrationSha: baseSha,
+        repair: promotionRepair,
+        nonce,
+        commitIdentity: identity,
+        run,
+      })
+    : {};
   const uiChanged =
     evidence.ui.changed ||
     changed
@@ -322,5 +335,5 @@ export async function runCheckedDelivery({
     throw new Error(
       "The draft may have been created, but its URL could not be confirmed. Inspect the source provider before retrying.",
     );
-  return { checks, prUrl, headSha: commit };
+  return { checks, prUrl, headSha: commit, ...promotionSource };
 }

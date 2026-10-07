@@ -1,6 +1,92 @@
 import type { LocalJob, LocalJobInput } from "../localRunners/types.ts";
 import type { Project } from "../config.ts";
 import type { DeliveryRecord, QaFailureFinding } from "./types.ts";
+import { createHash } from "node:crypto";
+
+export function qaFeedbackKey(records: DeliveryRecord[]): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        records
+          .map((r) => ({
+            id: r.id,
+            plan: r.review!.planId,
+            proof: r.review!.manifestHash,
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id)),
+      ),
+    )
+    .digest("hex");
+}
+
+export function qaReviewVerdict(record: DeliveryRecord) {
+  return (
+    record.review!.verdict ??
+    (record.review!.failures?.length
+      ? "failed"
+      : ["verified", "promoted"].includes(record.status)
+        ? "passed"
+        : "blocked")
+  );
+}
+
+/** Summarize controller receipts, never recipe inputs, session contents or model prose. */
+export function qaFeedbackComment(
+  records: DeliveryRecord[],
+  secrets: string[] = [],
+) {
+  const verdict = records.some((r) => qaReviewVerdict(r) === "blocked")
+    ? "blocked"
+    : records.some((r) => qaReviewVerdict(r) === "failed")
+      ? "failed"
+      : "passed";
+  const review = records[0]!.review!;
+  const key = qaFeedbackKey(records);
+  const lines = [
+    `<!-- shipgremlins:qa:${key} -->`,
+    `## Owning PM QA: ${verdict === "passed" ? "verified" : verdict === "failed" ? "acceptance check failed" : "evidence or environment blocked"}`,
+    `PM: ${records[0]!.area}. Run: ${review.jobId}.`,
+    `Deployment: ${review.deployment.id} (${review.deployment.branch})`,
+    `Tested commit: ${review.testedSha}`,
+    `Application: ${review.deployment.url}`,
+    "",
+    "| Delivery | Approved criterion | Result | Receipt |",
+    "| --- | --- | --- | --- |",
+  ];
+  const cell = (text: string) =>
+    [...text]
+      .map((c) => (c.charCodeAt(0) < 32 || "<>|`".includes(c) ? " " : c))
+      .join("")
+      .slice(0, 1000);
+  for (const record of records) {
+    for (const assertion of record.review!.assertions ?? [])
+      lines.push(
+        `| ${cell(record.id)} | ${cell(assertion.criterion)} | ${assertion.status} | ${assertion.receiptId ?? "No complete receipt"} |`,
+      );
+    const evidence =
+      qaReviewVerdict(record) === "passed"
+        ? record.review!.artifacts
+        : (record.review!.failures?.map((f) => f.screenshot) ?? []);
+    for (const artifact of evidence)
+      lines.push(
+        `Evidence (${record.review!.jobId}): ${artifact.name}; SHA-256 ${artifact.sha256}`,
+      );
+  }
+  lines.push(
+    "",
+    verdict === "passed"
+      ? "The controller will include this tested work in its owning PM's promotion batch when the configured ticket threshold is reached. This is not production completion."
+      : verdict === "failed"
+        ? "The controller schedules one bounded coding repair for this approved ticket, then the owning PM tests the original change and repair together. An exhausted repair remains stopped; no duplicate coding jobs are launched."
+        : "No coding defect has been established. Promotion remains blocked. The next eligible owning-PM patrol carries this unfinished QA after deployment access or evidence is repaired.",
+  );
+  let body = lines.join("\n");
+  for (const secret of secrets
+    .filter((s) => s.length >= 4)
+    .sort((a, b) => b.length - a.length))
+    body = body.split(secret).join("[redacted]");
+  return { key, verdict, body };
+}
 
 // Match CrewOS: the initial implementation gets one automatic QA repair.
 export const MAX_QA_REPAIRS = 1;

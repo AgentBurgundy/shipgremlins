@@ -88,7 +88,7 @@ describe("PM prompt policy and knowledge contracts", () => {
       expect(prompt).toContain(
         "label repair alone never authorizes implementation",
       );
-      expect(prompt).toContain("one combined promotion PR");
+      expect(prompt).toContain("your own area's promotion PR");
       expect(prompt).not.toContain(
         "Never self-approve tickets, add pm-approved",
       );

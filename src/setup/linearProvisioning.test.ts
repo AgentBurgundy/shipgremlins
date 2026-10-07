@@ -227,11 +227,13 @@ describe("Linear app and mandate provisioning", () => {
       const content = vi.mocked(f.client.createProject).mock.calls[0]![0]
         .content;
       if (kind === "promotion") {
-        expect(content).toContain("Self-approve ordinary in-mandate work");
-        expect(content).toContain("one combined promotion PR");
-        expect(content).toContain("Failed QA returns to coding");
         expect(content).toContain(
-          "preserve explicit owner review-only instructions",
+          "you may self-approve ordinary implementation tickets",
+        );
+        expect(content).toContain("your own area's promotion PR");
+        expect(content).toContain("Genuine failed QA returns to a coder");
+        expect(content).toContain(
+          "Preserve explicit owner review-only instructions",
         );
         expect(content).not.toContain("**Human owner:** review scope");
         expect(content).not.toContain("Do not self-approve tickets");
@@ -929,7 +931,7 @@ describe("Linear app and mandate provisioning", () => {
       "pm-proposal",
       "pm-approved",
       "pm-needs-human",
-      "draft PR/MR",
+      "coding drafts",
       "merged into production",
       "Run once",
       "repository code",

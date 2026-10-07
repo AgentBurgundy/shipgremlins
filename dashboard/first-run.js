@@ -294,7 +294,7 @@
       "Connect Claude",
       "Add a project",
       "Meet your gremlin",
-      "Review a change",
+      "Review scope",
     ];
     if (state.active)
       progress.replaceChildren(

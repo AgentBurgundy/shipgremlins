@@ -33,6 +33,13 @@ export function seedPriority(path: string): number | undefined {
     return 3;
   if (tests.test(path)) return undefined;
   if (webEntry.test(path)) return 6;
+  // Login modals are often loaded dynamically and never appear in an entrypoint's
+  // literal imports. Read their source before suggesting a browser login recipe.
+  if (
+    code.test(path) &&
+    /(?:^|\/)(?:login|sign[-_]?in|auth)(?:[-_./]|$)/i.test(path)
+  )
+    return 7;
   if (/^README\.md$/i.test(path)) return 4;
   if (
     /^(?:README\.md|Procfile|Makefile|compose\.ya?ml|docker-compose\.ya?ml|vercel\.json|railway\.json|next\.config\.[cm]?[jt]s|vite\.config\.[cm]?[jt]s)$/i.test(
@@ -197,7 +204,7 @@ export function sourceExcerpt(
   const lines = content.split(/\r?\n/),
     windows: SourceRange[] = [{ start: 1, end: Math.min(lines.length, 45) }];
   const important = lines.flatMap((line, i) =>
-    /createServer|createDashboard|\.listen\(|DOMContentLoaded|fixture|synthetic|test.?mode|dependency.?inject|(?:app|router)\.(?:use|get|post)\(/i.test(
+    /createServer|createDashboard|\.listen\(|DOMContentLoaded|fixture|synthetic|test.?mode|dependency.?inject|signIn|signOut|type=["'](?:password|email)["']|(?:app|router)\.(?:use|get|post)\(/i.test(
       line,
     )
       ? [i]

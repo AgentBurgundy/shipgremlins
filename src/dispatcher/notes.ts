@@ -38,6 +38,7 @@ export const SYNC_RESOLVE_DISPATCHED_PREFIX =
 export const PORT_DISPATCHED_PREFIX = "🚚 Port dispatched → run";
 
 export const LABELS = {
+  epic: "pm-epic",
   tierA: "pm-tier-a",
   tierB: "pm-tier-b",
   tierC: "pm-tier-c",

@@ -7,7 +7,10 @@ import {
   type AreaConfig,
   type Project,
 } from "../config.ts";
-import { effectiveVerification } from "../projectCapabilities.ts";
+import {
+  effectiveVerification,
+  effectiveWorkflow,
+} from "../projectCapabilities.ts";
 import { inspectTestAccess } from "../testAccess.ts";
 import type { LocalWorker } from "../localRunners/types.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
@@ -41,6 +44,8 @@ export interface ReadinessContext {
   workers: LocalWorker[];
   /** The execution adapter's current project scope and connection policy. */
   canRunWorker?: (remoteId: string | undefined, project: string) => boolean;
+  /** Must reflect the saved environment and current test-account credentials. */
+  environmentVerification?: (project: Project) => { status: string };
   localMode: boolean;
 }
 export class PmControlError extends Error {
@@ -76,6 +81,24 @@ export function hasPmMandate(project: Project, area: AreaConfig): boolean {
   } catch {
     return false;
   }
+}
+/** Promotion coding needs provider deployment provenance and an actual access check. */
+export function promotionEnvironmentBlocker(
+  project: Project,
+  environmentVerification?: { status: string },
+): ReadinessBlocker | undefined {
+  const verification = effectiveVerification(project.config);
+  return effectiveWorkflow(project.config).kind === "promotion" &&
+    (verification.mode !== "browser" ||
+      !["vercel", "railway"].includes(verification.target.kind) ||
+      environmentVerification?.status !== "passed")
+    ? {
+        id: "promotion_environment",
+        action: "environment",
+        message:
+          "Set up a Vercel or Railway integration deployment and pass its current app-access test before enabling promotion coding. PMs can still investigate the repository; direct URLs and Docker targets cannot prove the deployed branch and commit for this workflow.",
+      }
+    : undefined;
 }
 function validSchedule(schedule: string) {
   try {
@@ -186,6 +209,7 @@ export function inspectPmReadiness(
     "The selected Linear account is connected.",
   );
   const verification = effectiveVerification(config);
+  let browserVerified = false;
   if (verification.mode === "browser") {
     const target = verification.target;
     let ready = true;
@@ -221,6 +245,24 @@ export function inspectPmReadiness(
       access.message,
       access.message,
     );
+    if (access.ready) {
+      try {
+        browserVerified =
+          context.environmentVerification?.(project).status === "passed";
+      } catch {
+        /* An unavailable result never establishes browser readiness. */
+      }
+      add(
+        "browser_verification",
+        "Test app access",
+        browserVerified,
+        "environment",
+        "Test the saved environment and app sign-in before starting daily browser patrols. Saved connections or an HTTP response do not prove the gremlin can use the app.",
+        target.access?.kind === "password"
+          ? "The current environment and test accounts passed a browser sign-in check. Each patrol still needs evidence for the journeys it tests."
+          : "The current environment passed its public browser check. Signed-in journeys are not verified by this check.",
+      );
+    }
   }
   const workerReady = context.workers.some((worker) => {
     if (
@@ -258,6 +300,9 @@ export function inspectPmReadiness(
   const common = steps
     .filter((step) => !step.ready)
     .map(({ id, message, action }) => ({ id, message, action }));
+  const promotionEnvironment = promotionEnvironmentBlocker(project, {
+    status: browserVerified ? "passed" : "untested",
+  });
   const areas = project.areas.map((area) => {
     const blockers = [...common];
     if (!hasPmMapping(area))
@@ -288,6 +333,11 @@ export function inspectPmReadiness(
         message:
           "Set a valid five-field UTC schedule for this PM before enabling automation.",
       });
+    const codingBlockers = blockers.filter(
+      (item) =>
+        !["worker", "test_access", "browser_verification"].includes(item.id),
+    );
+    if (promotionEnvironment) codingBlockers.push(promotionEnvironment);
     return {
       key: area.key,
       enabled: area.enabled,
@@ -300,13 +350,8 @@ export function inspectPmReadiness(
       blockers,
       enableBlockers,
       coding: {
-        canEnable:
-          blockers.filter(
-            (item) => !["worker", "test_access"].includes(item.id),
-          ).length === 0,
-        enableBlockers: blockers.filter(
-          (item) => !["worker", "test_access"].includes(item.id),
-        ),
+        canEnable: codingBlockers.length === 0,
+        enableBlockers: codingBlockers,
       },
     };
   });

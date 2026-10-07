@@ -123,6 +123,8 @@ export interface Forge {
   ): Promise<void>;
   /** Change only the target branch; never merge or rewrite the source branch. */
   retargetPull?(repo: RepoRef, number: number, base: string): Promise<void>;
+  /** Close an obsolete pull request without merging it or deleting its branch. */
+  closePull?(repo: RepoRef, number: number): Promise<void>;
   markReady(repo: RepoRef, number: number): Promise<void>;
   mergePull(
     repo: RepoRef,

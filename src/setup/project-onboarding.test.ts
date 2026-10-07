@@ -295,6 +295,12 @@ describe("environment diagnosis and recovery", () => {
       "The sign-in button matches 2 elements.",
     );
     expect(text(resultPanel(root))).toContain(
+      'Submit button: button[type="submit"]. Matched 2 elements; exactly one is required.',
+    );
+    expect(text(resultPanel(root))).toContain(
+      "Tested login path: /sign-in/password.",
+    );
+    expect(text(resultPanel(root))).toContain(
       "✓ Passed · Browser opens application",
     );
     expect(text(resultPanel(root))).toContain(
@@ -339,6 +345,38 @@ describe("environment diagnosis and recovery", () => {
     selector.value = 'form[data-testid="password-login"] button[type="submit"]';
     selector.fire("input");
     expect(selector.attributes.get("aria-invalid")).toBe("false");
+    f.panel.destroy();
+  });
+
+  it("names the tested login path and preview origin when the app rejects sign-in origin", async () => {
+    const current = vercelState(passwordTarget),
+      data = {
+        ...current,
+        environment: {
+          ...current.environment,
+          verification: {
+            status: "failed",
+            diagnosis: {
+              code: "login_origin_rejected",
+              title: "The app does not trust this preview's sign-in origin",
+              detail: "Check the authentication provider's trusted domains.",
+              action: "edit_login",
+              origin: "https://shop-preview.example.test",
+            },
+          },
+        },
+      },
+      f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(resultPanel(root))).toContain(
+      "Preview origin: https://shop-preview.example.test.",
+    );
+    expect(text(resultPanel(root))).toContain(
+      "Tested login path: /sign-in/password.",
+    );
+    expect(primaryActions(root)).toEqual(["Fix sign-in settings"]);
     f.panel.destroy();
   });
 
@@ -1444,6 +1482,203 @@ describe("explicit app sign-in onboarding", () => {
       .find((item) => item.id === `onboarding-shop-access-${kind}`)!
       .fire("click");
 
+  const detectedRecipe = {
+    loginPath: "/sign-in/password",
+    usernameSelector: "#email",
+    passwordSelector: "#password",
+    submitSelector: "#sign-in",
+    successSelector: '[data-testid="account-menu"]',
+  };
+  const detectedState = (kind = "password", stale = false) => ({
+    ...vercelState({ access: undefined }),
+    stale,
+    report: {
+      projectSetup: {
+        appAccess: {
+          kind,
+          summary: "Inspected the application's actual login UI.",
+          ...(kind === "password" ? { password: detectedRecipe } : {}),
+          evidence: [{ path: "src/login.tsx", quote: "password" }],
+        },
+      },
+    },
+  });
+  function fillLoginControls(root: Element) {
+    for (const key of [
+      "loginPath",
+      "usernameSelector",
+      "passwordSelector",
+      "submitSelector",
+    ] as const) {
+      const input = walk(root).find(
+        (item) => item.id === `onboarding-shop-${key}`,
+      )!;
+      input.value = detectedRecipe[key];
+      input.fire("input");
+    }
+  }
+  it("does not save guessed login paths or selectors for an account-only draft", async () => {
+    const api = vi.fn(async () => vercelState({ access: undefined })),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    await chooseAccess(root, "password");
+    for (const key of [
+      "loginPath",
+      "usernameSelector",
+      "passwordSelector",
+      "submitSelector",
+      "successSelector",
+    ])
+      expect(
+        walk(root).find((item) => item.id === `onboarding-shop-${key}`)!.value,
+      ).toBe("");
+    for (const [key, value] of [
+      ["loginPath", "/my-login"],
+      ["successSelector", "#account-menu"],
+    ] as const) {
+      const input = walk(root).find(
+        (item) => item.id === `onboarding-shop-${key}`,
+      )!;
+      input.value = value;
+      input.fire("input");
+    }
+    await walk(root)
+      .find((item) => item.textContent === "Save & add test credentials")!
+      .fire("click");
+    expect(api.mock.calls.filter((args) => args.length > 1)).toHaveLength(0);
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    expect(text(root)).toContain("We do not guess your app’s login form");
+    f.panel.destroy();
+  });
+  it("applies a detected login recipe without manual CSS and preserves the selected Vercel environment", async () => {
+    const current = detectedState(),
+      api = vi.fn(async (_path: string, _body?: unknown) => current),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      instanceId: "new-instance",
+      repo: "owner/shop",
+    });
+    await settle();
+    expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+    await walk(root)
+      .find((item) => item.textContent === "Use detected password login")!
+      .fire("click");
+    expect(text(accessPanel(root))).toContain(
+      "source inspection alone does not verify sign-in",
+    );
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-successSelector")!
+        .value,
+    ).toBe(detectedRecipe.successSelector);
+    await walk(root)
+      .find((item) => item.textContent === "Save & add test credentials")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/configure",
+      {
+        configurationRevision: "config-1",
+        profile: "hosted",
+        environment: "preview",
+        target: {
+          ...current.environment.target,
+          access: {
+            kind: "password",
+            ...detectedRecipe,
+            accounts: [
+              {
+                name: "Test user",
+                usernameSecret: "APP_SHOP_NEWINSTANCE_TEST_USER_USERNAME",
+                passwordSecret: "APP_SHOP_NEWINSTANCE_TEST_USER_PASSWORD",
+              },
+            ],
+          },
+        },
+      },
+    );
+    expect(f.window.dashboardPages.navigate).toHaveBeenCalledWith(
+      "/connections#project-access",
+    );
+    expect(JSON.stringify(api.mock.calls)).not.toContain('"password":');
+    f.panel.destroy();
+  });
+  it.each(["unknown", "email-code", "sso", "public"])(
+    "keeps %s source observations separate from an access selection and live verification",
+    async (kind) => {
+      const f = fixture(vi.fn(async () => detectedState(kind))),
+        root = new Element();
+      f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+      await settle();
+      expect(
+        walk(root).find(
+          (item) => item.textContent === "Use detected password login",
+        ),
+      ).toBeUndefined();
+      for (const choice of walk(root).filter((item) =>
+        /^onboarding-shop-access-/.test(item.id),
+      ))
+        expect(choice.attributes.get("aria-pressed")).toBe("false");
+      expect(f.api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+      if (["email-code", "sso"].includes(kind))
+        expect(text(accessPanel(root))).toContain(
+          "cannot be checked by the password verifier",
+        );
+      if (kind === "public")
+        expect(text(accessPanel(root))).toContain(
+          "not a verified browser result",
+        );
+      f.panel.destroy();
+    },
+  );
+  it("requires a current source inspection before applying a stale login recipe", async () => {
+    const f = fixture(vi.fn(async () => detectedState("password", true))),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(
+      walk(root).find(
+        (item) => item.textContent === "Use detected password login",
+      ),
+    ).toBeUndefined();
+    expect(
+      walk(root).find(
+        (item) => item.textContent === "Detect sign-in from code",
+      ),
+    ).toBeDefined();
+    expect(f.api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+    f.panel.destroy();
+  });
+
+  it("retains a reviewed login suggestion after hosting settings change, with its limitations visible", async () => {
+    const f = fixture(
+        vi.fn(async () => ({
+          ...detectedState("password", true),
+          setupConfirmation: {
+            confirmed: false,
+            confirmedAt: "2026-10-07T12:00:00Z",
+          },
+        })),
+      ),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(
+      walk(root).find(
+        (item) => item.textContent === "Use detected password login",
+      ),
+    ).toBeDefined();
+    expect(text(accessPanel(root))).toContain(
+      "previously reviewed source inspection",
+    );
+    expect(text(accessPanel(root))).toContain(
+      "live sign-in test is still required",
+    );
+    expect(f.api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+    f.panel.destroy();
+  });
   it("asks about app sign-in before hosting settings without defaulting to public access", async () => {
     const f = fixture(),
       root = new Element();
@@ -1553,6 +1788,7 @@ describe("explicit app sign-in onboarding", () => {
     )!;
     success.value = '[data-testid="account-menu"]';
     success.fire("input");
+    fillLoginControls(root);
     await walk(root)
       .find((item) => item.textContent === "Save & add test credentials")!
       .fire("click");
@@ -1597,6 +1833,7 @@ describe("explicit app sign-in onboarding", () => {
     )!;
     success.value = "#account-menu";
     success.fire("input");
+    fillLoginControls(root);
     await walk(root)
       .find((item) => item.textContent === "Save & add test credentials")!
       .fire("click");
@@ -1646,6 +1883,7 @@ describe("explicit app sign-in onboarding", () => {
       )!;
       success.value = "#account-menu";
       success.fire("input");
+      fillLoginControls(root);
       // Merely opening the environment form does not make this an environment
       // replacement or normalize its optional fields.
       await walk(root)
@@ -2038,6 +2276,9 @@ describe("Vercel preview access", () => {
     select.fire("click");
     for (const [id, value] of [
       ["onboarding-shop-loginPath", "/sign-in"],
+      ["onboarding-shop-usernameSelector", "#email"],
+      ["onboarding-shop-passwordSelector", "#password"],
+      ["onboarding-shop-submitSelector", "#submit-login"],
       ["onboarding-shop-successSelector", '[data-testid="account-menu"]'],
       ["onboarding-shop-account-0-name", "Test member"],
     ]) {

@@ -19,11 +19,22 @@ export interface QaReworkIntent {
 }
 export interface IntegrationRepairIntent {
   key: string;
-  kind: "conflict" | "checks";
+  kind: "conflict" | "checks" | "behind";
   headSha: string;
   integrationSha: string;
   jobId?: string;
   phase: "queued" | "running" | "stopped" | "replaced";
+  message: string;
+}
+export interface PromotionRepairIntent {
+  key: string;
+  integrationSha: string;
+  stagingSha: string;
+  sourceDeliveryIds: string[];
+  sourceShas: string[];
+  allowedPaths: string[];
+  phase: "queued" | "running" | "stopped" | "replaced";
+  jobId?: string;
   message: string;
 }
 
@@ -46,7 +57,13 @@ export interface DeliveryRecord {
   configuration: string;
   ticket: Pick<
     LinearTicket,
-    "id" | "identifier" | "title" | "description" | "projectId" | "teamId"
+    | "id"
+    | "identifier"
+    | "title"
+    | "description"
+    | "projectId"
+    | "teamId"
+    | "parentId"
   >;
   scopeHash: string;
   approvedBy: string;
@@ -80,12 +97,32 @@ export interface DeliveryRecord {
     manifestHash: string;
     artifacts: { name: string; sha256: string }[];
     failures?: QaFailureFinding[];
+    verdict?: "passed" | "failed" | "blocked";
+    assertions?: Array<{
+      criterion: string;
+      status: "passed" | "failed" | "blocked";
+      receiptId?: string;
+    }>;
+    feedback?: {
+      key: string;
+      status: "sent" | "retrying";
+      commentId?: string;
+      message: string;
+    };
   };
   rework?: QaReworkIntent;
   /** One bounded repair before this implementation has ever entered integration. */
   integrationRepair?: IntegrationRepairIntent;
   integrationRepairOf?: string;
+  /** One bounded, isolated port of the complete approved ticket onto staging. */
+  promotionRepair?: PromotionRepairIntent;
+  promotionRepairOf?: string[];
+  promotionSource?: { sha: string; baseSha: string; paths: string[] };
+  /** A port must not reset the ticket's already-consumed QA repair allowance. */
+  priorQaRepairs?: number;
   supersededBy?: string;
+  /** Controller confirmed this exact superseded implementation was closed. */
+  supersededClosedAt?: string;
   reworkOf?: {
     deliveryId: string;
     rootDeliveryId: string;
@@ -93,6 +130,12 @@ export interface DeliveryRecord {
     key: string;
   };
   promotion?: { number: number; url: string; headSha: string; branch: string };
+  promotionHistory?: Array<{
+    number: number;
+    url: string;
+    headSha: string;
+    branch: string;
+  }>;
 }
 export interface PmReviewPlan {
   schema: 1;

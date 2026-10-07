@@ -68,8 +68,24 @@ export function knowledgeRevision(project: Project, area: AreaConfig): string {
     .update(
       JSON.stringify(
         canonical({
-          config: { ...project.config, verified: undefined },
-          area: { ...area, enabled: undefined, codingEnabled: undefined },
+          config: {
+            ...project.config,
+            verified: undefined,
+            ...(project.config.workflow?.kind === "promotion"
+              ? {
+                  workflow: {
+                    ...project.config.workflow,
+                    promotionBatchSize: undefined,
+                  },
+                }
+              : {}),
+          },
+          area: {
+            ...area,
+            enabled: undefined,
+            codingEnabled: undefined,
+            promotionBatchSize: undefined,
+          },
           mandate: mandate(project, area),
         }),
       ),

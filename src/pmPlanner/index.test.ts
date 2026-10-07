@@ -17,6 +17,8 @@ import {
   type PmPlannerOptions,
 } from "./index.ts";
 import { loadProject } from "../config.ts";
+import { createOnboardingStore } from "../projectOnboarding/store.ts";
+import type { OnboardingReport } from "../projectOnboarding/types.ts";
 import {
   CHARTER_LIST_FIELDS,
   CHARTER_TEXT_FIELDS,
@@ -122,6 +124,91 @@ function fixture(extra: Partial<PmPlannerOptions> = {}) {
   };
 }
 describe("draft-only mandate planner", () => {
+  it("reuses source-grounded crew evidence without another source scan and labels its age honestly", async () => {
+    const report: OnboardingReport = {
+      summary: "Checkout and account controls.",
+      recommendation: "hosted",
+      rationale: "Existing test preview.",
+      stack: ["Node"],
+      missingInputs: [],
+      hosted: { provider: "url", instructions: [] },
+      docker: null,
+      proposedFiles: [],
+      warnings: [],
+      repository: {
+        provider: "github",
+        repo: "owner/app",
+        branch: "develop",
+        sha: "a".repeat(40),
+        filesRead: ["src/checkout/page.tsx"],
+        truncated: false,
+      },
+      projectSetup: {
+        commands: {},
+        firstPm: {
+          name: "Checkout",
+          mandate: input.mandate,
+          evidence: [{ path: "src/checkout/page.tsx", quote: "retryPayment" }],
+        },
+      },
+    };
+    await createOnboardingStore(root).change("app", () => ({
+      state: {
+        schema: 1,
+        project: "app",
+        configurationRevision: "a".repeat(64),
+        status: "analyzed",
+        stage: "complete",
+        message: "Inspected.",
+        updatedAt: new Date().toISOString(),
+        report,
+      },
+      result: undefined,
+    }));
+    const f = fixture(),
+      result = await f.planner.plan(input),
+      execution = f.execute.mock.calls[0]![0],
+      prompt = JSON.parse(execution.prompt);
+    expect(prompt.savedSourceInspection).toMatchObject({
+      sha: "a".repeat(40),
+      suggestedPms: [
+        {
+          name: "Checkout",
+          evidence: [{ path: "src/checkout/page.tsx", quote: "retryPayment" }],
+        },
+      ],
+    });
+    expect(prompt.savedSourceInspection.limitations).toContain(
+      "not a fresh review",
+    );
+    expect(result.warnings[0]).toContain("saved source excerpts at aaaaaaaa");
+    expect(f.fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("grounds new managed projects in owner-approved epics without granting approval during adoption", async () => {
+    const file = join(root, "projects/app/project.json"),
+      project = JSON.parse(readFileSync(file, "utf8"));
+    project.workflow = {
+      kind: "promotion",
+      approvalPolicy: "epic",
+      promotionBatchSize: 10,
+    };
+    writeFileSync(file, JSON.stringify(project));
+    const f = fixture();
+    await f.planner.plan(input);
+    const execution = f.execute.mock.calls[0]![0];
+    expect(execution.system).toContain(
+      "owner approves an epic before coding begins",
+    );
+    expect(execution.system).toContain(
+      "Do not request owner review of each in-scope child ticket",
+    );
+    expect(execution.system).toContain(
+      "Adopting or activating this PM does not approve an epic",
+    );
+    expect(execution.system).not.toContain(
+      "PM may self-approve finite implementation tickets",
+    );
+  });
   it.each(["promotion", "pull-request"] as const)(
     "grounds the planner's approval policy in %s without discarding owner limits",
     async (kind) => {

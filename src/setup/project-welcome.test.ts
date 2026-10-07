@@ -120,7 +120,11 @@ function fixture(api: Api, onSaved = vi.fn(async () => {})) {
     removeEventListener: (name: string) => events.delete(name),
   } as unknown as {
     createProjectWelcome(options: object): {
-      mount(root: Element, project: object): void;
+      mount(
+        root: Element,
+        project: object,
+        options?: { suggestionsOnly?: boolean },
+      ): void;
       refresh(name: string): Promise<void>;
       resume(projects: object[]): void;
       destroy(): void;
@@ -143,12 +147,14 @@ function fixture(api: Api, onSaved = vi.fn(async () => {})) {
     },
   );
   const onCreatePm = vi.fn(),
+    onSetupLinear = vi.fn(),
     view = window.createProjectWelcome({
       api,
       pages,
       isLocked: () => locked,
       onSaved,
       onCreatePm,
+      onSetupLinear,
     });
   view.mount(root, project);
   return {
@@ -156,6 +162,7 @@ function fixture(api: Api, onSaved = vi.fn(async () => {})) {
     project,
     view,
     onCreatePm,
+    onSetupLinear,
     onSaved,
     document,
     events,
@@ -166,6 +173,283 @@ function fixture(api: Api, onSaved = vi.fn(async () => {})) {
   };
 }
 describe("repository-first project welcome", () => {
+  const readyProject = () => ({
+    name: "app",
+    instanceId: "current",
+    workflow: { kind: "promotion", approvalPolicy: "epic" },
+    areas: [{ key: "journey", enabled: false, codingEnabled: false }],
+    readiness: {
+      steps: [
+        "source_connection",
+        "ai_connection",
+        "worker",
+        "linear_connection",
+        "test_access",
+        "browser_verification",
+      ].map((id) => ({ id, ready: true })),
+      areas: [
+        {
+          key: "journey",
+          canRun: true,
+          canEnable: true,
+          coding: { canEnable: true },
+          blockers: [],
+          enableBlockers: [],
+        },
+      ],
+    },
+  });
+  it("retains remaining source-grounded crew suggestions after adoption without another inspection", async () => {
+    const source = setup(true),
+      second = {
+        name: "Lock",
+        mandate: "Investigate authorization boundaries in checkout.",
+        evidence: [{ path: "src/auth.ts", quote: "authorize" }],
+      },
+      response = {
+        ...source,
+        report: {
+          ...source.report,
+          projectSetup: {
+            ...source.report.projectSetup,
+            suggestedPms: [source.report.projectSetup.firstPm, second],
+          },
+        },
+      },
+      api = vi.fn(async () => response),
+      f = fixture(api);
+    await settle();
+    byText(f.root, "Meet Pip").fire("click");
+    f.view.mount(
+      f.root,
+      {
+        ...f.project,
+        areas: [
+          {
+            key: "journey",
+            mandate: source.report.projectSetup.firstPm.mandate,
+          },
+        ],
+      },
+      { suggestionsOnly: true },
+    );
+    await settle();
+    expect(byText(f.root, "Meet Pip")).toBeUndefined();
+    expect(text(f.root)).toContain("Already in your crew");
+    byText(f.root, "Meet Lock").fire("click");
+    expect(f.onCreatePm).toHaveBeenLastCalledWith("app", {
+      name: second.name,
+      mandate: second.mandate,
+    });
+    expect(api).toHaveBeenCalledExactlyOnceWith("/api/projects/app/onboarding");
+    expect(text(f.root)).toContain("does not start daily patrols");
+    f.view.destroy();
+  });
+  it("activates only a ready crew using fresh configuration revisions and refreshes the saved status", async () => {
+    const api = vi.fn(async (url: string) =>
+        url.endsWith("/readiness")
+          ? { projectRevision: "fresh-project", areasRevision: "fresh-areas" }
+          : url.endsWith("/crew/activate")
+            ? { message: "Crew enabled." }
+            : setup(true),
+      ),
+      f = fixture(api);
+    await settle();
+    f.view.mount(f.root, readyProject(), { suggestionsOnly: true });
+    await byText(f.root, "Activate ready crew").fire("click");
+    expect(api).toHaveBeenLastCalledWith("/api/projects/app/crew/activate", {
+      projectRevision: "fresh-project",
+      areasRevision: "fresh-areas",
+    });
+    expect(f.onSaved).toHaveBeenCalledExactlyOnceWith("app");
+    expect(text(f.root)).toContain("Crew enabled.");
+    expect(text(f.root)).toContain("Activation does not approve any epic.");
+    expect(f.onCreatePm).not.toHaveBeenCalled();
+    f.view.destroy();
+  });
+  it("surfaces a failed activation without a retry or a claimed active crew", async () => {
+    const api = vi.fn(async (url: string) => {
+        if (url.endsWith("/crew/activate"))
+          throw new Error("Test app access again before activation.");
+        return url.endsWith("/readiness")
+          ? { projectRevision: "fresh-project", areasRevision: "fresh-areas" }
+          : setup(true);
+      }),
+      f = fixture(api);
+    await settle();
+    f.view.mount(f.root, readyProject(), { suggestionsOnly: true });
+    await byText(f.root, "Activate ready crew").fire("click");
+    expect(
+      api.mock.calls.filter(([url]) => url.endsWith("/crew/activate")),
+    ).toHaveLength(1);
+    expect(f.onSaved).not.toHaveBeenCalled();
+    expect(text(f.root)).toContain("Test app access again before activation.");
+    expect(text(f.root)).not.toContain("Your ready crew is active.");
+    f.view.destroy();
+  });
+  it("verifies connections before activating with the new configuration revisions", async () => {
+    const api = vi.fn(async (url: string) =>
+        url.endsWith("/verify")
+          ? { ok: true, checks: [] }
+          : url.endsWith("/readiness")
+            ? {
+                projectRevision: "verified-project",
+                areasRevision: "fresh-areas",
+              }
+            : url.endsWith("/crew/activate")
+              ? { message: "Crew enabled." }
+              : setup(true),
+      ),
+      f = fixture(api),
+      project = readyProject();
+    Object.assign(project.readiness.areas[0]!, {
+      canRun: false,
+      canEnable: false,
+      blockers: [{ id: "verification" }],
+      enableBlockers: [{ id: "verification" }],
+      coding: { canEnable: false, enableBlockers: [{ id: "verification" }] },
+    });
+    await settle();
+    f.view.mount(f.root, project, { suggestionsOnly: true });
+    await byText(f.root, "Verify & activate crew").fire("click");
+    expect(api.mock.calls.slice(-3).map(([url]) => url)).toEqual([
+      "/api/projects/app/verify",
+      "/api/projects/app/readiness",
+      "/api/projects/app/crew/activate",
+    ]);
+    expect(api).toHaveBeenCalledWith(
+      "/api/projects/app/verify",
+      {},
+      "POST",
+      90000,
+    );
+    expect(api).toHaveBeenLastCalledWith("/api/projects/app/crew/activate", {
+      projectRevision: "verified-project",
+      areasRevision: "fresh-areas",
+    });
+    expect(f.onSaved).toHaveBeenCalledExactlyOnceWith("app");
+    f.view.destroy();
+  });
+  it("keeps the crew paused and explains a connection verification failure", async () => {
+    const api = vi.fn(async (url: string) =>
+        url.endsWith("/verify")
+          ? {
+              ok: false,
+              checks: [
+                { name: "Linear", ok: false, detail: "Workspace unavailable" },
+              ],
+            }
+          : setup(true),
+      ),
+      f = fixture(api),
+      project = readyProject();
+    Object.assign(project.readiness.areas[0]!, {
+      canRun: false,
+      canEnable: false,
+      blockers: [{ id: "verification" }],
+      enableBlockers: [{ id: "verification" }],
+      coding: { canEnable: false, enableBlockers: [{ id: "verification" }] },
+    });
+    await settle();
+    f.view.mount(f.root, project, { suggestionsOnly: true });
+    await byText(f.root, "Verify & activate crew").fire("click");
+    expect(api.mock.calls.some(([url]) => url.endsWith("/crew/activate"))).toBe(
+      false,
+    );
+    expect(api.mock.calls.some(([url]) => url.endsWith("/readiness"))).toBe(
+      false,
+    );
+    expect(f.onSaved).not.toHaveBeenCalled();
+    expect(text(f.root)).toContain("Linear: Workspace unavailable");
+    expect(text(f.root)).not.toContain("Your ready crew is active.");
+    f.view.destroy();
+  });
+  it("routes incomplete environment setup to app access and never offers activation for an invalid schedule", async () => {
+    const f = fixture(async () => setup(true)),
+      project = readyProject();
+    await settle();
+    project.readiness.steps.find(
+      (step) => step.id === "browser_verification",
+    )!.ready = false;
+    project.readiness.areas[0]!.canRun = false;
+    f.view.mount(f.root, project, { suggestionsOnly: true });
+    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    const environment = walk(f.root).find(
+      (item) => item.tagName === "A" && item.textContent === "Test app access",
+    )!;
+    expect((environment as Element & { href: string }).href).toBe(
+      "/projects/app?tab=environment",
+    );
+    const badSchedule = readyProject();
+    badSchedule.readiness.areas[0]!.canEnable = false;
+    f.view.mount(f.root, badSchedule, { suggestionsOnly: true });
+    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    f.view.destroy();
+  });
+  it("does not ask repository-only projects to connect browser hosting or sign-in", async () => {
+    const f = fixture(async () => setup(true)),
+      project = readyProject();
+    await settle();
+    project.readiness.steps = project.readiness.steps.filter(
+      (step) => !["test_access", "browser_verification"].includes(step.id),
+    );
+    project.readiness.steps.push({ id: "verification", ready: true });
+    f.view.mount(
+      f.root,
+      { ...project, verification: { mode: "repository" } },
+      { suggestionsOnly: true },
+    );
+    expect(text(f.root)).toContain("Confirm repository checks");
+    expect(text(f.root)).not.toContain("Test app access");
+    expect(byText(f.root, "Activate ready crew")).toBeDefined();
+    f.view.destroy();
+  });
+  it("keeps an active ready crew focused without repeating the completed setup checklist", async () => {
+    const f = fixture(async () => setup(true)),
+      project = readyProject();
+    await settle();
+    project.areas[0]!.enabled = project.areas[0]!.codingEnabled = true;
+    f.view.mount(f.root, project, { suggestionsOnly: true });
+    expect(
+      walk(f.root).find(
+        (item) =>
+          item.attributes.get("aria-label") === "Project setup progress",
+      ),
+    ).toBeUndefined();
+    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    expect(text(f.root)).toContain("Grow your crew");
+    f.view.destroy();
+  });
+  it("points repository-first promotion setup to a deployment before activating coders", async () => {
+    const f = fixture(async () => setup(true)),
+      project = readyProject();
+    await settle();
+    Object.assign(project.readiness.areas[0]!.coding, {
+      canEnable: false,
+      enableBlockers: [
+        {
+          id: "promotion_environment",
+          action: "environment",
+          message: "Prepare integration deployment.",
+        },
+      ],
+    });
+    f.view.mount(
+      f.root,
+      { ...project, verification: { mode: "repository" } },
+      { suggestionsOnly: true },
+    );
+    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    const action = walk(f.root).find(
+      (item) =>
+        item.tagName === "A" &&
+        item.textContent === "Prepare integration deployment",
+    )!;
+    expect((action as Element & { href: string }).href).toBe(
+      "/projects/app?tab=environment",
+    );
+    f.view.destroy();
+  });
   it("only reads on mount and requires exact selected commands plus reviewed revisions to confirm", async () => {
     const api = vi.fn(async (_url: string, body?: unknown) =>
       body ? setup(true) : setup(),

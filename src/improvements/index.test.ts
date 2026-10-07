@@ -34,7 +34,11 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 function edit(
   name: string,
   change: (value: {
-    workflow: { kind: string; baseBranch?: string };
+    workflow: {
+      kind: string;
+      baseBranch?: string;
+      approvalPolicy?: "epic" | "ticket";
+    };
     linear: { connectionId: string; teamId: string };
     areas: { core: { linearProjectId: string; instanceId: string } };
   }) => void,
@@ -148,6 +152,23 @@ function fixture() {
   };
 }
 describe("durable improvement missions", () => {
+  it("routes new epic-governed missions to epic approval instead of treating an epic as a coding step", async () => {
+    edit("project.json", (value) => {
+      value.workflow = { kind: "promotion", approvalPolicy: "epic" };
+    });
+    const f = fixture(),
+      mission = await f.start();
+    f.tickets[0]!.labels.push("pm-epic");
+    expect((await f.service.detail("app", mission.id)).approvalPolicy).toBe(
+      "epic",
+    );
+    await expect(f.plan(mission.id)).rejects.toThrow("Epic review");
+    expect(f.approve).not.toHaveBeenCalled();
+    expect(f.jobs.every((job) => job.type === "pm")).toBe(true);
+    expect(
+      (await f.service.detail("app", mission.id)).mission.plan,
+    ).toBeUndefined();
+  });
   it("keeps staging maintenance out of product changes and exposes the staged workflow", async () => {
     edit("project.json", (value) => {
       value.workflow = { kind: "promotion" };

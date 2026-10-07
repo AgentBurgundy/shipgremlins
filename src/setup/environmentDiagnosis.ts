@@ -15,6 +15,7 @@ export interface EnvironmentDiagnosis {
     | "retry";
   field?: EnvironmentDiagnosisField;
   matchCount?: number;
+  origin?: string;
 }
 export interface EnvironmentCheck {
   name: string;
@@ -98,6 +99,11 @@ const catalog = {
     "The sign-in request returned an error, but the browser could not confirm the cause. Check the app's login configuration and test account.",
     "edit_login",
   ],
+  login_origin_rejected: [
+    "The app does not trust this preview's sign-in origin",
+    "The app rejected the preview origin during sign-in. Check this origin against your authentication provider's trusted domains and the app's origin policy, then test again. This is an app authentication setting; it does not prove the password is wrong.",
+    "edit_login",
+  ],
   success_not_found: [
     "Signed-in confirmation was not found",
     "The saved signed-in selector did not match an element after submitting the form. Check that selector and whether sign-in completed; a timeout does not prove the password is wrong.",
@@ -178,6 +184,22 @@ export function environmentDiagnosis(
   if (code === "selector_ambiguous" && (typeof count !== "number" || count < 2))
     return undefined;
   const [title, detail, action] = catalog[code];
+  const origin = row.origin;
+  if (origin !== undefined) {
+    if (
+      code !== "login_origin_rejected" ||
+      typeof origin !== "string" ||
+      origin.length > 512
+    )
+      return undefined;
+    try {
+      const url = new URL(origin);
+      if (!["http:", "https:"].includes(url.protocol) || url.origin !== origin)
+        return undefined;
+    } catch {
+      return undefined;
+    }
+  }
   return {
     code,
     title,
@@ -185,6 +207,7 @@ export function environmentDiagnosis(
     action,
     ...(field ? { field: field as EnvironmentDiagnosisField } : {}),
     ...(count !== undefined ? { matchCount: count as number } : {}),
+    ...(origin ? { origin: origin as string } : {}),
   };
 }
 
