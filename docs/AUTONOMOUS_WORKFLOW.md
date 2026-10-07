@@ -12,7 +12,8 @@ merges production. The team's usual production release process stays in place.
 
 ```mermaid
 flowchart TD
-  Repo[Connect GitHub or GitLab repository] --> Inspect[AI reads bounded, revision-pinned source]
+  Repo[Connect GitHub or GitLab repository] --> Worker[Configure AI connection and a verified agent service]
+  Worker --> Inspect[AI reads bounded, revision-pinned source]
   Inspect --> Review[Confirm commands, login hints and suggested area PMs]
   Review --> Adopt[Adopt one or more PMs with their own brief and paths]
   Adopt --> Linear[Connect Linear; prepare missing projects and labels]
@@ -21,10 +22,9 @@ flowchart TD
   Access -->|Password| Account[Save dedicated test credentials; apply detected login recipe]
   Access -->|Public| Public[Explicitly choose public-only coverage]
   Access -->|OTP, SSO or uncertain| Clarify[Explain the gap; choose supported access or public-only coverage]
-  Account --> Worker[Configure AI connection and a verified agent service]
-  Public --> Worker
-  Clarify --> Worker
-  Worker --> Probe[Browser opens app and tests saved login]
+  Account --> Probe[Browser opens app and tests saved login]
+  Public --> Probe
+  Clarify --> Probe
   Probe -->|Fails| Repair[Show exact failed step and repair action]
   Repair --> Probe
   Probe -->|Passes| Activate[Activate ready crew in one revision-guarded action]
