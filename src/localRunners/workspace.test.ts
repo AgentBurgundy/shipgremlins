@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -66,7 +67,7 @@ afterEach(() => {
 });
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "gremlins-workspace-"));
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-workspace-"));
   roots.push(root);
   const directory = join(root, "workspaces");
   mkdirSync(directory, { mode: 0o700 });
