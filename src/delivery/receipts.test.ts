@@ -176,6 +176,31 @@ function world() {
   };
 }
 describe("trusted worker browser receipts", () => {
+  it.each(["/login", "/sign-in/password", "/_vercel/sso"])(
+    "keeps unexpected %s redirects blocked instead of sending a false product failure to coding",
+    async (path) => {
+      const w = world();
+      w.page.url = () => `https://preview.example${path}`;
+      w.locator.count = async () => 0;
+      const result = await w.run();
+      const proof = JSON.parse(
+        readFileSync(join(w.root, result.reviewProof.file), "utf8"),
+      );
+      expect(proof.manifest.deliveries[0].status).toBe("blocked");
+      expect(proof.receipts.receipts[0].status).toBe("blocked");
+      expect(w.page.screenshot).not.toHaveBeenCalled();
+    },
+  );
+  it("can still test an explicitly requested login page", async () => {
+    const w = world();
+    w.request.deliveries[0]!.checks[0]!.path = "/login";
+    w.page.url = () => "https://preview.example/login";
+    const result = await w.run();
+    expect(
+      JSON.parse(readFileSync(join(w.root, result.reviewProof.file), "utf8"))
+        .manifest.deliveries[0].status,
+    ).toBe("passed");
+  });
   it("executes real browser API checks and binds screenshots to trusted proof digest", async () => {
     const w = world();
     const result = await w.run();

@@ -1,4 +1,4 @@
-import { projectRuntimeKey } from "../projectIdentity.ts";
+import { jobBelongsToProject, projectRuntimeKey } from "../projectIdentity.ts";
 import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -9,7 +9,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { loadHub, loadProject, type Project } from "../config.ts";
+import {
+  loadHub,
+  loadProject,
+  matchesPrefix,
+  type Project,
+} from "../config.ts";
 import {
   effectiveVerification,
   effectiveWorkflow,
@@ -47,6 +52,24 @@ import {
 import { integrationHealth } from "../dispatcher/stopTheLine.ts";
 import { createStagingSync } from "./stagingSync.ts";
 import { createSyncRepairPayload } from "./syncRepair.ts";
+import {
+  qaRepairInput,
+  qaRepairPrompt,
+  matchesQaRepair,
+  validQaFinding,
+} from "./qaRework.ts";
+import { prepareProductionRelease } from "./release.ts";
+import { createDraftAdoption, type CompletedDraft } from "./adoption.ts";
+import { readPromotionBatch } from "./promotionBatch.ts";
+import {
+  integrationRepairInput,
+  integrationRepairPayload,
+  matchesIntegrationRepair,
+} from "./integrationRepair.ts";
+import {
+  readDraftMigrations,
+  saveDraftMigrationStatus,
+} from "./migrationStatus.ts";
 import { LocalJobDeferredError } from "../localRunners/engine.ts";
 import {
   createDeliveryService,
@@ -70,6 +93,8 @@ interface Admission {
   ticket: LinearTicket;
   scopeHash: string;
   approvedAt: string;
+  qaRepairKey?: string;
+  integrationRepairKey?: string;
 }
 export interface DeliveryControllerOptions {
   root: string;
@@ -91,6 +116,9 @@ export interface DeliveryControllerOptions {
   executor?: typeof createPromotionExecutor;
   syncJobs?: () => Promise<LocalJob[]>;
   enqueueSyncRepair?: (input: LocalJobInput) => Promise<LocalJob>;
+  qaJobs?: () => Promise<LocalJob[]>;
+  enqueueQaRepair?: (input: LocalJobInput) => Promise<LocalJob>;
+  completedDrafts?: (project: string) => Promise<CompletedDraft[]>;
 }
 export interface CandidateHandoff {
   project: string;
@@ -98,6 +126,7 @@ export interface CandidateHandoff {
   author: string;
   area: string;
   areaInstanceId?: string;
+  ownershipRevision?: string;
   branch: string;
   releaseBranch: string;
   candidateSha: string;
@@ -278,7 +307,10 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     });
   function candidateHandoffs(project: Project): CandidateHandoff[] {
     const values: CandidateHandoff[] = [];
-    for (const area of project.areas) {
+    for (const area of [
+      ...project.areas.filter((a) => a.key !== "combined"),
+      { key: "combined", instanceId: undefined },
+    ]) {
       validateName(area.key, "area");
       const file = join(
         options.root,
@@ -296,6 +328,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           "Candidate handoff requires repair; existing evidence was preserved.",
         );
       const value = JSON.parse(readFileSync(file, "utf8")) as CandidateHandoff;
+      if (
+        area.key === "combined" &&
+        value.ownershipRevision !== combinedOwnership(project)
+      )
+        continue;
       if (value.areaInstanceId !== area.instanceId) continue;
       if (
         value.project !== project.config.name ||
@@ -325,6 +362,9 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         repo: value.repo,
         author: value.author,
         area: value.area,
+        ...(value.ownershipRevision
+          ? { ownershipRevision: value.ownershipRevision }
+          : {}),
         ...(value.areaInstanceId
           ? { areaInstanceId: value.areaInstanceId }
           : {}),
@@ -338,11 +378,23 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     }
     return values;
   }
+  function combinedOwnership(project: Project) {
+    return hash(
+      JSON.stringify(
+        project.areas
+          .map((area) => [area.key, configHash(project, area.key)])
+          .sort(([a], [b]) => a!.localeCompare(b!)),
+      ),
+    );
+  }
   function saveCandidate(project: Project, value: CandidateHandoff) {
     validateName(value.area, "area");
-    const areaInstanceId = project.areas.find(
-      (area) => area.key === value.area,
-    )?.instanceId;
+    const areaInstanceId =
+      value.area === "combined"
+        ? undefined
+        : project.areas.find((area) => area.key === value.area)?.instanceId;
+    if (value.area === "combined")
+      value.ownershipRevision = combinedOwnership(project);
     const directory = join(
         options.root,
         ".run",
@@ -457,13 +509,220 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       );
     return value;
   }
+  async function reconcileQaRework(name: string) {
+    const project = projectFor(name);
+    if (!enabled(project) || !options.qaJobs || !options.enqueueQaRepair)
+      return [];
+    const { ledger } = await clients(project);
+    const results: import("./types.ts").DeliveryRecord[] = [];
+    for (const failed of ledger
+      .list()
+      .filter((r) => r.status === "failed" && r.review?.failures?.length)) {
+      const record = await ledger.reserveQaRepair(failed.id);
+      if (
+        !record?.rework ||
+        ["stopped", "awaiting-review"].includes(record.rework.phase)
+      )
+        continue;
+      const current = projectFor(name);
+      if (
+        current.config.instanceId !== project.config.instanceId ||
+        configHash(current, record.area) !== record.configuration
+      ) {
+        await ledger.noteQaRepair(
+          record.rework.key,
+          "stopped",
+          "The project or owning PM changed. Review the preserved QA findings before starting new coding work.",
+        );
+        continue;
+      }
+      const jobs = await options.qaJobs();
+      const matching = jobs.filter(
+        (j) => j.idempotencyKey === record.rework!.key,
+      );
+      if (
+        matching.length > 1 ||
+        (matching[0] && !matchesQaRepair(matching[0], project, record))
+      ) {
+        await ledger.noteQaRepair(
+          record.rework.key,
+          "stopped",
+          "QA repair job identity changed. Existing work was preserved for inspection.",
+        );
+        continue;
+      }
+      let job = matching[0];
+      if (!job) {
+        if (
+          jobs.some(
+            (j) =>
+              j.project === name &&
+              j.type === "developer" &&
+              j.ticket === record.ticket.identifier &&
+              ["queued", "running"].includes(j.status),
+          )
+        )
+          continue;
+        // The intent is durable before queueing. The queue's retained idempotency
+        // key recovers a lost response or restart without launching a duplicate.
+        job = await options.enqueueQaRepair(qaRepairInput(current, record));
+      }
+      const saved = ledger.list().find((r) => r.id === record.id);
+      if (saved?.rework?.phase === "awaiting-review") {
+        results.push(saved);
+        continue;
+      }
+      if (!matchesQaRepair(job, project, record))
+        throw new Error("The queue returned a different QA repair job.");
+      if (["failed", "canceled", "succeeded"].includes(job.status)) {
+        await ledger.noteQaRepair(
+          record.rework.key,
+          "stopped",
+          job.status === "succeeded"
+            ? "The coding run ended without a registered repair delivery. Inspect its report before choosing another approach."
+            : "The coding repair stopped without a verified result. Inspect its failure or cancellation; automatic duplicate attempts are disabled.",
+        );
+        continue;
+      }
+      results.push(await ledger.admitQaRepair(job));
+    }
+    return results;
+  }
+  async function reconcileIntegrationRepairs(name: string) {
+    const project = projectFor(name);
+    if (
+      !enabled(project) ||
+      !project.config.verified ||
+      !options.qaJobs ||
+      !options.enqueueQaRepair
+    )
+      return;
+    const { ledger, forge } = await clients(project);
+    for (const candidate of ledger
+      .list()
+      .filter((r) => r.status === "awaiting-merge" && !r.supersededBy)) {
+      let record = candidate;
+      if (!record.integrationRepair) {
+        const pull = await forge.getPull(
+          project.config.repo,
+          record.implementation.number,
+        );
+        if (
+          !pull ||
+          pull.state !== "open" ||
+          pull.headSha !== record.implementation.headSha ||
+          pull.headRef !== record.implementation.branch ||
+          pull.author !== record.implementation.author ||
+          pull.baseRef !== project.config.branches.integration
+        )
+          continue;
+        const files = await forge.listPullFiles(
+          project.config.repo,
+          pull.number,
+        );
+        if (
+          !files.length ||
+          files.some((file) => matchesPrefix(file, project.tiers.hubOwnerOnly))
+        )
+          continue;
+        const provider = await forge.getChecks(
+          project.config.repo,
+          pull.headSha,
+        );
+        if (provider.status === "pending") continue;
+        let kind: "conflict" | "checks";
+        if (pull.mergeableState === "dirty") kind = "conflict";
+        else if (
+          ["failure", "none"].includes(provider.status) &&
+          (await localChecks(project, pull.headSha)).status === "failure"
+        )
+          kind = "checks";
+        else continue; // Never ask an agent to fix permission/protection/provider failures.
+        const integrationSha = await forge.getBranchSha(
+          project.config.repo,
+          project.config.branches.integration,
+        );
+        if (!integrationSha) continue;
+        // An unhealthy baseline is not a defect in this ticket's implementation.
+        if ((await localChecks(project, integrationSha)).status !== "success")
+          continue;
+        if (configHash(projectFor(name), record.area) !== record.configuration)
+          continue;
+        const reserved = await ledger.reserveIntegrationRepair({
+          deliveryId: record.id,
+          kind,
+          integrationSha,
+        });
+        if (!reserved) continue;
+        record = reserved;
+      }
+      if (["stopped", "replaced"].includes(record.integrationRepair!.phase))
+        continue;
+      const jobs = await options.qaJobs();
+      const matching = jobs.filter(
+        (job) => job.idempotencyKey === record.integrationRepair!.key,
+      );
+      if (
+        matching.length > 1 ||
+        (matching[0] && !matchesIntegrationRepair(matching[0], project, record))
+      ) {
+        await ledger.stopIntegrationRepair(
+          record.integrationRepair!.key,
+          "Pre-merge repair queue identity changed. Preserved drafts need inspection.",
+        );
+        continue;
+      }
+      let job = matching[0];
+      if (!job) {
+        if (
+          jobs.some(
+            (j) =>
+              j.project === name &&
+              j.ticket === record.ticket.identifier &&
+              j.type === "developer" &&
+              ["queued", "running"].includes(j.status),
+          )
+        )
+          continue;
+        job = await options.enqueueQaRepair(
+          integrationRepairInput(project, record),
+        );
+      }
+      if (ledger.list().find((r) => r.id === record.id)?.supersededBy) continue;
+      if (!matchesIntegrationRepair(job, project, record))
+        throw new Error("The queue returned a different pre-merge repair.");
+      if (["failed", "canceled", "succeeded"].includes(job.status)) {
+        await ledger.stopIntegrationRepair(
+          record.integrationRepair!.key,
+          "The one automatic pre-merge repair stopped without a registered replacement. Inspect its report and preserved draft; no duplicate run will launch.",
+        );
+        continue;
+      }
+      try {
+        await ledger.admitIntegrationRepair(job);
+      } catch {
+        await ledger.stopIntegrationRepair(
+          record.integrationRepair!.key,
+          "The approved ticket, original draft or project changed. Automatic pre-merge repair stopped; existing work is preserved.",
+        );
+      }
+    }
+  }
   async function beforeDeveloper(
     job: LocalJob,
     payload: DockerJobPayload,
     ticket: LinearTicket,
   ): Promise<DockerJobPayload> {
     const project = projectFor(job.project!);
-    if (!enabled(project)) return payload;
+    const repairing = job.idempotencyKey?.startsWith("qa-rework:");
+    const integrationRepairing = job.idempotencyKey?.startsWith(
+      "integration-repair:",
+    );
+    if (!enabled(project)) {
+      if (repairing || integrationRepairing)
+        throw new Error("QA repair requires the admitted promotion workflow.");
+      return payload;
+    }
     if (
       !job.area ||
       !payload.delivery ||
@@ -473,6 +732,66 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       throw new Error(
         "Promotion coding must target its exact integration branch and owning PM.",
       );
+    let repair: import("./types.ts").DeliveryRecord | undefined;
+    let integrationRepair: import("./types.ts").DeliveryRecord | undefined;
+    if (integrationRepairing) {
+      const { ledger } = await clients(project);
+      integrationRepair = await ledger.admitIntegrationRepair(job);
+      if (
+        ticketScopeHash(ticket) !== integrationRepair.scopeHash ||
+        ticket.id !== integrationRepair.ticket.id ||
+        configHash(projectFor(project.config.name), integrationRepair.area) !==
+          integrationRepair.configuration
+      )
+        throw new Error(
+          "The pre-merge repair must retain the exact current approved scope and owning PM.",
+        );
+      payload = integrationRepairPayload(payload, integrationRepair);
+    }
+    if (repairing) {
+      const { ledger, forge } = await clients(project);
+      repair = await ledger.admitQaRepair(job);
+      if (
+        ticketScopeHash(ticket) !== repair.scopeHash ||
+        ticket.id !== repair.ticket.id
+      )
+        throw new Error(
+          "QA repair must retain the same approved ticket scope.",
+        );
+      const integrationSha = await forge.getBranchSha(
+        project.config.repo,
+        project.config.branches.integration,
+      );
+      if (
+        !integrationSha ||
+        !repair.implementation.mergeSha ||
+        (
+          await forge.compare(
+            project.config.repo,
+            repair.implementation.mergeSha,
+            integrationSha,
+          )
+        ).behindBy !== 0
+      )
+        throw new Error(
+          "The current integration branch no longer contains the reviewed implementation.",
+        );
+      payload = {
+        ...payload,
+        expectedCommitSha: integrationSha,
+        prompt: (payload.prompt ?? "") + qaRepairPrompt(repair),
+      };
+    }
+    if (repair) {
+      const current = projectFor(project.config.name);
+      if (
+        current.config.instanceId !== project.config.instanceId ||
+        configHash(current, repair.area) !== repair.configuration
+      )
+        throw new Error(
+          "Project or owning PM changed while preparing QA repair.",
+        );
+    }
     const snapshot: Admission = {
       schema: 1,
       jobId: job.id,
@@ -482,13 +801,22 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       configuration: configHash(project, job.area),
       ticket: structuredClone(ticket),
       scopeHash: ticketScopeHash(ticket),
-      approvedAt: now().toISOString(),
+      approvedAt:
+        repair?.approvedAt ??
+        integrationRepair?.approvedAt ??
+        now().toISOString(),
+      ...(repair ? { qaRepairKey: repair.rework!.key } : {}),
+      ...(integrationRepair
+        ? { integrationRepairKey: integrationRepair.integrationRepair!.key }
+        : {}),
     };
     const existing = admission(job);
     if (existing) {
       if (
         existing.configuration !== snapshot.configuration ||
-        existing.scopeHash !== snapshot.scopeHash
+        existing.scopeHash !== snapshot.scopeHash ||
+        existing.qaRepairKey !== snapshot.qaRepairKey ||
+        existing.integrationRepairKey !== snapshot.integrationRepairKey
       )
         throw new Error(
           "The original coding admission changed. Queue a new reviewed attempt.",
@@ -751,7 +1079,21 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         "Delivery reconciliation requires the completed worker's bound result.",
       );
     if (job.type === "developer") {
-      if (result.noChanges === true) return;
+      if (result.noChanges === true) {
+        const captured = admission(job);
+        if (captured?.integrationRepairKey)
+          await localLedger(project).stopIntegrationRepair(
+            captured.integrationRepairKey,
+            "The pre-merge repair produced no change. Inspect the preserved draft and report; no automatic duplicate will launch.",
+          );
+        if (captured?.qaRepairKey)
+          await localLedger(project).noteQaRepair(
+            captured.qaRepairKey,
+            "stopped",
+            "The coding repair produced no change. Automatic retries stopped; inspect the failed QA evidence and coding report.",
+          );
+        return;
+      }
       const captured = admission(job);
       if (!captured)
         throw new Error(
@@ -808,6 +1150,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         pullNumber: number,
         approvedBy: "controller-observed Linear pm-approved label",
         approvedAt: captured.approvedAt,
+        ...(captured.qaRepairKey ? { qaRepairKey: captured.qaRepairKey } : {}),
+        ...(captured.integrationRepairKey
+          ? { integrationRepairKey: captured.integrationRepairKey }
+          : {}),
+        expectedHeadSha: String(result.headSha),
         ...(independentChecks.status === "success"
           ? {
               checks: {
@@ -898,6 +1245,76 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           hash(artifact) === sha256
         );
       },
+      failureEvidence: async ({ receiptId, deliveryId, criterion }) => {
+        const found = receipts.filter(
+          (r) =>
+            object(r) &&
+            r.id === receiptId &&
+            r.deliveryId === deliveryId &&
+            r.criterion === criterion &&
+            r.jobId === job.id &&
+            r.planId === plan.id &&
+            r.status === "failed" &&
+            r.testedSha === plan.deployment.sha &&
+            r.deploymentId === plan.deployment.id,
+        );
+        const receipt =
+          found.length === 1 && object(found[0]) ? found[0] : null;
+        if (
+          !receipt ||
+          !object(receipt.check) ||
+          !object(receipt.screenshot) ||
+          typeof receipt.url !== "string"
+        )
+          return null;
+        const check = receipt.check;
+        if (
+          ![
+            "text-visible",
+            "text-absent",
+            "selector-visible",
+            "selector-absent",
+            "url-path",
+          ].includes(String(check.kind))
+        )
+          return null;
+        const target = String(check.kind).startsWith("text-")
+          ? check.text
+          : String(check.kind).startsWith("selector-")
+            ? check.selector
+            : check.expected;
+        if (
+          typeof target !== "string" ||
+          !target ||
+          target.length > 1000 ||
+          typeof check.path !== "string" ||
+          !/^\/(?!\/)/.test(check.path) ||
+          /[?#\\]/.test(check.path)
+        )
+          return null;
+        let url: URL;
+        try {
+          url = new URL(receipt.url);
+        } catch {
+          return null;
+        }
+        if (
+          url.origin !== new URL(plan.deployment.url).origin ||
+          url.username ||
+          url.password
+        )
+          return null;
+        url.search = "";
+        url.hash = "";
+        const finding = {
+          criterion,
+          receiptId,
+          expected: `At ${check.path}, expected ${check.kind}: ${target}. The independently replayed predicate evaluated false.`,
+          url: url.href,
+          screenshot: receipt.screenshot,
+        };
+        return validQaFinding(finding) ? finding : null;
+      },
     });
   }
   async function promote(name: string, opts: PromoteOpts) {
@@ -942,6 +1359,10 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       },
     };
     const env = environment();
+    const publishReviewedCandidate =
+      !opts.verifyCandidate &&
+      !env.SHIPGREMLINS_VERIFICATION_FILE &&
+      !env.SHIPGREMLINS_ATTESTATION_PUBLIC_KEY;
     const verifier =
       opts.verifyCandidate ??
       createCandidateVerifier(ctx, {
@@ -955,9 +1376,29 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     const rows = await runPromote(ctx, {
       ...opts,
       ...ledger.promotionOptions(),
-      verifyCandidate: async (candidate) => {
+      publishReviewedCandidate,
+      onPublished: async (candidate, pull) => {
+        if (publishReviewedCandidate)
+          await ledger.recordPromotion({
+            deliveryIds: ledger
+              .list()
+              .filter((record) =>
+                candidate.changes.includes(record.implementation.number),
+              )
+              .map((record) => record.id),
+            pullNumber: pull.number,
+            candidate,
+            reviewedCandidate: true,
+            trustedAuthor: ctx.botLogin,
+          });
+        await opts.onPublished?.(candidate, pull);
+      },
+      onCandidatePrepared: async (candidate) => {
         const area = candidate.releaseBranch.split("/")[1];
-        if (!area || !project.areas.some((a) => a.key === area))
+        if (
+          !area ||
+          (area !== "combined" && !project.areas.some((a) => a.key === area))
+        )
           throw new Error("Candidate has no configured owning PM.");
         saveCandidate(project, {
           project: project.config.name,
@@ -971,10 +1412,15 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           changes: [...candidate.changes],
           preparedAt: now().toISOString(),
         });
-        const evidence = await verifier(candidate);
-        if (evidence.ok) accepted.push({ candidate, evidence });
-        return evidence;
+        await opts.onCandidatePrepared?.(candidate);
       },
+      verifyCandidate: publishReviewedCandidate
+        ? undefined
+        : async (candidate) => {
+            const evidence = await verifier(candidate);
+            if (evidence.ok) accepted.push({ candidate, evidence });
+            return evidence;
+          },
     });
     for (const captured of accepted) {
       const pull = (
@@ -1081,7 +1527,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         token: credential.token,
         docker: input.docker,
       });
-      return await promote(name, { ...executor, area: input.area });
+      return await promote(name, executor);
     } finally {
       await access.releaseLease?.(jobId);
     }
@@ -1143,6 +1589,95 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     return ledger.advanceIntegration(
       async () => (await integrationHealth(ctx)).state === "healthy",
     );
+  }
+  async function reconcileCompletedDrafts(name: string) {
+    const project = projectFor(name);
+    if (
+      !enabled(project) ||
+      !project.config.verified ||
+      !options.completedDrafts
+    )
+      return [];
+    const registered = new Set(
+      localLedger(project)
+        .list()
+        .map((record) => record.jobId),
+    );
+    const completed = (await options.completedDrafts(name)).filter(
+      (item) => !registered.has(item.job.id),
+    );
+    if (!completed.length) return [];
+    let access: Awaited<ReturnType<typeof clients>>;
+    try {
+      access = await clients(project, true);
+    } catch {
+      return completed
+        .filter(
+          ({ job, change }) =>
+            jobBelongsToProject(project.config, job) &&
+            job.type === "developer" &&
+            (job.developerKind === undefined ||
+              job.developerKind === "build") &&
+            job.status === "succeeded" &&
+            !job.cancelRequestedAt &&
+            /^job-[a-z0-9-]{1,58}$/.test(job.id) &&
+            change.jobId === job.id &&
+            change.status === "succeeded" &&
+            change.pullRequests.length > 0 &&
+            !change.noChanges,
+        )
+        .map(({ job }) => {
+          const result = {
+            jobId: job.id,
+            phase: "blocked" as const,
+            message:
+              "Repository or Linear access is unavailable. Check this project's saved connections. ShipGremlins will retry this draft automatically.",
+          };
+          try {
+            saveDraftMigrationStatus(options.root, project, {
+              ...result,
+              checkedAt: now().toISOString(),
+            });
+          } catch {
+            /* A status-storage failure cannot expose provider errors or authorize migration. */
+          }
+          return result;
+        });
+    }
+    const { forge, linear, ledger } = access;
+    const adoption = createDraftAdoption({
+      root: options.root,
+      project,
+      currentProject: () => projectFor(name),
+      forge,
+      now,
+      ticket: (id) => linear.getTicket(id),
+      checkHead: (sha) => localChecks(project, sha),
+      registered: (jobId) =>
+        ledger.list().some((record) => record.jobId === jobId),
+      register: (migration) => {
+        if (
+          projectRuntimeKey(projectFor(name).config) !==
+            migration.projectInstance ||
+          configHash(projectFor(name), migration.area) !==
+            migration.configuration
+        )
+          throw new Error("Draft migration configuration changed.");
+        return ledger.register({
+          jobId: migration.jobId,
+          area: migration.area,
+          ticket: migration.ticket,
+          pullNumber: migration.pullNumber,
+          approvedBy: migration.approvedBy,
+          approvedAt: migration.approvedAt,
+          checks: migration.checks,
+          expectedHeadSha: migration.headSha,
+        });
+      },
+    });
+    const results = [];
+    for (const item of completed) results.push(await adoption.adopt(item));
+    return results;
   }
   async function localChecks(
     project: Project,
@@ -1263,6 +1798,43 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     completeJob,
     promote,
     preparePromotion,
+    reconcileQaRework,
+    reconcileIntegrationRepairs,
+    reconcileCompletedDrafts,
+    promotionBatch: async (name: string) => {
+      const project = projectFor(name);
+      if (!enabled(project)) return null;
+      const credential = await source().resolveCredential({
+        provider: project.config.provider ?? "github",
+        serverUrl: project.config.serverUrl,
+        repository: project.config.repo,
+        write: false,
+        minValidityMs: 60_000,
+      });
+      const forge =
+        options.forge?.(project, credential.token) ??
+        (project.config.provider === "gitlab"
+          ? new GitLabForge({
+              token: credential.token,
+              serverUrl: project.config.serverUrl,
+            })
+          : new GitHubForge({ token: credential.token }));
+      return readPromotionBatch({
+        project,
+        forge,
+        records: localLedger(project).list(),
+        now,
+      });
+    },
+    prepareRelease: async (name: string) => {
+      const project = projectFor(name);
+      const { forge } = await clients(project, true);
+      return prepareProductionRelease({
+        project,
+        forge,
+        resolveChecks: (sha) => localChecks(project, sha),
+      });
+    },
     advanceIntegration,
     declareProduction: (name: string, input: ProductionDeclarationInput) =>
       declarationsFor(projectFor(name)).declare(input),
@@ -1276,6 +1848,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         enabled: enabled(project),
         stagingSync: stagingSync(project).status(),
         deliveries: localLedger(project).list(),
+        draftMigrations: readDraftMigrations(options.root, project),
         candidateEnvironment:
           effectiveWorkflow(project.config).kind === "promotion"
             ? ((

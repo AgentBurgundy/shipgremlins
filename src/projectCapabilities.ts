@@ -441,9 +441,22 @@ export function baseBranch(config: ProjectConfig): string {
     ? workflow.baseBranch
     : config.branches.integration;
 }
+/** Read-only first investigation works before the delivery branches exist. */
+export function discoveryBranch(config: ProjectConfig): string {
+  return effectiveWorkflow(config).kind === "promotion"
+    ? config.branches.production
+    : baseBranch(config);
+}
 /** PMs inspect the deployed baseline; coding jobs still branch from their PR base. */
 export function inspectionBranch(config: ProjectConfig): string {
   const verification = effectiveVerification(config);
+  // Initial repository discovery must work before setup creates pm-staging.
+  // Coding still targets the isolated integration branch via baseBranch().
+  if (
+    verification.mode === "repository" &&
+    effectiveWorkflow(config).kind === "promotion"
+  )
+    return config.branches.production;
   return verification.mode === "browser" &&
     ["vercel", "railway"].includes(verification.target.kind) &&
     "branch" in verification.target &&

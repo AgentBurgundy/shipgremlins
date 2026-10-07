@@ -52,6 +52,34 @@ afterEach(() => {
 });
 
 describe("durable automatic promotion intents", () => {
+  it("backs off incomplete promotion work across restart and admits newer QA immediately", () => {
+    const f = fixture();
+    let time = 1_000_000;
+    const queue = createAutomaticPromotions({ root: f.root, now: () => time });
+    queue.enqueue(item.project, item.area, item.key);
+    const token = queue.claim(item)!;
+    queue.finish(item, token, { retry: true });
+    const restarted = createAutomaticPromotions({
+      root: f.root,
+      now: () => time,
+    });
+    expect(restarted.pending()).toEqual([item]);
+    expect(restarted.pending({ readyOnly: true })).toEqual([]);
+    expect(restarted.claim(item)).toBeNull();
+    time += 60_000;
+    expect(restarted.pending({ readyOnly: true })).toEqual([item]);
+    const second = restarted.claim(item)!;
+    restarted.finish(item, second, { retry: true });
+    time += 60_000;
+    expect(restarted.claim(item)).toBeNull();
+    restarted.enqueue(item.project, item.area, B);
+    expect(restarted.pending({ readyOnly: true })).toEqual([
+      { ...item, key: B },
+    ]);
+    const third = restarted.claim({ ...item, key: B })!;
+    restarted.finish({ ...item, key: B }, third);
+    expect(restarted.pending()).toEqual([]);
+  });
   it("does not create state during reads and resumes queued intents after restart", () => {
     const { root, queue, file } = fixture();
     expect(queue.pending()).toEqual([]);

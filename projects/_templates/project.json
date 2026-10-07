@@ -1,7 +1,12 @@
 {
-  "$comment": "Repository review is the default. Choose a base branch, commands, and optional browser environment in the dashboard. Secret fields contain environment-variable NAMES, never values. gremlins doctor stamps verified after the selected capabilities pass.",
+  "$comment": "Coders target pm-staging; PMs test its deployment; verified work is cherry-picked into one promotion PR to staging. The owner releases staging to main. Connect a test environment before enabling delivery. Secret fields contain environment-variable NAMES, never values.",
   "repo": "{{repo}}",
-  "workflow": { "kind": "pull-request", "baseBranch": "main" },
+  "workflow": { "kind": "promotion" },
+  "branches": {
+    "production": "main",
+    "staging": "staging",
+    "integration": "pm-staging"
+  },
   "verification": { "mode": "repository" },
   "environments": {},
   "database": "none",

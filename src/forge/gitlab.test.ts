@@ -18,6 +18,21 @@ const mr = {
   changes_count: "1",
 };
 describe("GitLab delivery forge", () => {
+  it("retargets only the selected merge request target branch", async () => {
+    const fetcher = vi.fn(async () => Response.json(mr));
+    await new GitLabForge({ token: "test-token", fetch: fetcher }).retargetPull(
+      repo,
+      7,
+      "pm-staging",
+    );
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+      "https://gitlab.com/api/v4/projects/group%2Fsubgroup%2Fapp/merge_requests/7",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ target_branch: "pm-staging" }),
+      }),
+    );
+  });
   it("creates an immutable sync snapshot using a full commit revision", async () => {
     const fetcher = vi.fn(async () =>
       Response.json({ name: "gremlins/staging-sync" }),

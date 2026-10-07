@@ -2511,10 +2511,13 @@
       (type === "developer" && !body.ticket)
         ? api("/api/jobs", body, "POST", 90000)
         : api("/api/jobs", body));
+      const promotion =
+        currentStatus?.projects?.find((item) => item.name === project)?.workflow
+          ?.kind === "promotion";
       message(
         $("job-message"),
         result.reused
-          ? `${result.job?.ticket || "This ticket"} ${result.job?.status === "succeeded" ? "already has completed work. Opening its existing run so you can review the changes and any draft pull request." : "is already queued or running. Opening its progress."} No duplicate run was started.`
+          ? `${result.job?.ticket || "This ticket"} ${result.job?.status === "succeeded" ? (promotion ? "already has completed coding work. Opening its activity; follow checks, PM QA and the promotion batch in Changes." : "already has completed work. Opening its existing run so you can review the changes and any draft pull request.") : "is already queued or running. Opening its progress."} No duplicate run was started.`
           : `${type === "developer" && result.job?.ticket ? `${result.job.ticket} queued for coding.` : "Job queued."} Opening Activity so you can follow its progress. Automation is unchanged.`,
       );
       if (type === "developer") {
@@ -3490,7 +3493,7 @@
     for (const [id, key] of Object.entries(pmInputKeys))
       $(id).value =
         saved?.[key] ??
-        ({ schedule: "0 13 * * 1-5", metric: "/", wipLimit: "3" }[key] || "");
+        ({ schedule: "0 13 * * *", metric: "/", wipLimit: "3" }[key] || "");
     $("pm-mandate").value = saved?.mandate || "";
     $("pm-mixpanel-report").value = saved?.mixpanelReport || "";
     $("pm-linear-project").value = saved?.linearProject || "";
@@ -3607,7 +3610,7 @@
       : "The area label is generated from this ID.";
     $("pm-creation-readiness").textContent = missing.length
       ? `Still needed: ${missing.join(", ")}. AI can help turn your goal into a working brief.`
-      : "Their brief is ready to review. Adoption saves it with automation off.";
+      : "Their brief is ready to review. Daily patrols and approved coding pickup start when project setup is ready.";
     pmAdoption?.refresh();
   }
   const readPmDraft = () => ({
@@ -3922,7 +3925,7 @@
       $("pm-schedule").focus();
       message(
         $("pm-create-message"),
-        "Use a five-field UTC cron schedule, such as 0 13 * * 1-5.",
+        "Use a five-field UTC cron schedule, such as 0 13 * * *.",
         true,
       );
       return;

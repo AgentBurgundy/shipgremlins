@@ -9,7 +9,7 @@
       "label": "pm:{{area}}",
       "wipLimit": 3,
       "metric": "/",
-      "schedule": "0 13 * * 1-5",
+      "schedule": "0 13 * * *",
       "enabled": true
     }
   }

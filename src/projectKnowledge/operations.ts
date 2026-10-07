@@ -83,10 +83,49 @@ export function projectOperations(
         },
       });
   const own = jobs.filter((j) => jobBelongsToProject(config, j));
+  const currentDeliveries = [...deliveries]
+    .filter(
+      (item) =>
+        !item.supersededBy ||
+        !deliveries.some((replacement) => replacement.id === item.supersededBy),
+    )
+    .sort(
+      (a, b) =>
+        b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+    )
+    .filter(
+      (item, index, sorted) =>
+        !sorted
+          .slice(0, index)
+          .some(
+            (newer) =>
+              /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(
+                item.ticket.id,
+              ) &&
+              newer.ticket.id.toLowerCase() === item.ticket.id.toLowerCase() &&
+              newer.ticket.teamId === item.ticket.teamId &&
+              newer.ticket.projectId === item.ticket.projectId,
+          ),
+    );
+  const repairing = (item: DeliveryRecord) =>
+    (item.rework &&
+      ["queued", "running", "awaiting-review"].includes(item.rework.phase)) ||
+    (item.integrationRepair &&
+      ["queued", "running", "replaced"].includes(item.integrationRepair.phase));
   for (const job of own
     .filter((j) => j.status === "failed")
     .sort((a, b) => b.runId - a.runId)
     .slice(0, 10)) {
+    if (workflow.kind === "promotion") {
+      const recorded = deliveries.find(
+        (item) => item.jobId === job.id || item.review?.jobId === job.id,
+      );
+      if (
+        recorded &&
+        (!currentDeliveries.includes(recorded) || repairing(recorded))
+      )
+        continue;
+    }
     // A newer successful attempt on the same work resolves the older alert.
     if (
       own.some(
@@ -110,19 +149,35 @@ export function projectOperations(
     });
   }
   const midnight = new Date();
-  for (const item of deliveries.filter((item) => item.status !== "promoted")) {
+  for (const item of (workflow.kind === "promotion"
+    ? currentDeliveries
+    : deliveries
+  ).filter((item) =>
+    workflow.kind === "promotion"
+      ? (item.integrationRepair?.phase === "stopped" ||
+          ["blocked", "failed"].includes(item.status)) &&
+        !repairing(item)
+      : item.status !== "promoted",
+  )) {
     inbox.push({
       id: `delivery:${item.id}`,
       kind: "delivery",
       title: `${item.ticket.identifier}: ${item.ticket.title}`,
-      detail: item.message,
+      detail:
+        item.integrationRepair?.message || item.rework?.message || item.message,
       action: {
         label:
-          item.status === "awaiting-merge" ? "Review draft" : "Review delivery",
+          workflow.kind === "promotion"
+            ? "View blocker"
+            : item.status === "awaiting-merge"
+              ? "Review draft"
+              : "Review delivery",
         href:
-          item.status === "awaiting-merge"
-            ? item.implementation.url
-            : `/projects/${name}?tab=delivery`,
+          workflow.kind === "promotion"
+            ? `/projects/${name}?tab=changes`
+            : item.status === "awaiting-merge"
+              ? item.implementation.url
+              : `/projects/${name}?tab=delivery`,
       },
     });
   }
@@ -165,7 +220,10 @@ export function projectOperations(
         workflow.kind === "promotion"
           ? config.branches
           : { base: workflow.baseBranch },
-      items: deliveries.map((item) => ({
+      items: (workflow.kind === "promotion"
+        ? currentDeliveries
+        : deliveries
+      ).map((item) => ({
         ...item,
         title: `${item.ticket.identifier}: ${item.ticket.title}`,
         detail: item.message,

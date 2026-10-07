@@ -103,6 +103,8 @@ describe("Linear app and mandate provisioning", () => {
       key: "later",
       name: "Later",
       mandate: "An intentionally paused product initiative.",
+      enabled: false,
+      codingEnabled: false,
     });
     await expect(
       service.provision("demo", { areaKey: "core" }),
@@ -645,7 +647,7 @@ describe("Linear app and mandate provisioning", () => {
     await f.create().provision("demo");
     expect(
       loadProject(f.root, "demo").areas.find((area) => area.key === "growth"),
-    ).toMatchObject({ mixpanelReportId: "456", enabled: false });
+    ).toMatchObject({ mixpanelReportId: "456", enabled: true });
     expect(f.client.createProject).toHaveBeenCalledTimes(2);
   });
   it.each([null, 7, "", "0", "-1", "1x", "https://mixpanel.com/report/1"])(
@@ -724,7 +726,7 @@ describe("Linear app and mandate provisioning", () => {
     const config = loadProject(f.root, "demo");
     expect(config.config.linear?.teamId).toBe(result.teamId);
     expect(f.projects.has(config.areas[0]!.linearProjectId)).toBe(true);
-    expect(config.areas[0]!.enabled).toBe(false);
+    expect(config.areas[0]!.enabled).toBe(true);
     await f.create().provision("demo");
     expect(f.client.createTeam).toHaveBeenCalledTimes(1);
     expect(f.client.createProject).toHaveBeenCalledTimes(1);
@@ -780,7 +782,7 @@ describe("Linear app and mandate provisioning", () => {
     expect(input.content).not.toContain("never-copy");
     expect(input.content).not.toContain("VERCEL_TOKEN");
     expect(f.client.updateProject).not.toHaveBeenCalled();
-    expect(loadProject(f.root, "demo").areas[0]!.enabled).toBe(false);
+    expect(loadProject(f.root, "demo").areas[0]!.enabled).toBe(true);
   });
   it("uses versioned mandates and the actual GitLab repository for the initial brief", async () => {
     const f = fixture();
@@ -958,6 +960,8 @@ describe("Linear app and mandate provisioning", () => {
       key: "security",
       name: "Security",
       mandate: "Test RBAC with test accounts.",
+      enabled: false,
+      codingEnabled: false,
       charter: {
         ambition: "Prevent cross-account exposure.",
         guardrails: ["Use isolated test accounts"],

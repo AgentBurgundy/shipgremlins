@@ -752,10 +752,10 @@
       root.append(
         heading(
           promotion
-            ? "Evidence before promotion"
+            ? "Your crew builds. Your PM tests."
             : "From ticket to pull request",
           promotion
-            ? "Follow implementation, review, and release. A ticket is Done only after its production merge is confirmed."
+            ? "Follow integration checks, PM QA and the resulting promotion. A ticket is Done only after its production merge is confirmed."
             : "Follow the work, inspect the checks, and review the draft pull request before merging.",
         ),
       );
@@ -764,12 +764,12 @@
             [
               "Build",
               delivery.branches?.integration || "pm-staging",
-              "Coding work and PM testing",
+              "Checked code deploys for PM QA",
             ],
             [
-              "Review",
+              "Promote",
               delivery.branches?.staging || "staging",
-              "Verified changes selected for promotion",
+              "PM-tested changes get a promotion PR",
             ],
             [
               "Release",
@@ -808,7 +808,9 @@
       if (!items.length)
         root.append(
           empty(
-            "No delivery awaiting review",
+            promotion
+              ? "No change in delivery yet"
+              : "No delivery awaiting review",
             "Approved work will appear here as its implementation and verification evidence becomes available.",
           ),
         );
@@ -819,16 +821,32 @@
             el(
               "span",
               `review-kind delivery-${item.status}`,
-              {
-                "awaiting-merge": "Implementation review",
-                "awaiting-deployment": "Waiting for deployment",
-                "awaiting-review": "PM verification pending",
-                verified: "PM verification passed",
-                failed: "Verification failed",
-                blocked: "Needs attention",
-                promoted: "Staging review",
-                released: "Production merged",
-              }[item.status] ||
+              (item.integrationRepair
+                ? {
+                    queued: "Integration repair queued",
+                    running: "Coder repairing integration",
+                    stopped: "Integration repair stopped",
+                    replaced: "Replacement draft registered",
+                  }[item.integrationRepair.phase]
+                : null) ||
+                (item.status === "failed" && item.rework
+                  ? {
+                      queued: "Coding follow-up queued",
+                      running: "Coder addressing PM feedback",
+                      "awaiting-review": "Fix awaiting fresh PM QA",
+                      stopped: "Coding follow-up stopped",
+                    }[item.rework.phase]
+                  : null) ||
+                {
+                  "awaiting-merge": "Integration checks",
+                  "awaiting-deployment": "Waiting for deployment",
+                  "awaiting-review": "PM QA pending",
+                  verified: "PM QA passed",
+                  failed: "PM QA failed · follow-up needed",
+                  blocked: "Needs attention",
+                  promoted: "Promotion PR published",
+                  released: "Production merged",
+                }[item.status] ||
                 item.stage ||
                 item.status ||
                 "Delivery",
@@ -837,6 +855,12 @@
           );
           if (item.detail || item.message)
             card.append(el("p", "", item.detail || item.message));
+          if (item.rework?.message)
+            card.append(el("p", "runner-guidance", item.rework.message));
+          if (item.integrationRepair?.message)
+            card.append(
+              el("p", "runner-guidance", item.integrationRepair.message),
+            );
           if (item.ticket?.identifier)
             card.append(
               el(
@@ -863,6 +887,20 @@
               anchor(
                 "PM test activity →",
                 `/activity?run=${encodeURIComponent(item.review.jobId)}`,
+              ),
+            );
+          if (item.rework?.jobId)
+            links.append(
+              anchor(
+                "Coding follow-up →",
+                `/activity?run=${encodeURIComponent(item.rework.jobId)}`,
+              ),
+            );
+          if (item.integrationRepair?.jobId)
+            links.append(
+              anchor(
+                "Integration repair activity →",
+                `/activity?run=${encodeURIComponent(item.integrationRepair.jobId)}`,
               ),
             );
           card.append(links);

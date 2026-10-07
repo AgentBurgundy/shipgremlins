@@ -15,6 +15,7 @@ import { initializeSetup } from "../setup/files.ts";
 import { loadProject } from "../config.ts";
 import {
   ImprovementError,
+  type ChangeSummary,
   type createImprovements,
 } from "../improvements/index.ts";
 import type { LocalRunners } from "../localRunners/engine.ts";
@@ -53,7 +54,11 @@ async function fixture(noPm = false, foundation = false) {
     status: "needs-review",
   };
   const methods = {
-    list: vi.fn(async () => ({ missions: [mission], areas: [], changes: [] })),
+    list: vi.fn(async () => ({
+      missions: [mission],
+      areas: [],
+      changes: [] as ChangeSummary[],
+    })),
     detail: vi.fn(async () => ({
       mission,
       candidates: [],
@@ -94,6 +99,49 @@ async function fixture(noPm = false, foundation = false) {
   return { root, methods, call, mission };
 }
 describe("improvement mission HTTP boundary", () => {
+  it("projects one current ticket state without deleting prior reconciliation attempts", async () => {
+    const f = await fixture();
+    const failed: ChangeSummary = {
+      jobId: "job-old",
+      runId: 1,
+      ticket: "FOR-2",
+      ticketId: id,
+      linearBinding: {
+        connectionId: "default",
+        workspaceId: "workspace",
+        ticketId: id,
+      },
+      status: "failed",
+      message: "Earlier attempt failed",
+      activityUrl: "/activity?run=job-old",
+      createdAt: "2026-10-06T12:00:00Z",
+      pullRequests: [],
+    };
+    const succeeded: ChangeSummary = {
+      ...failed,
+      jobId: "job-new",
+      runId: 2,
+      status: "succeeded",
+      message: "Current work",
+      createdAt: "2026-10-07T12:00:00Z",
+    };
+    const all = [failed, succeeded];
+    f.methods.list.mockResolvedValueOnce({
+      missions: [f.mission],
+      areas: [],
+      changes: all,
+    });
+    const result = (await (await f.call()).json()) as {
+      changes: ChangeSummary[];
+    };
+    expect(result.changes).toHaveLength(1);
+    expect(result.changes[0]).toMatchObject({
+      jobId: "job-new",
+      status: "succeeded",
+      previousAttempts: [failed],
+    });
+    expect(all).toEqual([failed, succeeded]);
+  });
   it("requires authentication and preserves the collection/detail/mutation contract", async () => {
     const f = await fixture();
     expect((await f.call("", undefined, false)).status).toBe(401);

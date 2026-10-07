@@ -76,10 +76,12 @@
       (!confirmed ? operation?.job : null);
     const blocker = project.readiness?.blockers?.[0];
     const path = `/projects/${encodeURIComponent(project.name)}`;
+    const promotion = project.workflow?.kind === "promotion";
     root.dataset.state = "ready";
     title.textContent = "Put your runners to work";
-    description.textContent =
-      "Find the next approved ticket, build the change, and open a draft pull request.";
+    description.textContent = promotion
+      ? "Find the next approved ticket and build it. Your PM tests the deployed change before it joins your promotion batch."
+      : "Find the next approved ticket, build the change, and open a draft pull request.";
 
     if (operation?.busy) {
       root.dataset.state = "searching";
@@ -97,11 +99,15 @@
       const completed = confirmed || operation.job;
       root.dataset.state = "completed";
       title.textContent = "This ticket already has completed work";
-      description.textContent = `${completed.ticket || "Your ticket"} has a completed coding run. Review its changes and any draft pull request before requesting another implementation.`;
+      description.textContent = promotion
+        ? `${completed.ticket || "Your ticket"} has a completed coding run. Follow its checks, PM QA and promotion status in Changes; a successful coding run is not a QA pass.`
+        : `${completed.ticket || "Your ticket"} has a completed coding run. Review its changes and any draft pull request before requesting another implementation.`;
       actions.append(
         link(
-          "Review existing run",
-          `/activity?run=${encodeURIComponent(completed.id)}`,
+          promotion ? "Follow delivery" : "Review existing run",
+          promotion
+            ? `${path}?tab=changes`
+            : `/activity?run=${encodeURIComponent(completed.id)}`,
         ),
         launchButton(project, "Find another ticket", locked, true),
       );

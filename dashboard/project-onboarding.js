@@ -1290,6 +1290,16 @@
               project: s.project,
               getStatus,
               isLocked: () => disabled(s),
+              onConfigured: async () => {
+                s.data = await api(endpoint(s));
+                s.draft = initialDraft(s);
+                s.baseline = JSON.stringify(s.draft);
+                s.draftRevision = s.data.configurationRevision;
+                s.showVercel = s.showForm = false;
+                s.formSignature = "";
+                await onSaved(s.project.name);
+                await prepareEnvironment(s, undefined, true);
+              },
               onSelect: ({ target, label, url }) => {
                 const previous =
                   s.draft.providerTarget || s.draft.existingTarget;
@@ -1852,9 +1862,9 @@
         container.append(details.section);
       }
     }
-    async function choosePreview(s, choice) {
+    async function choosePreview(s, choice, repair = false) {
       if (disabled(s) || dirty(s)) return;
-      if (choice?.target) {
+      if (choice?.target && !repair) {
         try {
           await prepareEnvironment(s, withAccess(choice.target, s.draft));
         } catch (error) {
@@ -1868,12 +1878,19 @@
       s.error = "";
       paint(s);
       try {
-        if (choice?.projectId)
-          await api(endpoint(s, "vercel/discover"), {
+        if (choice?.projectId) {
+          const discovered = await api(endpoint(s, "vercel/discover"), {
             connectionId: choice.connectionId,
             projectId: choice.projectId,
             ...(choice.teamId !== undefined ? { teamId: choice.teamId } : {}),
           });
+          // Repository, branch bases and missing branches are resolved by the
+          // controller; present one concrete plan instead of manual ID forms.
+          await api(endpoint(s, "vercel/prepare"), {
+            revision: discovered.revision,
+            ...(repair ? { repairWorkflow: true } : {}),
+          });
+        }
         if (
           destroyed ||
           entries.get(s.project.name) !== s ||
@@ -2544,6 +2561,12 @@
           primaryActions.append(s.recoveryAction);
         }
         primaryActions.append(s.test);
+        if (target.kind === "vercel")
+          primaryActions.append(
+            button("Repair PM staging setup", () =>
+              choosePreview(s, target, true),
+            ),
+          );
         if (
           !ready &&
           !diagnosis &&

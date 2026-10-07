@@ -38,7 +38,14 @@ import type {
   PmReviewPlan,
   ReviewDeployment,
   ReviewIngestion,
+  QaFailureFinding,
 } from "./types.ts";
+import type { LocalJob } from "../localRunners/types.ts";
+import {
+  matchesIntegrationRepair,
+  validIntegrationRepair,
+} from "./integrationRepair.ts";
+import { MAX_QA_REPAIRS, matchesQaRepair, validQaFinding } from "./qaRework.ts";
 export type * from "./types.ts";
 
 const SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -240,7 +247,37 @@ export function createDeliveryService(options: {
             !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(
               r.areaInstanceId,
             )) ||
-          !SHA.test(r.implementation?.headSha ?? ""),
+          !SHA.test(r.implementation?.headSha ?? "") ||
+          (r.integrationRepair !== undefined &&
+            !validIntegrationRepair(r.integrationRepair)) ||
+          (r.integrationRepairOf !== undefined &&
+            !validText(r.integrationRepairOf, 100)) ||
+          (r.supersededBy !== undefined && !validText(r.supersededBy, 100)) ||
+          (r.review?.failures !== undefined &&
+            (!Array.isArray(r.review.failures) ||
+              r.review.failures.length > 50 ||
+              r.review.failures.some((f) => !validQaFinding(f)))) ||
+          (r.rework !== undefined &&
+            (!/^qa-rework:[a-f0-9]{64}$/.test(r.rework.key) ||
+              !validText(r.rework.rootDeliveryId, 100) ||
+              !Number.isSafeInteger(r.rework.attempt) ||
+              r.rework.attempt < 1 ||
+              r.rework.attempt > MAX_QA_REPAIRS ||
+              !/^[a-f0-9]{64}$/.test(r.rework.reviewHash) ||
+              !Array.isArray(r.rework.findings) ||
+              !r.rework.findings.length ||
+              r.rework.findings.length > 50 ||
+              r.rework.findings.some((f) => !validQaFinding(f)) ||
+              !["queued", "running", "awaiting-review", "stopped"].includes(
+                r.rework.phase,
+              ))) ||
+          (r.reworkOf !== undefined &&
+            (!validText(r.reworkOf.deliveryId, 100) ||
+              !validText(r.reworkOf.rootDeliveryId, 100) ||
+              !/^qa-rework:[a-f0-9]{64}$/.test(r.reworkOf.key) ||
+              !Number.isSafeInteger(r.reworkOf.attempt) ||
+              r.reworkOf.attempt < 1 ||
+              r.reworkOf.attempt > MAX_QA_REPAIRS)),
       ) ||
       new Set(state.records.map((r) => r.id)).size !== state.records.length
     )
@@ -358,6 +395,9 @@ export function createDeliveryService(options: {
     approvedBy: string;
     approvedAt: string;
     checks?: DeliveryRecord["checks"];
+    qaRepairKey?: string;
+    integrationRepairKey?: string;
+    expectedHeadSha?: string;
   }) {
     promotionWorkflow();
     const area = project.areas.find((a) => a.key === input.area),
@@ -386,12 +426,46 @@ export function createDeliveryService(options: {
       !pull ||
       pull.headRef !== `gremlins/${input.jobId}` ||
       pull.baseRef !== project.config.branches.integration ||
+      (input.expectedHeadSha !== undefined &&
+        (pull.headSha !== input.expectedHeadSha ||
+          (pull.state !== "open" &&
+            !read().records.some((r) => r.jobId === input.jobId)))) ||
       !SHA.test(pull.headSha)
     )
       throw new Error(
         "The implementation must be the job's exact branch targeting integration.",
       );
-    return locked((state) => {
+    return locked(async (state) => {
+      const replaced = input.integrationRepairKey
+        ? state.records.find(
+            (r) => r.integrationRepair?.key === input.integrationRepairKey,
+          )
+        : undefined;
+      if (
+        input.integrationRepairKey &&
+        (!replaced ||
+          replaced.integrationRepair!.jobId !== input.jobId ||
+          replaced.scopeHash !== ticketScopeHash(ticket) ||
+          replaced.area !== input.area ||
+          replaced.configuration !== config(input.area))
+      )
+        throw new Error(
+          "Integration repair no longer matches the original approved delivery.",
+        );
+      const repairing = input.qaRepairKey
+        ? state.records.find((r) => r.rework?.key === input.qaRepairKey)
+        : undefined;
+      if (
+        input.qaRepairKey &&
+        (!repairing ||
+          repairing.rework!.jobId !== input.jobId ||
+          repairing.scopeHash !== ticketScopeHash(ticket) ||
+          repairing.area !== input.area ||
+          repairing.configuration !== config(input.area))
+      )
+        throw new Error(
+          "QA repair no longer matches its admitted approved scope.",
+        );
       const existing = state.records.find((r) => r.jobId === input.jobId);
       if (existing) {
         checkConfig(existing);
@@ -405,6 +479,28 @@ export function createDeliveryService(options: {
           );
         return existing;
       }
+      if (
+        replaced &&
+        (!(await integrationRepairSourceCurrent(replaced)) ||
+          !(await approved(replaced)) ||
+          (
+            await forge.compare(
+              repo,
+              replaced.integrationRepair!.headSha,
+              pull.headSha,
+            )
+          ).behindBy !== 0 ||
+          (
+            await forge.compare(
+              repo,
+              replaced.integrationRepair!.integrationSha,
+              pull.headSha,
+            )
+          ).behindBy !== 0)
+      )
+        throw new Error(
+          "The replacement must preserve both admitted histories and its still-open original approved draft.",
+        );
       const at = now();
       const record: DeliveryRecord = {
         id: input.jobId,
@@ -435,6 +531,24 @@ export function createDeliveryService(options: {
         ...(input.checks?.headSha === pull.headSha
           ? { checks: input.checks }
           : {}),
+        ...(repairing
+          ? {
+              reworkOf: {
+                deliveryId: repairing.id,
+                rootDeliveryId: repairing.rework!.rootDeliveryId,
+                attempt: repairing.rework!.attempt,
+                key: repairing.rework!.key,
+              },
+            }
+          : {}),
+        ...(replaced
+          ? {
+              integrationRepairOf: replaced.id,
+              ...(replaced.reworkOf
+                ? { reworkOf: structuredClone(replaced.reworkOf) }
+                : {}),
+            }
+          : {}),
         status: "awaiting-merge",
         message:
           "Implementation recorded. Integration merge and owning-PM deployment review remain required.",
@@ -442,6 +556,19 @@ export function createDeliveryService(options: {
         updatedAt: at,
       };
       state.records.push(record);
+      if (replaced) {
+        replaced.supersededBy = record.id;
+        replaced.status = "blocked";
+        replaced.integrationRepair!.phase = "replaced";
+        replaced.message =
+          replaced.integrationRepair!.message = `Replaced by draft #${pull.number}. The original draft is preserved and excluded from automatic merge; the replacement still needs independent checks and fresh owning-PM QA.`;
+        replaced.updatedAt = at;
+      }
+      if (repairing) {
+        repairing.rework!.phase = "awaiting-review";
+        repairing.rework!.message =
+          "Coding repair published. Integration checks and a fresh owning-PM review will test the original work and repair together.";
+      }
       return record;
     });
   }
@@ -490,6 +617,35 @@ export function createDeliveryService(options: {
       ? ready
       : [];
   }
+  async function repairIncluded(
+    state: State,
+    record: DeliveryRecord,
+    target: ReviewDeployment,
+    depth = 0,
+  ): Promise<boolean> {
+    if (depth > MAX_QA_REPAIRS) return false;
+    if (!record.rework)
+      return !(record.status === "failed" && record.review?.failures?.length);
+    const child = state.records.find(
+      (r) => !r.supersededBy && r.reworkOf?.key === record.rework!.key,
+    );
+    if (
+      !child ||
+      child.configuration !== config(child.area) ||
+      !(await repairIncluded(state, child, target, depth + 1))
+    )
+      return false;
+    const pull = await forge.getPull(repo, child.implementation.number);
+    return (
+      !!pull &&
+      pull.state === "merged" &&
+      pull.headSha === child.implementation.headSha &&
+      pull.baseRef === project.config.branches.integration &&
+      !!pull.mergeCommitSha &&
+      (await forge.compare(repo, pull.mergeCommitSha, target.sha)).behindBy ===
+        0
+    );
+  }
   async function prepareReview(input: {
     area: string;
     jobId: string;
@@ -528,8 +684,15 @@ export function createDeliveryService(options: {
       }
       const deliveries: PmReviewPlan["deliveries"] = [];
       for (const record of state.records.filter(
-        (r) => currentOwner(r) && r.area === input.area && !r.promotion,
+        (r) =>
+          currentOwner(r) &&
+          r.area === input.area &&
+          !r.promotion &&
+          !r.supersededBy,
       )) {
+        // Do not re-test a known failure while its bounded coding follow-up is
+        // still queued/running. Once merged, review the original and repair together.
+        if (!(await repairIncluded(state, record, input.deployment))) continue;
         if (record.configuration !== config(record.area)) {
           record.status = "blocked";
           record.message =
@@ -652,10 +815,19 @@ export function createDeliveryService(options: {
           throw new Error(
             "The approved ticket changed before review ingestion; existing evidence was preserved.",
           );
+        if (record.review?.planId === plan.id) {
+          // A completed review is immutable. Replaying the same job may create
+          // new receipt IDs; it must not invalidate a repair already admitted.
+          updated.push(record);
+          continue;
+        }
         if (
-          record.review?.planId === plan.id &&
-          record.review.manifestHash === hash(manifest)
+          record.review &&
+          state.plans.findIndex((p) => p.id === record.review!.planId) >
+            state.plans.findIndex((p) => p.id === plan.id)
         ) {
+          // A restarted completion callback for an earlier PM run must not
+          // replace the later repair verification with its old failure.
           updated.push(record);
           continue;
         }
@@ -701,15 +873,64 @@ export function createDeliveryService(options: {
               !(await input.verifyArtifact({ jobId: plan.jobId, ...artifact }))
             )
               verified = false;
+        let failures: QaFailureFinding[] = [];
+        if (
+          !verified &&
+          row?.status === "failed" &&
+          input.failureEvidence &&
+          row.assertions.length === admitted.criteria.length &&
+          new Set(row.assertions.map((a) => a.criterion)).size ===
+            admitted.criteria.length &&
+          row.assertions.every(
+            (a) =>
+              admitted.criteria.includes(a.criterion) && a.status !== "blocked",
+          )
+        ) {
+          let complete = true;
+          for (const assertion of row.assertions) {
+            const args = {
+              jobId: plan.jobId,
+              deliveryId: record.id,
+              criterion: assertion.criterion,
+              receiptId: assertion.receiptId,
+              deployment: plan.deployment,
+            };
+            if (assertion.status === "passed") {
+              if (!(await input.verifyAssertion(args))) complete = false;
+            } else {
+              const finding = await input.failureEvidence(args);
+              if (
+                !finding ||
+                !validQaFinding(finding) ||
+                finding.criterion !== assertion.criterion ||
+                finding.receiptId !== assertion.receiptId ||
+                new URL(finding.url).origin !==
+                  new URL(plan.deployment.url).origin ||
+                !row.screenshots.some(
+                  (s) =>
+                    s.name === finding.screenshot.name &&
+                    s.sha256 === finding.screenshot.sha256,
+                ) ||
+                !(await input.verifyArtifact({
+                  jobId: plan.jobId,
+                  ...finding.screenshot,
+                }))
+              )
+                complete = false;
+              else failures.push(finding);
+            }
+          }
+          if (!complete) failures = [];
+        }
         record.status = verified
           ? "verified"
-          : row?.status === "failed"
+          : failures.length
             ? "failed"
             : "blocked";
         record.message = verified
           ? "Owning PM acceptance checks and artifact receipts passed on the exact integration deployment."
-          : row?.status === "failed"
-            ? "Owning PM found a failing acceptance criterion; fix and reverify before promotion."
+          : failures.length
+            ? "Owning PM reproduced a failing acceptance criterion. A bounded coding repair will address the same approved ticket, then the PM will verify it again."
             : "Awaiting complete acceptance receipts and screenshot hashes for this exact deployment. Model observations alone do not authorize promotion.";
         record.updatedAt = now();
         record.review = {
@@ -720,6 +941,7 @@ export function createDeliveryService(options: {
           at: now(),
           manifestHash: hash(manifest),
           artifacts: row?.screenshots ?? [],
+          ...(failures.length ? { failures } : {}),
         };
         updated.push(record);
       }
@@ -732,13 +954,15 @@ export function createDeliveryService(options: {
   > => ({
     local: true,
     candidateVerdict: async (pull: PullRequest) => {
-      const record = read().records.find(
+      const records = read().records;
+      const record = records.find(
         (r) => currentOwner(r) && r.implementation.number === pull.number,
       );
       if (!record) return null;
       checkConfig(record);
       const matches =
         (await approved(record)) &&
+        completeQaLineage(records, record) &&
         pull.headSha === record.implementation.headSha &&
         pull.mergeCommitSha === record.implementation.mergeSha &&
         pull.baseRef === project.config.branches.integration;
@@ -752,11 +976,39 @@ export function createDeliveryService(options: {
       };
     },
   });
+  function qaLineage(records: DeliveryRecord[], record: DeliveryRecord) {
+    const root = record.reworkOf?.rootDeliveryId ?? record.id;
+    return records.filter(
+      (r) =>
+        !r.supersededBy &&
+        (r.id === root || r.reworkOf?.rootDeliveryId === root),
+    );
+  }
+  function completeQaLineage(
+    records: DeliveryRecord[],
+    record: DeliveryRecord,
+  ): boolean {
+    return qaLineage(records, record).every(
+      (r) =>
+        currentOwner(r) &&
+        r.configuration === config(r.area) &&
+        r.scopeHash === record.scopeHash &&
+        ["verified", "promoted"].includes(r.status) &&
+        r.review?.testedSha === record.review?.testedSha &&
+        (!r.rework ||
+          records.some(
+            (child) =>
+              !child.supersededBy && child.reworkOf?.key === r.rework!.key,
+          )),
+    );
+  }
   async function recordPromotion(input: {
     deliveryIds: string[];
     pullNumber: number;
     candidate: CandidateVerification;
-    evidence: CandidateVerificationResult;
+    evidence?: CandidateVerificationResult;
+    /** Internal publication after owning PM receipts and assembled code checks. */
+    reviewedCandidate?: boolean;
     trustedAuthor: string;
   }) {
     const branches = promotionWorkflow(),
@@ -767,11 +1019,15 @@ export function createDeliveryService(options: {
       !pull.headRef.startsWith("pm-release/") ||
       pull.headSha !== input.candidate.sha ||
       pull.headRef !== input.candidate.releaseBranch ||
-      candidateEvidenceError(
-        input.evidence,
-        input.candidate,
-        input.trustedAuthor,
-      )
+      pull.author !== input.trustedAuthor ||
+      (input.reviewedCandidate === true
+        ? pull.draft || pull.state !== "open"
+        : !input.evidence ||
+          candidateEvidenceError(
+            input.evidence,
+            input.candidate,
+            input.trustedAuthor,
+          ))
     )
       throw new Error(
         "Promotion must target staging from a selective release branch.",
@@ -782,6 +1038,13 @@ export function createDeliveryService(options: {
       );
       if (
         selected.length !== new Set(input.deliveryIds).size ||
+        selected.some(
+          (r) =>
+            !completeQaLineage(state.records, r) ||
+            qaLineage(state.records, r).some(
+              (related) => !input.deliveryIds.includes(related.id),
+            ),
+        ) ||
         selected.length !== input.candidate.changes.length ||
         selected.some(
           (r) => !input.candidate.changes.includes(r.implementation.number),
@@ -836,6 +1099,7 @@ export function createDeliveryService(options: {
       ) ||
       all.some(
         (r) =>
+          !r.supersededBy &&
           records.some((selected) => selected.ticket.id === r.ticket.id) &&
           !input.deliveryIds.includes(r.id),
       )
@@ -882,7 +1146,11 @@ export function createDeliveryService(options: {
     const branches = promotionWorkflow();
     return locked(async (state) => {
       for (const record of state.records.filter(
-        (r) => currentOwner(r) && r.status === "awaiting-merge",
+        (r) =>
+          currentOwner(r) &&
+          r.status === "awaiting-merge" &&
+          !r.supersededBy &&
+          !r.integrationRepair,
       )) {
         checkConfig(record);
         if (!(await approved(record))) {
@@ -915,25 +1183,13 @@ export function createDeliveryService(options: {
           record.message = "Implementation was closed without merging.";
           continue;
         }
-        const area = project.areas.find((a) => a.key === record.area)!;
         const files = await forge.listPullFiles(repo, pull.number);
         if (
           !files.length ||
-          files.some(
-            (f) =>
-              matchesPrefix(f, [
-                ...project.tiers.ownerOnlyPrefixes,
-                ...project.tiers.hubOwnerOnly,
-              ]) ||
-              !matchesPrefix(f, [
-                ...area.paths,
-                ...area.sharedTouchpoints,
-                ...project.tiers.alwaysFree,
-              ]),
-          )
+          files.some((f) => matchesPrefix(f, project.tiers.hubOwnerOnly))
         ) {
           record.message =
-            "Owner review is required for protected or out-of-mandate files before integration merge.";
+            "Owner review is required for hub control files before integration merge. Sensitive application files are reviewed once in the promotion batch's Look closely section.";
           continue;
         }
         if (
@@ -980,6 +1236,262 @@ export function createDeliveryService(options: {
       return null;
     });
   }
+  async function integrationRepairSourceCurrent(record: DeliveryRecord) {
+    const pull = await forge.getPull(repo, record.implementation.number);
+    return (
+      !!pull &&
+      pull.state === "open" &&
+      pull.headSha === record.implementation.headSha &&
+      pull.headRef === record.implementation.branch &&
+      pull.author === record.implementation.author &&
+      pull.baseRef === project.config.branches.integration &&
+      !record.implementation.mergeSha
+    );
+  }
+  async function reserveIntegrationRepair(input: {
+    deliveryId: string;
+    kind: "conflict" | "checks";
+    integrationSha: string;
+  }) {
+    promotionWorkflow();
+    return locked(async (state) => {
+      const record = state.records.find((r) => r.id === input.deliveryId);
+      if (
+        !record ||
+        record.status !== "awaiting-merge" ||
+        record.supersededBy ||
+        record.review ||
+        record.promotion
+      )
+        return null;
+      checkConfig(record);
+      if (record.integrationRepair) return record;
+      if (
+        !(await approved(record)) ||
+        !(await integrationRepairSourceCurrent(record))
+      )
+        return null;
+      const files = await forge.listPullFiles(
+        repo,
+        record.implementation.number,
+      );
+      if (
+        !files.length ||
+        files.some((f) => matchesPrefix(f, project.tiers.hubOwnerOnly))
+      )
+        return null;
+      if (record.integrationRepairOf) {
+        record.message =
+          "The replacement still has a confirmed conflict or failing check after its one automatic pre-merge repair. Inspect both preserved drafts before choosing another approach.";
+        return null;
+      }
+      if (
+        !/^[a-f0-9]{40}$/.test(input.integrationSha) ||
+        input.integrationSha === record.implementation.headSha ||
+        (await forge.getBranchSha(
+          repo,
+          project.config.branches.integration,
+        )) !== input.integrationSha
+      )
+        return null;
+      record.integrationRepair = {
+        key: `integration-repair:${hash({ project: projectRuntimeKey(project.config), delivery: record.id, head: record.implementation.headSha, base: input.integrationSha, kind: input.kind })}`,
+        kind: input.kind,
+        headSha: record.implementation.headSha,
+        integrationSha: input.integrationSha,
+        phase: "queued",
+        message:
+          "One coding repair is queued for the original approved implementation. Its replacement needs fresh checks and owning-PM QA.",
+      };
+      record.message = record.integrationRepair.message;
+      record.updatedAt = now();
+      return record;
+    });
+  }
+  async function admitIntegrationRepair(job: LocalJob) {
+    return locked(async (state) => {
+      const record = state.records.find(
+        (r) => r.integrationRepair?.key === job.idempotencyKey,
+      );
+      if (
+        !record ||
+        !matchesIntegrationRepair(job, project, record) ||
+        record.supersededBy ||
+        !["queued", "running"].includes(record.integrationRepair!.phase) ||
+        record.status !== "awaiting-merge"
+      )
+        throw new Error(
+          "This coding job does not match an active pre-merge repair intent.",
+        );
+      checkConfig(record);
+      if (
+        !(await approved(record)) ||
+        !(await integrationRepairSourceCurrent(record))
+      )
+        throw new Error(
+          "The original draft, owning PM or approved ticket changed before repair.",
+        );
+      const current = await forge.getBranchSha(
+        repo,
+        project.config.branches.integration,
+      );
+      if (
+        !current ||
+        (
+          await forge.compare(
+            repo,
+            record.integrationRepair!.integrationSha,
+            current,
+          )
+        ).behindBy !== 0
+      )
+        throw new Error(
+          "Integration no longer contains the admitted repair baseline.",
+        );
+      record.integrationRepair!.jobId = job.id;
+      record.integrationRepair!.phase =
+        job.status === "queued" ? "queued" : "running";
+      record.message =
+        record.integrationRepair!.message = `One pre-merge coding repair is ${record.integrationRepair!.phase}; no previous PM evidence will authorize its replacement.`;
+      return record;
+    });
+  }
+  async function stopIntegrationRepair(key: string, message: string) {
+    return locked((state) => {
+      const record = state.records.find(
+        (r) => r.integrationRepair?.key === key,
+      );
+      if (!record?.integrationRepair || record.supersededBy) return record;
+      record.integrationRepair.phase = "stopped";
+      record.message = record.integrationRepair.message = message.slice(
+        0,
+        1000,
+      );
+      record.updatedAt = now();
+      return record;
+    });
+  }
+  async function qaSourceCurrent(record: DeliveryRecord) {
+    const pull = await forge.getPull(repo, record.implementation.number);
+    const current = await forge.getBranchSha(
+      repo,
+      project.config.branches.integration,
+    );
+    return (
+      !!pull &&
+      pull.state === "merged" &&
+      pull.headRef === record.implementation.branch &&
+      pull.headSha === record.implementation.headSha &&
+      pull.author === record.implementation.author &&
+      pull.baseRef === project.config.branches.integration &&
+      !!pull.mergeCommitSha &&
+      pull.mergeCommitSha === record.implementation.mergeSha &&
+      !!current &&
+      (await forge.compare(repo, pull.mergeCommitSha, current)).behindBy === 0
+    );
+  }
+  async function reserveQaRepair(
+    deliveryId: string,
+  ): Promise<DeliveryRecord | null> {
+    return locked(async (state) => {
+      const record = state.records.find((r) => r.id === deliveryId);
+      if (
+        !record ||
+        record.status !== "failed" ||
+        record.promotion ||
+        !record.review?.failures?.length
+      )
+        return null;
+      checkConfig(record);
+      if (!(await qaSourceCurrent(record))) {
+        record.message =
+          "QA repair stopped because the reviewed implementation or integration history changed.";
+        if (record.rework) {
+          record.rework.phase = "stopped";
+          record.rework.message = record.message;
+        }
+        return null;
+      }
+      if (!(await approved(record))) {
+        record.message =
+          "QA repair stopped because the approved ticket scope or owning PM changed.";
+        if (record.rework) {
+          record.rework.phase = "stopped";
+          record.rework.message = record.message;
+        }
+        return null;
+      }
+      if (record.rework) return record;
+      const attempt = (record.reworkOf?.attempt ?? 0) + 1;
+      if (attempt > MAX_QA_REPAIRS) {
+        record.message =
+          "The owning PM still found a failing criterion after the automatic coding repair. Both implementations are preserved; review the recorded findings before choosing a new approach.";
+        return null;
+      }
+      const rootDeliveryId = record.reworkOf?.rootDeliveryId ?? record.id;
+      // Only the last failed member of a repair chain may admit another job.
+      if (state.records.some((r) => r.reworkOf?.deliveryId === record.id))
+        return null;
+      record.rework = {
+        key: `qa-rework:${hash({ project: projectRuntimeKey(project.config), area: record.area, delivery: record.id, rootDeliveryId, attempt, review: record.review.manifestHash })}`,
+        rootDeliveryId,
+        attempt,
+        reviewHash: record.review.manifestHash,
+        findings: structuredClone(record.review.failures),
+        phase: "queued",
+        message: `Owning-PM QA found a reproducible failure. Coding repair ${attempt} of ${MAX_QA_REPAIRS} is queued for the same approved ticket.`,
+      };
+      record.updatedAt = now();
+      return record;
+    });
+  }
+  async function admitQaRepair(job: LocalJob): Promise<DeliveryRecord> {
+    return locked(async (state) => {
+      const record = state.records.find(
+        (r) => r.rework?.key === job.idempotencyKey,
+      );
+      if (
+        !record ||
+        !matchesQaRepair(job, project, record) ||
+        record.promotion ||
+        record.status !== "failed" ||
+        record.rework!.phase === "stopped" ||
+        record.review?.manifestHash !== record.rework!.reviewHash
+      )
+        throw new Error(
+          "This coding follow-up does not match the current failed owning-PM review.",
+        );
+      checkConfig(record);
+      if (!(await qaSourceCurrent(record)))
+        throw new Error(
+          "The reviewed implementation changed before QA repair.",
+        );
+      if (!(await approved(record)))
+        throw new Error(
+          "The approved ticket changed before QA repair. No new coding work was admitted.",
+        );
+      record.rework!.jobId = job.id;
+      if (state.records.some((r) => r.reworkOf?.key === record.rework!.key))
+        return record;
+      record.rework!.phase = job.status === "queued" ? "queued" : "running";
+      record.rework!.message = `Coding repair ${record.rework!.attempt} of ${MAX_QA_REPAIRS} is ${record.rework!.phase}; the owning PM will verify the result again.`;
+      return record;
+    });
+  }
+  async function noteQaRepair(
+    key: string,
+    phase: NonNullable<DeliveryRecord["rework"]>["phase"],
+    message: string,
+  ) {
+    return locked((state) => {
+      const record = state.records.find((r) => r.rework?.key === key);
+      if (!record?.rework) return null;
+      record.rework.phase = phase;
+      record.rework.message = message.slice(0, 1000);
+      record.updatedAt = now();
+      return record;
+    });
+  }
   return {
     register,
     list: () => structuredClone(read().records.filter(currentOwner)),
@@ -992,6 +1504,12 @@ export function createDeliveryService(options: {
     recordPromotion,
     completionManifest,
     advanceIntegration,
+    reserveIntegrationRepair,
+    admitIntegrationRepair,
+    stopIntegrationRepair,
+    reserveQaRepair,
+    admitQaRepair,
+    noteQaRepair,
     reviewUnavailable: (area: string) =>
       locked((state) => {
         for (const record of state.records.filter(

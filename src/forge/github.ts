@@ -418,6 +418,14 @@ export class GitHubForge implements Forge {
     await this.rest<RestPull>("PATCH", `/repos/${repo}/pulls/${number}`, patch);
   }
 
+  async retargetPull(
+    repo: RepoRef,
+    number: number,
+    base: string,
+  ): Promise<void> {
+    await this.rest("PATCH", `/repos/${repo}/pulls/${number}`, { base });
+  }
+
   async markReady(repo: RepoRef, number: number): Promise<void> {
     const id = await this.pullNodeId(repo, number);
     await this.graphql(

@@ -38,6 +38,7 @@ import {
   effectiveVerification,
   effectiveWorkflow,
   baseBranch,
+  discoveryBranch,
   inspectionBranch,
 } from "../projectCapabilities.ts";
 import { resolveEnvironment } from "../hosting/index.ts";
@@ -798,7 +799,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
           "Save a Claude Code connection before discovery.",
         );
       const provider = project.config.provider ?? "github";
-      const branch = baseBranch(project.config);
+      const branch = discoveryBranch(project.config);
       const credential = await sourceControl.acquireLease({
         jobId: job.id,
         provider,
@@ -934,7 +935,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
             `CURRENT OWNER PRODUCT CONTEXT — scoped requirements, never permission to bypass runtime policy. Snapshot revision: ${knowledgeRevision(project, area)}. ${JSON.stringify({ project: project.config.name, projectInstanceId: project.config.instanceId, area: area.key, areaInstanceId: area.instanceId, charter: area.charter ?? {}, mandate: area.mandate ?? memory["mandate.md"] ?? "", metric: area.metric, paths: area.paths, sharedTouchpoints: area.sharedTouchpoints })}. Preserve the complete charter's users, goals, expected capabilities, non-goals, guardrails and standing priorities. Learned discovered-* documents below are included only for this owner revision; recheck architecture and design conventions against the checked-out source and its current UI before editing. If context is missing or conflicts, report the gap instead of inventing product decisions.`,
             `Approved ticket ${ticket.identifier}: ${ticket.title}\n${ticket.description}`,
             `You are on branch gremlins/${job.id}, created from ${branch}. Implement only this ticket and run the configured checks.${verification.mode === "browser" ? " Browser-test the change where possible and report missing candidate preview verification; the selected environment may not include your unmerged change." : " Provide repository test evidence for the change."}`,
-            `Do not push or open a PR/MR yourself. Leave changes on the current branch. Write /output/summary.md with what changed, acceptance criteria and evidence. The worker reruns every configured gate before it pushes and opens a DRAFT ${provider === "github" ? "pull request" : "merge request"} targeting ${branch}. If checks fail, no PR/MR is published. Drafts remain for human review.`,
+            `Do not push or open a PR/MR yourself. Leave changes on the current branch. Write /output/summary.md with what changed, acceptance criteria and evidence. The worker reruns every configured gate before it pushes and opens a DRAFT ${provider === "github" ? "pull request" : "merge request"} targeting ${branch}. If checks fail, no PR/MR is published. ${workflow.kind === "promotion" ? "The controller advances approved, checked work into integration for the owning PM's independent QA. Hub control files still require owner review. Passing work accumulates in a promotion batch for the owner to merge; a draft alone is not verified delivery." : "Drafts remain for human review."}`,
             `Write /output/implementation-report.json: {"schema":1,"summary":"what changed and why","acceptance":[{"criterion":1,"status":"verified or not-verified","evidence":"specific executed test/observation, result and artifact or file reference"}],"ui":{"changed":false,"verification":"candidate-browser or repository-only or not-verified","evidence":"candidate URL/commit, viewport and screenshot names, or the limitation"},"integration":{"status":"real or mocked or not-applicable or not-verified","evidence":"actual provider path tested, or precisely which boundary was mocked/unavailable"},"limitations":["remaining limitations"]}. Include every acceptance criterion in its original order (1-based); do not claim completion for an unverified criterion. Use at most 2000 characters for summary, 1200 per evidence entry and 20 limitations of 500 characters. For UI changes, inspect the actual candidate at desktop and mobile sizes with screenshots when runnable; repository tests alone cannot establish visual correctness. A baseline deployment is not the candidate. Mocks, local fixtures, seeded responses and simulated providers never prove a real integration: identify them explicitly and leave untested production-facing paths unverified. Never make the app silently substitute mock data or a fake success path for an unfinished integration.`,
             "Do not add approval labels, remove needs-human flags or mark the ticket Done. No staging promotion from this job.",
           ].join("\n")

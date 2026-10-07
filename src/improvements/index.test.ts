@@ -34,7 +34,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 function edit(
   name: string,
   change: (value: {
-    workflow: { kind: string; baseBranch: string };
+    workflow: { kind: string; baseBranch?: string };
     linear: { connectionId: string; teamId: string };
     areas: { core: { linearProjectId: string; instanceId: string } };
   }) => void,
@@ -148,6 +148,35 @@ function fixture() {
   };
 }
 describe("durable improvement missions", () => {
+  it("keeps staging maintenance out of product changes and exposes the staged workflow", async () => {
+    edit("project.json", (value) => {
+      value.workflow = { kind: "promotion" };
+    });
+    const f = fixture();
+    const job: LocalJob = {
+      id: "job-sync-fixture",
+      runId: 1,
+      type: "developer",
+      developerKind: "sync",
+      project: "app",
+      projectInstanceId: loadProject(root, "app").config.instanceId,
+      status: "succeeded",
+      createdAt: new Date().toISOString(),
+      ticket: "SYNC-123",
+    };
+    f.jobs.push(job);
+    f.service.captureResult(job, {
+      ok: true,
+      kind: "developer",
+      nonce: job.id,
+      prUrl: "https://github.com/owner/app/pull/1",
+      headSha: "a".repeat(40),
+      checks: ["test"],
+    });
+    const result = await f.service.list("app");
+    expect(result.workflow).toEqual({ kind: "promotion" });
+    expect(result.changes).toEqual([]);
+  });
   it("preserves the mission workspace across restart and damaged journals while isolating replacement projects", async () => {
     const f = fixture(),
       project = loadProject(root, "app");

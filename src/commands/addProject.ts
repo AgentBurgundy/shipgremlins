@@ -35,11 +35,11 @@ export interface AddProjectResult {
 
 export const CHECKLIST = `Next, in this order:
   1. Open gremlins setup and connect GitHub or GitLab, Linear, and your AI runtime.
-  2. Choose this repository's base branch and install/test commands. New projects review repositories and open draft PRs to main.
-  3. Optionally select browser verification and a preview/staging environment. Hosting credentials are needed only for the selected provider.
+  2. Review install/test/build commands. The normal flow is coder → pm-staging → staging → main.
+  3. Connect Vercel and use Repair PM staging setup to prepare missing branches, deploy a preview, and verify browser access. Other hosting providers can use a configured test environment.
   4. Set up the app's Linear team and each PM's project in the dashboard, or preserve existing IDs.
   5. Write and review each PM mandate, then run gremlins doctor for this app.
-  6. Create a local worker and enable reviewed PMs. No additional branches or hosting provider are required for repository review.`;
+  6. Create a local worker. New PMs run daily once setup passes; pause them from the dashboard whenever needed. Repository-only draft PRs remain an optional workflow.`;
 
 export function templateVars(
   input: Required<Pick<AddProjectInput, "name" | "repo" | "area" | "today">>,
@@ -117,17 +117,6 @@ export function addProject(
   mkdirSync(join(dir, area), { recursive: true });
   for (const f of CONFIG_FILES) {
     write(join(dir, f), join(templates, f));
-    if (f === "areas.json") {
-      const raw = JSON.parse(readFileSync(join(dir, f), "utf8"));
-      for (const area of Object.values(raw.areas) as Array<{
-        enabled: boolean;
-        codingEnabled?: boolean;
-      }>) {
-        area.enabled = false;
-        if (area.codingEnabled !== undefined) area.codingEnabled = false;
-      }
-      writeFileSync(join(dir, f), JSON.stringify(raw, null, 2) + "\n");
-    }
   }
   for (const f of AREA_FILES) write(join(dir, area, f), join(templates, f));
   return { dir, files, vars };

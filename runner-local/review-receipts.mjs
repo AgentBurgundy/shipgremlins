@@ -16,6 +16,18 @@ const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const text = (v, max) =>
   typeof v === "string" && !!v.trim() && v.length <= max && !v.includes("\0");
+const loginPath = (path) =>
+  /(?:^|\/)(?:login|log-in|signin|sign-in|sign_in|auth|sso)(?:\/|$)/i.test(
+    path,
+  );
+function requireApplicationPage(page, requestedPath) {
+  const path = new URL(page.url()).pathname;
+  if (
+    /^\/_vercel(?:\/|$)/i.test(path) ||
+    (loginPath(path) && !loginPath(requestedPath))
+  )
+    throw new Error("Review session or deployment access needs repair.");
+}
 export function validateReviewPlan(plan) {
   if (
     !plan ||
@@ -249,6 +261,11 @@ export async function runReviewReceipts({
               new URL(page.url()).origin !== target.origin
             )
               throw new Error("Target unavailable.");
+            const intentionalPath =
+              check.kind === "url-path" && loginPath(check.expected)
+                ? check.expected
+                : check.path;
+            requireApplicationPage(page, intentionalPath);
             const steps = check.steps ?? [];
             if (!Array.isArray(steps) || steps.length > 12)
               throw new Error("Review recipe is too large.");
@@ -274,6 +291,7 @@ export async function runReviewReceipts({
               else await locator.uncheck();
               if (new URL(page.url()).origin !== target.origin)
                 throw new Error("Review action left its admitted deployment.");
+              requireApplicationPage(page, intentionalPath);
             }
             let passed = false;
             if (check.kind === "url-path")

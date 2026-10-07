@@ -1,6 +1,7 @@
 import type { SourceControl } from "../sourceControl/types.ts";
 import type { VercelConnection } from "../vercelConnection/index.ts";
 import type { EnvironmentTarget } from "../projectCapabilities.ts";
+import type { ProjectConfig } from "../config.ts";
 
 export type VercelTarget = Extract<EnvironmentTarget, { kind: "vercel" }>;
 export interface VercelProject {
@@ -43,6 +44,14 @@ export interface VercelPlan {
   baseBranch: string;
   sha: string;
   createBranch: boolean;
+  /** Missing staging is seeded once from production; existing staging is untouched. */
+  staging?: {
+    branch: string;
+    baseBranch: string;
+    sha: string;
+    create: boolean;
+  };
+  workflowBranches?: ProjectConfig["branches"];
   customEnvironmentId?: string;
   target: VercelTarget;
   warnings: string[];
@@ -68,6 +77,7 @@ export interface VercelSetupState {
   plan?: VercelPlan;
   deployment?: VercelCandidate;
   target?: VercelTarget;
+  workflowApplied?: boolean;
 }
 export interface VercelDiscoverInput {
   connectionId?: string;
@@ -80,6 +90,7 @@ export interface VercelPrepareInput {
   branch?: string;
   baseBranch?: string;
   customEnvironmentId?: string;
+  repairWorkflow?: boolean;
 }
 export interface VercelDeployInput {
   revision: string;

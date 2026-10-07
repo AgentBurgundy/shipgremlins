@@ -1,17 +1,22 @@
 # Browser evidence and promotion
 
 ShipGremlins fails closed: a passing prose comment is not release authorization.
-There are two independent checks. First a PM verifies each source change on a
-deployment. Then a trusted verifier checks the exact candidate assembled from
-those changes on the current staging base. Missing, expired, or mismatched
-evidence keeps the candidate out of staging.
+In the local promotion workflow, the owning PM tests each source change on the
+exact integration deployment, and an isolated replay captures independent browser
+evidence. The controller then checks the assembled changes before publishing a
+promotion PR. Missing or mismatched PM evidence holds that change. A separately
+configured candidate browser verifier adds a further gate; its evidence must
+match the exact assembled candidate and current staging base.
 
 For local Docker jobs, start with [Project → Changes → Advanced delivery workflow](DELIVERY_WORKFLOW.md).
 Owning-PM review receipts are recorded automatically by an isolated replay phase;
-the candidate handoff is available on the Delivery page. The CLI examples below
-describe the original Vercel release path and the shared signing format. For a
-Railway project, use the dashboard preparation/retry path and an explicitly selected
-candidate environment instead of assuming the legacy `promote` CLI discovers it.
+the optional candidate handoff is available on the Delivery page. Local promotion
+does not require an external signer by default, and integration screenshots are
+not represented as browser tests of the assembled candidate. The CLI examples below
+describe the original Vercel release path, which requires candidate verification,
+and the shared signing format. For a Railway project that opts into this extra gate,
+use the dashboard preparation/retry path and an explicitly selected candidate
+environment instead of assuming the legacy `promote` CLI discovers it.
 
 ## Source change evidence
 

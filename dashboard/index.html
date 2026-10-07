@@ -1956,7 +1956,7 @@
                         <label for="pm-schedule">Schedule (UTC)</label
                         ><input
                           id="pm-schedule"
-                          value="0 13 * * 1-5"
+                          value="0 13 * * *"
                           type="text"
                           required
                           autocomplete="off"
@@ -1994,7 +1994,10 @@
                     >
                   </label>
                   <div class="form-bottom">
-                    <p>Starts with automation off. You choose when it runs.</p>
+                    <p>
+                      Runs daily once setup is ready. Pause or change the
+                      schedule anytime.
+                    </p>
                     <button
                       class="button button-dark"
                       id="create-pm"

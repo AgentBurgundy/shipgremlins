@@ -22,7 +22,7 @@ import type { LocalJob } from "../localRunners/types.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import { PM_KNOWLEDGE_FILES, PM_KNOWLEDGE_MAX_BYTES } from "./prompts.ts";
 import { createObservations } from "../improvements/observations.ts";
-import { baseBranch, inspectionBranch } from "../projectCapabilities.ts";
+import { discoveryBranch, inspectionBranch } from "../projectCapabilities.ts";
 import { jobBelongsToProject } from "../projectIdentity.ts";
 
 type Document = { name: string; content: string };
@@ -264,7 +264,7 @@ export function createPmKnowledge(options: {
       typeof result.branch !== "string" ||
       result.branch !==
         (job.pmMode === "discovery"
-          ? baseBranch(current.project.config)
+          ? discoveryBranch(current.project.config)
           : inspectionBranch(current.project.config))
     )
       throw new Error(

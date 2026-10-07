@@ -405,7 +405,7 @@ describe("durable owning-PM delivery", () => {
     await w.service.advanceIntegration(async () => true);
     expect(w.forge.merged).toEqual([1]);
   });
-  it("holds protected files for owner review and preserves paused automation", async () => {
+  it("holds hub control files for owner review and preserves paused automation", async () => {
     const w = world();
     await w.service.register(w.input);
     w.project.areas[0]!.enabled = false;
@@ -419,7 +419,7 @@ describe("durable owning-PM delivery", () => {
         draft: true,
         mergeableState: "clean",
       },
-      ["middleware.ts"],
+      [".github/workflows/build.yml"],
     );
     w.forge.seedChecks(TEST_REPO, HEAD, { status: "success", failedJobs: [] });
     await w.service.advanceIntegration(async () => true);
@@ -427,6 +427,38 @@ describe("durable owning-PM delivery", () => {
     expect(w.forge.readied).toEqual([]);
     expect(w.service.list()[0]!.message).toMatch(/Owner review/);
   });
+  it.each([
+    "app/api/auth/login.ts",
+    "prisma/migrations/add-name.sql",
+    "new-feature/outside-area-map.ts",
+  ])(
+    "automatically advances approved %s work to PM QA without individual owner review",
+    async (file) => {
+      const w = world();
+      await w.service.register(w.input);
+      w.forge.seedPull(
+        TEST_REPO,
+        {
+          number: 1,
+          headRef: "gremlins/job-one",
+          headSha: HEAD,
+          baseRef: "pm-staging",
+          draft: true,
+          mergeableState: "clean",
+        },
+        [file],
+      );
+      w.forge.seedChecks(TEST_REPO, HEAD, {
+        status: "success",
+        failedJobs: [],
+      });
+      await w.service.advanceIntegration(async () => true);
+      expect(w.forge.readied).toEqual([1]);
+      expect(w.forge.merged).toEqual([1]);
+      expect(w.service.list()[0]!.status).toBe("awaiting-deployment");
+      expect(w.linear.stateUpdates).toEqual([]);
+    },
+  );
   it("only extracts finite explicit criteria and excludes neighboring sections", () => {
     expect(
       acceptanceCriteria(

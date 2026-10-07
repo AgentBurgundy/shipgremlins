@@ -294,6 +294,24 @@ describe("local job preparation", () => {
     ).toBe("44444444-4444-4444-8444-444444444444");
   });
   it.each(["pull-request", "promotion"])(
+    "describes the actual draft review policy for %s delivery",
+    async (kind) => {
+      edit("project.json", (raw) => {
+        raw.workflow =
+          kind === "promotion" ? { kind } : { kind, baseBranch: "main" };
+      });
+      const payload = await setup().prepareJob(job);
+      if (kind === "promotion") {
+        expect(payload.prompt).toContain("owning PM's independent QA");
+        expect(payload.prompt).toContain(
+          "promotion batch for the owner to merge",
+        );
+        expect(payload.prompt).not.toContain("Drafts remain for human review.");
+      } else
+        expect(payload.prompt).toContain("Drafts remain for human review.");
+    },
+  );
+  it.each(["pull-request", "promotion"])(
     "rejects coding without finite criteria in %s delivery",
     async (kind) => {
       edit("project.json", (raw) => {
@@ -990,7 +1008,7 @@ describe("local job preparation", () => {
       pmMode: "discovery",
       browserVerification: false,
       nonce: job.id,
-      branch: "pm-staging",
+      branch: "main",
     });
     expect(Object.keys(payload.credentials!).sort()).toEqual([
       "CLAUDE_CODE_OAUTH_TOKEN",

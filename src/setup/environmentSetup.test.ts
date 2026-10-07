@@ -41,6 +41,7 @@ const matched: VercelProject = {
 };
 const config = () => readEditableConfig(root, "projects/app/project.json");
 type FixtureConfig = {
+  workflow?: { kind: "pull-request"; baseBranch: string };
   environments: Record<string, Record<string, unknown>>;
   verification: { mode: string; environment: string };
   branches: { production: string; staging: string; integration: string };
@@ -239,11 +240,31 @@ const protectedFailure: EnvironmentVerification = {
 };
 
 describe("automatic environment preparation", () => {
+  it("checks project readiness only after the independent browser test passes", async () => {
+    const h = harness();
+    h.options.verifyReadiness = vi.fn(async () => {
+      expect(h.verify).toHaveBeenCalledOnce();
+      return "PM staging and project connections are ready.";
+    });
+    expect((await run(h)).state).toMatchObject({
+      status: "ready",
+      message: "PM staging and project connections are ready.",
+    });
+    expect(h.options.verifyReadiness).toHaveBeenCalledOnce();
+    const failed = harness();
+    failed.options.verifyReadiness = vi.fn();
+    failed.results([
+      { status: "failed", message: "The test login did not work." },
+    ]);
+    await run(failed, { force: true });
+    expect(failed.options.verifyReadiness).not.toHaveBeenCalled();
+  });
   it("is not busy for a new project that has not been created yet", () => {
     expect(harness().service.busy("new-app")).toBe(false);
   });
   it("uses the conventional pm-staging preview when repository-only branches all default to main", async () => {
     edit((raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
       raw.branches = {
         production: "main",
         integration: "main",

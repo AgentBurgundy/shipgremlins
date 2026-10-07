@@ -83,7 +83,7 @@ different account. Verify the project after changing its access or mappings.
 
 ## Start with repository checks
 
-New projects default to repository verification and draft pull or merge requests against `main`. The repository picker suggests its default branch. Change that branch if your review process uses another one.
+New projects default to the promotion workflow, with `pm-staging`, `staging` and `main` as distinct branches. Repository discovery can start before hosting is ready; automatic PM QA waits for a verified integration environment. Existing projects keep their selected workflow. To use repository checks and review each draft yourself, explicitly select the pull-request workflow:
 
 ```json
 {
@@ -212,16 +212,16 @@ The Connections section stores account credentials and shows configured state. P
 
 Manual values live in the configuration directory's `.env`; OAuth connections use their encrypted local state and matching keys. Keep private backups of both. Never put token values or service-account JSON in `project.json`. Hosting discovery runs on the controller. Application preview bypass and test sign-in access, where configured, are distinct from the provider's account credential.
 
-## Choose selective promotion when your app needs it
+## Automatic integration and PM QA
 
-New projects use ordinary draft PRs/MRs. Selecting `workflow: {"kind":"promotion"}` requires distinct production, staging, and integration branches plus deployment and evidence setup. Project Delivery tracks approved drafts, owning-PM verification and selectively cherry-picked candidates. GitHub and GitLab source are independent of the hosting provider.
+The default promotion workflow requires distinct production, staging, and integration branches plus a verified test environment. The controller checks eligible coding drafts and merges them into integration; the owning PM then tests the deployed app. Failed acceptance criteria return to a coder with evidence, at most one automatic coding repair per original change. Passing work is collected into a project promotion PR. Changes shows the actual lifecycle and any blocker. GitHub and GitLab source are independent of the hosting provider.
 
 Vercel and Railway integration review require actual deployed branch/SHA metadata.
-Select a named candidate target on the Delivery page using
+For an additional candidate browser gate, select a named target on the Delivery page using
 `workflow.candidateEnvironment`. A Railway candidate must use a separate service
 or environment so its deployment cannot overwrite the fixed `pm-staging` target.
-Candidate deployment and trusted signing are still explicit setup steps; direct
-URLs and Cloud Run discovery alone cannot authorize promotion. The controller
+Candidate deployment and trusted signing are optional additional setup; when configured, that verifier must pass. Direct
+URLs and Cloud Run discovery alone cannot establish the deployment identity needed for automatic PM QA. The controller
 never auto-merges production or marks Done merely because a job succeeded.
 Follow [the delivery setup](DELIVERY_WORKFLOW.md), [candidate gate](VERIFICATION.md),
 and [production completion](LINEAR_LIFECYCLE.md).

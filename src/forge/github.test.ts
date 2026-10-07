@@ -4,6 +4,23 @@ import { GitHubForge } from "./github.ts";
 const REPO = "owner/game";
 const HUB = "owner/pm-hub";
 
+it("retargets an existing draft without changing its head or enabling merge", async () => {
+  const calls = stubGitHub([
+    {
+      method: "PATCH",
+      re: /\/repos\/owner\/game\/pulls\/7$/,
+      handler: () => ({}),
+    },
+  ]);
+  await new GitHubForge({ token: "test-token" }).retargetPull(
+    REPO,
+    7,
+    "pm-staging",
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.body).toEqual({ base: "pm-staging" });
+});
+
 it("creates a staging snapshot without updating an existing branch", async () => {
   const calls = stubGitHub([
     {

@@ -155,6 +155,484 @@ function fixture(api: Api, onSaved = vi.fn(async () => {})) {
   };
 }
 describe("outcome-led project missions", () => {
+  it.each([
+    ["queued", "Integration repair queued"],
+    ["running", "Coder repairing integration"],
+    ["stopped", "Integration repair stopped"],
+  ])(
+    "shows %s pre-merge repair with its actual reason and activity",
+    async (phase, label) => {
+      const f = fixture(async () => ({
+        workflow: { kind: "promotion" },
+        missions: [],
+        changes: [
+          {
+            jobId: "implementation",
+            status: "succeeded",
+            delivery: {
+              status: "blocked",
+              message: "The implementation conflicts with current integration.",
+              integrationRepair: {
+                phase,
+                jobId: "repair-integration",
+                message:
+                  phase === "stopped"
+                    ? "The automatic integration repair failed."
+                    : "A coder is repairing the conflict before PM QA.",
+              },
+            },
+          },
+        ],
+      }));
+      await settle();
+      expect(text(f.root)).toContain(label);
+      expect(text(f.root)).toContain(
+        "The implementation conflicts with current integration.",
+      );
+      expect(text(f.root)).toContain(
+        phase === "stopped"
+          ? "The automatic integration repair failed."
+          : "A coder is repairing the conflict before PM QA.",
+      );
+      expect(
+        walk(f.root).find((item) => item.textContent === "Activity")?.href,
+      ).toBe("http://localhost/activity?run=repair-integration");
+      expect(text(f.root)).not.toContain("Review pull request");
+    },
+  );
+  it("collects many individually tested tickets under one authoritative batch and leaves earlier attempts in history", async () => {
+    const promotionUrl = "https://github.com/org/app/pull/99";
+    const passed = Array.from({ length: 12 }, (_, index) => ({
+      jobId: `coding-${index + 1}`,
+      status: "succeeded",
+      pullRequests: [
+        {
+          state: "merged",
+          url: `https://github.com/org/app/pull/${index + 1}`,
+        },
+      ],
+      delivery: {
+        status: "promoted",
+        ticket: {
+          identifier: `APP-${index + 1}`,
+          title: `Useful improvement ${index + 1}`,
+        },
+        message: "Owning PM acceptance checks passed.",
+        promotion: { url: promotionUrl, number: 99, headSha: "batch-head" },
+      },
+      previousAttempts: [
+        {
+          status: "failed",
+          message: "Earlier attempt failed before the successful fix.",
+        },
+      ],
+    }));
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      promotionBatch: {
+        url: promotionUrl,
+        number: 99,
+        state: "open",
+        headSha: "batch-head",
+      },
+      missions: [],
+      changes: [
+        ...passed,
+        {
+          jobId: "qa-pending",
+          status: "succeeded",
+          delivery: {
+            status: "awaiting-review",
+            ticket: { identifier: "APP-13", title: "One more improvement" },
+            message: "Owning PM is testing this deployment.",
+          },
+        },
+      ],
+    }));
+    await settle();
+    const batchLinks = walk(f.root).filter(
+      (item) => item.textContent === "Review promotion batch",
+    );
+    expect(batchLinks).toHaveLength(1);
+    expect(batchLinks[0]!.href).toBe(promotionUrl);
+    expect(
+      walk(f.root).filter((item) => item.className === "promotion-ticket"),
+    ).toHaveLength(13);
+    expect(
+      walk(f.root).filter((item) => item.textContent === "APP-2"),
+    ).toHaveLength(1);
+    expect(text(f.root)).toContain("Still with the crew");
+    expect(text(f.root)).toContain("PM QA pending");
+    expect(text(f.root)).not.toContain("Earlier attempt failed");
+    expect(
+      walk(f.root).filter(
+        (item) => item.textContent === "Activity · 2 attempts",
+      ),
+    ).toHaveLength(12);
+    expect(text(f.root)).not.toContain("Review pull request");
+    expect(
+      walk(f.root).filter(
+        (item) =>
+          item.tagName === "A" && item.href.startsWith("https://github.com/"),
+      ),
+    ).toHaveLength(1);
+  });
+  it("does not present a closed recorded batch as ready for human review", async () => {
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      promotionBatch: {
+        url: "https://github.com/org/app/pull/99",
+        number: 99,
+        state: "closed",
+      },
+      missions: [],
+      changes: [],
+    }));
+    await settle();
+    expect(text(f.root)).toContain("This recorded batch is closed");
+    expect(text(f.root)).not.toContain("Review promotion batch");
+    expect(byText(f.root, "Open recorded batch").href).toBe(
+      "https://github.com/org/app/pull/99",
+    );
+  });
+  it("shows unavailable batch state without losing known ticket status", async () => {
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      promotionBatchError:
+        "Source control is unavailable. The current batch state could not be checked.",
+      missions: [],
+      changes: [
+        {
+          jobId: "tested",
+          status: "succeeded",
+          delivery: {
+            status: "verified",
+            ticket: { identifier: "APP-7", title: "Verified work" },
+          },
+        },
+      ],
+    }));
+    await settle();
+    expect(text(f.root)).toContain(
+      "Source control is unavailable. The current batch state could not be checked.",
+    );
+    expect(text(f.root)).toContain("PM QA passed");
+    expect(text(f.root)).not.toContain("Review promotion batch");
+  });
+  it("separates earlier promotions and stale batch revisions from the current batch", async () => {
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      promotionBatch: {
+        url: "https://github.com/org/app/pull/99",
+        number: 99,
+        state: "open",
+        headSha: "current-head",
+      },
+      missions: [],
+      changes: [
+        {
+          jobId: "current",
+          status: "succeeded",
+          delivery: {
+            status: "promoted",
+            ticket: { title: "Current ticket" },
+            promotion: {
+              url: "https://github.com/org/app/pull/99",
+              number: 99,
+              headSha: "current-head",
+            },
+          },
+        },
+        {
+          jobId: "stale",
+          status: "succeeded",
+          delivery: {
+            status: "promoted",
+            ticket: { title: "Stale inclusion" },
+            promotion: {
+              url: "https://github.com/org/app/pull/99",
+              number: 99,
+              headSha: "old-head",
+            },
+          },
+        },
+        {
+          jobId: "earlier",
+          status: "succeeded",
+          delivery: {
+            status: "promoted",
+            ticket: { title: "Earlier ticket" },
+            promotion: {
+              url: "https://github.com/org/app/pull/80",
+              number: 80,
+              headSha: "previous-head",
+            },
+          },
+        },
+      ],
+    }));
+    await settle();
+    expect(
+      walk(f.root).filter(
+        (item) => item.textContent === "Included in promotion",
+      ),
+    ).toHaveLength(1);
+    expect(text(f.root)).toContain("Batch inclusion needs refresh");
+    expect(text(f.root)).toContain("Earlier promotions");
+    expect(text(f.root)).toContain("The promotion PR changed.");
+    expect(
+      walk(f.root).filter((item) => item.className === "promotion-ticket"),
+    ).toHaveLength(3);
+  });
+  it("surfaces blocked and waiting draft migration reasons before delivery admission", async () => {
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      missions: [],
+      changes: [
+        {
+          jobId: "blocked",
+          status: "succeeded",
+          migration: {
+            phase: "blocked",
+            message:
+              "The approved ticket scope changed. Owner review is required.",
+          },
+        },
+        {
+          jobId: "waiting",
+          status: "succeeded",
+          migration: {
+            phase: "waiting",
+            message: "The original draft checks are still pending.",
+          },
+        },
+      ],
+    }));
+    await settle();
+    expect(text(f.root)).toContain("Blocked");
+    expect(text(f.root)).toContain("Preparing existing draft");
+    expect(text(f.root)).toContain(
+      "The approved ticket scope changed. Owner review is required.",
+    );
+    expect(text(f.root)).toContain(
+      "The original draft checks are still pending.",
+    );
+    expect(text(f.root)).not.toContain("PM QA pending");
+  });
+  it("tracks promotion work through real delivery stages without requesting manual draft review", async () => {
+    const changes = [
+      ["checks", "awaiting-merge"],
+      ["deployment", "awaiting-deployment"],
+      ["qa", "awaiting-review"],
+      ["verified", "verified"],
+      ["promotion", "promoted"],
+      ["failed", "failed"],
+      ["blocked", "blocked"],
+    ].map(([jobId, status], index) => ({
+      jobId,
+      status: "succeeded",
+      pullRequests: [
+        {
+          number: index + 1,
+          url: `https://github.com/org/app/pull/${index + 1}`,
+          state: status === "awaiting-merge" ? "open" : "merged",
+          currentHeadSha: "new-sha",
+        },
+      ],
+      checks: { headSha: "old-sha", commands: ["npm test"] },
+      delivery: {
+        status,
+        ticket: { title: `${jobId} ticket` },
+        message:
+          status === "blocked"
+            ? "Deployment protection prevents QA."
+            : `Actual ${status} status.`,
+        ...(status === "promoted"
+          ? { promotion: { url: "https://github.com/org/app/pull/20" } }
+          : {}),
+        ...(status === "failed"
+          ? {
+              rework: {
+                jobId: "repair-1",
+                phase: "queued",
+                message:
+                  "Coding repair is queued for the failed sign-in criterion.",
+              },
+            }
+          : {}),
+      },
+    }));
+    const f = fixture(async () => ({
+      missions: [],
+      workflow: { kind: "promotion" },
+      changes,
+    }));
+    await settle();
+    for (const expected of [
+      "Integration checks",
+      "Waiting for deployment",
+      "PM QA pending",
+      "PM QA passed",
+      "Batch inclusion unconfirmed",
+      "Coding follow-up queued",
+      "Blocked",
+    ])
+      expect(text(f.root)).toContain(expected);
+    expect(text(f.root)).toContain("Deployment protection prevents QA.");
+    expect(text(f.root)).toContain(
+      "Coding repair is queued for the failed sign-in criterion.",
+    );
+    expect(
+      walk(f.root).some(
+        (item) =>
+          item.textContent === "Activity" &&
+          item.href === "http://localhost/activity?run=repair-1",
+      ),
+    ).toBe(true);
+    expect(byText(f.root, "Open recorded batch").href).toBe(
+      "https://github.com/org/app/pull/20",
+    );
+    expect(text(f.root)).toContain(
+      "Recorded worker checks cover an earlier revision",
+    );
+    expect(text(f.root)).not.toContain("Changes ready for review");
+    expect(text(f.root)).not.toContain("Inspect the draft");
+    expect(text(f.root)).not.toContain("earlier changes are merged or closed");
+    expect(
+      walk(f.root).some((item) => item.textContent === "Review pull request"),
+    ).toBe(false);
+  });
+  it("does not treat a successful coding job as a PM QA pass without delivery evidence", async () => {
+    const f = fixture(async () => ({
+      missions: [],
+      workflow: { kind: "promotion" },
+      changes: [
+        {
+          jobId: "coding-only",
+          status: "succeeded",
+          message: "Coding finished.",
+          pullRequests: [
+            { state: "open", url: "https://github.com/org/app/pull/7" },
+          ],
+        },
+      ],
+    }));
+    await settle();
+    expect(text(f.root)).toContain("Awaiting delivery admission");
+    expect(
+      walk(f.root).filter((item) => item.className === "promotion-ticket"),
+    ).toHaveLength(1);
+    expect(
+      walk(f.root).some(
+        (item) =>
+          item.className.includes("promotion-ticket-status") &&
+          item.textContent === "PM QA passed",
+      ),
+    ).toBe(false);
+    expect(text(f.root)).not.toContain("Included in promotion");
+    expect(text(f.root)).not.toContain("Changes ready for review");
+  });
+  it("distinguishes active coding follow-up from stopped retries without hiding the original QA failure", async () => {
+    let phase = "queued";
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      missions: [],
+      changes: [
+        {
+          jobId: "original",
+          status: "succeeded",
+          pullRequests: [],
+          delivery: {
+            status: "failed",
+            message: "The sign-in confirmation never appeared.",
+            rework: {
+              jobId: "repair",
+              phase,
+              message:
+                phase === "stopped"
+                  ? "The automatic coding repair did not satisfy this criterion. Review the evidence."
+                  : "Coding repair is queued.",
+            },
+          },
+        },
+      ],
+    }));
+    await settle();
+    expect(text(f.root)).toContain("Coding follow-up queued");
+    expect(text(f.root)).toContain("The sign-in confirmation never appeared.");
+    expect(text(f.root)).not.toContain("PM QA PASSED");
+    phase = "stopped";
+    f.timers.at(-1)!();
+    await settle();
+    expect(text(f.root)).toContain("Follow-up stopped");
+    expect(text(f.root)).toContain(
+      "The automatic coding repair did not satisfy this criterion",
+    );
+    expect(text(f.root)).not.toContain("Coding follow-up queued");
+  });
+  it("surfaces the actual promotion hold and staging blocker even after PM QA passed", async () => {
+    const f = fixture(async () => ({
+      workflow: { kind: "promotion" },
+      missions: [],
+      deliveryOperation: {
+        phase: "idle",
+        message:
+          "Assembled candidate failed the checkout test. The controller will retry after its backoff.",
+        rows: [{ needsYou: true, pending: true }],
+      },
+      stagingSync: {
+        phase: "blocked",
+        message: "The staging sync PR has failing branch checks.",
+      },
+      changes: [
+        {
+          jobId: "passed",
+          status: "succeeded",
+          pullRequests: [],
+          delivery: {
+            status: "verified",
+            message: "PM acceptance checks passed.",
+          },
+        },
+      ],
+    }));
+    await settle();
+    expect(text(f.root)).toContain("Your promotion batch");
+    expect(text(f.root)).toContain(
+      "Assembled candidate failed the checkout test. The controller will retry after its backoff.",
+    );
+    expect(text(f.root)).toContain(
+      "The staging sync PR has failing branch checks.",
+    );
+    expect(text(f.root)).toContain("PM acceptance checks passed.");
+    expect(text(f.root)).not.toContain("Promotion PR published");
+  });
+  it("keeps mission guidance aligned with automatic QA while retaining actual blockers", async () => {
+    let current = mission({
+      status: "review-changes",
+      message: "Coding finished. Review the actual changes before merging.",
+    });
+    const f = fixture(async (url) =>
+      url.endsWith("/missions")
+        ? { workflow: { kind: "promotion" }, missions: [current], changes: [] }
+        : { mission: current, candidates: [] },
+    );
+    await settle();
+    expect(text(f.root)).toContain("Follow your change through PM QA");
+    expect(text(f.root)).not.toContain(
+      "Review the actual changes before merging",
+    );
+    current = mission({
+      status: "blocked",
+      message: "Source connection expired. Reconnect GitHub.",
+    });
+    f.timers.at(-1)!();
+    await settle();
+    expect(text(f.root)).toContain(
+      "Source connection expired. Reconnect GitHub.",
+    );
+    expect(text(f.root)).toContain("This mission needs your help");
+  });
   it("does not imply an empty project or offer creation when initial state could not load", async () => {
     const api = vi
       .fn()

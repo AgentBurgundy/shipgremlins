@@ -87,6 +87,8 @@ export interface EnvironmentSetupOptions {
     name: string,
     input: { previousConfigurationRevision: string; profile: "hosted" },
   ): Promise<unknown>;
+  /** Complete connection checks after the real browser probe, then stamp readiness. */
+  verifyReadiness?(name: string): Promise<string>;
 }
 export class EnvironmentSetupError extends Error {
   constructor(
@@ -794,9 +796,11 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
           current();
           const result = options.environmentAccess.status(name);
           if (result.status === "passed") {
+            const readyMessage = await options.verifyReadiness?.(name);
+            if (readyMessage) expected = document(name).revision;
             save({
               status: "ready",
-              message: "Your test environment is ready.",
+              message: readyMessage ?? "Your test environment is ready.",
               action: undefined,
               choices: undefined,
             });
