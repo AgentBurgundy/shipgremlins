@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateCommitIdentity } from "./runtime.mjs";
+import { verifySyncRepairAncestry } from "./sync-repair.mjs";
 
 /** A model-authored report is evidence to review, never an executable action. */
 export function readImplementationReport(directory, redact = (text) => text) {
@@ -145,6 +146,7 @@ export async function runCheckedDelivery({
   prepareRepository,
   onCheck = () => {},
   report,
+  syncRepair,
 }) {
   validateDelivery(delivery);
   validateCommitIdentity(commitIdentity, provider);
@@ -206,7 +208,9 @@ export async function runCheckedDelivery({
   const changed = (
     await run("git", ["diff", "--name-only", baseSha, "HEAD"])
   ).trim();
-  if (!changed) return { checks, noChanges: true };
+  // A merge can reconcile ancestry without changing the tree (for example when
+  // staging independently contains the same fix). That merge must still ship.
+  if (!changed && !syncRepair) return { checks, noChanges: true };
   const evidence = implementationReport(report, delivery.acceptanceCriteria);
   // A model may have committed everything already. Normalize the final commit's
   // identity without changing its tested tree; never publish an invented author.
@@ -221,6 +225,12 @@ export async function runCheckedDelivery({
   const commit = (await run("git", ["rev-parse", "HEAD"])).trim();
   if (!/^[a-f0-9]{40}$/.test(commit))
     throw new Error("Could not identify the tested commit.");
+  if (syncRepair)
+    await verifySyncRepairAncestry({
+      integrationSha: baseSha,
+      stagingSha: syncRepair.stagingSha,
+      run,
+    });
   const uiChanged =
     evidence.ui.changed ||
     changed

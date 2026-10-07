@@ -76,6 +76,7 @@ function world(realSource = false) {
     ["app/name.ts"],
   );
   forge.seedBranch(TEST_REPO, "pm-staging", BASE);
+  forge.seedBranch(TEST_REPO, "staging", BASE);
   const job: LocalJob = {
     id: "job-one",
     runId: 1,
@@ -139,6 +140,13 @@ function world(realSource = false) {
         },
       })
     : { resolveCredential: source };
+  const resolveEnvironment = vi.fn(async () => ({
+    provider: "railway" as const,
+    url: "https://preview.example",
+    deploymentId: "dep",
+    commitSha: BASE,
+    branch: "pm-staging",
+  }));
   const controller = createDeliveryController({
     root,
     loadProject: () => project,
@@ -146,13 +154,7 @@ function world(realSource = false) {
     linearConnectionFor: connectionFor,
     forge: () => forge,
     linear: () => linear,
-    resolveEnvironment: async () => ({
-      provider: "railway",
-      url: "https://preview.example",
-      deploymentId: "dep",
-      commitSha: BASE,
-      branch: "pm-staging",
-    }),
+    resolveEnvironment,
     docker: { ensureImage: async () => "shipgremlins-local:aaaaaaaaaaaaaaaa" },
     executor,
     now: () => new Date("2026-10-05T12:00:00Z"),
@@ -179,12 +181,123 @@ function world(realSource = false) {
     executor,
     connectionFor,
     controller,
+    resolveEnvironment,
     check,
     result,
   };
 }
 const noArtifacts = {} as DockerRunners;
 describe("local delivery controller integration", () => {
+  it("defers a deployment race before recording a review plan, then resumes the same queued job", async () => {
+    const w = world();
+    await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);
+    await w.controller.completeJob(w.job, w.result, noArtifacts);
+    w.forge.patchPull(TEST_REPO, 1, { state: "merged", mergeCommitSha: BASE });
+    let calls = 0;
+    w.resolveEnvironment.mockImplementation(async () => {
+      const sha = ++calls <= 2 ? BASE : HEAD;
+      w.forge.seedBranch(TEST_REPO, "pm-staging", sha);
+      return {
+        provider: "railway",
+        url: "https://preview.example",
+        deploymentId: "dep",
+        commitSha: sha,
+        branch: "pm-staging",
+      };
+    });
+    const job = { ...w.job, id: "job-racing-review", type: "pm" as const };
+    const payload = {
+      kind: "pm" as const,
+      branch: "pm-staging",
+      browserVerification: true,
+    };
+    await expect(w.controller.beforePm(job, payload)).rejects.toMatchObject({
+      category: "environment-wait",
+    });
+    const ready = await w.controller.beforePm(job, payload);
+    expect(ready.expectedCommitSha).toBe(HEAD);
+    expect(ready.reviewPlan?.deployment.sha).toBe(HEAD);
+  });
+  it("keeps a patrol queued until staging is included and pins the current deployment without requiring product deliveries", async () => {
+    const w = world();
+    const staging = "c".repeat(40);
+    w.forge.seedBranch(TEST_REPO, "staging", staging);
+    w.forge.seedCompare(TEST_REPO, BASE, staging, { aheadBy: 2, behindBy: 1 });
+    const patrol = { ...w.job, type: "pm" as const, ticket: undefined };
+    await expect(w.controller.beforePmStart(patrol)).rejects.toMatchObject({
+      category: "environment-wait",
+    });
+    expect(w.connectionFor).not.toHaveBeenCalled();
+    expect(w.forge.merged).toEqual([]);
+    expect(await w.forge.listOpenPulls(TEST_REPO)).toHaveLength(1); // Only the original coding draft; admission never enqueues while the runner holds its lock.
+    w.forge.seedCompare(TEST_REPO, BASE, staging, { aheadBy: 0, behindBy: 1 });
+    const payload = await w.controller.beforePm(patrol, {
+      kind: "pm",
+      branch: "pm-staging",
+      browserVerification: true,
+      browserTarget: "https://old.example",
+      prompt: "Explore https://old.example",
+    });
+    expect(payload).toMatchObject({
+      expectedCommitSha: BASE,
+      browserTarget: "https://preview.example",
+      prompt: "Explore https://preview.example",
+    });
+    expect(payload.reviewPlan).toBeUndefined();
+    expect(w.controller.deliveryStatus("game").stagingSync.phase).toBe(
+      "current",
+    );
+  });
+  it("holds PMs when hosting is one commit behind, including exploration and Grumblin baselines", async () => {
+    const w = world();
+    w.forge.seedBranch(TEST_REPO, "pm-staging", HEAD);
+    for (const pmMode of [undefined, "exploration", "grumblin"] as const) {
+      await expect(
+        w.controller.pinPmBaseline(
+          { ...w.job, type: "pm", pmMode },
+          { kind: "pm", branch: "pm-staging", browserVerification: true },
+        ),
+      ).rejects.toMatchObject({ category: "environment-wait" });
+    }
+    expect(w.controller.deliveryStatus("game").stagingSync.phase).toBe(
+      "waiting-deployment",
+    );
+    expect(w.forge.merged).toEqual([]);
+  });
+  it("does not sync a draft-PR project or code discovery", async () => {
+    const w = world();
+    const patrol = {
+      ...w.job,
+      type: "pm" as const,
+      pmMode: "discovery" as const,
+    };
+    await w.controller.beforePmStart(patrol);
+    w.project.config.workflow = { kind: "pull-request", baseBranch: "main" };
+    expect((await w.controller.reconcileStaging("game")).phase).toBe(
+      "disabled",
+    );
+    await w.controller.beforePmStart({ ...patrol, pmMode: undefined });
+    expect(w.source).not.toHaveBeenCalled();
+  });
+  it("checks the combined immutable revisions in an isolated checkout and releases its source lease", async () => {
+    const w = world(true),
+      staging = "c".repeat(40);
+    const source = w.sourceAccess as ReturnType<typeof createSourceControl>;
+    const release = vi.spyOn(source, "releaseLease");
+    w.forge.seedBranch(TEST_REPO, "staging", staging);
+    w.forge.seedCompare(TEST_REPO, BASE, staging, { aheadBy: 1, behindBy: 1 });
+    const result = await w.controller.reconcileStaging("game");
+    // FakeForge generates a short post-merge SHA: the controller must refuse to
+    // claim readiness from that invalid provider response, after verifying work.
+    expect(result.phase).not.toBe("current");
+    expect(w.executor).toHaveBeenCalledOnce();
+    expect(w.check).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledWith(
+      expect.stringMatching(/^job-sync-checks-[a-f0-9]{24}$/),
+    );
+    expect(w.forge.merged).toEqual([2]);
+    expect(w.forge.branch(TEST_REPO, "staging")).toBe(staging);
+  });
   it("uses valid real source lease identifiers for independent checks and promotion, releasing both on completion or failure", async () => {
     const w = world(true);
     const source = w.sourceAccess as ReturnType<typeof createSourceControl>;

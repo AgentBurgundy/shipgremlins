@@ -8,6 +8,7 @@ import { validateReviewPlan } from "../../runner-local/review-receipts.mjs";
 import { validateGrumblinPayload } from "../../runner-local/grumblin-runtime.mjs";
 import { browserOrigin } from "../../runner-local/browser-access.mjs";
 import { validateCommitIdentity } from "../../runner-local/runtime.mjs";
+import { validateSyncRepairPayload } from "../../runner-local/sync-repair.mjs";
 import {
   createTestEnvironments,
   parseDockerTarget,
@@ -39,6 +40,8 @@ export interface DockerJobPayload {
   remoteLeaseDeadline?: number;
   reviewPlan?: import("../delivery/types.ts").PmReviewPlan;
   expectedCommitSha?: string;
+  /** Trusted controller intent for a conflict repair; never accepted from the queue API. */
+  syncRepair?: { stagingSha: string };
   testEnvironment?: {
     target: DockerEnvironmentTarget;
     env?: Record<string, string>;
@@ -251,6 +254,7 @@ export function validatePayload(payload: DockerJobPayload): string {
           "remoteLeaseDeadline",
           "reviewPlan",
           "expectedCommitSha",
+          "syncRepair",
           "testEnvironment",
           "credentials",
           "commands",
@@ -273,6 +277,7 @@ export function validatePayload(payload: DockerJobPayload): string {
   }
   if (payload.kind === "developer" || payload.commitIdentity !== undefined)
     validateCommitIdentity(payload.commitIdentity, payload.provider);
+  validateSyncRepairPayload({ ...payload });
   if (
     payload.expectedCommitSha !== undefined &&
     !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(payload.expectedCommitSha)

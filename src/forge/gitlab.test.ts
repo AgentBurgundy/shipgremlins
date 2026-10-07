@@ -18,6 +18,24 @@ const mr = {
   changes_count: "1",
 };
 describe("GitLab delivery forge", () => {
+  it("creates an immutable sync snapshot using a full commit revision", async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({ name: "gremlins/staging-sync" }),
+    );
+    const forge = new GitLabForge({ token: "test-token", fetch: fetcher });
+    await forge.createBranch(repo, "gremlins/staging-sync", SHA);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://gitlab.com/api/v4/projects/group%2Fsubgroup%2Fapp/repository/branches",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ branch: "gremlins/staging-sync", ref: SHA }),
+      }),
+    );
+    await expect(
+      forge.createBranch(repo, "gremlins/staging-sync", "main"),
+    ).rejects.toThrow("full commit SHA");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it("encodes subgroup paths and uses OAuth Bearer without redirects", async () => {
     const fetcher = vi.fn(
       async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) =>

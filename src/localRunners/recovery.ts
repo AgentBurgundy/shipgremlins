@@ -2,6 +2,7 @@ export type FailureCategory =
   | "infrastructure"
   | "configuration"
   | "credential-wait"
+  | "environment-wait"
   | "worker-exit"
   | "completion"
   | "ambiguous-launch"
@@ -37,6 +38,7 @@ export function validFailure(value: unknown): value is JobFailure {
       "infrastructure",
       "configuration",
       "credential-wait",
+      "environment-wait",
       "worker-exit",
       "completion",
       "ambiguous-launch",

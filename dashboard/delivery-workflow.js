@@ -51,6 +51,9 @@
           candidateBaseline: "",
           candidateSignature: "",
           trackingOpen: false,
+          syncBusy: false,
+          syncFeedback: "",
+          syncError: false,
         };
       const heading = el("div", undefined, "project-section-title");
       heading.append(
@@ -60,6 +63,50 @@
       s.notice = el("p", "", "operations-message");
       s.notice.hidden = true;
       s.actions = el("div", undefined, "delivery-controller-actions");
+      s.sync = el("section", undefined, "delivery-staging-sync");
+      s.syncTitle = el("h3", "Keep the test branch current");
+      s.syncStatus = el("p", "", "runner-guidance");
+      s.syncStatus.setAttribute("role", "status");
+      s.syncStatus.setAttribute("aria-live", "polite");
+      s.syncChecked = el("p", "", "runner-guidance");
+      s.syncNotice = el("p", "", "operations-message");
+      s.syncNotice.setAttribute("role", "status");
+      s.syncNotice.setAttribute("aria-live", "polite");
+      s.syncNotice.hidden = true;
+      s.syncRetry = button("Retry sync", async () => {
+        if (s.syncRetry.disabled || s.busy || isLocked()) return;
+        s.busy = true;
+        s.syncBusy = true;
+        s.syncFeedback = "Checking staging and the test branch…";
+        s.syncError = false;
+        paint(s);
+        try {
+          s.data = await api(`${endpoint(s)}/sync`, {});
+          s.syncFeedback = "Sync requested. Its status updates automatically.";
+          await onChanged?.(project.name);
+        } catch (error) {
+          s.syncFeedback = `Sync could not finish. ${error.message}`;
+          s.syncError = true;
+        } finally {
+          s.busy = false;
+          s.syncBusy = false;
+          paint(s);
+          schedule();
+        }
+      });
+      s.syncPull = el("a", "View sync PR / MR ↗", "production-diff-link");
+      s.syncPull.target = "_blank";
+      s.syncPull.rel = "noopener noreferrer";
+      s.syncPull.hidden = true;
+      const syncControls = el("div", undefined, "button-row");
+      syncControls.append(s.syncRetry, s.syncPull);
+      s.sync.append(
+        s.syncTitle,
+        s.syncStatus,
+        s.syncChecked,
+        syncControls,
+        s.syncNotice,
+      );
       s.confirmBox = el("div", undefined, "approval-confirm");
       s.confirmBox.hidden = true;
       s.candidate = el("section", undefined, "delivery-candidate-setup");
@@ -145,7 +192,7 @@
         confirm(s, "advance"),
       );
       promote.append(areaLabel, area, s.promote, s.advance);
-      s.actions.append(s.candidate, promote, s.confirmBox);
+      s.actions.append(s.sync, s.candidate, promote, s.confirmBox);
       s.productionIntro = el("section", undefined, "production-tracking");
       s.openTracking = button("Track a production release", () => {
         s.trackingOpen = true;
@@ -440,6 +487,52 @@
       s.handoffs.hidden = s.trackingOpen;
       s.declarations.hidden = s.trackingOpen;
       s.openTracking.disabled = disabled;
+      const sync = s.data?.stagingSync;
+      s.sync.hidden = !sync || sync.phase === "disabled";
+      const syncLabels = {
+        checking: "Checking the test branch",
+        current: "Test branch is up to date",
+        "waiting-checks": "Waiting for branch checks",
+        "waiting-merge": "Waiting to merge staging changes",
+        repairing: "A coding gremlin is resolving conflicts",
+        "waiting-deployment": "Waiting for the updated test app",
+        blocked: "Staging sync needs attention",
+      };
+      s.syncTitle.textContent =
+        syncLabels[sync?.phase] || "Keep the test branch current";
+      s.syncStatus.textContent = sync?.message || "";
+      const checkedAt = sync?.checkedAt ? new Date(sync.checkedAt) : null;
+      s.syncChecked.hidden = !checkedAt || Number.isNaN(checkedAt.getTime());
+      s.syncChecked.textContent = s.syncChecked.hidden
+        ? ""
+        : `Last checked ${checkedAt.toLocaleString()} · Checks automatically every minute`;
+      s.syncRetry.disabled =
+        disabled ||
+        !available ||
+        !sync ||
+        ["disabled", "checking", "repairing"].includes(sync.phase);
+      s.syncRetry.textContent = s.syncBusy ? "Checking…" : "Retry sync";
+      message(s.syncNotice, s.syncFeedback, s.syncError);
+      s.syncPull.hidden = true;
+      s.syncPull.href = "";
+      if (sync?.pullUrl) {
+        try {
+          const url = new URL(sync.pullUrl);
+          if (
+            ["http:", "https:"].includes(url.protocol) &&
+            !url.username &&
+            !url.password &&
+            ![...url.searchParams.keys()].some((key) =>
+              /token|secret|password|credential/i.test(key),
+            )
+          ) {
+            s.syncPull.href = url.href;
+            s.syncPull.hidden = false;
+          }
+        } catch {
+          /* A malformed provider URL must not become a clickable link. */
+        }
+      }
       const candidate = s.data?.candidateSetup;
       s.candidate.hidden = !candidate;
       const candidateSignature = JSON.stringify(candidate);
@@ -755,7 +848,10 @@
       if (!s) return;
       timer = setTimeout(
         () => load(s),
-        s.data?.operation?.phase === "running" ? 2000 : 15000,
+        s.data?.operation?.phase === "running" ||
+          s.data?.stagingSync?.phase === "checking"
+          ? 2000
+          : 15000,
       );
     }
     window.addEventListener("dashboard:pagechange", schedule);

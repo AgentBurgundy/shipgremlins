@@ -26,6 +26,7 @@ export function runCheckedDelivery(input: {
   prepareRepository: () => void | Promise<void>;
   onCheck?: (name: string, status: "running" | "succeeded" | "failed") => void;
   report?: unknown;
+  syncRepair?: { stagingSha: string };
 }): Promise<{
   checks: string[];
   prUrl?: string;

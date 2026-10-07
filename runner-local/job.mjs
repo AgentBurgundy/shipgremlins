@@ -29,6 +29,10 @@ import {
 } from "./delivery.mjs";
 import { validateReviewPlan } from "./review-receipts.mjs";
 import {
+  validateSyncRepairPayload,
+  prepareSyncRepairCheckout,
+} from "./sync-repair.mjs";
+import {
   enforceDeadline,
   jobEnvironments,
   preparePublication,
@@ -254,6 +258,7 @@ try {
     throw new Error("Invalid browser verification mode.");
   activity.emit("progress", "Job started", `Starting ${kind} work.`, "running");
   if (kind === "developer") validateDelivery(input.delivery);
+  validateSyncRepairPayload(input);
   if (input.reviewPlan !== undefined) {
     if (kind !== "pm" || input.pmMode || input.browserVerification !== true)
       throw new Error("Delivery review requires a normal browser PM patrol.");
@@ -387,6 +392,13 @@ try {
       throw new Error(
         "Integration moved before checkout. Queue a patrol after its deployment settles.",
       );
+    if (input.syncRepair)
+      await prepareSyncRepairCheckout({
+        integrationSha: baseSha,
+        stagingSha: input.syncRepair.stagingSha,
+        run: (command, args) =>
+          run(command, args, { cwd: "/work/repo", env: publication }),
+      });
     if (kind === "developer")
       await run("git", ["checkout", "-b", input.delivery.branch], {
         cwd: "/work/repo",
@@ -497,6 +509,7 @@ try {
             commands,
             delivery: input.delivery,
             report: readImplementationReport("/output", redact),
+            syncRepair: input.syncRepair,
             baseSha,
             repoUrl: repo.href,
             provider: input.provider,
