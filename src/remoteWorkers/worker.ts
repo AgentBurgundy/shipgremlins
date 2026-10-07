@@ -14,6 +14,7 @@ import type {
   DockerRunners,
   DockerArtifacts,
 } from "../localRunners/docker.ts";
+import { RunnerWorkspaceError } from "../localRunners/workspace.ts";
 import { safeOAuthPath } from "../oauthConnection/storage.ts";
 import {
   RemoteWorkerError,
@@ -568,16 +569,18 @@ export function createRemoteWorker(options: {
                 .digest("hex"),
               commitSha: job.payload.reviewPlan.deployment.sha,
             };
-          } catch {
+          } catch (error) {
+            const message =
+              error instanceof RunnerWorkspaceError
+                ? `${error.message} Completed work and evidence are retained; independent browser review did not finish. Promotion remains blocked.`
+                : "Independent browser review could not complete. Promotion remains blocked.";
             inspect.exitCode = 1;
             artifacts.result = {
               ok: false,
               kind: job.payload.kind,
-              error:
-                "Independent browser review could not complete. Promotion remains blocked.",
+              error: message,
             };
-            logs +=
-              "\nIndependent browser review could not complete. Promotion remains blocked.";
+            logs += `\n${message}`;
           } finally {
             clearInterval(heartbeat);
           }

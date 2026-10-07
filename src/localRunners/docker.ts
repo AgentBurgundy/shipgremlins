@@ -10,6 +10,10 @@ import { browserOrigin } from "../../runner-local/browser-access.mjs";
 import { validateCommitIdentity } from "../../runner-local/runtime.mjs";
 import { validateSyncRepairPayload } from "../../runner-local/sync-repair.mjs";
 import {
+  createRunnerWorkspaceStorage,
+  RunnerWorkspaceError,
+} from "./workspace.ts";
+import {
   createTestEnvironments,
   parseDockerTarget,
   type DockerEnvironmentTarget,
@@ -450,8 +454,14 @@ export function createDockerRunners(options: {
   packageRoot: string;
   run?: DockerRun;
   environmentNamespace?: string;
+  workspaceRoot?: string;
 }): DockerRunners {
   const run = options.run ?? runDocker;
+  const workspaces = createRunnerWorkspaceStorage({
+    configurationRoot: options.environmentNamespace,
+    workspaceRoot: options.workspaceRoot,
+    run,
+  });
   const directory = join(resolve(options.packageRoot), "runner-local");
   const secrets = new Map<string, string[]>();
   let building: Promise<string> | undefined;
@@ -593,6 +603,7 @@ export function createDockerRunners(options: {
   const api: DockerRunners = {
     async preflight() {
       try {
+        await workspaces.preflight();
         const response = await run(
           ["version", "--format", "{{json .Server}}"],
           { timeoutMs: 10_000 },
@@ -626,15 +637,18 @@ export function createDockerRunners(options: {
           os: info.Os,
           architecture: info.Arch,
         };
-      } catch {
+      } catch (error) {
         return {
           available: false,
           message:
-            "Install and start Docker Desktop or Docker Engine, then retry.",
+            error instanceof RunnerWorkspaceError
+              ? error.message
+              : "Install and start Docker Desktop or Docker Engine, then retry.",
         };
       }
     },
     async ensureImage(progress) {
+      await workspaces.preflight();
       if (building) return building;
       building = (async () => {
         const tag = imageTag();
@@ -681,11 +695,13 @@ export function createDockerRunners(options: {
           throw new Error("This job belongs to another worker.");
         return { id: input.id, name: name(input.id), image: config.Image };
       }
+      workspaces.check();
       const preparationStarted = Date.now();
       const budgetMs =
         input.payload.remainingRuntimeMs ??
         (input.payload.maxRuntimeMinutes ?? 45) * 60_000;
       const image = await api.ensureImage();
+      const workspace = await workspaces.prepare(input.id, image);
       const environment = input.payload.testEnvironment
         ? await environments.start({
             jobId: input.id,
@@ -768,6 +784,7 @@ export function createDockerRunners(options: {
           `GREMLINS_JOB_ID=${input.id}`,
           "--mount",
           `type=volume,source=${volume(input.id)},target=/output`,
+          ...(workspace ? ["--mount", workspace] : []),
           image,
         ]);
         if (created.code !== 0) {
@@ -832,7 +849,7 @@ export function createDockerRunners(options: {
           await run(["stop", "--time", "10", container]).catch(() => {});
           await environments.cleanup(input.id).catch(() => {});
           throw new Error(
-            "The local job could not receive its payload. Credentials were not written to host files or Docker configuration.",
+            "The local job could not receive its payload. Existing private workspace data and output were preserved.",
           );
         }
         return { id: input.id, name: container, image };
@@ -1007,6 +1024,7 @@ export function createDockerRunners(options: {
           originalConfig = original.Config as {
             Labels: Record<string, string>;
           };
+        const workspace = await workspaces.prepare(id, image, true);
         const created = await run([
           "volume",
           "create",
@@ -1053,6 +1071,7 @@ export function createDockerRunners(options: {
           `type=volume,source=${volume(id)},target=/input,readonly`,
           "--mount",
           `type=volume,source=${reviewVolume(id)},target=/output`,
+          ...(workspace ? ["--mount", workspace] : []),
           "--entrypoint",
           "node",
           image,

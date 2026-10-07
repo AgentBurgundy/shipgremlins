@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import * as testEnvironments from "../testEnvironments/index.ts";
+import * as workspaceStorage from "./workspace.ts";
 import { fileURLToPath } from "node:url";
 import {
   mkdtempSync,
@@ -158,6 +159,105 @@ function fake() {
   };
 }
 const verify = { kind: "verify", nonce: id } satisfies DockerJobPayload;
+
+it("binds only a verified per-job workspace while preserving separate output storage", async () => {
+  const f = fake();
+  const storage = {
+    check: vi.fn(() => "/mnt/storage/gremlins"),
+    preflight: vi.fn(async () => undefined),
+    prepare: vi.fn(
+      async () => `type=bind,source=/mnt/storage/gremlins/${id},target=/work`,
+    ),
+  };
+  const factory = vi
+    .spyOn(workspaceStorage, "createRunnerWorkspaceStorage")
+    .mockReturnValue(storage);
+  try {
+    const api = createDockerRunners({
+      packageRoot,
+      run: f.run,
+      environmentNamespace: "/configuration",
+    });
+    await api.startJob({ id, workerId, payload: verify });
+    expect(factory).toHaveBeenCalledWith({
+      configurationRoot: "/configuration",
+      workspaceRoot: undefined,
+      run: f.run,
+    });
+    const args = f.calls.find(({ args }) => args[0] === "create")!.args;
+    expect(args).toContain(
+      `type=bind,source=/mnt/storage/gremlins/${id},target=/work`,
+    );
+    expect(args).toContain(
+      `type=volume,source=gremlins-output-${id},target=/output`,
+    );
+    await api.stopJob(id);
+    await api.cleanupEnvironment!(id);
+    expect(f.volumes.size).toBe(1);
+    expect(f.containers.has(`gremlins-job-${id}`)).toBe(true);
+  } finally {
+    factory.mockRestore();
+  }
+});
+
+it("fails storage admission before creating the agent container or passing credentials", async () => {
+  const f = fake();
+  const failure = new workspaceStorage.RunnerWorkspaceError(
+    "Runner storage has less than 5 GiB free.",
+  );
+  const factory = vi
+    .spyOn(workspaceStorage, "createRunnerWorkspaceStorage")
+    .mockReturnValue({
+      check: vi.fn(() => "/mnt/storage/gremlins"),
+      preflight: vi.fn(async () => undefined),
+      prepare: vi.fn(async () => {
+        throw failure;
+      }),
+    });
+  try {
+    const api = createDockerRunners({ packageRoot, run: f.run });
+    await expect(api.startJob({ id, workerId, payload: verify })).rejects.toBe(
+      failure,
+    );
+    expect(
+      f.calls.some(({ args }) =>
+        ["create", "exec", "volume"].includes(args[0]!),
+      ),
+    ).toBe(false);
+  } finally {
+    factory.mockRestore();
+  }
+});
+
+it("shows a safe storage readiness failure and refuses an image build on low disk", async () => {
+  const f = fake();
+  const failure = new workspaceStorage.RunnerWorkspaceError(
+    "Runner storage has less than 5 GiB free.",
+  );
+  const factory = vi
+    .spyOn(workspaceStorage, "createRunnerWorkspaceStorage")
+    .mockReturnValue({
+      check: vi.fn(() => {
+        throw failure;
+      }),
+      preflight: vi.fn(async () => {
+        throw failure;
+      }),
+      prepare: vi.fn(async () => undefined),
+    });
+  try {
+    const api = createDockerRunners({ packageRoot, run: f.run });
+    await expect(api.preflight()).resolves.toEqual({
+      available: false,
+      message: failure.message,
+    });
+    await expect(api.ensureImage()).rejects.toBe(failure);
+    expect(f.calls).toEqual([]);
+  } finally {
+    factory.mockRestore();
+  }
+});
+
 const developer = {
   kind: "developer",
   repoUrl: "https://github.com/example/app.git",

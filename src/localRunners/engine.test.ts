@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -20,11 +21,37 @@ import {
   LocalJobDeferredError,
 } from "./engine.ts";
 import type { DockerJobPayload, DockerRunners } from "./docker.ts";
+import { RunnerWorkspaceError } from "./workspace.ts";
 import type { LocalJobInput } from "./types.ts";
 import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import { createUsage } from "../usage/index.ts";
 import type { JobNotificationEvent } from "../slack/messages.ts";
 import type { ActivityStore } from "../storage/activity.ts";
+
+const lockWriteFault = vi.hoisted(() => ({
+  once: undefined as ((fd: number) => void) | undefined,
+}));
+vi.mock("node:fs", async (load) => {
+  const actual = await load<typeof import("node:fs")>();
+  return {
+    ...actual,
+    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      const [file, value] = args;
+      if (
+        lockWriteFault.once &&
+        typeof file === "number" &&
+        typeof value === "string" &&
+        value.startsWith('{"pid":') &&
+        value.includes('"owner":')
+      ) {
+        const fault = lockWriteFault.once;
+        lockWriteFault.once = undefined;
+        fault(file);
+      }
+      return actual.writeFileSync(...args);
+    },
+  };
+});
 
 const roots: string[] = [];
 const PNG = Buffer.from(
@@ -282,6 +309,103 @@ it("backs off confirmed pre-execution infrastructure failures durably and exhaus
   expect(readFileSync(f.stateFile, "utf8")).not.toContain("private outage");
 });
 
+it("surfaces a storage prerequisite failure once without infrastructure retries or agent preparation", async () => {
+  const f = fixture(),
+    message =
+      "Runner storage has less than 5 GiB free. Free space on its storage drive before starting another job. Retained work and evidence were not deleted.";
+  f.mock.ensureImage.mockRejectedValue(new RunnerWorkspaceError(message));
+  const worker = await f.engine.create();
+  await f.engine.tick();
+  const job = (await f.engine.jobs())[0]!;
+  expect(job).toMatchObject({
+    status: "failed",
+    retries: 0,
+    message,
+    failure: { category: "infrastructure", retryable: false },
+  });
+  expect(job.nextAttemptAt).toBeUndefined();
+  expect(
+    (await f.engine.status()).runners.find((item) => item.id === worker.id),
+  ).toMatchObject({ busy: false, message });
+  const restarted = createLocalRunners(f.options);
+  f.advance(90_000);
+  await restarted.tick();
+  await restarted.tick();
+  expect((await restarted.job(job.id))?.message).toBe(message);
+  expect(f.mock.ensureImage).toHaveBeenCalledTimes(1);
+  expect(f.options.prepareJob).not.toHaveBeenCalled();
+  expect(f.mock.startJob).not.toHaveBeenCalled();
+  expect(f.mock.removeJob).not.toHaveBeenCalled();
+});
+
+it("stops a workspace launch refusal durably, releases its lease and restores unused run budget", async () => {
+  const f = fixture();
+  const worker = await f.ready();
+  const releaseJobResources = vi.fn(async (_id: string) => {});
+  const options = {
+    ...f.options,
+    releaseJobResources,
+    executionLimits: () => ({ maxDailyRuns: 1 }),
+  };
+  const engine = createLocalRunners(options);
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  const message =
+    "The runner storage directory is missing. Mount its storage drive and restore the configured directory before starting a job.";
+  f.mock.startJob.mockRejectedValueOnce(new RunnerWorkspaceError(message));
+  f.mock.inspectJob.mockClear();
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({
+    status: "failed",
+    message,
+    retries: 0,
+    failure: { category: "infrastructure", retryable: false },
+  });
+  expect(f.mock.inspectJob).not.toHaveBeenCalledWith(job.id);
+  expect(releaseJobResources).toHaveBeenCalledWith(job.id);
+  expect(
+    (await engine.status()).runners.find((item) => item.id === worker.id),
+  ).toMatchObject({ busy: false, status: "ready", message });
+  const attempts = f.mock.startJob.mock.calls.length;
+  const restarted = createLocalRunners(options);
+  f.advance(90_000);
+  await restarted.tick();
+  expect(f.mock.startJob).toHaveBeenCalledTimes(attempts);
+  expect(f.mock.removeJob).not.toHaveBeenCalledWith(job.id);
+  expect(readFileSync(f.stateFile, "utf8")).not.toContain(
+    "never-store-this-credential",
+  );
+  const replacement = await restarted.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await restarted.tick();
+  expect((await restarted.job(replacement.id))?.status).toBe("running");
+  expect((await restarted.job(job.id))?.status).toBe("failed");
+});
+
+it("does not trust a generic error merely named RunnerWorkspaceError", async () => {
+  const f = fixture();
+  f.mock.ensureImage.mockRejectedValue(
+    Object.assign(new Error("private storage path and credential"), {
+      name: "RunnerWorkspaceError",
+    }),
+  );
+  await f.engine.create();
+  await f.engine.tick();
+  expect((await f.engine.jobs())[0]).toMatchObject({
+    status: "queued",
+    failure: { category: "infrastructure", retryable: true },
+  });
+  expect(readFileSync(f.stateFile, "utf8")).not.toContain(
+    "private storage path and credential",
+  );
+});
+
 it("cancels queued work durably and only stops the requested running owned job", async () => {
   const f = fixture();
   await f.ready();
@@ -529,6 +653,82 @@ it("retries completion reconciliation without executing the agent or publication
       () => "historical failure retained",
     ),
   ).resolves.toBe("historical failure retained");
+  expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
+});
+
+it("retains completed work and usage when independent review hits a storage admission failure", async () => {
+  const f = fixture();
+  const worker = await f.ready();
+  const message =
+    "Runner storage has less than 5 GiB free. Free space on its storage drive before starting another job. Retained work and evidence were not deleted.";
+  const completeJob = vi.fn(async () => {});
+  const reconcileCompletedJob = vi.fn(async () => {
+    throw new RunnerWorkspaceError(message);
+  });
+  const releaseJobResources = vi.fn(async (_id: string) => {});
+  const options = {
+    ...f.options,
+    completeJob,
+    reconcileCompletedJob,
+    releaseJobResources,
+    executionLimits: () => ({ maxDailyRuns: 1 }),
+  };
+  const engine = createLocalRunners(options);
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  f.advance(60_000);
+  f.finish(job.id);
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({
+    status: "failed",
+    exitCode: 0,
+    message: expect.stringContaining(message),
+    failure: { category: "infrastructure", retryable: false },
+    budget: { runtimeMs: 60_000 },
+  });
+  expect((await engine.job(job.id))?.message).toContain(
+    "Completed work and evidence are retained",
+  );
+  expect((await engine.job(job.id))?.nextAttemptAt).toBeUndefined();
+  expect(releaseJobResources).toHaveBeenCalledWith(job.id);
+  expect(
+    (await engine.status()).runners.find((item) => item.id === worker.id),
+  ).toMatchObject({
+    busy: false,
+    status: "ready",
+    message: expect.stringContaining(message),
+  });
+
+  const starts = f.mock.startJob.mock.calls.length;
+  const restarted = createLocalRunners(options);
+  f.advance(180_000);
+  await restarted.tick();
+  await restarted.tick();
+  expect(completeJob).toHaveBeenCalledOnce();
+  expect(reconcileCompletedJob).toHaveBeenCalledOnce();
+  expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
+  expect(f.mock.removeJob).not.toHaveBeenCalledWith(job.id);
+  expect(f.mock.stopJob).not.toHaveBeenCalledWith(job.id);
+  expect(f.containers.get(job.id)).toMatchObject({
+    status: "exited",
+    exitCode: 0,
+  });
+  expect(
+    (await restarted.status()).execution?.find(
+      (item) => item.project === "demo",
+    ),
+  ).toMatchObject({ runsStarted: 1, runtimeMinutes: 1 });
+  const next = await restarted.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await restarted.tick();
+  expect(await restarted.job(next.id)).toMatchObject({ status: "queued" });
   expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
 });
 
@@ -861,6 +1061,7 @@ function fixture() {
 }
 
 afterEach(() => {
+  lockWriteFault.once = undefined;
   vi.restoreAllMocks();
   vi.useRealTimers();
   for (const root of roots.splice(0))
@@ -1607,6 +1808,58 @@ describe("durable local worker engine", () => {
     await expect(f.engine.create()).rejects.toBeInstanceOf(LocalRunnerError);
     expect(readFileSync(f.stateFile, "utf8")).toBe(corrupt);
   });
+
+  it.each(["empty", "partial"])(
+    "releases only its newly created %s lock after ENOSPC so a recovered disk can run again",
+    async (contents) => {
+      const f = fixture();
+      const file = join(f.root, ".run", "local-runners", "state.lock");
+      lockWriteFault.once = (fd) => {
+        if (contents === "partial") writeFileSync(fd, '{"pid":');
+        throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+      };
+      await expect(f.engine.create()).rejects.toMatchObject({ code: "ENOSPC" });
+      expect(existsSync(file)).toBe(false);
+      expect(existsSync(f.stateFile)).toBe(false);
+      expect(f.calls).toHaveLength(0);
+      await f.engine.create();
+      await f.engine.tick();
+      expect(f.calls).toHaveLength(1);
+    },
+  );
+
+  it("preserves a different controller's replacement lock when initializing its own lock fails", async () => {
+    const f = fixture();
+    const file = join(f.root, ".run", "local-runners", "state.lock");
+    const replacement = JSON.stringify({
+      pid: process.pid,
+      owner: "other-controller",
+    });
+    lockWriteFault.once = () => {
+      renameSync(file, `${file}.original`);
+      writeFileSync(file, replacement);
+      throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    };
+    await expect(f.engine.create()).rejects.toMatchObject({ code: "ENOSPC" });
+    expect(readFileSync(file, "utf8")).toBe(replacement);
+    expect(existsSync(`${file}.original`)).toBe(true);
+    await expect(f.engine.create()).rejects.toMatchObject({ status: 409 });
+    expect(readFileSync(file, "utf8")).toBe(replacement);
+  });
+
+  it.each(["", '{"pid":'])(
+    "preserves an existing malformed lock %j for operator recovery",
+    async (contents) => {
+      const f = fixture();
+      const directory = join(f.root, ".run", "local-runners");
+      mkdirSync(directory, { recursive: true });
+      const file = join(directory, "state.lock");
+      writeFileSync(file, contents);
+      await expect(f.engine.create()).rejects.toMatchObject({ status: 409 });
+      expect(readFileSync(file, "utf8")).toBe(contents);
+      expect(readdirSync(directory)).toEqual(["state.lock"]);
+    },
+  );
 
   it("rejects unknown queue fields and unsafe paths before preparing or launching anything", async () => {
     const f = fixture();

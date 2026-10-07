@@ -303,6 +303,58 @@ An area's WIP limit includes approved tickets in delivery: a completed worker jo
 
 Queue state lives under `.run/local-runners/` in the configuration directory. Restart recovery inspects the existing container before deciding what to do. Docker containers/output volumes retain logs and artifacts independently of the dashboard. Older completed metadata is archived. Back up configuration and Docker storage according to your server's retention policy.
 
+### Put runner workspaces on a storage drive
+
+On a Linux controller using its local Docker Engine, you can move **new job
+workspaces** off the system disk. Repository checkouts, dependencies, and private
+agent home directories then live on the dedicated mounted drive. Save
+`runner-storage.json` in the configuration directory (normally `~/.shipgremlins/`):
+
+```json
+{
+  "workspaceRoot": "/mnt/storage/shipgremlins/workspaces"
+}
+```
+
+Mount the drive first, then create this dedicated directory with owner UID 1000
+and permissions `0700`. The controller or enrolled worker process must also run
+as UID 1000, matching the runner's container user. This requirement applies only
+to opt-in external storage; default Docker storage is unchanged. For example:
+
+```sh
+sudo install -d -o 1000 -g 1000 -m 0700 /mnt/storage/shipgremlins/workspaces
+```
+
+Use an absolute directory without symbolic links. Configure the mount to be
+available after reboot before starting the controller. Do not point this setting
+at your home, configuration, or source repository directory. Windows, macOS,
+Docker Desktop, and remote Docker endpoints use their existing Docker storage;
+this opt-in setting requires a Linux controller and a local Docker Engine that
+can read the exact host directory. Each enrolled remote worker reads its own
+`runner-storage.json` from its worker home, normally
+`~/.shipgremlins/worker/runner-storage.json`.
+
+Each job receives its own directory mounted at `/work`; browser reviews use a
+separate directory. ShipGremlins checks that the directory is private, writable
+by the runner, visible to Docker, and has at least **5 GiB free** before starting
+work. This is a starting-space check, not a quota or a guarantee that a large
+build will fit. Storage admission failures show the required action and do not
+retry automatically. Fix the mount, permissions, or free space, then start a new
+run; the failed run stays in history.
+
+This setting does not move existing containers or jobs, Docker images and build
+cache, output/evidence volumes, or the activity database. Keep sufficient space
+on Docker's own storage disk too. Removing the optional configuration restores
+the default Docker workspace behavior for future jobs.
+
+Job directories remain on the drive after success, failure, or cancellation;
+there is **no automatic workspace purge**. They can contain unpublished code and
+private agent files. Back them up and review completed jobs before removing
+their directories as part of your own retention policy. Never remove a directory
+used by an active job, and retain required logs, evidence, configuration, and
+database backups separately. Cleaning unused Docker images does not clean these
+workspaces or constitute a backup.
+
 ## Server use
 
 For a foreground dashboard on your trusted LAN:
