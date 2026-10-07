@@ -20,15 +20,31 @@ Never put client secrets or state keys in the CLI distribution, source repositor
 
 Linear uses `actor=user`, `read,write`, and S256 PKCE. The broker relays only the authorization code; the controller exchanges and refreshes credentials directly with Linear. Callback: `https://shipgremlins.ai/api/linear/callback`.
 
-Vercel uses a registered **connectable integration**. Configure **Read** access
-for Integration Configuration, Projects, Teams and Current User; **Read/Write**
+Vercel uses a registered **community connectable integration**. Configure **Read**
+access for Integration Configuration, Projects, Teams and Current User; **Read/Write**
 for Deployments and the separate Project Protection Bypass permission. These
-support repository matching, existing deployment discovery, reviewed test
-Preview creation and ShipGremlins-owned automation bypass recovery. General
-Projects write access, environment-variable access and domain access are not
+support repository matching, existing deployment discovery and reviewed test
+Preview creation. The bypass scope does **not** enable community OAuth to create
+an automation bypass: Vercel currently permits integration-owned creation only
+for native integrations. General Projects write access, environment-variable
+access and domain access are not
 needed by the current implementation. The
 [permission and endpoint rationale](../docs/LINEAR_VERCEL_OAUTH.md#vercel)
 describes the boundary; do not describe this integration as read-only.
+
+Live setup confirmed that an authorized community installation receives
+`Only native integrations can create automation bypass.` from the protection
+bypass API even with its Read/Write scope approved. Treat this as a supported
+setup limitation, not a reason to repeatedly reconnect or request broader project
+permissions. Keep OAuth connected and have the project owner save one dedicated
+automation bypass in the field setup prepared for this project under
+**Connections → Project access → Vercel preview access**. Setup saves the secret
+reference automatically; manual configuration must use that same reference.
+Deployment Protection stays enabled. Native integrations or a manual API token
+with project protection administration access can support managed generation;
+community OAuth cannot. The manual-token alternative uses the Default connection
+and requires explicitly disconnecting its saved OAuth authorization first. See
+the [protected-preview setup instructions](../docs/LINEAR_VERCEL.md#vercel-preview-access).
 
 Set the integration's callback to
 `https://shipgremlins.ai/api/vercel/callback`. Its registered slug must match

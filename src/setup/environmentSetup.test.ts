@@ -647,6 +647,40 @@ describe("automatic environment preparation", () => {
       profile: "hosted",
     });
   });
+  it("routes the integration bypass restriction to one-time manual access without reconnecting or reflecting provider content", async () => {
+    useTarget(target);
+    const h = harness();
+    const connect = h.connect.getMockImplementation()!;
+    h.connect.mockImplementation(async (name, input) => {
+      await connect(name, input);
+      throw new VercelSetupError(
+        "private-provider-response-must-not-appear",
+        400,
+        "access_manual_required",
+      );
+    });
+    const { state } = await run(h);
+    expect(state).toMatchObject({
+      status: "needs_input",
+      step: "connect_access",
+      action: "manage_credentials",
+      configurationRevision: config().revision,
+    });
+    expect(state?.message).toContain("Your Vercel account is connected");
+    expect(state?.message).toContain("Protection Bypass for Automation");
+    expect(state?.connectionId).toBeUndefined();
+    expect(JSON.stringify(state)).not.toContain("private-provider-response");
+    expect(
+      effectiveVerification(loadProject(root, "app").config),
+    ).toMatchObject({
+      mode: "browser",
+      target: { bypassSecret: "TEST_PREVIEW_ACCESS" },
+    });
+    h.service.status("app");
+    h.service.status("app");
+    expect(h.connect).toHaveBeenCalledOnce();
+    expect(h.verify).not.toHaveBeenCalled();
+  });
   it.each([
     [
       "credential_changed",

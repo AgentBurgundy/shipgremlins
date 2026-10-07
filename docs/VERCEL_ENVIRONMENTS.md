@@ -1,10 +1,11 @@
 # Find or create a Vercel test environment
 
 Open **Project → Environment**. With a connected Vercel account, ShipGremlins
-finds the matching app, selects its current test preview, connects private
+finds the matching app, selects its current test preview, checks private
 automation access, and opens the app in a real browser. One progress card follows
-the whole setup, including after a refresh. You do not need to copy project IDs,
-deployment URLs, or protection bypass secrets between forms.
+the whole setup, including after a refresh. Project IDs and deployment URLs are
+resolved automatically. A protected preview connected through community OAuth
+needs a dedicated bypass saved once in Connections; later runs reuse it.
 
 Discovery uses the repository and source provider, not just an app name. It uses
 the saved test branch, a configured nonproduction integration branch, or
@@ -32,8 +33,9 @@ For an explicit choice, use the environment editor:
 3. Choose a ready Preview deployment or an existing custom staging environment.
    The card shows the branch, environment, deployment state and commit. Production
    deployments are visible for context and cannot be selected as previews.
-4. Save the environment. ShipGremlins connects preview access and tests the app
-   automatically. Add app test accounts if needed. **Test again** reruns setup
+4. Save the environment. ShipGremlins checks preview access and tests the app
+   automatically once any required bypass is saved. Add app test accounts if
+   needed. **Test again** reruns setup
    and browser verification. A successful Vercel build is not proof that a PM can
    reach the app or sign in.
 
@@ -84,13 +86,33 @@ reviewed actions. Do not paste secrets in chat. Save them in **Connections**.
 
 ## Connect protected preview access
 
-Preview access is part of automatic setup. ShipGremlins checks the project using
-its selected Vercel connection, creates or reuses a
-dedicated **Protection Bypass for Automation** secret when needed, and saves it
-privately in Connections. Project settings contain only a secret reference;
-the credential is never sent to the dashboard or chat. Public previews need no
-new secret. Opening an eligible, unverified Environment page starts this setup
-once; a failed attempt does not loop on every refresh.
+Preview access is part of setup. ShipGremlins checks the project using its
+selected Vercel connection. Public previews need no new secret. Vercel currently
+rejects automation bypass creation by community OAuth integrations, including
+ShipGremlins, even with Project Protection Bypass Read/Write approved. This is a
+credential-type limitation; reconnecting or granting that scope again does not
+fix it.
+
+Keep OAuth connected for project and deployment access. For a protected preview:
+
+1. In the selected Vercel project, open **Settings → Deployment Protection →
+   Protection Bypass for Automation** and generate a dedicated ShipGremlins secret.
+2. Follow setup's link to **Connections → Project access → Vercel preview access**
+   and save its value in the field prepared for this project. Setup has already
+   saved the reference. When configuring manually instead, select that same
+   reference under **Advanced preview access** and save the environment.
+3. Choose **Test again** to resume setup and verify browser access. The saved
+   value is reused until you revoke or rotate it.
+
+An eligible native integration, or a manual API token belonging to an account
+allowed to administer that project's protection, can instead let ShipGremlins
+create and recover its managed bypass automatically. Manual tokens use the
+Default connection; saved OAuth takes precedence until explicitly disconnected.
+[Connection choices and storage →](LINEAR_VERCEL.md#vercel-preview-access)
+
+Project settings contain only a secret reference, and saved values are not
+returned to the dashboard or chat. Opening an eligible, unverified Environment
+page starts setup once; a failed attempt does not loop on every refresh.
 
 Vercel grants a bypass secret access across **all deployments of that Vercel
 project** until revoked. ShipGremlins keeps deployment protection enabled and
@@ -98,24 +120,27 @@ uses the credential with the selected test environment. It does not replace or
 revoke other tools' bypass secrets. Setup verifies the saved credential in a real
 browser before displaying **Ready**.
 
-Managed credentials are reconciled against Vercel: missing local values can be
+Where the selected credential permits managed bypass access, managed credentials
+are reconciled against Vercel: missing local values can be
 restored and changed provider values refreshed. Browser jobs also reconcile their
 managed access before starting. If a browser check still encounters protection,
 setup attempts one repair and one more browser check, then shows the specific
 remaining problem. Uncertain provider writes are reconciled rather than blindly
-creating duplicate credentials. Manually supplied credentials are preserved;
-a diagnosed repair can create a separate managed reference.
+creating duplicate credentials. Manually supplied credentials are preserved.
+Update their value in Connections after rotation or revocation; community OAuth
+cannot regenerate them. A diagnosed repair can create a separate managed
+reference only when the selected account credential supports that operation.
 
 Workers apply the bypass privately to the exact selected deployment origin,
 including redirect hops. Agents use clean URLs and saved test-account names;
 the secret values are not included in prompts, browser output, or screenshots.
 Cross-origin sign-in is not supported by the private password-login flow.
 
-If Vercel denies permission, reconnect an account with permission to manage
-deployment protection, or use **Advanced preview access** to reference a
-manually created secret and save its value in **Connections → Project access**.
-Vercel requires a team member role or a Project Administrator project role to
-manage automation bypasses. Keep secret values out of chat and URLs.
+If Vercel denies project or deployment access, check the selected account and its
+project permissions. If it rejects community integration bypass creation, use
+the dedicated-secret steps above. The person creating that secret must be
+allowed to manage the project's Deployment Protection. Keep secret values out
+of chat and URLs.
 
 The bypass is separate from logging into your application. Configure dedicated
 app test accounts and verify both steps in the browser check. An email OTP,

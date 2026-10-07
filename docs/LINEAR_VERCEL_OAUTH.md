@@ -14,34 +14,63 @@ These behaviors follow [Linear's OAuth documentation](https://linear.app/develop
 
 ## Vercel
 
-ShipGremlins uses a Vercel **connectable integration**. In the authorization flow,
-choose the account or team and the existing projects your crew may access. The
-controller verifies the selected project before using that connection.
+ShipGremlins uses a Vercel **community connectable integration**. In the
+authorization flow, choose the account or team and the existing projects your
+crew may access. The controller verifies the selected project before using that
+connection.
 
 The integration needs these permissions for the current setup features:
 
-| Vercel permission         | Access     | Purpose                                                                                           |
-| ------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
-| Integration Configuration | Read       | Installation access; its identity binds the saved OAuth connection and owned automation bypass.   |
-| Current User              | Read       | Verify a personal-account installation.                                                           |
-| Teams                     | Read       | Verify a team installation.                                                                       |
-| Projects                  | Read       | Match the repository, inspect existing project settings and identify preview environments.        |
-| Deployments               | Read/Write | Find and verify deployments, and create a reviewed test Preview in the selected existing project. |
-| Project Protection Bypass | Read/Write | Find, create and recover ShipGremlins' dedicated automation bypass for protected previews.        |
+| Vercel permission         | Access     | Purpose                                                                                                                  |
+| ------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Integration Configuration | Read       | Installation access; its identity binds the saved OAuth connection and owned automation bypass.                          |
+| Current User              | Read       | Verify a personal-account installation.                                                                                  |
+| Teams                     | Read       | Verify a team installation.                                                                                              |
+| Projects                  | Read       | Match the repository, inspect existing project settings and identify preview environments.                               |
+| Deployments               | Read/Write | Find and verify deployments, and create a reviewed test Preview in the selected existing project.                        |
+| Project Protection Bypass | Read/Write | Manage an integration-owned bypass where Vercel permits it; creation requires a native integration, not community OAuth. |
 
 Project access and permission levels are separate: select only the projects the
 crew needs. Vercel groups deployment writes into a broader permission; the
 ShipGremlins setup implementation uses it to create nonproduction previews.
 It does not create Vercel projects, edit general project settings, write environment
 variables or domains, delete deployments, or promote production. Keep general
-**Projects** access at **Read**, with the separate protection-bypass permission
-for automation access. See [Vercel's integration scope reference](https://vercel.com/docs/integrations/create-integration/vercel-api-integrations)
+**Projects** access at **Read**. The separate protection-bypass permission does
+not override Vercel's restriction on community integrations. See [Vercel's integration scope reference](https://vercel.com/docs/integrations/create-integration/vercel-api-integrations)
 and [automation bypass API](https://vercel.com/docs/rest-api/projects/update-protection-bypass-for-automation).
 
-A read-only installation supports discovery but cannot provide the complete
-preview setup. Existing installations must approve added permissions before using
-them; reconnect if the saved grant lacks access. Optional Vercel analytics reads
-can still return unavailable and are not required for onboarding. If the hosted
+### Protected previews with community OAuth
+
+Vercel's current API rejects a community integration's bypass creation with
+`Only native integrations can create automation bypass.` This restriction was
+confirmed with an authorized ShipGremlins installation, including approved
+Project Protection Bypass Read/Write access. It is a credential-type restriction,
+not a failed OAuth connection or a missing scope. The public endpoint reference
+does not currently spell out that distinction.
+
+Keep community OAuth for project discovery and deployment actions. For protected
+previews, create one dedicated ShipGremlins secret in the Vercel project's
+**Settings → Deployment Protection → Protection Bypass for Automation**, then
+save its value in the field setup prepared for this project in **Connections →
+Project access → Vercel preview access**. Setup has already saved the reference;
+when configuring access manually, select that same reference in the environment
+settings. Subsequent browser runs reuse it. Deployment Protection stays on; the
+app's own login remains separate.
+[User setup instructions →](LINEAR_VERCEL.md#vercel-preview-access)
+
+Automatic creation requires an eligible native integration or a manual API
+token whose owner can manage that project's protection. A manual token works
+through the Default connection, and does not override a saved OAuth
+authorization. Explicitly disconnect OAuth before selecting that alternative;
+otherwise use the dedicated bypass without changing the account connection.
+If a manually supplied bypass is revoked or rotated, update its saved value in
+Connections. Do not promise that community OAuth can regenerate it.
+
+A read-only installation supports discovery but needs deployment write access
+to create test Previews. Existing installations must approve added permissions
+before using them; reconnect if the saved grant lacks access. Additional scopes
+do not remove the community bypass-creation restriction. Optional Vercel
+analytics reads can still return unavailable and are not required for onboarding. If the hosted
 connection broker is unavailable, the dashboard's advanced manual-token path
 remains usable. See [Vercel environments](VERCEL_ENVIRONMENTS.md).
 

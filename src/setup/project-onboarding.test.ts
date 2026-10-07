@@ -1086,6 +1086,72 @@ describe("automatic Vercel environment setup", () => {
     ).toHaveLength(1);
     f.panel.destroy();
   });
+  it("guides the one-time protected-preview secret setup and verifies it without reconnecting Vercel", async () => {
+    const blocked = {
+      ...managed({
+        status: "needs_input",
+        step: "connect_access",
+        action: "manage_credentials",
+        message:
+          "Your Vercel account is connected. Protected previews need a one-time Protection Bypass for Automation secret saved in Connections → Project access.",
+      }),
+      environment: vercelState({
+        bypassSecret: "VERCEL_BYPASS_EXISTING_REFERENCE",
+      }).environment,
+    };
+    const api = vi.fn(async (path: string, _body?: unknown) =>
+      path.endsWith("/prepare-environment")
+        ? {
+            ...blocked,
+            environmentSetup: { status: "ready", step: "test_access" },
+            environment: {
+              ...blocked.environment,
+              verification: { status: "passed" },
+            },
+          }
+        : blocked,
+    );
+    const f = fixture(api, () => ({
+        serviceConnections: [
+          { provider: "vercel", id: "default", connected: true },
+        ],
+      })),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(automatic(root))).toContain(
+      "One-time access for your protected preview",
+    );
+    expect(text(automatic(root))).toContain("“Vercel preview access” for shop");
+    expect(text(automatic(root))).not.toContain("Reconnect Vercel");
+    expect(text(automatic(root))).not.toContain("Try setup again");
+    expect(text(automatic(root))).not.toContain("Add test credentials");
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Add preview access secret")!
+      .fire("click");
+    expect(f.window.dashboardPages.navigate).toHaveBeenCalledWith(
+      "/connections#project-access",
+    );
+    await f.panel.refresh("shop");
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toHaveLength(0);
+    await walk(automatic(root))
+      .find((item) => item.textContent === "Verify preview access")!
+      .fire("click");
+    expect(
+      api.mock.calls.filter(([path]) => path.endsWith("/prepare-environment")),
+    ).toEqual([
+      [
+        "/api/projects/shop/onboarding/prepare-environment",
+        { configurationRevision: "config-1", force: true },
+      ],
+    ]);
+    expect(f.onConnectHosting).not.toHaveBeenCalled();
+    expect(f.panel.isDirty()).toBe(false);
+    expect(automatic(root).hidden).toBe(true);
+    f.panel.destroy();
+  });
 
   it("starts discovery when Vercel is connected and no environment has been selected", async () => {
     const api = vi.fn(async (path: string, _body?: unknown) => ({

@@ -245,6 +245,10 @@
           ? (s.data.environmentSetup.connectionId ?? null)
           : null,
       ]);
+    const manualPreviewAccessRequired = (s) =>
+      s.data?.environment?.target.kind === "vercel" &&
+      s.data?.environmentSetup?.action === "manage_credentials" &&
+      s.data.environmentSetup.step === "connect_access";
     const previewNeedsSave = (s) =>
       dirty(s) || s.draft?.suggestedEnvironment || !s.data?.environment;
     const preparedTargetKey = (target) => {
@@ -1288,10 +1292,17 @@
       if (manual && s.data?.environmentSetupSupported) {
         s.formPreviewAccess = null;
         card.append(
-          node("h4", "Preview access is handled for you"),
+          node(
+            "h4",
+            manualPreviewAccessRequired(s)
+              ? "One-time preview access"
+              : "Preview access",
+          ),
           node(
             "p",
-            "Saving checks Vercel protection, connects the runner’s access and tests the preview. Protection stays enabled.",
+            manualPreviewAccessRequired(s)
+              ? "Add a dedicated bypass secret under Vercel preview access in Connections, then verify preview access above. Your Vercel connection stays connected."
+              : "Saving checks Vercel protection and tests access from your runner. We’ll ask for a one-time access secret only if Vercel requires it.",
             "onboarding-help",
           ),
         );
@@ -2074,6 +2085,7 @@
       if (connection.ready) s.hostingFailure = null;
       const setup = s.data?.environmentSetup,
         available = s.data?.environmentSetupSupported,
+        manualPreviewAccess = manualPreviewAccessRequired(s),
         showConnection =
           !s.showForm || s.data?.environment?.target.kind === "vercel",
         connectionFailure = showConnection
@@ -2117,11 +2129,13 @@
           ? "Getting your crew connected."
           : needsConnection
             ? "Let your gremlins see the app."
-            : suggested
-              ? "We’ll find your test environment."
-              : setup?.action === "choose_preview"
-                ? "Choose the app your crew should test."
-                : diagnosis?.title || "One thing needs your help.";
+            : manualPreviewAccess
+              ? "One-time access for your protected preview."
+              : suggested
+                ? "We’ll find your test environment."
+                : setup?.action === "choose_preview"
+                  ? "Choose the app your crew should test."
+                  : diagnosis?.title || "One thing needs your help.";
       copy.append(
         node("h3", title),
         node(
@@ -2155,6 +2169,14 @@
         ),
       );
       s.automatic.append(heading);
+      if (manualPreviewAccess)
+        s.automatic.append(
+          node(
+            "p",
+            `In Connections, open “Vercel preview access” for ${s.project.name}. This lets your gremlins test protected previews while protection stays enabled.`,
+            "onboarding-help",
+          ),
+        );
       if (
         !preparing &&
         setup?.action === "connect_vercel" &&
@@ -2287,7 +2309,9 @@
       } else if (setup?.action === "manage_credentials")
         actions.append(
           action(
-            "Add test credentials",
+            manualPreviewAccess
+              ? "Add preview access secret"
+              : "Add test credentials",
             () => navigate("/connections#project-access"),
             false,
           ),
@@ -2321,7 +2345,7 @@
       )
         actions.append(
           action(
-            "Check again",
+            manualPreviewAccess ? "Verify preview access" : "Check again",
             () => prepareEnvironment(s, undefined, true),
             true,
             false,
