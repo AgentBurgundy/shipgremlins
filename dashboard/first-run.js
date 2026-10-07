@@ -229,6 +229,10 @@
           `${projectPath(project)}?pm=${encodeURIComponent(area.key)}`,
         ],
         config: ["Review settings", "/settings#advanced-settings"],
+        environment: [
+          "Set up app sign-in",
+          `${projectPath(project)}?tab=environment`,
+        ],
       };
       const [label, href] = links[blocker.action] || [
         "Open the project",

@@ -302,12 +302,25 @@
         ? "Set up Linear"
         : "";
     };
+    const needsTestLogin = (project) =>
+      !project?.foundation?.needed &&
+      project?.readiness?.steps?.some(
+        (step) => step.id === "test_access" && step.ready === false,
+      );
     const nextSetup = (project) =>
-      onSetupLinear && linearSetupLabel(project)
-        ? "linear"
-        : onSetupHosting && needsHosting(project)
-          ? "hosting"
-          : "";
+      onSetupHosting && !needsHosting(project) && needsTestLogin(project)
+        ? "test-login"
+        : onSetupLinear && linearSetupLabel(project)
+          ? "linear"
+          : onSetupHosting && needsHosting(project)
+            ? "hosting"
+            : "";
+    const setupLabel = (step, project) =>
+      step === "linear"
+        ? linearSetupLabel(project)
+        : step === "test-login"
+          ? "Set up app sign-in"
+          : "Connect a test environment";
     const setupHosting = button(
       "Connect a test environment",
       async () => {
@@ -321,12 +334,7 @@
           !window.isCurrentGremlinAdoption(accepted, project)
         )
           return;
-        if (
-          setupHosting.textContent !==
-          (step === "linear"
-            ? linearSetupLabel(project)
-            : "Connect a test environment")
-        ) {
+        if (setupHosting.textContent !== setupLabel(step, project)) {
           render();
           return;
         }
@@ -576,13 +584,15 @@
           ? "This project or PM was replaced after adoption. Open the current project from the sidebar to review its crew."
           : savedProject?.foundation?.needed
             ? "First, build the app’s foundation. Your PM’s brief is saved and ready for when there is something to investigate."
-            : setup === "linear"
-              ? "Give your gremlin a home for its work in Linear. We’ll connect the account and prepare its project. You can also start a code-only investigation while setup waits."
-              : offerHosting
-                ? "Give your gremlin a test environment to walk through the app like a user. Or start with a code-only investigation; it reads the repository without opening the app."
-                : savedArea
-                  ? `Their brief is saved. Let them explore the codebase and bring back what they learn. Automation is ${savedArea.enabled ? "on" : "off"}.`
-                  : "Their brief is saved. Refresh readiness to see the first task options.";
+            : setup === "test-login"
+              ? "Your preview is connected. To explore signed-in features, your gremlin needs a dedicated test account for the app. Set one up next, or explicitly choose public pages only. You can also start with a code-only investigation."
+              : setup === "linear"
+                ? "Give your gremlin a home for its work in Linear. We’ll connect the account and prepare its project. You can also start a code-only investigation while setup waits."
+                : offerHosting
+                  ? "Give your gremlin a test environment to walk through the app like a user. Or start with a code-only investigation; it reads the repository without opening the app."
+                  : savedArea
+                    ? `Their brief is saved. Let them explore the codebase and bring back what they learn. Automation is ${savedArea.enabled ? "on" : "off"}.`
+                    : "Their brief is saved. Refresh readiness to see the first task options.";
         welcomeNotice.textContent =
           welcomeWarning || accepted.setupMessage || "";
         welcomeNotice.hidden = !welcomeNotice.textContent;
@@ -604,12 +614,10 @@
           !currentAdoption ||
           Boolean(onSetupLinear && linearSetupLabel(savedProject)) ||
           needsHosting(savedProject) ||
+          needsTestLogin(savedProject) ||
           Boolean(savedProject?.foundation?.needed) ||
           !onOpenSignals;
-        setupHosting.textContent =
-          setup === "linear"
-            ? linearSetupLabel(savedProject)
-            : "Connect a test environment";
+        setupHosting.textContent = setupLabel(setup, savedProject);
         setupHosting.hidden = !offerSetup;
         setupHosting.disabled =
           firstBusy || busy || isLocked() || !currentAdoption;

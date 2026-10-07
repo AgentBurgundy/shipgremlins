@@ -317,6 +317,41 @@ const adopted = {
 };
 
 describe("gremlin adoption", () => {
+  it("asks for app sign-in after adoption even when Vercel is connected", async () => {
+    const f = fixture(true);
+    f.project.areas.push({ key: "moss", linearProjectId: "linear-moss" });
+    f.project.readiness.areas.push({
+      key: "moss",
+      discovery: { canRun: true },
+    });
+    f.project.verification.mode = "browser";
+    f.project.environments.preview = { kind: "vercel" };
+    f.project.readiness.steps.push({ id: "test_access", ready: false });
+    f.helper.adopted(adopted);
+    const setup = f.button("Set up app sign-in");
+    expect(setup.hidden).toBe(false);
+    expect(setup.className).toContain("button-dark");
+    expect(f.button("Start with code only").className).not.toContain(
+      "button-dark",
+    );
+    expect(
+      f.dialog.all().find((node) => node.className === "adoption-signals")
+        ?.hidden,
+    ).toBe(true);
+    expect(f.firstTask).not.toHaveBeenCalled();
+    await setup.click();
+    expect(f.setupHosting).toHaveBeenCalledWith("shop", setup);
+    expect(f.setupLinear).not.toHaveBeenCalled();
+    expect(f.firstTask).not.toHaveBeenCalled();
+    f.project.readiness.steps[0]!.ready = true;
+    f.helper.refresh();
+    expect(setup.hidden).toBe(true);
+    expect(
+      f.dialog.all().find((node) => node.className === "adoption-signals")
+        ?.hidden,
+    ).toBe(false);
+  });
+
   it("guides Linear account then PM project then hosting, without launching work during setup", async () => {
     const f = fixture(true);
     f.project.areas.push({

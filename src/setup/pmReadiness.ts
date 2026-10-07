@@ -8,6 +8,7 @@ import {
   type Project,
 } from "../config.ts";
 import { effectiveVerification } from "../projectCapabilities.ts";
+import { inspectTestAccess } from "../testAccess.ts";
 import type { LocalWorker } from "../localRunners/types.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
 import type { OAuthStatus } from "../oauthConnection/types.ts";
@@ -19,6 +20,7 @@ export type ReadinessAction =
   | "ai"
   | "linear"
   | "mapping"
+  | "environment"
   | "verify"
   | "worker"
   | "mandate"
@@ -198,8 +200,6 @@ export function inspectPmReadiness(
       );
     if (target.kind === "cloud-run" && target.credentialsSecret)
       ready = Boolean(context.env[target.credentialsSecret]?.trim());
-    if (config.signIn)
-      ready &&= Boolean(context.env[config.signIn.databaseUrlSecret]?.trim());
     add(
       "browser_connections",
       "Browser environment",
@@ -207,6 +207,19 @@ export function inspectPmReadiness(
       "config",
       "Save the selected browser environment's credentials and test sign-in settings, then verify connections.",
       "Selected browser environment credentials are configured.",
+    );
+    const access = inspectTestAccess(
+      target.access,
+      context.env,
+      config.signIn?.databaseUrlSecret,
+    );
+    add(
+      "test_access",
+      "Test login",
+      access.ready,
+      "environment",
+      access.message,
+      access.message,
     );
   }
   const workerReady = context.workers.some((worker) => {
@@ -287,8 +300,13 @@ export function inspectPmReadiness(
       blockers,
       enableBlockers,
       coding: {
-        canEnable: blockers.filter((item) => item.id !== "worker").length === 0,
-        enableBlockers: blockers.filter((item) => item.id !== "worker"),
+        canEnable:
+          blockers.filter(
+            (item) => !["worker", "test_access"].includes(item.id),
+          ).length === 0,
+        enableBlockers: blockers.filter(
+          (item) => !["worker", "test_access"].includes(item.id),
+        ),
       },
     };
   });

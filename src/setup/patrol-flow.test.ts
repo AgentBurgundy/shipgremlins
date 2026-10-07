@@ -110,6 +110,11 @@ describe("patrol plan and evidence", () => {
       }),
     );
     expect(text(root)).toContain("Test accounts: Admin");
+    expect(text(root)).toContain("Signed-in testing planned");
+    expect(text(root)).toContain("Open app & attempt sign-in");
+    expect(text(root)).toContain(
+      "Saved accounts do not prove that login or signed-in features work",
+    );
     expect(text(root)).not.toContain("PRIVATE");
     const open = all(root).find((item) => item.textContent === "Open app ↗")!;
     expect(open.href).toBe("https://staging.example.test/dashboard");
@@ -121,6 +126,100 @@ describe("patrol plan and evidence", () => {
     expect(all(unsafe).some((item) => item.textContent === "Open app ↗")).toBe(
       false,
     );
+  });
+  it.each([{}, { access: { kind: "password", accounts: [] } }])(
+    "makes an unconfigured app login actionable before a browser patrol: %j",
+    (access) => {
+      const root = fixture().renderPatrolPlan(
+        project({ kind: "vercel", ...access }),
+      );
+      expect(text(root)).toContain("Choose how your gremlin signs in");
+      expect(text(root)).toContain(
+        "Signed-in features need a dedicated test account",
+      );
+      expect(text(root)).toContain(
+        "Vercel access opens the preview. A test account signs the gremlin into your app.",
+      );
+      const action = all(root).find(
+        (item) => item.textContent === "Set up app sign-in",
+      );
+      expect(action?.href).toBe("/projects/shop?tab=environment");
+      expect(
+        all(root).find((item) => item.className === "patrol-plan-coverage")
+          ?.dataset.tone,
+      ).toBe("attention");
+      expect(text(root)).not.toContain("Open app & sign in");
+      expect(text(root)).not.toContain("Signed-in testing planned");
+    },
+  );
+  it("makes the public-only limit visible even in a compact plan", () => {
+    const ui = fixture(),
+      input = project({ kind: "url", access: { kind: "public" } }),
+      root = ui.renderPatrolPlan(input, { compact: true });
+    expect(text(root)).toContain("Public pages only");
+    expect(text(root)).toContain(
+      "To test anything behind a login, add a dedicated test account",
+    );
+    expect(text(root)).toContain("Set up app sign-in");
+    expect(root.dataset.compact).toBe("true");
+    expect(all(root).find((item) => item.tagName === "h3")?.textContent).toBe(
+      "Public pages only",
+    );
+    expect(
+      all(root).some((item) => item.className === "patrol-plan-coverage"),
+    ).toBe(false);
+    expect(all(root).some((item) => item.tagName === "ol")).toBe(false);
+    const full = ui.renderPatrolPlan(input),
+      steps = all(full).find((item) => item.tagName === "ol")!;
+    expect(text(steps)).toContain("Open public pages");
+    expect(text(steps)).toContain("Explore public flows & capture evidence");
+    expect(text(steps)).not.toContain("sign-in");
+  });
+  it.each([
+    project({ kind: "vercel" }),
+    { name: "legacy", vercel: { projectId: "preview-project" } },
+  ])("recognizes a saved legacy sign-in recipe: %j", (input) => {
+    const root = fixture().renderPatrolPlan({
+      ...input,
+      signIn: {
+        kind: "neon-auth-otp",
+        email: "private-test@example.test",
+        path: "/sign-in",
+        databaseUrlSecret: "PRIVATE_DATABASE",
+      },
+    });
+    expect(text(root)).toContain("Existing email-code sign-in recipe");
+    expect(text(root)).toContain("attempt the saved email-code login");
+    expect(text(root)).toContain(
+      "Check browser evidence to confirm sign-in and signed-in features actually work",
+    );
+    expect(text(root)).toContain("Open app & attempt sign-in");
+    expect(text(root)).toContain("Environment & accounts");
+    expect(text(root)).not.toContain("Choose how your gremlin signs in");
+    expect(text(root)).not.toContain("Set up app sign-in");
+    expect(text(root)).not.toContain("PRIVATE_DATABASE");
+    expect(text(root)).not.toContain("private-test@example.test");
+  });
+  it("uses the selected public coverage before an older project-wide login recipe", () => {
+    const root = fixture().renderPatrolPlan({
+      ...project({ kind: "vercel", access: { kind: "public" } }),
+      signIn: { kind: "neon-auth-otp" },
+    });
+    expect(text(root)).toContain("Public pages only");
+    expect(text(root)).not.toContain("email-code");
+    expect(text(root)).not.toContain("attempt sign-in");
+  });
+  it("does not require app sign-in for repository-only patrols", () => {
+    const root = fixture().renderPatrolPlan({
+      ...project({ kind: "vercel" }),
+      verification: { mode: "repository" },
+    });
+    expect(text(root)).toContain("Run repository checks");
+    expect(text(root)).toContain("Add browser testing");
+    expect(text(root)).not.toContain("test account");
+    expect(
+      all(root).some((item) => item.className === "patrol-plan-coverage"),
+    ).toBe(false);
   });
   it("counts recorded tool attempts, never summary claims or generic tool results as successful app verification", () => {
     const result = fixture().patrolEvidence({

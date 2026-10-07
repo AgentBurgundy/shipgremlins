@@ -3811,6 +3811,10 @@
       } else if (action === "worker") {
         pages.navigate("/runners#workers");
         $("create-runner").focus({ preventScroll: true });
+      } else if (action === "environment") {
+        pages.navigate(
+          `/projects/${encodeURIComponent(project.name)}?tab=environment`,
+        );
       } else if (action === "verify") {
         pages.navigate("/projects");
         [...$("project-list").querySelectorAll("[data-verify-project]")]

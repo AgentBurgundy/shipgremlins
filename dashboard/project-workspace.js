@@ -1080,6 +1080,8 @@
         node("span", "project-crew-count", String(project.areas?.length || 0)),
       );
       crew.append(title);
+      if (project.areas?.length && window.renderPatrolPlan)
+        crew.append(window.renderPatrolPlan(project, { compact: true }));
       const cards = node("div", "project-crew-list");
       for (const area of project.areas || []) {
         const card = node("article", "project-pm-row"),
@@ -1308,6 +1310,8 @@
       );
       heading.append(image, title);
       main.append(heading);
+      if (window.renderPatrolPlan)
+        main.append(window.renderPatrolPlan(project, { compact: true }));
       main.append(
         window.renderPmControls(project, area, {
           locked,

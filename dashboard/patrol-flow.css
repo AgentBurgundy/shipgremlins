@@ -35,6 +35,42 @@
   color: #5a6f61;
   overflow-wrap: anywhere;
 }
+.patrol-plan-coverage {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #dce5df;
+  border-radius: 8px;
+  background: #fff;
+}
+.patrol-plan-coverage[data-tone="attention"] {
+  border-color: #e6d6b6;
+  background: #fffcf5;
+}
+.patrol-plan-coverage-title {
+  display: block;
+  color: #344d3c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.patrol-plan-coverage .patrol-plan-access {
+  font-size: 12px;
+}
+.patrol-plan[data-compact="true"] {
+  padding: 14px 16px;
+}
+.patrol-plan[data-compact="true"] .patrol-plan-heading {
+  align-items: flex-start;
+}
+.patrol-plan-access-summary {
+  margin-top: 8px;
+}
+.patrol-plan-access-summary .patrol-plan-access {
+  font-size: 12px;
+}
+.patrol-plan-access-summary[data-tone="attention"] {
+  border-left: 2px solid #d3b77e;
+  padding-left: 10px;
+}
 .patrol-plan-actions {
   display: flex;
   flex-shrink: 0;

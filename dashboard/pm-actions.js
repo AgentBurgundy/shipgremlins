@@ -48,6 +48,7 @@
       worker: "Set up a worker",
       mandate: "Edit PM brief",
       config: "Edit project settings",
+      environment: "Set up app sign-in",
     };
     const canPrepareRun = (readiness) =>
       readiness?.canRun === true ||

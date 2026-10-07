@@ -59,6 +59,7 @@ async function fixture(
         kind: "url",
         role: "preview",
         url: "https://preview.example.test",
+        access: { kind: "public" },
       },
     };
   }

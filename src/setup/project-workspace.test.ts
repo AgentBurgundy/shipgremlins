@@ -54,6 +54,8 @@ function fixture() {
     createProjectWelcome?: (options: object) => object;
     createProjectMissions?: (options: object) => object;
     renderCodingLauncher(project: object, options: object): Element;
+    renderProjectCrew(project: object): Element;
+    renderPmControls(): Element;
   };
   window.addEventListener = () => {};
   const document = {
@@ -96,6 +98,25 @@ const text = (root: Element): string =>
   root.textContent + root.children.map(text).join("");
 
 describe("PM workspace knowledge", () => {
+  it("shows the missing test-login choice beside PM launch controls", () => {
+    const window = fixture();
+    window.renderPmControls = () => new Element("BUTTON");
+    const rendered = window.renderProjectCrew({
+      name: "shop",
+      verification: { mode: "browser", environment: "preview" },
+      environments: {
+        preview: { kind: "vercel", url: "https://preview.example.com" },
+      },
+      areas: [{ key: "core", name: "Moss", mandate: "Explore checkout" }],
+    });
+    expect(text(rendered)).toContain("Set up app sign-in");
+    expect(
+      all(rendered).find((node) => node.textContent === "Set up app sign-in")
+        ?.href,
+    ).toBe("/projects/shop?tab=environment");
+    expect(text(rendered)).toContain("PM Gremlins");
+  });
+
   it("hides only the matching reviewed setup machine block while preserving the learning and ordinary code", () => {
     const renderer = fixture().renderKnowledgeDocument,
       proposal = {
@@ -224,6 +245,26 @@ describe("progressive PM product brief", () => {
 });
 
 describe("focused project crew workspace", () => {
+  it("does not block approved coding on a browser-only test-login setup step", () => {
+    const rendered = fixture().renderCodingLauncher(
+      {
+        name: "app",
+        readiness: {
+          canRun: false,
+          blockers: [
+            {
+              id: "test_access",
+              action: "environment",
+              message: "Choose app sign-in.",
+            },
+          ],
+        },
+      },
+      {},
+    );
+    expect(text(rendered)).toContain("Start coding");
+    expect(text(rendered)).not.toContain("Choose app sign-in.");
+  });
   it("keeps active promotion coding hands-off while ordinary PR projects retain draft review", () => {
     const api = fixture(),
       job = {
@@ -307,6 +348,25 @@ describe("focused project crew workspace", () => {
     view.setStatus(state, false);
     return { root, pages, project, state, view, jobs };
   }
+  it("keeps app sign-in setup visible on the crew page and individual PM page", () => {
+    const f = workspace();
+    Object.assign(f.project, {
+      verification: { mode: "browser", environment: "preview" },
+      environments: {
+        preview: { kind: "vercel", role: "preview", projectId: "fixture" },
+      },
+    });
+    f.view.setStatus(f.state, false);
+    expect(text(f.root)).toContain("Choose how your gremlin signs in");
+    expect(
+      all(f.root).find((node) => node.textContent === "Set up app sign-in")
+        ?.href,
+    ).toBe("/projects/shipgremlins?tab=environment");
+    f.pages.pm = f.project.areas[0]!.key;
+    f.pages.tab = "brief";
+    f.view.render();
+    expect(text(f.root)).toContain("Choose how your gremlin signs in");
+  });
   it("keeps PM controls and both independent automations on the crew page, with settings separate", () => {
     const { root, pages, view } = workspace();
     const row = all(root).find((item) => item.className === "project-pm-row")!;
