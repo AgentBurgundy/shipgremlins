@@ -48,14 +48,14 @@ with one outcome: make the first import easier, close an account-isolation gap,
 or investigate a feature your current workflow is missing. You set direction;
 the crew investigates and implements the work you approve.
 
-| Where you are                          | Where ShipGremlins fits                                                                                 |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.              |
-| An app with a growing backlog          | Investigate one area, approve a bounded ticket, and review the Coding Gremlin's draft PR or MR.         |
-| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity. |
+| Where you are                          | Where ShipGremlins fits                                                                                        |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| An early codebase or working prototype | Give one PM a concrete goal and run repository discovery. A public launch is not required.                     |
+| An app with a growing backlog          | Approve a bounded ticket. Your coder implements it, your PM tests it, and passing work becomes a promotion PR. |
+| Several product areas to maintain      | Add PM mandates and schedules as the first proves useful. Keep work limits within your review capacity.        |
 
 Start with **one PM, one outcome, one useful change**. Your project home collects
-changes ready for review, blocked work, active runs, and the next improvement.
+integration checks, PM QA, coding follow-ups, promotion PRs, and the next improvement.
 Browser investigations need a runnable test environment; repository discovery
 can start before hosting and Linear setup. The Setup Gremlin helps prepare an
 existing app for testing. PM patrol schedules and automatic approved-ticket coding
@@ -105,13 +105,13 @@ flowchart LR
     F --> G[Production audit]
 ```
 
-| Step        | What actually happens                                                                                                                                                                                                                                                           |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                                                         |
-| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Promotion projects use their integration branch.                                                                                              |
-| **Recover** | Durable queues, bounded startup retries and cancellation preserve existing work. An ambiguous launch or publication is held for review, not blindly repeated.                                                                                                                   |
-| **Verify**  | In promotion projects, the owning PM checks its fixes on the exact integration deployment. Independent browser receipts and screenshots are required; prose alone cannot pass a fix.                                                                                            |
-| **Ship**    | Selective promotion cherry-picks verified work from the staging base and checks the assembled candidate. Candidate deployment/evidence must be configured. You control staging and production merges; production reconciliation requires an explicitly reviewed complete scope. |
+| Step        | What actually happens                                                                                                                                                                                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                                                             |
+| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Promotion projects use their integration branch.                                                                                                  |
+| **Recover** | Durable queues, bounded startup retries and cancellation preserve existing work. An ambiguous launch or publication is held for review, not blindly repeated.                                                                                                                       |
+| **Verify**  | The controller checks and merges eligible coding drafts into integration. The owning PM tests the exact deployed app using independent browser receipts. Failed acceptance criteria return to a coder with evidence, with at most one automatic coding repair per original change.  |
+| **Ship**    | Verified work is collected into one project promotion PR after checks on the assembled changes. A configured candidate browser verifier remains an extra gate. You control staging and production merges; production reconciliation requires an explicitly reviewed complete scope. |
 
 **“Trust me” isn't a test.** Missing or stale evidence blocks promotion. A staging merge does not close a ticket. [Read the verification model →](docs/VERIFICATION.md)
 
@@ -246,7 +246,7 @@ Linear team and Vercel installation while another uses a client's workspace and
 Railway. The project editor keeps its name and repository visible and lets you
 repair Linear team/PM mappings without moving or deleting provider resources.
 
-**Any repository first. Hosting when you need it.** New projects use repository checks and draft PRs/MRs to a chosen base branch. Edit the install/test/build commands for your stack. Add a named preview or staging URL for browser work, or select Vercel, Railway, or Cloud Run discovery. Credentials belong in Connections; resource IDs and settings belong to each project. Existing projects have **Edit settings**, with conflict protection and preserved unrelated configuration. [Project and hosting guide →](docs/PROJECTS.md)
+**Any repository first. Hosting when you need it.** New projects default to `pm-staging → staging → main`; discovery can start with repository checks before browser setup. Automatic PM QA needs a verified integration deployment. Choose the explicit pull-request workflow if you want to review individual coding drafts instead. Edit the install/test/build commands for your stack. Add a named preview or staging environment, or select Vercel, Railway, or Cloud Run discovery. Credentials belong in Connections; resource IDs and settings belong to each project. Existing projects have **Edit settings**, with conflict protection and preserved unrelated configuration. [Project and hosting guide →](docs/PROJECTS.md)
 
 The local runtime provisions its PostgreSQL activity store when preparing work. The dashboard retains visible tool activity, summaries, checks, logs, and bounded artifacts. Private model reasoning is not exposed. Slack delivery runs separately from job execution and records each attempt so restarts do not repeat messages.
 

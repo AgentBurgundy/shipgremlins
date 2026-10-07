@@ -48,6 +48,21 @@ const withPm = (blockers: object[] = []) =>
   });
 
 describe("first useful mission guidance", () => {
+  it("sends promotion projects to delivery progress instead of a manual draft review", () => {
+    const value = next({
+      ...connected(),
+      projects: [
+        project({
+          workflow: { kind: "promotion" },
+          firstReviewableChange: { url: "https://github.com/org/app/pull/1" },
+        }),
+      ],
+    });
+    expect(value.title).toBe("Follow your first change through PM QA.");
+    expect(value.label).toBe("Follow delivery");
+    expect(value.href).toBe("/projects/my-app?tab=changes");
+    expect(value.description).not.toContain("Inspect the draft");
+  });
   it("keeps first-value guidance until a confirmed reviewable change exists", () => {
     class Node {
       hidden = false;

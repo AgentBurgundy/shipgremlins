@@ -12,7 +12,7 @@ import {
 import { join } from "node:path";
 import { loadProject, type Project } from "../config.ts";
 import { projectRuntimeKey, jobBelongsToProject } from "../projectIdentity.ts";
-import { baseBranch } from "../projectCapabilities.ts";
+import { baseBranch, effectiveWorkflow } from "../projectCapabilities.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import type { LocalJob, LocalJobInput } from "../localRunners/types.ts";
 import type { LinearTicket } from "../services/types.ts";
@@ -109,6 +109,8 @@ export interface ChangeSummary {
   area?: string;
   ticket?: string;
   ticketId?: string;
+  /** Validated queue binding; display identifiers alone never identify a ticket. */
+  linearBinding?: LocalJob["linearBinding"];
   status: LocalJob["status"];
   message: string;
   activityUrl: string;
@@ -359,7 +361,9 @@ export function createImprovements(options: ImprovementOptions) {
     } catch {
       /* Retained drafts remain reviewable while delivery settings need repair. */
     }
-    for (const job of jobs.filter((item) => item.type === "developer")) {
+    for (const job of jobs.filter(
+      (item) => item.type === "developer" && item.developerKind !== "sync",
+    )) {
       const known = retained.get(job.id);
       retained.set(job.id, {
         jobId: job.id,
@@ -367,6 +371,7 @@ export function createImprovements(options: ImprovementOptions) {
         area: job.area,
         ticket: job.ticket,
         ticketId: job.linearBinding?.ticketId,
+        linearBinding: job.linearBinding,
         status: job.status,
         message: job.message ?? "",
         activityUrl: "/activity?run=" + encodeURIComponent(job.id),
@@ -473,7 +478,9 @@ export function createImprovements(options: ImprovementOptions) {
     ) {
       status = "review-changes";
       message =
-        "Coding finished. Review the actual changes and verification; a successful run alone does not prove the outcome.";
+        effectiveWorkflow(project.config).kind === "promotion"
+          ? "Coding finished. Your PMs test the deployed changes, send failures back to coders, and collect passing work into promotion PRs."
+          : "Coding finished. Review the actual changes and verification; a successful run alone does not prove the outcome.";
     } else if (steps.length) {
       status = "blocked";
       message =
@@ -516,6 +523,7 @@ export function createImprovements(options: ImprovementOptions) {
         ? await options.refreshChanges(project, changes(project, jobs))
         : changes(project, jobs);
     return {
+      workflow: effectiveWorkflow(project.config),
       missions: state.missions
         .map((item) => view(item, project, jobs, allChanges))
         .reverse(),
@@ -1080,6 +1088,7 @@ export function createImprovements(options: ImprovementOptions) {
   function captureResult(job: LocalJob, result: Record<string, unknown>) {
     if (
       job.type !== "developer" ||
+      job.developerKind === "sync" ||
       !job.project ||
       result.ok !== true ||
       result.kind !== "developer" ||
@@ -1096,6 +1105,7 @@ export function createImprovements(options: ImprovementOptions) {
           area: job.area,
           ticket: job.ticket,
           ticketId: job.linearBinding?.ticketId,
+          linearBinding: job.linearBinding,
           status: "succeeded",
           message: "The run produced no code changes or draft.",
           activityUrl: "/activity?run=" + encodeURIComponent(job.id),
@@ -1151,8 +1161,12 @@ export function createImprovements(options: ImprovementOptions) {
         area: job.area,
         ticket: job.ticket,
         ticketId: job.linearBinding?.ticketId,
+        linearBinding: job.linearBinding,
         status: "succeeded",
-        message: "A tested draft is ready for owner review.",
+        message:
+          effectiveWorkflow(project.config).kind === "promotion"
+            ? "Coding checks finished. The controller is preparing this change for PM QA."
+            : "A tested draft is ready for owner review.",
         activityUrl: "/activity?run=" + encodeURIComponent(job.id),
         createdAt: job.createdAt,
         finishedAt: job.finishedAt ?? now(),

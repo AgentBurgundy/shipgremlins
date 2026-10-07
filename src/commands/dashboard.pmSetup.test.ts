@@ -96,6 +96,8 @@ async function fixture(
     key: "later",
     name: "Later",
     mandate: "An intentionally paused future PM.",
+    enabled: false,
+    codingEnabled: false,
   });
   const sourceControl = {
     status: vi.fn(async () => [
@@ -256,7 +258,7 @@ describe("PM prepare and verify admission", () => {
         (area) => area.key === "investigator",
       ),
     ).toMatchObject({
-      enabled: false,
+      enabled: true,
       linearProjectId: "PASTE_LINEAR_PROJECT_ID",
     });
     expect(f.client.organization).not.toHaveBeenCalled();
@@ -279,7 +281,11 @@ describe("PM prepare and verify admission", () => {
       areaInstanceId: adopted.instanceId ?? null,
       linear: { status: "ready" },
     });
-    expect(adopted).toMatchObject({ enabled: false, codingEnabled: false });
+    expect(adopted).toMatchObject({
+      enabled: true,
+      codingEnabled: true,
+      schedule: "0 13 * * *",
+    });
     expect(adopted.linearProjectId).not.toBe("PASTE_LINEAR_PROJECT_ID");
     expect(
       project.areas

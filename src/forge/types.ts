@@ -121,6 +121,8 @@ export interface Forge {
     number: number,
     patch: { title?: string; body?: string },
   ): Promise<void>;
+  /** Change only the target branch; never merge or rewrite the source branch. */
+  retargetPull?(repo: RepoRef, number: number, base: string): Promise<void>;
   markReady(repo: RepoRef, number: number): Promise<void>;
   mergePull(
     repo: RepoRef,

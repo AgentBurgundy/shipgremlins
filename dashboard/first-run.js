@@ -52,11 +52,19 @@
     if (established)
       return {
         active: false,
-        title: "Your first change is ready to review.",
+        title:
+          established.workflow?.kind === "promotion"
+            ? "Follow your first change through PM QA."
+            : "Your first change is ready to review.",
         description:
-          "Inspect the draft and its evidence. A finished coding run is a change to review, not a claim that the product is finished.",
-        label: "Review your change",
-        href: projectPath(established),
+          established.workflow?.kind === "promotion"
+            ? "Your crew checks the code, deploys it to the PM test branch and tests the app. Follow its actual QA result, promotion and any blocker."
+            : "Inspect the draft and its evidence. A finished coding run is a change to review, not a claim that the product is finished.",
+        label:
+          established.workflow?.kind === "promotion"
+            ? "Follow delivery"
+            : "Review your change",
+        href: `${projectPath(established)}${established.workflow?.kind === "promotion" ? "?tab=changes" : ""}`,
       };
     const sourceStep = list(project?.readiness?.steps).find(
       (item) => item.id === "source_connection",

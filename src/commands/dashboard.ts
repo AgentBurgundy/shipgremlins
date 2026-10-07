@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { createUsage } from "../usage/index.ts";
+import { currentChanges } from "../improvements/currentChanges.ts";
 import {
   createImprovements,
   ImprovementError,
@@ -64,6 +65,7 @@ import {
 } from "../setup/environmentGuide.ts";
 import { createVercelSetup, VercelSetupError } from "../vercelSetup/index.ts";
 import { createVercelAccess } from "../vercelSetup/access.ts";
+import { ReleasePreparationError } from "../delivery/release.ts";
 import {
   createEnvironmentSetup,
   EnvironmentSetupError,
@@ -511,6 +513,34 @@ export function createDashboardServer(
         runners().withConfigurationMutation({ project: name }, action),
       recordConfigured: (name, input) =>
         projectOnboarding.recordConfigured(name, input),
+      verifyReadiness: (name) =>
+        runners().withConfigurationMutation({ project: name }, async () => {
+          const project = loadProject(root, name);
+          const snapshot = verificationSnapshot(project.dir);
+          const checks = await doctorChecks(project, {
+            root,
+            env: { ...readConnections(root), ...process.env },
+            fetch,
+            today: () => new Date().toISOString().slice(0, 10),
+            sourceControl,
+            linearConnection,
+            vercelConnection,
+            linearConnectionFor,
+            vercelConnectionFor,
+          });
+          if (checks.every((check) => check.ok)) {
+            stampVerified(
+              project.dir,
+              new Date().toISOString().slice(0, 10),
+              snapshot,
+            );
+            return "PM staging and project connections are ready. Enabled PMs follow their saved schedules; new PMs default to daily.";
+          }
+          return `Your test environment is ready. PM automation still needs: ${checks
+            .filter((check) => !check.ok)
+            .map((check) => check.name)
+            .join(", ")}. Open project readiness to finish these connections.`;
+        }),
     });
   const environmentGuide =
     options.environmentGuide ??
@@ -691,6 +721,34 @@ export function createDashboardServer(
       linearConnectionFor,
       vercelConnectionFor,
       docker: localDocker,
+      completedDrafts: async (name) => {
+        const { changes } = await improvements.list(name);
+        const jobs = await runners().jobs();
+        return changes.flatMap((change) => {
+          const job = jobs.find((item) => item.id === change.jobId);
+          return job &&
+            job.project === name &&
+            job.status === "succeeded" &&
+            job.type === "developer" &&
+            job.developerKind !== "sync" &&
+            !change.delivery &&
+            change.pullRequests.length &&
+            change.checks
+            ? [{ job, change }]
+            : [];
+        });
+      },
+      qaJobs: () => runners().jobs(),
+      enqueueQaRepair: async (input) => {
+        const validated = await preparation.validate(input);
+        const job = await runners().enqueue({
+          ...input,
+          linearBinding: validated.linearBinding,
+          projectInstanceId: validated.project.config.instanceId,
+        });
+        runners().start();
+        return job;
+      },
       syncJobs: () => runners().jobs(),
       enqueueSyncRepair: async (input) => {
         const job = await runners().enqueue(input);
@@ -898,6 +956,10 @@ export function createDashboardServer(
     { phase: "running" | "idle" | "error"; message: string; rows?: unknown[] }
   >();
   const productionReports = new Map<string, unknown[]>();
+  const promotionOperations = new Map<
+    string,
+    { phase: "running" | "idle" | "error"; message: string; rows?: unknown[] }
+  >();
   const automaticPromotions = createAutomaticPromotions({ root });
   function continuePromotions(name: string) {
     if (configurationMutation) return;
@@ -907,7 +969,7 @@ export function createDashboardServer(
       key = projectRuntimeKey(project.config);
       if (deliveryOperations.get(key)?.phase === "running") return;
       if (!project.config.verified) return;
-      for (const item of automaticPromotions.pending()) {
+      for (const item of automaticPromotions.pending({ readyOnly: true })) {
         if (item.project !== name) continue;
         const hasVerified =
           project.areas.some((area) => area.key === item.area) &&
@@ -939,12 +1001,19 @@ export function createDashboardServer(
       document = readEditableConfig(root, `projects/${name}/project.json`),
       raw = JSON.parse(document.content),
       verification = effectiveVerification(project.config);
+    const evidenceEnvironment = { ...process.env, ...readConnections(root) };
+    const candidateRequired = Boolean(
+      evidenceEnvironment.SHIPGREMLINS_VERIFICATION_FILE ||
+      evidenceEnvironment.SHIPGREMLINS_ATTESTATION_PUBLIC_KEY,
+    );
     return {
       ...delivery.deliveryStatus(name),
       candidateSetup: {
+        required: candidateRequired,
         revision: document.revision,
         selected: raw.workflow?.candidateEnvironment ?? "",
         needsSelection:
+          candidateRequired &&
           verification.mode === "browser" &&
           verification.target.kind === "railway" &&
           !raw.workflow?.candidateEnvironment,
@@ -982,28 +1051,36 @@ export function createDashboardServer(
     deliveryOperations.set(key, {
       phase: "running",
       message:
-        "Preparing a selective candidate and running its checks in Docker. No staging PR is opened without matching candidate evidence.",
+        "Combining PM-verified changes and running their checks in Docker before opening or updating the project's staging promotion PR.",
     });
+    promotionOperations.set(key, deliveryOperations.get(key)!);
+    let retry = false;
     void delivery
       .preparePromotion(name, { area, docker: localDocker })
       .then((rows) => {
+        retry = rows.some((row) => row.pending);
         deliveryOperations.set(key, {
-          phase: "idle",
+          phase: rows.some((row) => row.needsYou) ? "error" : "idle",
           message: rows.map((row) => row.text).join("\n"),
           rows,
         });
+        promotionOperations.set(key, deliveryOperations.get(key)!);
       })
       .catch(() => {
+        retry = true;
         deliveryOperations.set(key, {
           phase: "error",
           message:
-            "Promotion could not finish. Check source access, worker Docker, deployment metadata and trusted candidate verification. Existing deliveries remain available for review.",
+            "Promotion is waiting on source access, worker Docker, deployment metadata or PM evidence. The controller will retry automatically; verified work is preserved.",
         });
+        promotionOperations.set(key, deliveryOperations.get(key)!);
       })
       .finally(() => {
         if (automatic) {
           try {
-            automaticPromotions.finish(automatic.item, automatic.token);
+            automaticPromotions.finish(automatic.item, automatic.token, {
+              retry,
+            });
           } catch {
             deliveryOperations.set(key, {
               phase: "error",
@@ -1110,11 +1187,14 @@ export function createDashboardServer(
             const synced = await synchronizeStaging(name);
             if (!synced || synced.phase !== "current") return;
           }
+          await delivery.reconcileIntegrationRepairs?.(name);
+          await delivery.reconcileQaRework?.(name);
+          await delivery.reconcileCompletedDrafts?.(name);
           continuePromotions(name);
           if (
-            status.deliveries.some(
-              (item) => item.status === "awaiting-merge",
-            ) &&
+            delivery
+              .deliveryStatus(name)
+              .deliveries.some((item) => item.status === "awaiting-merge") &&
             loadProject(root, name).config.verified &&
             deliveryOperations.get(key)?.phase !== "running"
           )
@@ -1189,10 +1269,7 @@ export function createDashboardServer(
           const verified = delivery
             .deliveryStatus(job.project)
             .deliveries.filter(
-              (item) =>
-                item.area === job.area &&
-                item.status === "verified" &&
-                item.review,
+              (item) => item.status === "verified" && item.review,
             )
             .map((item) => ({ id: item.id, review: item.review!.manifestHash }))
             .sort((a, b) => a.id.localeCompare(b.id));
@@ -1685,7 +1762,7 @@ export function createDashboardServer(
       serviceConnections,
       limitations: [
         "Local workers use Claude Code. Each worker runs one job at a time.",
-        "Jobs create draft PRs/MRs to each project's selected base branch; merges and release decisions need review.",
+        "In the staged workflow, PMs QA coding changes and prepare promotion PRs automatically. Production releases follow your repository's merge rules.",
         "Closing the browser is safe. Keep the controller running for schedules and queued jobs.",
       ],
     };
@@ -2331,7 +2408,7 @@ export function createDashboardServer(
           return;
         }
         const deliveryRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]*)\/delivery(?:\/(promote|production|states|advance|environment|sync))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]*)\/delivery(?:\/(promote|release|production|states|advance|environment|sync))?$/.exec(
             url.pathname,
           );
         if (deliveryRoute) {
@@ -2422,6 +2499,52 @@ export function createDashboardServer(
                   state.type === "completed" && state.teamId === mapping.teamId,
               ),
             });
+          } else if (req.method === "POST" && action === "release") {
+            if (Object.keys(await body(req)).length)
+              throw new RequestError(
+                400,
+                "Use an empty object to prepare the staging-to-production release.",
+              );
+            const key = projectRuntimeKey(loadProject(root, name).config);
+            if (deliveryOperations.get(key)?.phase === "running")
+              throw new RequestError(
+                409,
+                "A delivery operation is already running for this project.",
+              );
+            deliveryOperations.set(key, {
+              phase: "running",
+              message:
+                "Checking staging and preparing its production release draft.",
+            });
+            try {
+              const pull = await runners().withConfigurationMutation(
+                { project: name },
+                () => delivery.prepareRelease(name),
+              );
+              deliveryOperations.set(key, {
+                phase: "idle",
+                message: `Production release #${pull.number} is ready for owner review.`,
+              });
+              json(res, 200, {
+                ...deliveryView(name),
+                release: { number: pull.number, url: pull.htmlUrl },
+              });
+            } catch (error) {
+              deliveryOperations.set(key, {
+                phase: "error",
+                message:
+                  "Release preparation could not finish. Review staging checks and retry.",
+              });
+              throw new RequestError(
+                409,
+                error instanceof ReleasePreparationError ||
+                  error instanceof LocalRunnerError
+                  ? error.message
+                  : "Release preparation failed. Check source access and staging checks, then retry.",
+              );
+            } finally {
+              continuePromotions(name);
+            }
           } else if (req.method === "POST" && action === "promote") {
             const input = await body(req);
             if (
@@ -3504,7 +3627,7 @@ export function createDashboardServer(
           return;
         }
         const vercelSetupRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding\/vercel(?:\/(discover|prepare|deploy|chat|access))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding\/vercel(?:\/(discover|prepare|deploy|apply-workflow|chat|access))?$/.exec(
             url.pathname,
           );
         if (vercelSetupRoute) {
@@ -3534,16 +3657,24 @@ export function createDashboardServer(
               action === "discover"
                 ? ["connectionId", "teamId", "projectId", "revision"]
                 : action === "prepare"
-                  ? ["revision", "branch", "baseBranch", "customEnvironmentId"]
-                  : action === "deploy"
-                    ? ["revision", "confirmTestData"]
-                    : action === "access"
-                      ? ["configurationRevision"]
-                      : ["message"];
+                  ? [
+                      "revision",
+                      "branch",
+                      "baseBranch",
+                      "customEnvironmentId",
+                      "repairWorkflow",
+                    ]
+                  : action === "apply-workflow"
+                    ? ["revision"]
+                    : action === "deploy"
+                      ? ["revision", "confirmTestData"]
+                      : action === "access"
+                        ? ["configurationRevision"]
+                        : ["message"];
             if (
               Object.keys(input).some((key) => !allowed.includes(key)) ||
               Object.entries(input).some(([key, value]) =>
-                key === "confirmTestData"
+                key === "confirmTestData" || key === "repairWorkflow"
                   ? value !== true
                   : key === "teamId" && value === null
                     ? false
@@ -3555,7 +3686,9 @@ export function createDashboardServer(
                 "Provide only the supported Vercel setup fields.",
               );
             if (
-              (action === "prepare" || action === "deploy") &&
+              (action === "prepare" ||
+                action === "deploy" ||
+                action === "apply-workflow") &&
               typeof input.revision !== "string"
             )
               throw new RequestError(
@@ -3622,6 +3755,26 @@ export function createDashboardServer(
                   input as unknown as VercelPrepareInput,
                 ),
               );
+            } else if (action === "apply-workflow") {
+              const result = await runners().withConfigurationMutation(
+                { project: name },
+                async () => {
+                  const previousConfigurationRevision = readEditableConfig(
+                    root,
+                    `projects/${name}/project.json`,
+                  ).revision;
+                  const result = await vercelSetup.applyWorkflow(
+                    name,
+                    String(input.revision),
+                  );
+                  await projectOnboarding.recordConfigured(name, {
+                    previousConfigurationRevision,
+                    profile: "hosted",
+                  });
+                  return result;
+                },
+              );
+              json(res, 200, result);
             } else if (action === "deploy") {
               if (input.confirmTestData !== true)
                 throw new RequestError(
@@ -4294,13 +4447,45 @@ export function createDashboardServer(
           const [, name, id, action] = missionRoute;
           try {
             if (req.method === "GET" && !action) {
-              json(
-                res,
-                200,
-                id
-                  ? await improvements.detail(name!, id)
-                  : await improvements.list(name!),
+              const result = id
+                ? await improvements.detail(name!, id)
+                : await improvements.list(name!);
+              const project = loadProject(root, name!);
+              const deliveryState = delivery.deliveryStatus(name!);
+              const migrations = new Map(
+                (deliveryState.draftMigrations ?? []).map((item) => [
+                  item.jobId,
+                  item,
+                ]),
               );
+              let promotionBatch: Awaited<
+                ReturnType<typeof delivery.promotionBatch>
+              > = null;
+              let promotionBatchError: string | undefined;
+              if (effectiveWorkflow(project.config).kind === "promotion") {
+                try {
+                  promotionBatch =
+                    (await delivery.promotionBatch?.(name!)) ?? null;
+                } catch {
+                  promotionBatchError =
+                    "The current promotion PR could not be checked. Your ticket history is preserved; ShipGremlins will check again.";
+                }
+              }
+              json(res, 200, {
+                ...result,
+                changes: currentChanges(result.changes).map((change) => ({
+                  ...change,
+                  ...(migrations.has(change.jobId)
+                    ? { migration: migrations.get(change.jobId) }
+                    : {}),
+                })),
+                promotionBatch,
+                ...(promotionBatchError ? { promotionBatchError } : {}),
+                deliveryOperation: promotionOperations.get(
+                  projectRuntimeKey(project.config),
+                ) ?? { phase: "idle", message: "" },
+                stagingSync: deliveryState.stagingSync,
+              });
             } else if (req.method === "POST") {
               const input = await body(req);
               const allowed = !id
@@ -4364,6 +4549,7 @@ export function createDashboardServer(
                           sharedTouchpoints: [],
                           metric: "Owner-selected outcome",
                           wipLimit: 1,
+                          enabled: false,
                           codingEnabled: false,
                         }),
                     );

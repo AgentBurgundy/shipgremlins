@@ -632,7 +632,8 @@ describe("local delivery controller integration", () => {
     expect(handoff).toMatchObject({
       project: "game",
       repo: TEST_REPO,
-      area: "core",
+      area: "combined",
+      ownershipRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
       candidateSha,
       baseSha: stagingSha,
       changes: [1],

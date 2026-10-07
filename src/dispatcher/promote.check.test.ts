@@ -142,7 +142,7 @@ describe("runPromote build check", () => {
       ["app/a.ts"],
       "2026-10-01T10:00:00Z",
     );
-    ctx.forge.seedPull(TEST_REPO, {
+    const open = ctx.forge.seedPull(TEST_REPO, {
       number: 70,
       headRef: "pm-release/core/20261001",
       baseRef: "staging",
@@ -165,7 +165,7 @@ describe("runPromote build check", () => {
 
     expect(onBranch(git, [carriedBad, carriedGood])).toEqual([carriedGood]);
     expect(git.commands()).toContain(
-      "push --force-with-lease origin HEAD:refs/heads/pm-release/core/20261001",
+      `push --force-with-lease=refs/heads/pm-release/core/20261001:${open.headSha} origin HEAD:refs/heads/pm-release/core/20261001`,
     );
     const pr = (
       await ctx.forge.listOpenPulls(TEST_REPO, { base: "staging" })

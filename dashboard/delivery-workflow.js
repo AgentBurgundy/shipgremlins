@@ -57,7 +57,7 @@
         };
       const heading = el("div", undefined, "project-section-title");
       heading.append(
-        el("h2", "Move reviewed work forward"),
+        el("h2", "PM QA and promotion"),
         button("Refresh delivery", () => load(s, true)),
       );
       s.notice = el("p", "", "operations-message");
@@ -111,10 +111,10 @@
       s.confirmBox.hidden = true;
       s.candidate = el("section", undefined, "delivery-candidate-setup");
       s.candidate.append(
-        el("h3", "Choose the promotion test environment"),
+        el("h3", "Optional candidate test environment"),
         el(
           "p",
-          "Use a separate nonproduction target for the exact cherry-picked candidate. A Railway target must use a different environment or service from integration. Vercel can use a branch preview in the same project. This selection does not deploy anything or replace trusted candidate verification.",
+          "For an additional candidate browser check, select a nonproduction target for the assembled changes. Railway needs a separate environment or service; Vercel can use a branch preview. Selecting a target does not configure its verifier or deploy the app.",
           "runner-guidance",
         ),
       );
@@ -138,7 +138,7 @@
           s.candidateBaseline = s.candidateSelect.value;
           message(
             s.candidateNotice,
-            "Candidate environment saved. Trusted verification of the exact candidate is still required.",
+            "Candidate environment saved. A configured candidate verifier must still supply its own evidence.",
           );
           await load(s, true);
           await onChanged?.(project.name);
@@ -171,7 +171,7 @@
         el("h3", "Integration → staging"),
         el(
           "p",
-          "The controller tests approved work on the integration environment. Promotion uses isolated cherry-picks and checks; missing evidence keeps it blocked.",
+          "The owning PM tests each integrated change. Passing work is collected into a project promotion PR; failed acceptance checks return to coding. Any blocker remains visible in Delivery.",
           "runner-guidance",
         ),
       );
@@ -439,7 +439,7 @@
           "p",
           action === "advance"
             ? "Advance one approved ShipGremlins implementation? This may merge its exact reviewed PR into the integration branch. It does not merge staging or production."
-            : "Prepare a staging promotion for this PM? The controller will isolate reviewed changes, run checks, and require verification of the exact candidate before creating a draft promotion PR.",
+            : "Prepare a staging promotion for this PM? The controller assembles PM-verified changes and runs its checks before publishing the promotion. Any configured candidate verifier must also pass.",
         ),
       );
       const accept = button(

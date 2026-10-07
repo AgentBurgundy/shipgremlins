@@ -421,8 +421,12 @@ function initializeLocked(
         };
         if (input.createInitialPm === false) config.areas = {};
         for (const item of Object.values(config.areas)) {
-          item.enabled = false;
-          if (item.codingEnabled !== undefined) item.codingEnabled = false;
+          // New crews start daily once readiness checks pass. Recreated crews
+          // remain paused so an old name never silently restores automation.
+          if (replacementId) {
+            item.enabled = false;
+            item.codingEnabled = false;
+          }
         }
         content = JSON.stringify(config, null, 2) + "\n";
       }

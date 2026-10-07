@@ -53,6 +53,7 @@ function fixture() {
     ) => { read(): object; reset(): void };
     createProjectWelcome?: (options: object) => object;
     createProjectMissions?: (options: object) => object;
+    renderCodingLauncher(project: object, options: object): Element;
   };
   window.addEventListener = () => {};
   const document = {
@@ -223,6 +224,32 @@ describe("progressive PM product brief", () => {
 });
 
 describe("focused project crew workspace", () => {
+  it("routes completed promotion coding to delivery while preserving explicit draft review", () => {
+    const api = fixture(),
+      job = { id: "coding-1", ticket: "APP-1", status: "succeeded" };
+    const staged = api.renderCodingLauncher(
+      { name: "app", workflow: { kind: "promotion" } },
+      { operation: { kind: "existing", job } },
+    );
+    expect(text(staged)).toContain("a successful coding run is not a QA pass");
+    expect(text(staged)).not.toContain(
+      "Review its changes and any draft pull request",
+    );
+    expect(
+      all(staged).find((item) => item.textContent === "Follow delivery")?.href,
+    ).toBe("/projects/app?tab=changes");
+    const ordinary = api.renderCodingLauncher(
+      { name: "app", workflow: { kind: "pull-request" } },
+      { operation: { kind: "existing", job } },
+    );
+    expect(text(ordinary)).toContain(
+      "Review its changes and any draft pull request",
+    );
+    expect(
+      all(ordinary).find((item) => item.textContent === "Review existing run")
+        ?.href,
+    ).toBe("/activity?run=coding-1");
+  });
   function workspace() {
     const root = new Element("MAIN"),
       pages = {

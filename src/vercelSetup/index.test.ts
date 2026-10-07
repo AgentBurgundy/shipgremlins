@@ -188,6 +188,160 @@ function fixture() {
   };
 }
 describe("Vercel setup", () => {
+  it("repairs an existing direct-PR project into isolated staging, preserving commands and schedules", async () => {
+    const f = fixture();
+    const path = join(root, "projects/app/project.json");
+    const legacy = JSON.parse(readFileSync(path, "utf8"));
+    legacy.branches = {
+      production: "main",
+      staging: "main",
+      integration: "main",
+    };
+    writeFileSync(path, JSON.stringify(legacy));
+    const areasBefore = readFileSync(
+      join(root, "projects/app/areas.json"),
+      "utf8",
+    );
+    const commands = loadProject(root, "app").config.commands;
+    const plan = await f.service.prepare("app", {
+      revision: (await f.discover()).revision,
+      repairWorkflow: true,
+    });
+    expect(plan.plan).toMatchObject({
+      branch: "pm-staging",
+      baseBranch: "staging",
+      createBranch: true,
+      staging: { branch: "staging", sha: SHA, create: true },
+    });
+    expect(f.calls.filter((c) => c.method === "POST")).toEqual([]);
+    const deployed = await f.service.deploy("app", {
+      revision: plan.revision,
+      confirmTestData: true,
+    });
+    expect(f.branches.get("main")).toBe(SHA);
+    expect(f.branches.get("staging")).toBe(SHA);
+    expect(f.branches.get("pm-staging")).toBe(SHA);
+    const applied = await f.service.applyWorkflow("app", deployed.revision);
+    const config = loadProject(root, "app").config;
+    expect(config.workflow).toEqual({ kind: "promotion" });
+    expect(config.branches).toEqual({
+      production: "main",
+      staging: "staging",
+      integration: "pm-staging",
+    });
+    expect(config.verification).toEqual({
+      mode: "browser",
+      environment: "pm-staging",
+    });
+    expect(config.environments?.["pm-staging"]).toMatchObject({
+      kind: "vercel",
+      branch: "pm-staging",
+      projectId: "prj_app",
+      connectionId: "work",
+    });
+    expect(config.commands).toEqual(commands);
+    expect(config.verified).toBeNull();
+    expect(readFileSync(join(root, "projects/app/areas.json"), "utf8")).toBe(
+      areasBefore,
+    );
+    expect(applied.workflowApplied).toBe(true);
+    expect(applied.stale).toBe(false);
+    await f.create().applyWorkflow("app", applied.revision);
+    expect(
+      f.calls.filter(
+        (c) => c.method === "POST" && c.url.pathname.endsWith("/git/refs"),
+      ),
+    ).toHaveLength(2);
+    expect(
+      f.calls.filter(
+        (c) => c.method === "POST" && c.url.pathname === "/v13/deployments",
+      ),
+    ).toHaveLength(1);
+  });
+  it("starts PM staging from existing staging without moving normal development", async () => {
+    const f = fixture();
+    f.branches.set("staging", OTHER);
+    f.deployment.meta.githubCommitSha = OTHER;
+    const plan = await f.service.prepare("app", {
+      revision: (await f.discover()).revision,
+      repairWorkflow: true,
+    });
+    expect(plan.plan).toMatchObject({
+      sha: OTHER,
+      staging: { create: false, sha: OTHER },
+    });
+    await f.service.deploy("app", {
+      revision: plan.revision,
+      confirmTestData: true,
+    });
+    expect(f.branches.get("staging")).toBe(OTHER);
+    expect(f.branches.get("main")).toBe(SHA);
+    expect(f.branches.get("pm-staging")).toBe(OTHER);
+    expect(
+      f.calls
+        .filter(
+          (c) => c.method === "POST" && c.url.pathname.endsWith("/git/refs"),
+        )
+        .map((c) => c.body.ref),
+    ).toEqual(["refs/heads/pm-staging"]);
+  });
+  it("detects a non-main production branch for new promotion projects", async () => {
+    const f = fixture();
+    const path = join(root, "projects/app/project.json");
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    config.workflow = { kind: "promotion" };
+    writeFileSync(path, JSON.stringify(config));
+    f.project.link.productionBranch = "production";
+    f.branches.delete("main");
+    f.branches.set("production", SHA);
+    const plan = await f.prepare();
+    expect(plan.plan?.workflowBranches).toEqual({
+      production: "production",
+      staging: "staging",
+      integration: "pm-staging",
+    });
+    const deployed = await f.service.deploy("app", {
+      revision: plan.revision,
+      confirmTestData: true,
+    });
+    await f.service.applyWorkflow("app", deployed.revision);
+    expect(loadProject(root, "app").config.branches.production).toBe(
+      "production",
+    );
+    expect(f.branches.get("production")).toBe(SHA);
+  });
+  it("holds repair when staging moves and never resets either existing branch", async () => {
+    const f = fixture();
+    const plan = await f.service.prepare("app", {
+      revision: (await f.discover()).revision,
+      repairWorkflow: true,
+    });
+    f.branches.set("staging", OTHER);
+    await expect(
+      f.service.deploy("app", {
+        revision: plan.revision,
+        confirmTestData: true,
+      }),
+    ).rejects.toThrow("Staging moved");
+    expect(f.calls.filter((c) => c.method === "POST")).toEqual([]);
+    expect(f.branches.get("staging")).toBe(OTHER);
+  });
+  it("does not migrate configuration for a failed deployment or changed production mapping", async () => {
+    const f = fixture();
+    const plan = await f.service.prepare("app", {
+      revision: (await f.discover()).revision,
+      repairWorkflow: true,
+    });
+    const deployed = await f.service.deploy("app", {
+      revision: plan.revision,
+      confirmTestData: true,
+    });
+    f.project.link.productionBranch = "pm-staging";
+    await expect(
+      f.service.applyWorkflow("app", deployed.revision),
+    ).rejects.toThrow("mapping changed");
+    expect(loadProject(root, "app").config.workflow?.kind).toBe("pull-request");
+  });
   it("preserves a realistic bounded 500-project and 500-deployment inventory", async () => {
     const f = fixture();
     f.setListed([f.deployment]);

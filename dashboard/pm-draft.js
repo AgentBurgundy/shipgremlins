@@ -27,7 +27,7 @@
     const values = copy(draft),
       filled = [],
       kept = [];
-    const defaults = { metric: "/", schedule: "0 13 * * 1-5", wipLimit: "3" };
+    const defaults = { metric: "/", schedule: "0 13 * * *", wipLimit: "3" };
     for (const key of fields.filter((key) => key !== "charter")) {
       const existing = input[key];
       const preserve =

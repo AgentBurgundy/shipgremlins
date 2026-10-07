@@ -27,6 +27,7 @@ export interface StoredVercelSetup extends Omit<
     id: string;
     planId: string;
     branchSent?: boolean;
+    stagingSent?: boolean;
     deploymentSent?: boolean;
   };
 }

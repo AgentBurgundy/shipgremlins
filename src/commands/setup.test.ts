@@ -48,7 +48,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("setup initialization", () => {
-  it("pauses imported coding settings but preserves the owner's switches on repeat setup", () => {
+  it("starts fresh schedules and preserves the owner's switches on repeat setup", () => {
     const customRoot = join(root, "template-source");
     cpSync(
       join(templatesRoot, "projects", "_templates"),
@@ -61,11 +61,12 @@ describe("setup initialization", () => {
     writeFileSync(source, JSON.stringify(template));
     initializeSetup(root, customRoot, input);
     expect(loadProject(root, input.project).areas[0]).toMatchObject({
-      enabled: false,
-      codingEnabled: false,
+      enabled: true,
+      codingEnabled: true,
     });
     const areaFile = join(root, "projects", input.project, "areas.json");
     const areas = JSON.parse(readFileSync(areaFile, "utf8"));
+    areas.areas.core.enabled = false;
     areas.areas.core.codingEnabled = true;
     writeFileSync(areaFile, JSON.stringify(areas));
     const before = readFileSync(areaFile, "utf8");
@@ -325,14 +326,21 @@ describe("setup initialization", () => {
     expect(errors.join("\n")).toContain("gremlins setup --help");
     expect(readdirSync(root)).toEqual([]);
   });
-  it("creates a valid fresh config with disabled PMs and only empty secret names", () => {
+  it("creates daily PM defaults that wait for readiness, with only empty secret names", () => {
     const result = initializeSetup(root, templatesRoot, input);
     expect(result.created).toHaveLength(11);
     expect(loadHub(root).hubRepo).toBe("example/hub");
     const project = loadProject(root, "demo-app");
     expect(project.config.repo).toBe("example/app");
     expect(project.config.verified).toBeNull();
-    expect(project.areas[0]!.enabled).toBe(false);
+    expect(project.areas[0]!.enabled).toBe(true);
+    expect(project.areas[0]!.schedule).toBe("0 13 * * *");
+    expect(project.config.workflow).toEqual({ kind: "promotion" });
+    expect(project.config.branches).toEqual({
+      production: "main",
+      staging: "staging",
+      integration: "pm-staging",
+    });
     expect(project.areas[0]!.codingEnabled).toBeUndefined();
     const env = readFileSync(join(root, ".env.example"), "utf8");
     expect(

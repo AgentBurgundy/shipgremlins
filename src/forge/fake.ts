@@ -274,6 +274,13 @@ export class FakeForge implements Forge {
   ): Promise<void> {
     this.patchPull(repo, number, patch);
   }
+  async retargetPull(
+    repo: RepoRef,
+    number: number,
+    base: string,
+  ): Promise<void> {
+    this.patchPull(repo, number, { baseRef: base });
+  }
   async markReady(repo: RepoRef, number: number): Promise<void> {
     this.patchPull(repo, number, { draft: false });
     this.readied.push(number);

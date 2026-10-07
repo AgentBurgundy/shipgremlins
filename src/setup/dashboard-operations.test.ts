@@ -212,6 +212,52 @@ function fixture(api: (path: string, body?: unknown) => Promise<unknown>) {
 }
 
 describe("project operations edit safety", () => {
+  it("shows PM QA follow-up status and keeps the concrete failure visible in promotion delivery", async () => {
+    const current = {
+      ...data(),
+      delivery: {
+        mode: "promotion",
+        branches: {
+          integration: "pm-staging",
+          staging: "staging",
+          production: "main",
+        },
+        items: [
+          {
+            status: "failed",
+            title: "Repair sign-in",
+            message: "The saved account could not sign in.",
+            rework: {
+              phase: "stopped",
+              jobId: "job-repair",
+              message: "The coding retry was canceled.",
+            },
+          },
+        ],
+      },
+    };
+    const api = vi.fn(async (path: string) =>
+      path.endsWith("/operations")
+        ? current
+        : { enabled: true, deliveries: [] },
+    );
+    const { control } = fixture(api),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "delivery");
+    await flush();
+    expect(text(root)).toContain("Your crew builds. Your PM tests.");
+    expect(text(root)).toContain("Coding follow-up stopped");
+    expect(text(root)).toContain("The saved account could not sign in.");
+    expect(text(root)).toContain("The coding retry was canceled.");
+    expect(
+      root
+        .querySelectorAll("a")
+        .find((item) => item.textContent === "Coding follow-up →")?.href,
+    ).toBe("/activity?run=job-repair");
+    expect(text(root)).not.toContain(
+      "review the draft pull request before merging",
+    );
+  });
   it("keeps ordinary PR delivery focused and does not load promotion controls", async () => {
     const api = vi.fn(async () => data());
     const { control } = fixture(api),

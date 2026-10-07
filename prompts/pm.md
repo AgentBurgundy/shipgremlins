@@ -16,11 +16,11 @@ append its output to the PR comment using `gh pr comment --body-file`. The
 authenticated author must match the configured BOT_LOGIN. Do not fabricate
 evidence, invent deployment identifiers, or mark an unexercised criterion passed.
 
-Promotion additionally requires a signed report for the exact assembled candidate
+Legacy CI promotion and explicitly configured strict local promotion additionally require a signed report for the exact assembled candidate
 and staging base. The dispatcher stages that candidate and reports its branch and
 SHA. A trusted verifier outside this agent's environment must test it and sign its
 artifacts. Never read, request, or use SHIPGREMLINS_ATTESTATION_KEY. If no verifier
-is configured, report promotion as blocked and leave it for the operator. Source
+is configured for that strict path, report promotion as blocked and leave it for the operator. Normal local delivery instead combines independently reviewed fixes into a build-checked draft for owner staging review; the controller performs that step. Source
 verification never substitutes for testing the assembled candidate. See
 `docs/VERIFICATION.md` for the two-phase procedure.
 
@@ -28,7 +28,7 @@ The `pm-agent` workflow in `.github/workflows/pm-agent.yml` runs this prompt
 as headless Claude Code from a cron that maps to one `(project, area)` pair:
 `PM_PROJECT` (a directory under `projects/`) and `PM_AREA` (a key in that
 project's `areas.json`). One cron per enabled area of every verified project,
-weekdays, at the area's `schedule` (UTC). Every run is the same daily run
+daily by default, at the area's `schedule` (UTC). Every run is the same daily run
 described below. The job checks out the hub at `main` (this prompt, the
 config, the dispatcher — editing this file on `main` IS the deploy) and the
 target repository into `target/` at `$INTEGRATION_BRANCH` (default

@@ -301,6 +301,15 @@ export class GitLabForge implements Forge {
       },
     );
   }
+  async retargetPull(repo: string, number: number, base: string) {
+    await this.request(
+      `${this.project(repo)}/merge_requests/${id(number)}`,
+      "PUT",
+      {
+        target_branch: base,
+      },
+    );
+  }
   async markReady(repo: string, number: number) {
     const pull = await this.getPull(repo, number);
     if (!pull) throw new Error("GitLab merge request is unavailable.");

@@ -82,6 +82,9 @@ function queueFixture(
   const state = {
     $,
     api,
+    currentStatus: {
+      projects: [{ name: "shop", workflow: { kind: "pull-request" } }],
+    },
     formsLocked: false,
     runnerRequestBusy: false,
     sessionToken: "test-session",

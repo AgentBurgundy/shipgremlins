@@ -1,5 +1,32 @@
 import type { LinearTicket } from "../services/types.ts";
 
+export interface QaFailureFinding {
+  criterion: string;
+  receiptId: string;
+  expected: string;
+  url: string;
+  screenshot: { name: string; sha256: string };
+}
+export interface QaReworkIntent {
+  key: string;
+  rootDeliveryId: string;
+  attempt: number;
+  reviewHash: string;
+  findings: QaFailureFinding[];
+  jobId?: string;
+  phase: "queued" | "running" | "awaiting-review" | "stopped";
+  message: string;
+}
+export interface IntegrationRepairIntent {
+  key: string;
+  kind: "conflict" | "checks";
+  headSha: string;
+  integrationSha: string;
+  jobId?: string;
+  phase: "queued" | "running" | "stopped" | "replaced";
+  message: string;
+}
+
 export interface ReviewDeployment {
   id: string;
   url: string;
@@ -52,6 +79,18 @@ export interface DeliveryRecord {
     at: string;
     manifestHash: string;
     artifacts: { name: string; sha256: string }[];
+    failures?: QaFailureFinding[];
+  };
+  rework?: QaReworkIntent;
+  /** One bounded repair before this implementation has ever entered integration. */
+  integrationRepair?: IntegrationRepairIntent;
+  integrationRepairOf?: string;
+  supersededBy?: string;
+  reworkOf?: {
+    deliveryId: string;
+    rootDeliveryId: string;
+    attempt: number;
+    key: string;
   };
   promotion?: { number: number; url: string; headSha: string; branch: string };
 }
@@ -117,4 +156,12 @@ export interface ReviewIngestion {
     receiptId: string;
     deployment: ReviewDeployment;
   }) => Promise<boolean>;
+  /** Independently replayed failed predicate + verified screenshot, never PM prose. */
+  failureEvidence?: (input: {
+    jobId: string;
+    deliveryId: string;
+    criterion: string;
+    receiptId: string;
+    deployment: ReviewDeployment;
+  }) => Promise<QaFailureFinding | null>;
 }

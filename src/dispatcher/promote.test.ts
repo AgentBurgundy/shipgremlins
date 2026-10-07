@@ -481,6 +481,112 @@ describe("runPromote", () => {
     expect(rows[0]!.text).toBe("Core: promotion #70 — 1 new, 2 total, 0 held");
   });
 
+  it("preserves and holds a batch whose old source commit fell outside the candidate window", async () => {
+    const ctx = twoAreas();
+    const old = seedMerged(ctx, {
+      number: 50,
+      files: ["app/old.ts"],
+      mergedAt: "2026-01-01T09:00:00Z",
+      verdicts: [verified],
+    });
+    seedMerged(ctx, {
+      number: 60,
+      files: ["app/new.ts"],
+      mergedAt: "2026-10-01T09:00:00Z",
+      verdicts: [verified],
+    });
+    const open = ctx.forge.seedPull(TEST_REPO, {
+      number: 70,
+      headRef: "pm-release/combined/20261001",
+      baseRef: "staging",
+      draft: false,
+      body: "Original reviewed batch",
+    });
+    const git = new FakeGit([
+      {
+        match:
+          "log --format=%B origin/staging..origin/pm-release/combined/20261001",
+        result: `Old work\n\n(cherry picked from commit ${old})\n`,
+      },
+    ]);
+    let checked = false;
+    const rows = await runPromote(ctx, {
+      git,
+      checkoutDir: DIR,
+      local: true,
+      check: async () => {
+        checked = true;
+        return { ok: true, output: "checks passed" };
+      },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        needsYou: true,
+        text: expect.stringContaining(
+          "outside the current reviewed candidate set",
+        ),
+      }),
+    ]);
+    expect(checked).toBe(false);
+    expect(git.commands().some((command) => command.startsWith("push "))).toBe(
+      false,
+    );
+    expect(ctx.forge.pull(TEST_REPO, open.number)).toMatchObject({
+      state: "open",
+      body: "Original reviewed batch",
+      headSha: open.headSha,
+    });
+  });
+
+  it.each(["merged", "changed-head"])(
+    "does not extend a promotion that was %s while checks ran",
+    async (change) => {
+      const ctx = twoAreas();
+      seedMerged(ctx, {
+        number: 60,
+        files: ["app/a.ts"],
+        mergedAt: "2026-10-01T09:00:00Z",
+        verdicts: [verified],
+      });
+      const open = ctx.forge.seedPull(TEST_REPO, {
+        number: 70,
+        headRef: "pm-release/core/20261001",
+        baseRef: "staging",
+        draft: false,
+      });
+      const git = new FakeGit();
+      const rows = await runPromote(ctx, {
+        git,
+        checkoutDir: DIR,
+        area: "core",
+        check: async () => {
+          ctx.forge.patchPull(
+            TEST_REPO,
+            open.number,
+            change === "merged"
+              ? { state: "merged" }
+              : { headSha: "f".repeat(40) },
+          );
+          return { ok: true, output: "checks passed" };
+        },
+      });
+      expect(
+        rows.some(
+          (row) => row.pending && row.text.includes("Promotion changed"),
+        ),
+      ).toBe(true);
+      expect(
+        git
+          .commands()
+          .some(
+            (command) =>
+              command.startsWith("push ") &&
+              command.endsWith(`HEAD:refs/heads/${open.headRef}`),
+          ),
+      ).toBe(false);
+    },
+  );
+
   it("skips merges already on staging by trailer or ancestry and ignores sync and foreign PRs", async () => {
     const ctx = twoAreas();
     const onStaging = seedMerged(ctx, {

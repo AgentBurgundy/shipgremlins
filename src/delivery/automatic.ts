@@ -32,6 +32,8 @@ interface Slot {
   queued?: string;
   running?: Claim;
   finished?: string;
+  retryAt?: number;
+  retries?: number;
 }
 interface State {
   schema: 1;
@@ -89,12 +91,26 @@ function validate(value: unknown): State {
   for (const slot of value.slots) {
     if (
       !object(slot) ||
-      !only(slot, ["project", "area", "queued", "running", "finished"]) ||
+      !only(slot, [
+        "project",
+        "area",
+        "queued",
+        "running",
+        "finished",
+        "retryAt",
+        "retries",
+      ]) ||
       !name(slot.project) ||
       !name(slot.area) ||
       (slot.queued !== undefined && !digest(slot.queued)) ||
       (slot.finished !== undefined && !digest(slot.finished)) ||
       (slot.running !== undefined && !validClaim(slot.running)) ||
+      (slot.retryAt !== undefined &&
+        (!Number.isSafeInteger(slot.retryAt) || Number(slot.retryAt) < 0)) ||
+      (slot.retries !== undefined &&
+        (!Number.isSafeInteger(slot.retries) ||
+          Number(slot.retries) < 0 ||
+          Number(slot.retries) > 10)) ||
       (!slot.queued && !slot.running && !slot.finished) ||
       (slot.running && slot.queued === slot.running.key)
     )
@@ -166,7 +182,13 @@ function protect(file: string) {
 }
 
 /** Durable latest-intent queue. No delivery or provider mutations happen here. */
-export function createAutomaticPromotions({ root }: { root: string }) {
+export function createAutomaticPromotions({
+  root,
+  now = Date.now,
+}: {
+  root: string;
+  now?: () => number;
+}) {
   const directory = join(resolve(root), ".run", "delivery"),
     file = join(directory, "automatic.json"),
     lock = join(directory, "automatic.lock");
@@ -298,11 +320,16 @@ export function createAutomaticPromotions({ root }: { root: string }) {
       ) {
         // A newer verification snapshot supersedes work that has not started.
         slot.queued = key;
+        delete slot.retryAt;
+        delete slot.retries;
       }
     });
   }
-  function pending(): AutomaticPromotion[] {
+  function pending({
+    readyOnly = false,
+  }: { readyOnly?: boolean } = {}): AutomaticPromotion[] {
     return read().slots.flatMap((slot) => {
+      if (readyOnly && slot.retryAt && slot.retryAt > now()) return [];
       const key = slot.running?.key ?? slot.queued;
       return key ? [{ project: slot.project, area: slot.area, key }] : [];
     });
@@ -314,6 +341,7 @@ export function createAutomaticPromotions({ root }: { root: string }) {
         (s) => s.project === item.project && s.area === item.area,
       );
       if (!slot) return null;
+      if (slot.retryAt && slot.retryAt > now()) return null;
       if (slot.running) {
         if (slot.running.key !== item.key || !ownerIsDead(slot.running.pid))
           return null;
@@ -324,7 +352,11 @@ export function createAutomaticPromotions({ root }: { root: string }) {
       return token;
     });
   }
-  function finish(item: AutomaticPromotion, token: string): void {
+  function finish(
+    item: AutomaticPromotion,
+    token: string,
+    { retry = false }: { retry?: boolean } = {},
+  ): void {
     validItem(item);
     if (!digest(token)) return;
     change((state) => {
@@ -338,7 +370,16 @@ export function createAutomaticPromotions({ root }: { root: string }) {
       )
         return;
       delete slot.running;
-      slot.finished = item.key;
+      if (retry && (!slot.queued || slot.queued === item.key)) {
+        slot.queued = item.key;
+        slot.retries = Math.min(10, (slot.retries ?? 0) + 1);
+        slot.retryAt =
+          now() + Math.min(30 * 60_000, 60_000 * 2 ** (slot.retries - 1));
+      } else {
+        slot.finished = item.key;
+        delete slot.retryAt;
+        delete slot.retries;
+      }
     });
   }
   return { enqueue, pending, claim, finish };
