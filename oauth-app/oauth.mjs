@@ -150,7 +150,15 @@ export function createOAuthBroker(
       const u = new URL(req.url, SITE),
         action = u.pathname.split("/").at(-1);
       if (action === "status" && req.method === "GET")
-        return json(200, { available: configured });
+        return json(200, {
+          available: configured,
+          ...(!configured ? { availabilityReason: "not_configured" } : {}),
+        });
+      if (!configured && action === "connect" && req.method === "POST")
+        return json(503, {
+          available: false,
+          availabilityReason: "not_configured",
+        });
       if (!configured)
         return page(
           503,
@@ -188,7 +196,7 @@ export function createOAuthBroker(
         return page(
           200,
           `Connect your crew to ${name}.`,
-          `<p>Continue only if you just clicked <strong>Connect ${name}</strong> on this ShipGremlins server.</p><div class="instance"><small>YOUR SHIPGREMLINS INSTANCE</small><strong>${esc(new URL(r.returnUrl).origin)}</strong></div><p>${provider === "linear" ? "Organize your apps into teams, PM mandates into projects, and findings into issues. Your Linear permissions determine which teams you can create or manage." : "Choose the Vercel projects your crew can inspect. ShipGremlins reads project and deployment details to find ready previews."}</p><form method="post" action="/api/${provider}/authorize"><input type="hidden" name="request" value="${esc(raw)}"><button type="submit">Continue to ${name} <span>↗</span></button></form><p class="fine">${provider === "linear" ? "Your server exchanges the authorization code directly with Linear. Tokens stay on your server." : "Our connection service exchanges the authorization code, then returns the token encrypted to your server. It does not persist your token."} Keep your dashboard open until setup finishes.</p>`,
+          `<p>Continue only if you just clicked <strong>Connect ${name}</strong> on this ShipGremlins server.</p><div class="instance"><small>YOUR SHIPGREMLINS INSTANCE</small><strong>${esc(new URL(r.returnUrl).origin)}</strong></div><p>${provider === "linear" ? "Organize your apps into teams, PM mandates into projects, and findings into issues. Your Linear permissions determine which teams you can create or manage." : "Choose the Vercel projects your crew can inspect. ShipGremlins can read project and deployment details, create test previews, and manage dedicated browser access to protected previews."}</p><form method="post" action="/api/${provider}/authorize"><input type="hidden" name="request" value="${esc(raw)}"><button type="submit">Continue to ${name} <span>↗</span></button></form><p class="fine">${provider === "linear" ? "Your server exchanges the authorization code directly with Linear. Tokens stay on your server." : "Our connection service exchanges the authorization code, then returns the token encrypted to your server. It does not persist your token."} Keep your dashboard open until setup finishes.</p>`,
         );
       }
       if (action === "authorize" && req.method === "POST") {

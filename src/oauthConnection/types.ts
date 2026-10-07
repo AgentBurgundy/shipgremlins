@@ -1,7 +1,10 @@
 export type OAuthProvider = "linear" | "vercel";
+export type OAuthAvailabilityReason = "not_configured" | "provider_unavailable";
 export interface OAuthStatus {
   provider: OAuthProvider;
   available: boolean;
+  /** Browser setup availability is independent of existing saved credentials. */
+  availabilityReason?: OAuthAvailabilityReason;
   connected: boolean;
   method: "oauth" | "token" | "none";
   workspace?: { id: string; name: string };
@@ -27,7 +30,10 @@ export interface CredentialRequest {
   workspaceId?: string;
 }
 export interface OAuthConnection {
-  status(options?: { checkAvailability?: boolean }): Promise<OAuthStatus>;
+  status(options?: {
+    checkAvailability?: boolean;
+    refreshAvailability?: boolean;
+  }): Promise<OAuthStatus>;
   connect(returnUrl: string): Promise<{ url: string }>;
   complete(envelope: string): Promise<OAuthStatus>;
   disconnect(): Promise<OAuthStatus>;

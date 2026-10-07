@@ -116,6 +116,20 @@ creating missing resources.
 
 ## Vercel preview access
 
+Start with **Connect Vercel**. The ShipGremlins connection-service operator
+registers the integration and manages its client secret; you select your Vercel
+account/team and the existing projects it may access. You do not need to create
+an integration or enter a client ID. If browser setup is unavailable because the
+hosted service is not configured, the operator must finish that setup. The
+advanced manual-token option remains available.
+
+The connection reads project, deployment and account information. Full setup
+also requests deployment write access to create reviewed test Previews and
+separate protection-bypass access to prepare private browser access. General
+project settings, environment-variable and domain writes are not needed. Approve
+pending permissions or reconnect an older read-only installation before using
+those setup actions. [Exact integration permissions and operator setup →](LINEAR_VERCEL_OAUTH.md#vercel)
+
 For a manual token, open the Vercel card in Connections and use its link to
 [Vercel Tokens](https://vercel.com/account/tokens). Name the token ShipGremlins,
 select the team or project you need, choose an expiration, and save it in the
@@ -148,7 +162,15 @@ Linear uses OAuth with PKCE, and the controller exchanges and refreshes tokens l
 
 Encrypted default provider state and its local key live together under `.run/oauth/linear/` and `.run/oauth/vercel/`. Named connections have separate state, keys, pending authorizations, and job reservations in each provider's `connections/CONNECTION_ID/` subdirectory. Back up each complete provider directory privately. Do not copy encrypted state without its key. Manual keys remain in the configuration `.env`; only the default connection supports that fallback. Saved OAuth takes precedence, and a broken OAuth connection does not silently fall back to an older manual key.
 
-The controller uses Vercel tokens for deployment lookup; they are not included in the Docker job payload. Linear access tokens are supplied to workers so PMs can file proposals. Refresh tokens and provider client secrets stay out of worker payloads. Linear and source-control credentials have durable 50-minute job reservations for the 45-minute worker limit; new work waits when refreshing would invalidate a running job's credential. Reservations are released after completion or a failed preparation.
+The controller uses Vercel tokens for project and deployment lookup, reviewed
+Preview creation and managed automation bypass setup; account tokens are not
+included in the Docker job payload. A selected preview's bypass credential is
+separate and is supplied privately for browser access. Linear access tokens are
+supplied to workers so PMs can file proposals. Refresh tokens and provider client
+secrets stay out of worker payloads. Linear and source-control credentials have
+durable 50-minute job reservations for the 45-minute worker limit; new work waits
+when refreshing would invalidate a running job's credential. Reservations are
+released after completion or a failed preparation.
 
 Disconnecting or reconnecting can require active jobs to finish first. Provider revocation can still interrupt a job; review its evidence before retrying. Neither a successful worker nor a draft PR marks a Linear ticket Done. Done remains tied to reviewed production delivery.
 

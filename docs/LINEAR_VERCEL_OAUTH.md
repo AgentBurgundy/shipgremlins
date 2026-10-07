@@ -14,11 +14,55 @@ These behaviors follow [Linear's OAuth documentation](https://linear.app/develop
 
 ## Vercel
 
-ShipGremlins uses a Vercel **integration**, with read access to projects, deployments, the installation configuration, and team/user identity. Choose the Vercel projects the integration may read. The selected project is checked before credentials are used for preview discovery.
+ShipGremlins uses a Vercel **connectable integration**. In the authorization flow,
+choose the account or team and the existing projects your crew may access. The
+controller verifies the selected project before using that connection.
 
-The Vercel setup flow can also create an explicitly reviewed test Preview. That action requires **deployment write** permission; the original read-only integration grant is sufficient only for discovery. Use a connection granted deployment write access, or save a suitably scoped personal token in the default Vercel connection. Existing grants do not silently gain permissions. If the hosted connection broker is unavailable, the dashboard's advanced manual-token path remains usable. No environment-variable write, domain write, or production promotion is used by this setup flow. See [Vercel environments](VERCEL_ENVIRONMENTS.md).
+The integration needs these permissions for the current setup features:
+
+| Vercel permission         | Access     | Purpose                                                                                           |
+| ------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
+| Integration Configuration | Read       | Installation access; its identity binds the saved OAuth connection and owned automation bypass.   |
+| Current User              | Read       | Verify a personal-account installation.                                                           |
+| Teams                     | Read       | Verify a team installation.                                                                       |
+| Projects                  | Read       | Match the repository, inspect existing project settings and identify preview environments.        |
+| Deployments               | Read/Write | Find and verify deployments, and create a reviewed test Preview in the selected existing project. |
+| Project Protection Bypass | Read/Write | Find, create and recover ShipGremlins' dedicated automation bypass for protected previews.        |
+
+Project access and permission levels are separate: select only the projects the
+crew needs. Vercel groups deployment writes into a broader permission; the
+ShipGremlins setup implementation uses it to create nonproduction previews.
+It does not create Vercel projects, edit general project settings, write environment
+variables or domains, delete deployments, or promote production. Keep general
+**Projects** access at **Read**, with the separate protection-bypass permission
+for automation access. See [Vercel's integration scope reference](https://vercel.com/docs/integrations/create-integration/vercel-api-integrations)
+and [automation bypass API](https://vercel.com/docs/rest-api/projects/update-protection-bypass-for-automation).
+
+A read-only installation supports discovery but cannot provide the complete
+preview setup. Existing installations must approve added permissions before using
+them; reconnect if the saved grant lacks access. Optional Vercel analytics reads
+can still return unavailable and are not required for onboarding. If the hosted
+connection broker is unavailable, the dashboard's advanced manual-token path
+remains usable. See [Vercel environments](VERCEL_ENVIRONMENTS.md).
 
 The integration secret stays on the hosted callback service. That service exchanges the one-use code, encrypts the installation token for the local server, and does not persist it. The local server stores the token and includes its installation team ID when making requests. Vercel integration tokens are long-lived; a removed or disabled installation must be reconnected. This flow follows [Vercel's integration API documentation](https://vercel.com/docs/integrations/create-integration/vercel-api-integrations).
+
+### Connection-service operator and end user
+
+The operator of the hosted ShipGremlins connection service registers the Vercel
+integration once, configures these permissions and the callback
+`https://shipgremlins.ai/api/vercel/callback`, and privately deploys its client ID,
+client secret and OAuth state key. A working website alone does not register an
+integration or supply those credentials. The registered integration slug must
+match the broker's configuration. Operator details are in the
+[connection broker README](../oauth-app/README.md).
+
+People running ShipGremlins connect their own Vercel account through **Connect
+Vercel**; they do not register an integration or enter the broker's client secret.
+An unavailable broker or missing operator configuration needs an operator fix,
+not repeated authorization attempts. After successful authorization, a connection
+started from project setup resumes that project's environment setup. Connecting
+the account alone does not create a deployment or bypass secret.
 
 ## Storage and recovery
 

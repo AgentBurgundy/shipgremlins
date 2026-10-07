@@ -4126,12 +4126,18 @@
     }
     renderLinearSetup();
   }
-  async function refreshService(provider) {
+  async function refreshService(provider, refreshAvailability = false) {
     if (!sessionToken || serviceBusy.has(provider)) return;
     serviceBusy.add(provider);
     renderServiceControls();
     try {
-      rememberServiceStatus(provider, await api(serviceUrl(provider)));
+      rememberServiceStatus(
+        provider,
+        await api(
+          serviceUrl(provider) +
+            (provider === "vercel" && refreshAvailability ? "&refresh=1" : ""),
+        ),
+      );
       message($(`${provider}-message`), "");
     } catch (error) {
       message($(`${provider}-message`), error.message, true);
@@ -4239,12 +4245,28 @@
     renderServiceControls();
     message($(`${provider}-message`), "");
     try {
-      const status = await api(serviceUrl(provider, "", selected));
-      if (!status.available)
-        throw new Error(
-          status.message ||
-            `Browser sign-in is unavailable. Open Connections to configure ${config.name}.`,
+      const status = await api(
+        serviceUrl(provider, "", selected) +
+          (provider === "vercel" ? "&refresh=1" : ""),
+      );
+      if (!status.available) {
+        const reason = ["not_configured", "provider_unavailable"].includes(
+          status.availabilityReason,
+        )
+          ? status.availabilityReason
+          : undefined;
+        const error = new Error(
+          provider === "vercel"
+            ? reason === "not_configured"
+              ? "ShipGremlins’ hosted Vercel sign-in service needs configuration. The ShipGremlins operator must finish that setup; check again after it’s fixed."
+              : "We couldn’t reach a working Vercel sign-in service. Retry to check it again and continue to Vercel."
+            : status.message ||
+                `Browser sign-in is unavailable. Open Connections to configure ${config.name}.`,
         );
+        error.code = "oauth_unavailable";
+        error.availabilityReason = reason;
+        throw error;
+      }
       rememberService(provider, selected);
       rememberServiceStatus(provider, status);
       sessionStorage.setItem("gremlins-pending-" + provider, selected);
@@ -4276,7 +4298,7 @@
   }
   for (const [provider, config] of Object.entries(serviceProviders)) {
     $(`${provider}-refresh`).addEventListener("click", () =>
-      refreshService(provider),
+      refreshService(provider, true),
     );
     $(`${provider}-connect`).addEventListener("click", async () => {
       try {

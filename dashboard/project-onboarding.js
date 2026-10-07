@@ -233,6 +233,18 @@
         project.serverUrl ?? null,
         project.repo,
       ]);
+    const hostingBinding = (s) =>
+      JSON.stringify([
+        vercelTargetIdentity(
+          s.data?.environment?.target || s.draft?.existingTarget,
+        ),
+        s.project.vercel?.connectionId || "default",
+        s.project.vercel?.projectId ?? null,
+        s.project.vercel?.teamId ?? null,
+        s.data?.environmentSetup?.action === "connect_vercel"
+          ? (s.data.environmentSetup.connectionId ?? null)
+          : null,
+      ]);
     const previewNeedsSave = (s) =>
       dirty(s) || s.draft?.suggestedEnvironment || !s.data?.environment;
     const preparedTargetKey = (target) => {
@@ -616,15 +628,40 @@
           connections[0]?.id ||
           "default",
         connection = connections.find((item) => item.id === id);
+      if (
+        s.hostingFailure &&
+        (s.hostingFailure.connectionId !== id ||
+          s.hostingFailure.binding !== hostingBinding(s))
+      )
+        s.hostingFailure = null;
+      const unavailable =
+        connection?.available === false &&
+        (!connection.connected || connection.needsReconnect) &&
+        ["not_configured", "provider_unavailable"].includes(
+          connection.availabilityReason,
+        );
       return {
         id,
         label: connection?.name || id,
         known: Array.isArray(status?.serviceConnections),
         ready: Boolean(connection?.connected && !connection.needsReconnect),
         reconnect: Boolean(connection?.needsReconnect || reconnectId),
+        failure: unavailable
+          ? {
+              connectionId: id,
+              needsOperator: connection.availabilityReason === "not_configured",
+              message:
+                connection.message ||
+                "Vercel sign-in is unavailable. Check again to continue.",
+            }
+          : null,
       };
     }
-    async function connectHosting(s, connectionId = hostingConnection(s).id) {
+    async function connectHosting(
+      s,
+      connectionId = hostingConnection(s).id,
+      delegated = false,
+    ) {
       if (
         active !== s ||
         destroyed ||
@@ -633,6 +670,7 @@
       )
         return;
       const identity = projectIdentity(s.project),
+        binding = hostingBinding(s),
         current = () =>
           !destroyed &&
           entries.get(s.project.name) === s &&
@@ -646,11 +684,20 @@
           !window.dashboardPages?.navigate("/connections#vercel-connection")
         )
           window.location.assign("/connections#vercel-connection");
+        if (current()) s.hostingFailure = null;
       } catch (error) {
-        if (current())
-          s.error =
-            error.message ||
-            "Vercel authorization could not start. Your environment edits are kept.";
+        if (delegated) throw error;
+        if (current() && hostingBinding(s) === binding)
+          s.hostingFailure = {
+            connectionId,
+            binding,
+            needsOperator:
+              error.code === "oauth_unavailable" &&
+              error.availabilityReason === "not_configured",
+            message:
+              error.message ||
+              "Vercel sign-in could not start. Retry to check the connection and open Vercel.",
+          };
       } finally {
         if (current()) {
           s.hostingConnecting = false;
@@ -1399,7 +1446,7 @@
               getStatus,
               isLocked: () => disabled(s),
               onConnectHosting: (_project, connectionId) =>
-                connectHosting(s, connectionId),
+                connectHosting(s, connectionId, true),
               onConfigured: async () => {
                 s.data = await api(endpoint(s));
                 s.draft = initialDraft(s);
@@ -2023,15 +2070,21 @@
       }
     }
     function paintAutomatic(s) {
+      const connection = hostingConnection(s);
+      if (connection.ready) s.hostingFailure = null;
       const setup = s.data?.environmentSetup,
         available = s.data?.environmentSetupSupported,
-        connection = hostingConnection(s),
+        showConnection =
+          !s.showForm || s.data?.environment?.target.kind === "vercel",
+        connectionFailure = showConnection
+          ? s.hostingFailure || connection.failure
+          : null,
         needsConnection =
           connection.known &&
           !connection.ready &&
           (!s.data?.environment ||
             s.data.environment.target.kind === "vercel") &&
-          (!s.showForm || s.data?.environment?.target.kind === "vercel"),
+          showConnection,
         preparing = s.preparePending || setup?.status === "preparing",
         blocked = ["needs_input", "failed"].includes(setup?.status),
         suggested = !setup && !s.data?.environment && canPrepareEnvironment(s),
@@ -2039,7 +2092,11 @@
           available &&
           (!s.data?.environment ||
             s.data.environment.target.kind === "vercel") &&
-          (preparing || blocked || suggested || needsConnection);
+          (preparing ||
+            blocked ||
+            suggested ||
+            needsConnection ||
+            connectionFailure);
       s.automatic.hidden = !visible;
       s.prepareControls = [];
       if (!visible) return;
@@ -2062,7 +2119,7 @@
             ? "Let your gremlins see the app."
             : suggested
               ? "We’ll find your test environment."
-              : setup.action === "choose_preview"
+              : setup?.action === "choose_preview"
                 ? "Choose the app your crew should test."
                 : diagnosis?.title || "One thing needs your help.";
       copy.append(
@@ -2075,10 +2132,12 @@
             : needsConnection
               ? setup?.action === "connect_vercel"
                 ? setup.message
-                : "Connect Vercel and we’ll find this repository’s test preview, prepare access and check it from your runner. Using another host? Add its test address instead."
+                : "Connect Vercel once. We’ll find this app’s preview, prepare private access and verify it from your runner so your gremlins can test real changes."
               : suggested
                 ? "Your Vercel account is connected. We’ll match this repository to a preview and check that your gremlins can use it."
-                : diagnosis?.detail || setup.message,
+                : diagnosis?.detail ||
+                  setup?.message ||
+                  "Review the connection status before continuing.",
         ),
       );
       heading.append(
@@ -2168,14 +2227,36 @@
           s.data.environment.target,
           s.automatic,
         );
-      if (needsConnection || setup?.action === "connect_vercel")
+      if (connectionFailure) {
+        const problem = node("div", undefined, "environment-diagnosis");
+        problem.setAttribute("role", "alert");
+        problem.append(
+          node(
+            "h4",
+            connectionFailure.needsOperator
+              ? "Vercel sign-in needs setup."
+              : "Vercel sign-in couldn’t start.",
+          ),
+          node("p", connectionFailure.message),
+        );
+        s.automatic.append(problem);
+      }
+      if (
+        needsConnection ||
+        setup?.action === "connect_vercel" ||
+        connectionFailure
+      )
         actions.append(
           action(
             s.hostingConnecting
-              ? "Opening Vercel…"
-              : connection.reconnect
-                ? "Reconnect Vercel"
-                : "Connect Vercel",
+              ? "Checking Vercel sign-in…"
+              : connectionFailure
+                ? connectionFailure.needsOperator
+                  ? "Check Vercel sign-in again"
+                  : "Retry Vercel sign-in"
+                : connection.reconnect
+                  ? "Reconnect Vercel"
+                  : "Connect Vercel",
             () => connectHosting(s, connection.id),
             false,
           ),
@@ -2233,6 +2314,7 @@
       if (
         blocked &&
         !needsConnection &&
+        !connectionFailure &&
         ["connect_vercel", "manage_credentials", "edit_login"].includes(
           setup.action,
         )
@@ -2253,6 +2335,7 @@
             ? "Use another host or local environment"
             : "Review environment settings",
         () => {
+          s.hostingFailure = null;
           s.showForm = !s.showForm;
           paint(s);
           if (s.showForm)

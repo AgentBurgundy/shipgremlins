@@ -207,3 +207,46 @@ test("rejects cross-site confirmation, expired state and invalid destinations", 
     false,
   );
 });
+
+test("unconfigured browser setup exposes only a safe reason and keeps machine responses JSON", async () => {
+  for (const provider of ["linear", "vercel"]) {
+    const partial = {
+      ...env,
+      [`${provider.toUpperCase()}_OAUTH_STATE_KEY`]: "private-invalid-key",
+    };
+    const handler = createOAuthBroker(provider, { env: partial });
+    for (const [action, method, status] of [
+      ["status", "GET", 200],
+      ["connect", "POST", 503],
+    ]) {
+      const response = await invoke(handler, provider, action, {
+        method,
+        body: {},
+      });
+      assert.equal(response.statusCode, status);
+      assert.equal(response.headers["cache-control"], "no-store");
+      assert.equal(response.headers["content-type"], "application/json");
+      assert.deepEqual(JSON.parse(response.body), {
+        available: false,
+        availabilityReason: "not_configured",
+      });
+      for (const secret of [
+        "private-invalid-key",
+        "CLIENT_SECRET",
+        "OAUTH_STATE_KEY",
+        "test-secret",
+      ])
+        assert.ok(!response.body.includes(secret));
+    }
+    const page = await invoke(handler, provider, "authorize");
+    assert.equal(page.statusCode, 503);
+    assert.ok(page.headers["content-type"].startsWith("text/html"));
+    assert.ok(page.body.includes("connection is being configured"));
+    const ready = await invoke(
+      createOAuthBroker(provider, { env }),
+      provider,
+      "status",
+    );
+    assert.deepEqual(JSON.parse(ready.body), { available: true });
+  }
+});
