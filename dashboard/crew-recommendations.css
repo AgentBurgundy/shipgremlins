@@ -6,6 +6,38 @@
   border-radius: 14px;
   background: #fff;
 }
+.crew-recommendations-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 24px;
+  padding: 18px 22px;
+  background: #f8fbf4;
+}
+.crew-recommendations-summary-copy {
+  flex: 1 1 230px;
+  min-width: 0;
+}
+.crew-recommendations-summary h2 {
+  margin: 5px 0 6px;
+  color: #18342a;
+  font-size: 17px;
+  line-height: 1.3;
+  letter-spacing: -0.3px;
+}
+.crew-recommendations-summary p {
+  margin: 0;
+  color: #65756c;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.crew-recommendations-summary > a {
+  flex: none;
+  max-width: 100%;
+  text-align: center;
+  white-space: normal;
+}
 .crew-recommendations-heading {
   max-width: 760px;
   margin-bottom: 22px;

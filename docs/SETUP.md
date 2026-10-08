@@ -34,13 +34,16 @@ project**, then choose the path that fits your app:
    the app runs. If the source changed, inspect it again before confirming.
 4. **Adopt the gremlins you want.** Choose **Adopt** on a recommendation, review
    its filled-in brief, and confirm. Remaining recommendations stay available
-   after adoption and reload. You can also choose a gremlin yourself and write
+   after adoption and reload. **Continue choosing your crew** on Overview returns
+   to the saved suggestions in **Your crew**. You can also choose a gremlin yourself and write
    its brief. No generic Product Understanding PM is created automatically.
 5. **Give the crew a place to work.** The welcome screen offers **Connect Linear**
    when the account is missing, or **Set up Linear** when it is already connected.
    Choose an existing team when there is more than one; ShipGremlins creates the
    missing PM projects and labels and keeps existing mappings. Authorization
-   returns you to this project's setup.
+   returns you to this project's setup. If you create a team in Linear while the
+   dialog is open, use **Refresh teams & projects** to load it without closing the
+   dialog or clearing your current selection.
 6. **Connect a test environment.** For a runnable app, the next step opens
    Environment. **Connect Vercel** signs in and resumes preview discovery and
    testing automatically. Other hosting and Docker remain available. Once the

@@ -1025,6 +1025,11 @@
         window.projectFirstStep?.(project, getJobs?.() || []) ||
         (project.foundation?.needed ? "foundation" : "mission");
       if (project.areas?.length) root.append(crewPulse(project));
+      if (project.areas?.length)
+        crewRecommendations?.mount(root, project, {
+          compact: true,
+          hideWhenEmpty: true,
+        });
       if (step === "foundation")
         root.append(window.renderFoundationLauncher(project));
       else if (step === "welcome" && crewRecommendations) {
@@ -1873,8 +1878,7 @@
         !pages.pm &&
         project &&
         (pages.tab === "crew" ||
-          (["", "brief", "overview"].includes(pages.tab || "") &&
-            !project.areas?.length));
+          ["", "brief", "overview"].includes(pages.tab || ""));
       if (!recommendationsVisible) crewRecommendations?.deactivate?.();
       setupSuggestions?.setActive(
         pages.current === "project" && pages.tab === "discovery"

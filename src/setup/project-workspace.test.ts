@@ -892,6 +892,40 @@ describe("project-first investigation", () => {
     );
     expect(f.recommendations.forget).toHaveBeenCalledWith("shop");
   });
+  it("keeps saved crew recommendations discoverable on Overview after the first PM is adopted", () => {
+    const f = onboarding(false, true);
+    f.adopt();
+    expect(f.recommendations.mount).toHaveBeenLastCalledWith(
+      f.root,
+      f.project,
+      {
+        compact: true,
+        hideWhenEmpty: true,
+      },
+    );
+    expect(text(f.root)).toContain("Give Moss a first look");
+    expect(f.api).not.toHaveBeenCalled();
+    f.project.onboardingProgress.investigated = true;
+    f.refresh();
+    expect(f.recommendations.mount).toHaveBeenLastCalledWith(
+      f.root,
+      f.project,
+      {
+        compact: true,
+        hideWhenEmpty: true,
+      },
+    );
+    expect(f.missions.mount).toHaveBeenCalledOnce();
+    f.pages.tab = "crew";
+    f.view.render();
+    expect(f.recommendations.mount).toHaveBeenLastCalledWith(
+      f.root,
+      f.project,
+      {
+        hideWhenEmpty: true,
+      },
+    );
+  });
   it("shows reviewed repository welcome before adoption, then explicitly starts Discovery rather than an outcome mission", async () => {
     const f = onboarding();
     expect(f.welcome.mount).toHaveBeenCalledTimes(1);

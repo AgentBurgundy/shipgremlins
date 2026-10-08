@@ -13,6 +13,12 @@ the **Default connection**; manual-token fallback belongs only to that default.
 
 Connect Linear when the chosen assignment needs proposals or coding. Adoption, a foundation build, or a PM run can prepare missing team and PM-project mappings using the app’s selected account. Choose an existing team in **Edit settings → Linear mappings** before starting if you want to keep your current organization. Connecting an account or importing a repository alone creates no Linear resources.
 
+In the initial Linear setup dialog, **Refresh teams & projects** loads teams you
+created in Linear without closing setup. Your selected team is kept, including
+when a refresh fails. A team that is no longer accessible is marked unavailable
+and cannot be used until you choose another or restore access. Refreshing does
+not create resources or change mappings.
+
 Choose **Adopt a PM Gremlin** and describe its job. **Meet my gremlin** proposes
 a name and brief from that goal and repository paths. Use **Review full brief**
 and **Advanced settings** to inspect direction, ownership, schedule, work limit,
@@ -91,7 +97,18 @@ run explains the access needed; it does not silently continue with unroutable
 tickets. Label repair never creates replacement teams/projects, changes mappings,
 approves work or marks tickets Done.
 
-Creating teams depends on your Linear workspace's permissions and limits. Choose reuse before creation if you need an existing team. Once a creation attempt has a reserved ID, retries keep that ID because the first request might already have succeeded. Use the explicit mapping repair below to select different existing resources. ShipGremlins does not request Linear's admin scope solely to bypass workspace restrictions. Linear's [GraphQL API](https://linear.app/developers/graphql) and [official schema](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql) define the supported mutations and caller-provided IDs.
+Creating teams depends on your Linear workspace's permissions and limits. Choose
+reuse before creation if you need an existing team. If Linear definitively rejects
+team creation before any resources or mappings exist, you can select an existing
+team and retry. ShipGremlins checks the unused reservation's ID, validates the
+selected team and archives the old choice before continuing. A lost response,
+partial setup or older journal with an uncertain outcome keeps its reserved ID
+to prevent duplicates. Retry that setup or use explicit mapping repair below to
+choose different existing resources. ShipGremlins does not request Linear's admin
+scope solely to bypass workspace restrictions. Linear's
+[GraphQL API](https://linear.app/developers/graphql) and
+[official schema](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql)
+define the supported mutations and caller-provided IDs.
 
 ## Repair an incorrect Linear setup
 

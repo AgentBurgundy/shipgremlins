@@ -54,6 +54,7 @@ function fixture() {
         readFileSync(join(root, ".run/linear/provisioning/demo.json"), "utf8"),
       );
       expect(intent.team.id).toBe(input.id);
+      expect(intent.team.creation).toBe("pending");
       if (teams.has(input.id)) throw new Error("duplicate team");
       const team = { id: input.id, name: input.name, key: input.key };
       teams.set(input.id, team);
@@ -100,6 +101,202 @@ function fixture() {
 }
 
 describe("Linear app and mandate provisioning", () => {
+  it.each(["auth", "permission", "rate-limit", "limit", "validation"] as const)(
+    "allows selecting an existing team after a definite %s creation refusal, retaining the abandoned ID",
+    async (category) => {
+      const f = fixture();
+      vi.mocked(f.client.createTeam).mockRejectedValueOnce(
+        new LinearApiError(category),
+      );
+      await expect(f.create().provision("demo")).rejects.toThrow(
+        "creating the Linear team",
+      );
+      const stateFile = join(f.root, ".run/linear/provisioning/demo.json");
+      const previous = JSON.parse(readFileSync(stateFile, "utf8"));
+      expect(previous.team).toMatchObject({
+        created: false,
+        reuse: false,
+        creation: "rejected",
+      });
+      expect(loadProject(f.root, "demo").config.linear?.teamId).toBeUndefined();
+      const selected = {
+        id: randomUUID(),
+        name: "User-created team",
+        key: "USR",
+      };
+      f.teams.set(selected.id, selected);
+      await expect(
+        f.create().provision("demo", { teamId: selected.id }),
+      ).resolves.toMatchObject({ status: "ready", teamId: selected.id });
+      expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+      expect(f.client.createProject).toHaveBeenCalledTimes(1);
+      expect([...f.projects.values()][0]!.teamIds).toEqual([selected.id]);
+      expect(f.teams.has(previous.team.id)).toBe(false);
+      expect(
+        JSON.parse(
+          readFileSync(
+            join(
+              f.root,
+              ".run/linear/provisioning/history/demo",
+              `team-${previous.team.id}.json`,
+            ),
+            "utf8",
+          ),
+        ).intent,
+      ).toEqual(previous);
+      await f.create().provision("demo", { teamId: selected.id });
+      expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("allows changing a reservation when failure occurred before any team creation attempt", async () => {
+    const f = fixture();
+    vi.mocked(f.client.getTeam).mockRejectedValueOnce(
+      new LinearApiError("unavailable"),
+    );
+    await expect(f.create().provision("demo")).rejects.toThrow(
+      "checking the saved team",
+    );
+    expect(f.client.createTeam).not.toHaveBeenCalled();
+    const selected = { id: randomUUID(), name: "User choice", key: "USR" };
+    f.teams.set(selected.id, selected);
+    await expect(
+      f.create().provision("demo", { teamId: selected.id }),
+    ).resolves.toMatchObject({ status: "ready" });
+    expect(f.client.createTeam).not.toHaveBeenCalled();
+  });
+  it.each(["project.json", "areas.json"])(
+    "preserves a reservation if %s changes while validating a replacement team",
+    async (file) => {
+      const f = fixture();
+      vi.mocked(f.client.createTeam).mockRejectedValueOnce(
+        new LinearApiError("validation"),
+      );
+      await expect(f.create().provision("demo")).rejects.toThrow();
+      const stateFile = join(f.root, ".run/linear/provisioning/demo.json");
+      const before = JSON.parse(readFileSync(stateFile, "utf8"));
+      const selected = { id: randomUUID(), name: "User choice", key: "USR" };
+      f.teams.set(selected.id, selected);
+      const changedFile = join(f.root, "projects/demo", file);
+      const changed = JSON.parse(readFileSync(changedFile, "utf8"));
+      if (file === "project.json")
+        changed.linear = { teamId: randomUUID(), teamName: "Other team" };
+      else changed.areas.core.linearProjectId = randomUUID();
+      const updated = JSON.stringify(changed);
+      vi.mocked(f.client.getTeam).mockImplementation(async (id) => {
+        if (id === selected.id) writeFileSync(changedFile, updated);
+        return f.teams.get(id) ?? null;
+      });
+      await expect(
+        f.create().provision("demo", { teamId: selected.id }),
+      ).rejects.toThrow("settings changed while checking teams");
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).team).toEqual(
+        before.team,
+      );
+      expect(readFileSync(changedFile, "utf8")).toBe(updated);
+      expect(f.client.createProject).not.toHaveBeenCalled();
+      expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("reconciles a partial team creation before rejecting a switch, then resumes the existing team", async () => {
+    const f = fixture();
+    const create = f.client.createTeam;
+    f.client.createTeam = vi.fn(async (input) => {
+      await create(input);
+      throw new LinearApiError("validation");
+    });
+    await expect(f.create().provision("demo")).rejects.toThrow();
+    const existingId = [...f.teams.keys()][0]!;
+    const selected = { id: randomUUID(), name: "User choice", key: "USR" };
+    f.teams.set(selected.id, selected);
+    await expect(
+      f.create().provision("demo", { teamId: selected.id }),
+    ).rejects.toThrow("earlier setup created a different team");
+    expect(f.projects.size).toBe(0);
+    expect(f.teams.has(existingId)).toBe(true);
+    await expect(f.create().provision("demo")).resolves.toMatchObject({
+      teamId: existingId,
+      status: "ready",
+    });
+    expect(f.client.createTeam).toHaveBeenCalledTimes(1);
+  });
+  it("never turns an ambiguous creation into a safe reservation merely because a later retry is rejected", async () => {
+    const f = fixture();
+    vi.mocked(f.client.createTeam)
+      .mockRejectedValueOnce(new LinearApiError("unavailable"))
+      .mockRejectedValueOnce(new LinearApiError("validation"));
+    await expect(f.create().provision("demo")).rejects.toThrow();
+    await expect(f.create().provision("demo")).rejects.toThrow();
+    const before = JSON.parse(
+      readFileSync(join(f.root, ".run/linear/provisioning/demo.json"), "utf8"),
+    );
+    expect(before.team.creation).toBe("pending");
+    const selected = { id: randomUUID(), name: "User choice", key: "USR" };
+    f.teams.set(selected.id, selected);
+    await expect(
+      f.create().provision("demo", { teamId: selected.id }),
+    ).rejects.toThrow("not confirmed");
+    expect(f.client.createTeam).toHaveBeenCalledTimes(2);
+    expect(f.client.createProject).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(f.root, ".run/linear/provisioning/demo.json"),
+          "utf8",
+        ),
+      ).team.id,
+    ).toBe(before.team.id);
+  });
+  it("recovers a legacy first-time reservation through explicit mapping repair while archiving the original ambiguity", async () => {
+    const f = fixture();
+    vi.mocked(f.client.createTeam).mockRejectedValueOnce(
+      new LinearApiError("validation"),
+    );
+    await expect(f.create().provision("demo")).rejects.toThrow();
+    const stateFile = join(f.root, ".run/linear/provisioning/demo.json");
+    const legacy = JSON.parse(readFileSync(stateFile, "utf8"));
+    delete legacy.team.creation;
+    writeFileSync(stateFile, JSON.stringify(legacy, null, 2) + "\n");
+    const before = readFileSync(stateFile, "utf8");
+    const selected = { id: randomUUID(), name: "ShipGremlins", key: "SHI" };
+    f.teams.set(selected.id, selected);
+    await expect(
+      f.create().provision("demo", { teamId: selected.id }),
+    ).rejects.toThrow("not confirmed");
+    const project = readEditableConfig(f.root, "projects/demo/project.json");
+    const areas = readEditableConfig(f.root, "projects/demo/areas.json");
+    vi.mocked(f.client.createTeam).mockClear();
+    const result = await f.create().repairMappings("demo", {
+      projectRevision: project.revision,
+      areasRevision: areas.revision,
+      teamId: selected.id,
+      areaProjects: { core: null },
+    });
+    expect(result.team.id).toBe(selected.id);
+    expect(f.client.createTeam).not.toHaveBeenCalled();
+    expect(f.client.createProject).not.toHaveBeenCalled();
+    const archived = readdirSync(join(f.root, ".run/linear/provisioning")).find(
+      (name) => name.startsWith("demo.repair-"),
+    )!;
+    const transaction = JSON.parse(
+      readFileSync(join(f.root, ".run/linear/provisioning", archived), "utf8"),
+    );
+    expect(
+      transaction.files.find(
+        (entry: { name: string }) => entry.name === "journal",
+      ).before,
+    ).toBe(before);
+    expect(loadProject(f.root, "demo").areas[0]).toMatchObject({
+      key: "core",
+      enabled: false,
+      linearProjectId: "PASTE_LINEAR_PROJECT_ID",
+    });
+    await f.create().provision("demo", { teamId: selected.id });
+    await f.create().provision("demo", { teamId: selected.id });
+    expect(f.client.createTeam).not.toHaveBeenCalled();
+    expect(f.client.createProject).toHaveBeenCalledTimes(1);
+    expect([...f.projects.values()][0]!.teamIds).toEqual([selected.id]);
+    expect(loadProject(f.root, "demo").areas[0]!.enabled).toBe(false);
+  });
   it("reconciles and retries a rejected decorative icon once with the same project ID", async () => {
     const f = fixture();
     const create = f.client.createProject;
