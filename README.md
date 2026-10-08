@@ -245,10 +245,12 @@ Connect GitHub or GitLab with a device code in **Source control**, then select y
 
 Connect Linear from the dashboard. New apps can create a Linear team, and each PM mandate gets its own Linear project. Existing mappings are preserved and interrupted provisioning resumes with the same IDs. [Connection and mapping guide →](docs/LINEAR_VERCEL.md)
 
-Browser test credentials belong in Connections; environment settings hold their
-references. The guided sign-in check currently supports a same-origin password
-form. Email codes, magic links, MFA, and external SSO need additional support;
-do not treat a public-page check as signed-in verification.
+In **Environment → App sign-in**, enter a dedicated test account and choose
+**Connect & test**. Source inspection supplies the login recipe; the assigned
+agent service verifies it in a private browser before a PM starts. Password forms,
+modals and typed multi-step recipes are supported. Runs reserve the account and
+independent QA signs in afresh. Email codes, MFA and external SSO still need
+dedicated adapters; public or synthetic-fixture coverage does not prove real login.
 [Set up test accounts →](docs/TEST_ACCOUNTS.md)
 
 **Different clients, different accounts.** Save multiple named Linear and Vercel

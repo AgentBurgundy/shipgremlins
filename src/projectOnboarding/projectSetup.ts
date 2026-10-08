@@ -1,3 +1,4 @@
+import { parsePasswordRecipe } from "../testAccess.ts";
 import { object, type RepositorySnapshot } from "./repository.ts";
 import { PM_DRAFT_SCHEMA, validatePmDraft } from "../pmPlanner/index.ts";
 import {
@@ -102,9 +103,67 @@ export const PROJECT_SETUP_SCHEMA = {
           type: "object",
           additionalProperties: false,
           required: [...loginKeys],
-          properties: Object.fromEntries(
-            loginKeys.map((key) => [key, text(512)]),
-          ),
+          properties: {
+            ...Object.fromEntries(loginKeys.map((key) => [key, text(500)])),
+            authenticatedPath: text(500),
+            steps: {
+              type: "array",
+              minItems: 1,
+              maxItems: 12,
+              items: {
+                oneOf: [
+                  {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind", "path"],
+                    properties: {
+                      kind: { const: "navigate" },
+                      path: text(500),
+                    },
+                  },
+                  {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind", "selector"],
+                    properties: {
+                      kind: { const: "click" },
+                      selector: text(500),
+                    },
+                  },
+                  {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind", "selector", "credential"],
+                    properties: {
+                      kind: { const: "fill" },
+                      selector: text(500),
+                      credential: { enum: ["username", "password"] },
+                    },
+                  },
+                  {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind", "selector", "value"],
+                    properties: {
+                      kind: { const: "select" },
+                      selector: text(500),
+                      value: text(200),
+                    },
+                  },
+                  {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind", "selector", "state"],
+                    properties: {
+                      kind: { const: "wait" },
+                      selector: text(500),
+                      state: { enum: ["visible", "hidden"] },
+                    },
+                  },
+                ],
+              },
+            },
+          },
         },
       },
     },
@@ -116,7 +175,7 @@ Every suggested PM needs a complete editable draft: {name,key,paths,sharedTouchp
 Choose verificationRequirement from the inspected source and the PM's actual responsibility: "browser" for a PM that must walk through existing screens, interactions or user journeys; "repository" when investigation of code, APIs, CLI or background behavior is sufficient. Cite the supporting source in the PM evidence and explain the choice in its rationale. This is a minimum testing requirement: repository does not disable a configured browser, and browser does not claim the environment already works. Never silently choose repository just because environment setup is unfinished. Keep backend-only and security-code responsibilities useful without requiring an irrelevant UI.
 The full charter must contain ambition, goal, metricDefinition, users, expectedToBuild, nonGoals, guardrails, standingPriorities. The first three are concise text; the other five are 1–6 concise strings each. Explain the ongoing product outcome, how to verify it, who benefits (label inferred audiences), specific finite improvements to investigate, boundaries, and ordered standing priorities. For customer-facing areas, include walking the relevant real UI journey and testing implemented changes when configured browser access is available. For non-customer areas, define appropriate reproducible security, operational or integration evidence. configuredTesting is saved configuration, not evidence that sign-in or any feature worked; this analysis itself has no browser. State missing access as a setup dependency, never permanent source-only scope. Never claim customer research, independent browser exploration, successful checks, or current telemetry that was not supplied.
 The analysis itself cannot create PMs, tickets or automation; that restriction applies to this setup operation and must NOT become a permanent ban in a suggested PM's mandate or charter. Do not turn a one-time discovery task into an ongoing PM. Under promotion workflow, humans approve epics and final promotion PRs according to approvalPolicy; PMs may investigate, file approved-scope work and QA individual tickets without inventing a human review for each ticket or merge into integration. The PM does not implement code or approve its own implementation evidence. Keep Done tied to production delivery, preserve private data, and use nonproduction testing. Explicit owner-authored limits remain authoritative. Return proposals only; adoption is a separate owner action. Keep all drafts concise.
-Include appAccess: {kind,summary,evidence,password?}. kind is password, email-code, sso, public or unknown based only on inspected auth and UI source. Missing auth evidence means unknown, never public. Public means the inspected intended flows explicitly do not require login; it is still a suggestion for owner confirmation. Password means an actual email/username and password login exists, not merely a password reset, signup form or server dependency. For a clear password login, include password {loginPath,usernameSelector,passwordSelector,submitSelector,successSelector} only if ALL five values are grounded in the cited real UI. Prefer unique stable IDs or data-testid selectors. The success marker must be exclusive to signed-in UI; never use body, a generic heading, a submit button or the login form. loginPath must be a same-app route starting with a single slash, with no query or fragment. Omit password when the route, selectors, modal trigger or success marker is uncertain; describe what remains unknown. Do not invent accounts or secrets and do not claim source detection proves a browser login. Email-code and SSO-only apps need a supported test login or explicit public-only coverage. Confirming the report saves only selected command suggestions; app login settings require a separate live test.`;
+Include appAccess: {kind,summary,evidence,password?}. kind is password, email-code, sso, public or unknown based only on inspected auth and UI source. Missing auth evidence means unknown, never public. Public means the inspected intended flows explicitly do not require login; it is still a suggestion for owner confirmation. Password means an actual email/username and password login exists, not merely a password reset, signup form or server dependency. For a clear password login, include password {loginPath,usernameSelector,passwordSelector,submitSelector,successSelector} only if ALL five values are grounded in the cited real UI. Prefer unique stable IDs or data-testid selectors. The success marker must be exclusive to signed-in UI; never use body, a generic heading, a submit button or the login form. loginPath must be a same-app route starting with a single slash, with no query or fragment. For a source-grounded modal or multi-step login, include optional steps (1�12) covering the full sequence: {kind:"navigate",path}, {kind:"click",selector}, {kind:"fill",selector,credential:"username"|"password"}, {kind:"select",selector,value}, or {kind:"wait",selector,state:"visible"|"hidden"}. Use exactly one username fill, one password fill and a click after the password fill; never navigate after filling the password. Never include credential values or executable scripts. Optional authenticatedPath must be a same-app protected route grounded in inspected source; it is checked after login. Omit password when the route, selectors, modal trigger or success marker is uncertain; describe what remains unknown. Do not invent accounts or secrets and do not claim source detection proves a browser login. Email-code and SSO-only apps need a supported test login or explicit public-only coverage. Confirming the report saves only selected command suggestions; app login settings require a separate live test.`;
 
 function validText(
   value: unknown,
@@ -259,7 +318,7 @@ export function validateProjectSetup(
       if (
         item.kind !== "password" ||
         !object(recipe) ||
-        !only(recipe, loginKeys) ||
+        !only(recipe, [...loginKeys, "steps", "authenticatedPath"]) ||
         loginKeys.some((key) => !validText(recipe[key], 512)) ||
         !/^\/(?!\/)[^?#\\\s]*$/.test(String(recipe.loginPath)) ||
         /^(?:body|html|h[1-6]|button|form|input|\*)$/i.test(
@@ -267,9 +326,11 @@ export function validateProjectSetup(
         )
       )
         throw invalid();
-      appAccess.password = Object.fromEntries(
-        loginKeys.map((key) => [key, recipe[key]]),
-      ) as NonNullable<typeof appAccess.password>;
+      try {
+        appAccess.password = parsePasswordRecipe(recipe);
+      } catch {
+        throw invalid();
+      }
     }
   }
   const commands: ProjectSetupProposal["commands"] = {};

@@ -22,6 +22,8 @@ import {
 } from "./engine.ts";
 import type { DockerJobPayload, DockerRunners } from "./docker.ts";
 import { RunnerWorkspaceError } from "./workspace.ts";
+import { ManagedAccessError } from "./managedAccess.ts";
+import { TestEnvironmentError } from "../testEnvironments/index.ts";
 import type { LocalJobInput } from "./types.ts";
 import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import { createUsage } from "../usage/index.ts";
@@ -174,6 +176,37 @@ it("recovers old environment resources with one namespace sweep instead of one D
   expect(cleanupEnvironment).not.toHaveBeenCalled();
   expect(reconcileEnvironments).toHaveBeenCalledOnce();
   expect(reconcileEnvironments).toHaveBeenCalledWith([]);
+});
+it("keeps historical managed identities quarantined after restart until their browser cleanup succeeds", async () => {
+  const f = fixture();
+  await f.ready();
+  const historical = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await f.engine.tick();
+  f.finish(historical.id);
+  await f.engine.tick();
+  let pending = true;
+  const cleanupEnvironment = vi.fn(async (id: string) => {
+    if (id === historical.id && pending)
+      throw new Error("Remote cleanup not confirmed");
+  });
+  const releaseJobResources = vi.fn(async (_id: string) => {});
+  f.options.docker.cleanupEnvironment = cleanupEnvironment;
+  f.options.docker.requiresAccessCleanup = (id) => id === historical.id;
+  f.options.docker.reconcileEnvironments = vi.fn(async () => {
+    if (pending) throw new Error("Remote unreachable");
+  });
+  const restarted = createLocalRunners({ ...f.options, releaseJobResources });
+  await restarted.tick();
+  expect(cleanupEnvironment).toHaveBeenCalledWith(historical.id);
+  expect(releaseJobResources).not.toHaveBeenCalledWith(historical.id);
+  pending = false;
+  await restarted.tick();
+  expect(releaseJobResources).toHaveBeenCalledWith(historical.id);
+  await restarted.stop();
 });
 it("serializes deletion guards with job admission and preserves typed mutation errors", async () => {
   const f = fixture(),
@@ -1069,6 +1102,173 @@ afterEach(() => {
 });
 
 describe("durable local worker engine", () => {
+  it("explains a lost signed-in session using trusted failure text, never raw worker errors", async () => {
+    const f = fixture();
+    await f.ready();
+    const job = await f.engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "core",
+    });
+    await f.engine.tick();
+    f.finish(job.id, 1);
+    f.mock.artifacts.mockResolvedValue({
+      result: {
+        ok: false,
+        kind: "pm",
+        accessFailure: {
+          code: "session_expired",
+          message: "password=never-display",
+        },
+      },
+      files: [],
+    } as never);
+    await f.engine.tick();
+    const result = await f.engine.job(job.id);
+    expect(result?.message).toContain("session expired");
+    expect(JSON.stringify(result)).not.toContain("never-display");
+    expect(result?.failure).toMatchObject({
+      retryable: false,
+      category: "configuration",
+    });
+  });
+  it("keeps managed jobs queued for compatible workers before any preparation or credential lease", async () => {
+    const f = fixture();
+    await f.ready();
+    f.options.docker.canCheckAccess = () => false;
+    const engine = createLocalRunners({
+      ...f.options,
+      requiresManagedAccess: () => true,
+    });
+    const job = await engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "core",
+    });
+    await engine.tick();
+    expect(await engine.job(job.id)).toMatchObject({
+      status: "queued",
+      message: expect.stringContaining("supports managed test access"),
+    });
+    expect(f.options.prepareJob).not.toHaveBeenCalled();
+  });
+  it.each([
+    new ManagedAccessError(
+      "invalid_credentials",
+      "Test account rejected. Reconnect it in Test access.",
+    ),
+    new TestEnvironmentError(
+      "The test app never became ready on port 4311. Check its start command.",
+      "health_timeout",
+    ),
+  ])(
+    "preserves a known pre-agent failure without reporting a missing container",
+    async (error) => {
+      const f = fixture();
+      await f.ready();
+      f.mock.startJob.mockRejectedValueOnce(error);
+      const job = await f.engine.enqueue({
+        type: "pm",
+        project: "demo",
+        area: "core",
+      });
+      await f.engine.tick();
+      expect(await f.engine.job(job.id)).toMatchObject({
+        status: "failed",
+        message: error.message,
+        failure: { category: "configuration", retryable: false },
+      });
+      f.advance(120000);
+      await f.engine.tick();
+      expect(f.mock.startJob).toHaveBeenCalledTimes(2); // Worker verification and one admitted attempt.
+    },
+  );
+  it("reserves setup capacity until browser cleanup is confirmed, without scheduling another job", async () => {
+    const f = fixture();
+    const worker = await f.ready();
+    const cleanup = vi.fn(async () => {});
+    f.options.docker.cleanupEnvironment = cleanup;
+    const reservation = await f.engine.reserveSetupWorker(
+      "demo",
+      "job-setup-11111111-1111-4111-8111-111111111111",
+    );
+    expect(reservation.id).toBe(worker.id);
+    await expect(
+      f.engine.reserveSetupWorker(
+        "demo",
+        "job-setup-22222222-2222-4222-8222-222222222222",
+      ),
+    ).rejects.toThrow(/available runner/);
+    const job = await f.engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "core",
+    });
+    await f.engine.tick();
+    expect((await f.engine.job(job.id))?.status).toBe("queued");
+    cleanup.mockRejectedValueOnce(new Error("runner unreachable"));
+    await expect(reservation.release()).rejects.toThrow(/could not complete/);
+    expect((await f.engine.status()).runners[0]?.busy).toBe(true);
+    // The verification caller has returned after failure. Tick must reclaim
+    // its reservation without a second callback or a controller restart.
+    await f.engine.tick();
+    expect((await f.engine.job(job.id))?.status).toBe("running");
+    expect(cleanup).toHaveBeenCalledTimes(2);
+  });
+  it("does not steal a live setup reservation from a cooperating engine instance", async () => {
+    const f = fixture();
+    await f.ready();
+    const cleanup = vi.fn(async () => {});
+    f.options.docker.cleanupEnvironment = cleanup;
+    const id = "job-setup-11111111-1111-4111-8111-111111111111";
+    const reservation = await f.engine.reserveSetupWorker("demo", id);
+    const other = createLocalRunners(f.options);
+    await other.tick();
+    expect(f.mock.stopJob).not.toHaveBeenCalledWith(id);
+    expect(cleanup).not.toHaveBeenCalledWith(id);
+    expect((await other.status()).runners[0]?.busy).toBe(true);
+    await reservation.release();
+    expect((await other.status()).runners[0]?.busy).toBe(false);
+  });
+  it("recovers a persisted setup reservation after restart only after stopping and cleaning its browser", async () => {
+    const f = fixture();
+    await f.ready();
+    const sequence: string[] = [];
+    f.mock.stopJob.mockImplementation(async () => {
+      sequence.push("stop");
+    });
+    f.options.docker.cleanupEnvironment = async () => {
+      sequence.push("cleanup");
+    };
+    await f.engine.reserveSetupWorker(
+      "demo",
+      "job-setup-11111111-1111-4111-8111-111111111111",
+    );
+    // Simulate a persisted reservation with no live owner in this process.
+    const saved = JSON.parse(readFileSync(f.stateFile, "utf8"));
+    for (const reservation of Object.values(saved.setupReservations) as Array<{
+      ownerId?: string;
+    }>)
+      reservation.ownerId = randomUUID();
+    writeFileSync(f.stateFile, JSON.stringify(saved));
+    const restarted = createLocalRunners({
+      ...f.options,
+      releaseJobResources: async (id) => {
+        if (id === "job-setup-11111111-1111-4111-8111-111111111111")
+          sequence.push("release identity");
+      },
+    });
+    await restarted.tick();
+    expect(sequence.slice(0, 3)).toEqual([
+      "stop",
+      "cleanup",
+      "release identity",
+    ]);
+    expect((await restarted.status()).runners[0]?.busy).toBe(false);
+    expect(
+      JSON.parse(readFileSync(f.stateFile, "utf8")).setupReservations,
+    ).toEqual({});
+  });
   it("persists validated account bindings across controller restart and rejects arbitrary binding fields", async () => {
     const f = fixture();
     const linearBinding = {

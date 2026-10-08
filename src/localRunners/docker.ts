@@ -3,6 +3,13 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import {
+  createManagedBrowsers,
+  validateManagedTestAccess,
+  validateManagedBrowserConnection,
+  type ManagedTestAccess,
+  type ManagedBrowserConnection,
+} from "./managedAccess.ts";
 import { validateDelivery } from "../../runner-local/delivery.mjs";
 import { validateReviewPlan } from "../../runner-local/review-receipts.mjs";
 import { validateGrumblinPayload } from "../../runner-local/grumblin-runtime.mjs";
@@ -24,6 +31,9 @@ import {
 
 export interface DockerJobPayload {
   kind: "verify" | "pm" | "developer";
+  accessProbe?: true;
+  testAccess?: ManagedTestAccess;
+  managedAccess?: ManagedBrowserConnection;
   nonce?: string;
   repoUrl?: string;
   branch?: string;
@@ -116,6 +126,7 @@ export interface DockerRunners {
   removeJob(id: string): Promise<void>;
   stopJob(id: string): Promise<void>;
   cleanupEnvironment?(id: string): Promise<void>;
+  requiresAccessCleanup?(id: string): boolean;
   reconcileEnvironments?(activeJobIds: string[]): Promise<void>;
   smokeEnvironment?(
     input: TestEnvironmentInput,
@@ -124,6 +135,7 @@ export interface DockerRunners {
   refreshLease?(id: string, ttlMs: number): Promise<void>;
   prepareWorker?(workerId: string, remoteId?: string): Promise<void>;
   canRun?(remoteId: string | undefined, project?: string): boolean;
+  canCheckAccess?(remoteId: string | undefined, project?: string): boolean;
   verifyReview?(
     id: string,
     plan: import("../delivery/types.ts").PmReviewPlan,
@@ -242,6 +254,9 @@ export function validatePayload(payload: DockerJobPayload): string {
       (key) =>
         ![
           "kind",
+          "accessProbe",
+          "testAccess",
+          "managedAccess",
           "nonce",
           "repoUrl",
           "branch",
@@ -271,10 +286,51 @@ export function validatePayload(payload: DockerJobPayload): string {
     )
   )
     throw new Error("Invalid local job payload.");
+  if (
+    payload.accessProbe !== undefined &&
+    (payload.accessProbe !== true ||
+      payload.kind !== "verify" ||
+      !payload.project ||
+      (!payload.testAccess && !payload.managedAccess) ||
+      payload.prompt ||
+      payload.commands ||
+      payload.memory ||
+      payload.delivery ||
+      payload.reviewPlan ||
+      payload.pmMode)
+  )
+    throw new Error("Invalid internal test-access check.");
+  if (payload.testAccess !== undefined) {
+    validateManagedTestAccess(payload.testAccess);
+    if (
+      payload.managedAccess ||
+      payload.browserVerification === false ||
+      payload.pmMode === "discovery" ||
+      (!payload.browserTarget && !payload.testEnvironment) ||
+      (payload.kind === "verify" && !payload.accessProbe)
+    )
+      throw new Error("Managed access requires a browser job.");
+  }
+  if (payload.managedAccess !== undefined) {
+    validateManagedBrowserConnection(payload.managedAccess);
+    if (
+      !payload.browserTarget ||
+      payload.browserVerification === false ||
+      payload.pmMode === "discovery" ||
+      (payload.kind === "verify" && !payload.accessProbe) ||
+      Object.keys(payload.credentials ?? {}).some(
+        (key) =>
+          key.startsWith("GREMLINS_TEST_") || key === "GREMLINS_PREVIEW_BYPASS",
+      )
+    )
+      throw new Error(
+        "Managed browsers cannot share sign-in credentials with the agent.",
+      );
+  }
   if (payload.browserTarget !== undefined) {
     if (
       payload.browserVerification === false ||
-      payload.kind === "verify" ||
+      (payload.kind === "verify" && !payload.accessProbe) ||
       payload.pmMode === "discovery" ||
       typeof payload.browserTarget !== "string" ||
       payload.browserTarget.length > 8192
@@ -297,10 +353,12 @@ export function validatePayload(payload: DockerJobPayload): string {
       Object.keys(payload.testEnvironment).some(
         (k) => !["target", "env"].includes(k),
       ) ||
-      payload.kind === "verify" ||
+      (payload.kind === "verify" && !payload.accessProbe) ||
       payload.pmMode === "discovery" ||
       payload.reviewPlan ||
-      !payload.expectedCommitSha
+      (!payload.expectedCommitSha &&
+        (!payload.accessProbe ||
+          payload.testEnvironment.target?.recipe?.kind !== "image"))
     )
       throw new Error(
         "Managed app environments require a pinned normal job, without promotion review.",
@@ -398,7 +456,21 @@ export function validatePayload(payload: DockerJobPayload): string {
       !/^[A-Za-z0-9_-]{1,128}$/.test(payload.nonce)
     )
       throw new Error("Verification requires a job nonce.");
-    if (payload.credentials && Object.keys(payload.credentials).length)
+    if (
+      payload.credentials &&
+      Object.keys(payload.credentials).some(
+        (key) =>
+          !payload.accessProbe ||
+          ![
+            "GREMLINS_TEST_USERNAME_1",
+            "GREMLINS_TEST_PASSWORD_1",
+            "GREMLINS_PREVIEW_BYPASS",
+            ...(payload.testEnvironment
+              ? ["GITHUB_TOKEN", "GITLAB_TOKEN"]
+              : []),
+          ].includes(key),
+      )
+    )
       throw new Error("Browser verification does not accept credentials.");
   } else {
     let url: URL;
@@ -474,6 +546,37 @@ export function createDockerRunners(options: {
     ensureImage: () => api.ensureImage(),
     namespace: options.environmentNamespace,
   });
+  const browsers = createManagedBrowsers(
+    run,
+    options.environmentNamespace ?? resolve(options.packageRoot),
+  );
+  async function cleanupBrowser(id: string) {
+    const value = browsers.manifest(id);
+    if (value)
+      for (const review of [false, true]) {
+        const data = await inspectOwned(id, review);
+        if (!data) continue;
+        if (record(data.State) && data.State.Running === true)
+          throw new Error(
+            "The browser account remains reserved while its job is running.",
+          );
+        const networks =
+          record(data.NetworkSettings) && record(data.NetworkSettings.Networks)
+            ? data.NetworkSettings.Networks
+            : {};
+        if (networks[value.network]) {
+          const disconnected = await run([
+            "network",
+            "disconnect",
+            value.network,
+            review ? reviewName(id) : name(id),
+          ]);
+          if (disconnected.code !== 0)
+            throw new Error("Private browser network cleanup is pending.");
+        }
+      }
+    await browsers.cleanup(id);
+  }
   const imageTag = () => {
     const hash = createHash("sha256");
     const files = readdirSync(directory)
@@ -727,6 +830,7 @@ export function createDockerRunners(options: {
       try {
         // App secrets/recipe are controller-only. The agent receives only its private URL and pinned source SHA.
         const delivered = { ...input.payload };
+        delivered.credentials = { ...input.payload.credentials };
         delete delivered.testEnvironment;
         const remainingRuntime = () =>
           budgetMs - Math.max(0, Date.now() - preparationStarted);
@@ -739,7 +843,50 @@ export function createDockerRunners(options: {
         delivered.maxRuntimeMinutes = input.payload.maxRuntimeMinutes ?? 45;
         if (environment) {
           delivered.browserTarget = environment.url;
-          delivered.prompt += `\n\nManaged test app: ${environment.url}. This disposable app is the admitted baseline; it is not proof of unmerged changes. Use Playwright against this URL. Image: ${environment.imageId}.`;
+          if (delivered.prompt)
+            delivered.prompt += `\n\nManaged test app: ${environment.url}. This disposable app is the admitted baseline; it is not proof of unmerged changes. Use Playwright against this URL. Image: ${environment.imageId}.`;
+        }
+        let browserNetwork = environment?.network;
+        if (input.payload.testAccess) {
+          const managed = await browsers.start({
+            id: input.id,
+            image,
+            url: delivered.browserTarget!,
+            metadata: input.payload.testAccess,
+            credentials: input.payload.credentials ?? {},
+            network: environment?.network,
+            maxRuntimeMs: remainingRuntime(),
+            ...(input.payload.remoteLease
+              ? {
+                  leaseTtlMs: Math.max(
+                    1000,
+                    Math.min(
+                      120000,
+                      (input.payload.remoteLeaseDeadline ??
+                        Date.now() + 30000) - Date.now(),
+                    ),
+                  ),
+                  leaseDeadline: () => input.payload.remoteLeaseDeadline ?? 0,
+                }
+              : {}),
+            probeOnly: input.payload.accessProbe,
+          });
+          browserNetwork = managed.network;
+          delivered.managedAccess = managed.connection;
+          delete delivered.testAccess;
+          for (const key of Object.keys(delivered.credentials))
+            if (
+              key.startsWith("GREMLINS_TEST_") ||
+              key === "GREMLINS_PREVIEW_BYPASS" ||
+              key === "GREMLINS_PREVIEW_DATABASE_URL" ||
+              (input.payload.accessProbe &&
+                ["GITHUB_TOKEN", "GITLAB_TOKEN"].includes(key))
+            )
+              delete delivered.credentials[key];
+          secrets.set(input.id, [
+            ...Object.values(input.payload.credentials ?? {}),
+            managed.connection.token,
+          ]);
         }
         if (!(await ownedVolume(input.id))) {
           const created = await run([
@@ -795,16 +942,16 @@ export function createDockerRunners(options: {
           await environments.cleanup(input.id);
           throw new Error("Could not create the isolated local job container.");
         }
-        secrets.set(
-          input.id,
-          Object.values(input.payload.credentials ?? {}).filter(Boolean),
-        );
+        secrets.set(input.id, [
+          ...(secrets.get(input.id) ?? []),
+          ...Object.values(input.payload.credentials ?? {}).filter(Boolean),
+        ]);
         try {
-          if (environment) {
+          if (browserNetwork) {
             const connected = await run([
               "network",
               "connect",
-              environment.network,
+              browserNetwork,
               container,
             ]);
             if (connected.code !== 0) throw new Error();
@@ -858,6 +1005,7 @@ export function createDockerRunners(options: {
         }
         return { id: input.id, name: container, image };
       } catch (error) {
+        await cleanupBrowser(input.id).catch(() => {});
         if (environment) await environments.cleanup(input.id).catch(() => {});
         throw error;
       }
@@ -967,10 +1115,18 @@ export function createDockerRunners(options: {
             "The owned job could not be stopped; cancellation remains pending.",
           );
       }
+      await cleanupBrowser(id);
       await environments.cleanup(id);
     },
-    cleanupEnvironment: (id) => environments.cleanup(id),
-    reconcileEnvironments: (ids) => environments.reconcile(ids),
+    requiresAccessCleanup: (id) => browsers.requiresCleanup(id),
+    cleanupEnvironment: async (id) => {
+      await cleanupBrowser(id);
+      await environments.cleanup(id);
+    },
+    reconcileEnvironments: async (ids) => {
+      for (const id of await browsers.reconcile(ids)) await cleanupBrowser(id);
+      await environments.reconcile(ids);
+    },
     smokeEnvironment: (input, verify) => environments.smoke(input, verify),
     async refreshLease(id, ttlMs) {
       if (!Number.isInteger(ttlMs) || ttlMs < 1000 || ttlMs > 120000)
@@ -995,6 +1151,7 @@ export function createDockerRunners(options: {
         if (renewed.code !== 0)
           throw new Error("The remote job lease could not be renewed.");
       }
+      await browsers.refreshLease(id, ttlMs);
     },
     async verifyReview(id, plan, reviewOptions = {}) {
       validateReviewPlan(plan);
@@ -1028,6 +1185,7 @@ export function createDockerRunners(options: {
           originalConfig = original.Config as {
             Labels: Record<string, string>;
           };
+        const browser = browsers.manifest(id);
         const workspace = await workspaces.prepare(id, image, true);
         const created = await run([
           "volume",
@@ -1078,6 +1236,7 @@ export function createDockerRunners(options: {
           ...(workspace ? ["--mount", workspace] : []),
           "--entrypoint",
           "node",
+          ...(browser ? ["--network", browser.network] : []),
           image,
           "/opt/gremlins/review-job.mjs",
         ];
@@ -1103,6 +1262,14 @@ export function createDockerRunners(options: {
               plan,
               bypass: reviewOptions.bypass,
               remoteLease: !!reviewOptions.remoteLease,
+              ...(browser
+                ? {
+                    managedAccess: {
+                      endpoint: browser.connection.endpoint,
+                      token: browser.controlToken,
+                    },
+                  }
+                : {}),
             }),
             timeoutMs: 30000,
           },
@@ -1149,6 +1316,7 @@ export function createDockerRunners(options: {
       };
     },
     async removeJob(id) {
+      await cleanupBrowser(id);
       for (const review of [true, false]) {
         const data = await inspectOwned(id, review);
         if (data && record(data.State) && data.State.Running === true)

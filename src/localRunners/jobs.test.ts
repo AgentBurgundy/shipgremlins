@@ -298,7 +298,7 @@ describe("local job preparation", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
   it.each(["untested", "testing", "failed"] as const)(
-    "blocks manual and scheduled browser PMs with a %s access probe without blocking code discovery",
+    "admits configured managed browser PMs for a fresh runner check despite historical %s evidence",
     async (status) => {
       chooseBrowserAccess();
       vi.mocked(
@@ -311,12 +311,9 @@ describe("local job preparation", () => {
         area: "core",
         runOnce: true,
       };
-      await expect(prepared.validate(input)).rejects.toThrow(
-        /Test the environment/,
-      );
-      expect(
-        (await prepared.scheduledJobs()).some((input) => input.type === "pm"),
-      ).toBe(false);
+      await expect(prepared.validate(input)).resolves.toMatchObject({
+        area: { key: "core" },
+      });
       await expect(
         prepared.validate({ ...input, pmMode: "discovery" }),
       ).resolves.toMatchObject({ area: { key: "core" } });
@@ -442,7 +439,7 @@ describe("local job preparation", () => {
       "owner explicitly selected public-only testing",
     );
     expect(payload.prompt).toContain(
-      "Signed-in flows, account permissions, private data and billing actions are untested",
+      "does not verify real authentication, account permissions, tenant isolation or billing",
     );
     expect(payload.prompt).not.toContain(
       "No password test account is configured",
@@ -1300,7 +1297,12 @@ describe("local job preparation", () => {
     });
     expect(JSON.stringify(payload.credentials)).not.toContain("app-only");
     expect(payload.prompt).toContain("http://app.test:3000");
-    expect(payload.prompt).toContain("GREMLINS_TEST_PASSWORD_1");
+    expect(payload.prompt).toContain("freshly verified sign-in");
+    expect(payload.testAccess).toMatchObject({
+      version: 1,
+      access: { kind: "password" },
+    });
+    expect(payload.prompt).not.toContain("GREMLINS_TEST_PASSWORD_1");
     expect(payload.prompt).not.toContain("password with spaces");
     expect(String(hostingFetch.mock.calls[0]?.[0])).toContain("pm-staging");
   });

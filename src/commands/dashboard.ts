@@ -1,3 +1,7 @@
+import {
+  connectTestAccount,
+  testAccountSetupState,
+} from "../setup/testAccountSetup.ts";
 import { randomBytes } from "node:crypto";
 import {
   createDashboardAuth,
@@ -483,7 +487,9 @@ export function createDashboardServer(
       packageRoot,
       sourceControl,
       vercelConnectionFor,
-      docker: localDocker,
+      docker,
+      selectRunner: (project, jobId) =>
+        runners().reserveSetupWorker(project.config.name, jobId),
     });
   const vercelSetup =
     options.vercelSetup ??
@@ -616,6 +622,7 @@ export function createDashboardServer(
     }
     return {
       ...state,
+      ...testAccountSetupState(root, name, state),
       environmentSetupSupported: true,
       environmentSetup:
         verification.mode === "browser" && verification.target.kind !== "vercel"
@@ -1298,7 +1305,9 @@ export function createDashboardServer(
       docker,
       activityStore,
       ...preparation,
-      admissionBlocker: projectKnowledge.admissionBlocker,
+      admissionBlocker: (job, active) =>
+        preparation.admissionBlocker(job, active) ??
+        projectKnowledge.admissionBlocker(job, active),
       reconcileCompletedJob: async (job, result, worker) => {
         if (job.developerKind === "sync") {
           // Reconcile after the engine persists completion and releases its queue lock.
@@ -3919,7 +3928,7 @@ export function createDashboardServer(
           return;
         }
         const onboardingRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|prepare-environment|prepare-docker|setup-pr|cancel|screenshot))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|prepare-environment|prepare-docker|connect-test-account|setup-pr|cancel|screenshot))?$/.exec(
             url.pathname,
           );
         if (onboardingRoute) {
@@ -3987,6 +3996,25 @@ export function createDashboardServer(
                   : {}),
                 ...(input.force === true ? { force: true } : {}),
               });
+              json(res, 202, await onboardingState(name));
+            } else if (action === "connect-test-account") {
+              if (setupBusy(name))
+                throw new RequestError(
+                  409,
+                  "Wait for the current setup or sign-in check to finish, then connect the account.",
+                );
+              await runners().withConfigurationMutation(
+                { project: name },
+                async () => {
+                  connectTestAccount(
+                    root,
+                    name,
+                    input,
+                    await projectOnboarding.status(name),
+                  );
+                },
+              );
+              await environmentAccess.verify(name);
               json(res, 202, await onboardingState(name));
             } else if (action === "prepare-docker") {
               if (

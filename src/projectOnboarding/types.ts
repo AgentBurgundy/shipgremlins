@@ -1,3 +1,4 @@
+import type { PasswordRecipe } from "../testAccess.ts";
 import type {
   PlannerExecutor,
   PlannerFailureCode,
@@ -120,13 +121,7 @@ export interface ProjectSetupProposal {
     kind: "password" | "email-code" | "sso" | "public" | "unknown";
     summary: string;
     evidence: SetupEvidence[];
-    password?: {
-      loginPath: string;
-      usernameSelector: string;
-      passwordSelector: string;
-      submitSelector: string;
-      successSelector: string;
-    };
+    password?: PasswordRecipe;
   };
 }
 export interface ConfirmProjectSetupInput {

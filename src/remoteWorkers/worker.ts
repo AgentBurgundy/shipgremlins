@@ -1,3 +1,5 @@
+import { ManagedAccessError } from "../localRunners/managedAccess.ts";
+import { TestEnvironmentError } from "../testEnvironments/index.ts";
 import { validateGrumblinPayload } from "../../runner-local/grumblin-runtime.mjs";
 import {
   existsSync,
@@ -65,6 +67,7 @@ interface Active {
   workerId: string;
   lease: string;
   attempted: boolean;
+  startupFailure?: { phase: "environment" | "test-access"; code: string };
 }
 export function lockWorkerDirectory(root: string): () => void {
   safeOAuthPath(root);
@@ -114,6 +117,7 @@ interface Saved {
 }
 interface Assignment extends Active {
   cancel?: boolean;
+  cleanupOnly?: boolean;
   ttlMs?: number;
   payload?: DockerJobPayload;
 }
@@ -188,7 +192,16 @@ export function createRemoteWorker(options: {
           (!jobPattern.test(state.active.id) ||
             !jobPattern.test(state.active.workerId) ||
             !tokenPattern.test(state.active.lease) ||
-            typeof state.active.attempted !== "boolean"))
+            typeof state.active.attempted !== "boolean" ||
+            (state.active.startupFailure !== undefined &&
+              (!state.active.startupFailure ||
+                !["environment", "test-access"].includes(
+                  state.active.startupFailure.phase,
+                ) ||
+                typeof state.active.startupFailure.code !== "string" ||
+                !/^[a-z][a-z_]{0,63}$/.test(
+                  state.active.startupFailure.code,
+                )))))
       )
         throw new Error();
       return state;
@@ -247,7 +260,7 @@ export function createRemoteWorker(options: {
       throw new RemoteWorkerError("Invalid controller response.", 502);
     }
   }
-  async function stop(active: Active) {
+  async function stop(active: Pick<Active, "id">) {
     await options.docker.stopJob(active.id);
     const inspect = await options.docker.inspectJob(active.id);
     if (inspect.running)
@@ -256,6 +269,41 @@ export function createRemoteWorker(options: {
         409,
       );
     await options.docker.cleanupEnvironment?.(active.id);
+  }
+  async function reportStartupFailure(state: Saved, job: Assignment) {
+    const failure = state.active?.startupFailure;
+    if (!failure || !job.payload)
+      throw new RemoteWorkerError("Invalid startup failure state.", 502);
+    // Persist the typed reason before cleanup/reporting so a temporary controller
+    // outage cannot turn a known setup failure into an ambiguous missing launch.
+    await stop(job);
+    await request(
+      "report",
+      {
+        id: job.id,
+        lease: job.lease,
+        running: false,
+        exitCode: 1,
+        logs: "The runner could not prepare the test environment or browser access. No agent was started.",
+        result: {
+          ok: false,
+          kind: job.payload.kind,
+          ...(job.payload.nonce ? { nonce: job.payload.nonce } : {}),
+          cleanupConfirmed: true,
+          startupFailure: failure,
+          ...(job.payload.accessProbe
+            ? {
+                accessFailure: {
+                  code: failure.code,
+                },
+              }
+            : {}),
+        },
+      },
+      state.token,
+    );
+    delete state.active;
+    save(state);
   }
   async function renew(job: Assignment, requestAt: number) {
     const remaining =
@@ -319,7 +367,7 @@ export function createRemoteWorker(options: {
         const at = clock();
         let response;
         try {
-          response = await request("poll", {}, state.token);
+          response = await request("poll", { accessProtocol: 1 }, state.token);
         } catch (error) {
           if (
             error instanceof RemoteWorkerError &&
@@ -344,6 +392,24 @@ export function createRemoteWorker(options: {
         }
         if (!jobPattern.test(job.id) || !tokenPattern.test(job.lease))
           throw new RemoteWorkerError("Invalid job assignment.", 502);
+        if (job.cleanupOnly === true) {
+          if (job.cancel !== true)
+            throw new RemoteWorkerError(
+              "Invalid browser cleanup assignment.",
+              502,
+            );
+          await stop(job);
+          await request(
+            "report",
+            { id: job.id, lease: job.lease, cleanupOnly: true },
+            state.token,
+          );
+          if (state.active?.id === job.id && state.active.lease === job.lease) {
+            delete state.active;
+            save(state);
+          }
+          return;
+        }
         if (
           state.active &&
           (state.active.id !== job.id || state.active.lease !== job.lease)
@@ -355,7 +421,7 @@ export function createRemoteWorker(options: {
           );
         }
         if (job.cancel) {
-          if (state.active) await stop(state.active);
+          await stop({ id: job.id });
           await request(
             "report",
             {
@@ -364,7 +430,11 @@ export function createRemoteWorker(options: {
               running: false,
               exitCode: 130,
               logs: "Job canceled by its owner.",
-              result: { ok: false, error: "Job canceled by its owner." },
+              result: {
+                ok: false,
+                error: "Job canceled by its owner.",
+                cleanupConfirmed: true,
+              },
             },
             state.token,
           );
@@ -389,9 +459,14 @@ export function createRemoteWorker(options: {
           attempted: false,
         };
         save(state);
+        if (state.active.startupFailure) {
+          await reportStartupFailure(state, job);
+          return;
+        }
         let inspect = await options.docker.inspectJob(job.id);
         if (!inspect.exists) {
           if (state.active.attempted) {
+            await stop(job);
             await request(
               "report",
               {
@@ -405,6 +480,7 @@ export function createRemoteWorker(options: {
                   kind: job.payload.kind,
                   error:
                     "Remote launch is ambiguous; reconcile before retrying.",
+                  cleanupConfirmed: true,
                 },
               },
               state.token,
@@ -432,7 +508,11 @@ export function createRemoteWorker(options: {
             renewing = (async () => {
               const started = clock();
               try {
-                const current = await request("poll", {}, state.token);
+                const current = await request(
+                  "poll",
+                  { accessProtocol: 1 },
+                  state.token,
+                );
                 if (
                   !current.job ||
                   current.job.id !== job.id ||
@@ -460,6 +540,27 @@ export function createRemoteWorker(options: {
               workerId: job.workerId,
               payload: launchPayload,
             });
+          } catch (error) {
+            if (
+              !job.payload.accessProbe &&
+              !(error instanceof ManagedAccessError) &&
+              !(error instanceof TestEnvironmentError)
+            )
+              throw error;
+            state.active.startupFailure = {
+              phase:
+                error instanceof TestEnvironmentError
+                  ? "environment"
+                  : "test-access",
+              code:
+                error instanceof ManagedAccessError ||
+                error instanceof TestEnvironmentError
+                  ? error.code
+                  : "helper_unavailable",
+            };
+            save(state);
+            await reportStartupFailure(state, job);
+            return;
           } finally {
             clearInterval(heartbeat);
             await renewing;
@@ -480,7 +581,7 @@ export function createRemoteWorker(options: {
           );
         if (inspect.running) {
           const freshAt = clock(),
-            fresh = await request("poll", {}, state.token);
+            fresh = await request("poll", { accessProtocol: 1 }, state.token);
           if (
             !fresh.job ||
             fresh.job.id !== job.id ||
@@ -520,7 +621,11 @@ export function createRemoteWorker(options: {
             void (async () => {
               const started = clock();
               try {
-                const current = await request("poll", {}, state.token);
+                const current = await request(
+                  "poll",
+                  { accessProtocol: 1 },
+                  state.token,
+                );
                 if (
                   !current.job ||
                   current.job.id !== job.id ||
@@ -610,7 +715,11 @@ export function createRemoteWorker(options: {
             artifact.size > 10 * 1024 * 1024
           )
             continue;
-          const polled = await request("poll", {}, state.token);
+          const polled = await request(
+            "poll",
+            { accessProtocol: 1 },
+            state.token,
+          );
           if (
             !polled.job ||
             polled.job.id !== job.id ||
@@ -638,6 +747,19 @@ export function createRemoteWorker(options: {
             state.token,
           );
         }
+        if (job.payload.accessProbe || job.payload.testAccess) {
+          await options.docker.stopJob(job.id);
+          await options.docker.cleanupEnvironment?.(job.id);
+          artifacts.result = {
+            ...(artifacts.result ?? {
+              ok: false,
+              kind: job.payload.kind,
+              error:
+                "The worker exited without a result. This run did not verify its assigned work.",
+            }),
+            cleanupConfirmed: true,
+          };
+        }
         await request(
           "report",
           {
@@ -651,7 +773,8 @@ export function createRemoteWorker(options: {
           },
           state.token,
         );
-        await options.docker.cleanupEnvironment?.(job.id);
+        if (!job.payload.accessProbe && !job.payload.testAccess)
+          await options.docker.cleanupEnvironment?.(job.id);
         delete state.active;
         save(state);
       } finally {

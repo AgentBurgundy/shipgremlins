@@ -342,6 +342,32 @@
 .onboarding-app-access[hidden] {
   display: none;
 }
+.test-account-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  max-width: 720px;
+  margin: 22px 0 18px;
+}
+.test-account-fields .field {
+  margin: 0;
+  min-width: 0;
+}
+.test-account-fields input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.onboarding-app-access > .onboarding-settings-link {
+  max-width: 720px;
+  margin-top: 20px;
+}
+@media (max-width: 600px) {
+  .test-account-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+}
 .onboarding-app-access > .eyebrow {
   display: block;
   margin-bottom: 10px;

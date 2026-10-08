@@ -43,6 +43,7 @@ interface Worker {
   platform?: string;
   architecture?: string;
   logicalId?: string;
+  accessProtocol?: 1;
 }
 interface Job {
   id: string;
@@ -60,6 +61,8 @@ interface Job {
   result: Record<string, unknown> | null;
   files: DockerArtifacts["files"];
   trustedReview?: { planHash: string; commitSha: string };
+  requiresAccessCleanup?: true;
+  retired?: true;
 }
 interface State {
   schema: 1;
@@ -157,6 +160,7 @@ export function createRemoteWorkers(options: {
     token: string,
     id: string,
     lease: string,
+    allowEnded = false,
   ) {
     const worker = authenticate(state, token),
       job = getJob(state, id);
@@ -171,7 +175,7 @@ export function createRemoteWorkers(options: {
         403,
       );
     expire(job);
-    if (job.status === "exited")
+    if (job.status === "exited" && !allowEnded)
       throw new RemoteWorkerError("This job lease has ended.", 409);
     return { worker, job };
   }
@@ -196,6 +200,7 @@ export function createRemoteWorkers(options: {
             platform,
             architecture,
             logicalId,
+            accessProtocol,
             enrollmentExpiresAt,
             tokenHash,
           }) => ({
@@ -208,6 +213,7 @@ export function createRemoteWorkers(options: {
             platform,
             architecture,
             logicalId,
+            accessProtocol,
             capability: "docker" as const,
             enrolled: !!tokenHash,
             online:
@@ -319,11 +325,34 @@ export function createRemoteWorkers(options: {
         };
       });
     },
-    poll(token: string) {
+    poll(token: string, capabilities?: unknown) {
       return store.change((state) => {
         const worker = authenticate(state, token);
         worker.lastSeenAt = clock();
-        const job = Object.values(state.jobs).find(
+        worker.accessProtocol =
+          isRecord(capabilities) && capabilities.accessProtocol === 1
+            ? 1
+            : undefined;
+        const assigned = Object.values(state.jobs).filter(
+          (job) => job.remoteId === worker.id,
+        );
+        for (const job of assigned) expire(job);
+        const pendingCleanup = assigned.find(
+          (job) =>
+            job.status === "exited" &&
+            job.requiresAccessCleanup &&
+            job.result?.cleanupConfirmed !== true,
+        );
+        if (pendingCleanup)
+          return {
+            job: {
+              id: pendingCleanup.id,
+              lease: pendingCleanup.lease,
+              cancel: true,
+              cleanupOnly: true,
+            },
+          };
+        const job = assigned.find(
           (j) => j.remoteId === worker.id && j.status !== "exited",
         );
         if (!job) return { job: null };
@@ -347,6 +376,38 @@ export function createRemoteWorkers(options: {
       });
     },
     report(token: string, input: unknown) {
+      if (isRecord(input) && input.cleanupOnly === true) {
+        if (
+          typeof input.id !== "string" ||
+          typeof input.lease !== "string" ||
+          Object.keys(input).some(
+            (key) => !["id", "lease", "cleanupOnly"].includes(key),
+          )
+        )
+          throw new RemoteWorkerError("Invalid remote cleanup acknowledgment.");
+        return store.change((state) => {
+          const { worker, job } = authorizedJob(
+            state,
+            token,
+            String(input.id),
+            String(input.lease),
+            true,
+          );
+          if (job.status !== "exited" || !job.requiresAccessCleanup)
+            throw new RemoteWorkerError(
+              "This job does not need terminal browser cleanup.",
+              409,
+            );
+          worker.lastSeenAt = clock();
+          // A late acknowledgment proves cleanup only. Keep the original failure,
+          // exit code and evidence; an expired lease cannot report new work.
+          job.result = {
+            ...(job.result ?? { ok: false, kind: job.payload.kind }),
+            cleanupConfirmed: true,
+          };
+          return { ok: true };
+        });
+      }
       if (
         !isRecord(input) ||
         typeof input.id !== "string" ||
@@ -508,13 +569,42 @@ export function createRemoteWorkers(options: {
         },
         canRun(remoteId, project) {
           if (!remoteId) return true;
-          const worker = store.read().workers.find((w) => w.id === remoteId);
+          const state = store.read();
+          const worker = state.workers.find((w) => w.id === remoteId);
           return (
             !!worker &&
             !worker.revokedAt &&
             !!worker.tokenHash &&
             !!worker.lastSeenAt &&
             clock() - worker.lastSeenAt < 60000 &&
+            !Object.values(state.jobs).some(
+              (job) =>
+                job.remoteId === remoteId &&
+                job.requiresAccessCleanup &&
+                job.status === "exited" &&
+                job.result?.cleanupConfirmed !== true,
+            ) &&
+            (!project || ownsProject(worker, project))
+          );
+        },
+        canCheckAccess(remoteId, project) {
+          if (!remoteId) return true;
+          const state = store.read();
+          const worker = state.workers.find((w) => w.id === remoteId);
+          return (
+            !!worker &&
+            worker.accessProtocol === 1 &&
+            !worker.revokedAt &&
+            !!worker.tokenHash &&
+            !!worker.lastSeenAt &&
+            clock() - worker.lastSeenAt < 60000 &&
+            !Object.values(state.jobs).some(
+              (job) =>
+                job.remoteId === remoteId &&
+                job.requiresAccessCleanup &&
+                job.status === "exited" &&
+                job.result?.cleanupConfirmed !== true,
+            ) &&
             (!project || ownsProject(worker, project))
           );
         },
@@ -528,7 +618,7 @@ export function createRemoteWorkers(options: {
               !worker ||
               worker.revokedAt ||
               !worker.tokenHash ||
-              (input.payload.kind !== "verify" &&
+              ((input.payload.kind !== "verify" || input.payload.accessProbe) &&
                 (!input.payload.project ||
                   !ownsProject(worker, input.payload.project)))
             )
@@ -536,8 +626,16 @@ export function createRemoteWorkers(options: {
                 "This remote worker cannot accept work for this project.",
                 403,
               );
+            if (
+              (input.payload.accessProbe || input.payload.testAccess) &&
+              worker.accessProtocol !== 1
+            )
+              throw new RemoteWorkerError(
+                "Update this agent service before testing managed sign-in. Its current version does not support private access verification.",
+                409,
+              );
             const existing = getJob(state, input.id);
-            if (existing) {
+            if (existing && !existing.retired) {
               if (
                 existing.workerId !== input.workerId ||
                 existing.remoteId !== remoteId ||
@@ -565,7 +663,11 @@ export function createRemoteWorkers(options: {
             }
             if (
               Object.values(state.jobs).some(
-                (j) => j.remoteId === remoteId && j.status !== "exited",
+                (j) =>
+                  j.remoteId === remoteId &&
+                  (j.status !== "exited" ||
+                    (j.requiresAccessCleanup &&
+                      j.result?.cleanupConfirmed !== true)),
               )
             )
               throw new RemoteWorkerError("This remote worker is busy.", 409);
@@ -574,6 +676,9 @@ export function createRemoteWorkers(options: {
               workerId: identifier(input.workerId),
               remoteId,
               payload: input.payload,
+              ...(input.payload.accessProbe || input.payload.testAccess
+                ? { requiresAccessCleanup: true as const }
+                : {}),
               lease: randomBytes(32).toString("hex"),
               createdAt: clock(),
               status: "assigned",
@@ -590,7 +695,7 @@ export function createRemoteWorkers(options: {
             const job = state.jobs[id]!;
             expire(job);
             return {
-              exists: true,
+              exists: !job.retired,
               running: job.status !== "exited",
               status: job.status === "exited" ? "exited" : "running",
               exitCode: job.exitCode,
@@ -603,6 +708,7 @@ export function createRemoteWorkers(options: {
           if (!remoteJob(id)) return local.stopJob(id);
           store.change((state) => {
             const job = state.jobs[id]!;
+            if (job.retired) return;
             job.canceled = true;
             if (!job.leasedAt) {
               job.status = "exited";
@@ -611,6 +717,9 @@ export function createRemoteWorkers(options: {
                 ok: false,
                 kind: job.payload.kind,
                 error: "Canceled before remote launch.",
+                ...(job.requiresAccessCleanup
+                  ? { cleanupConfirmed: true }
+                  : {}),
               };
             }
           });
@@ -652,16 +761,49 @@ export function createRemoteWorkers(options: {
                 "Stop the remote job before removing it.",
                 409,
               );
+            if (
+              job.requiresAccessCleanup &&
+              job.result?.cleanupConfirmed !== true
+            )
+              throw new RemoteWorkerError(
+                "The agent service has not confirmed private-browser cleanup. Its test account remains reserved.",
+                409,
+              );
             for (const file of job.files) {
               const path = filePath(id, file.name);
               if (existsSync(path)) unlinkSync(path);
             }
-            delete state.jobs[id];
+            if (job.requiresAccessCleanup) {
+              // Persist routing and confirmed cleanup across controller restart and
+              // sequential account probes using the same reserved worker/job ID.
+              job.retired = true;
+              job.files = [];
+              job.logs = "";
+              job.result = { cleanupConfirmed: true };
+            } else delete state.jobs[id];
           });
         },
+        requiresAccessCleanup(id) {
+          const job = remoteJob(id);
+          return job
+            ? !!job.requiresAccessCleanup &&
+                job.result?.cleanupConfirmed !== true
+            : (local.requiresAccessCleanup?.(id) ?? false);
+        },
         async cleanupEnvironment(id) {
-          // The remote daemon cleans its app after its final evidence upload.
-          if (!remoteJob(id)) await local.cleanupEnvironment?.(id);
+          const job = remoteJob(id);
+          if (!job) {
+            await local.cleanupEnvironment?.(id);
+            return;
+          }
+          if (
+            job.requiresAccessCleanup &&
+            job.result?.cleanupConfirmed !== true
+          )
+            throw new RemoteWorkerError(
+              "The agent service has not confirmed private-browser cleanup. Its test account remains reserved.",
+              409,
+            );
         },
         async verifyReview(id, plan, reviewOptions) {
           const job = remoteJob(id);
@@ -760,7 +902,7 @@ export function createRemoteWorkers(options: {
           path === "/api/remote/worker/enroll"
             ? api.enroll(input)
             : path === "/api/remote/worker/poll"
-              ? api.poll(token)
+              ? api.poll(token, input)
               : path === "/api/remote/worker/report"
                 ? api.report(token, input)
                 : path === "/api/remote/worker/artifact"

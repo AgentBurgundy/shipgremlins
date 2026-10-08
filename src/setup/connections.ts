@@ -1,3 +1,4 @@
+import { readManagedTestCredentials } from "./testAccountStore.ts";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
@@ -456,7 +457,14 @@ function readSource(root: string): string {
 /** Never import arbitrary .env keys into the CLI process. */
 export function readConnections(root: string): Record<string, string> {
   try {
-    const parsed = parseEnv(readSource(root));
+    const parsed = {
+      ...Object.fromEntries(
+        Object.entries(parseEnv(readSource(root))).filter(
+          ([name]) => !name.startsWith("TEST_ACCESS_"),
+        ),
+      ),
+      ...readManagedTestCredentials(root),
+    };
     return Object.fromEntries(
       Object.entries(parsed).filter(
         (entry): entry is [string, string] =>
@@ -670,6 +678,11 @@ export function clearConnections(root: string, names: unknown): void {
       "unsupported_connection",
       "Choose one or more supported saved connections to clear.",
     );
+  if (names.some((name: string) => name.startsWith("TEST_ACCESS_")))
+    throw new ConnectionSaveError(
+      "managed_test_account",
+      "Remove this test account from its project�s Test login settings.",
+    );
   updateSource(
     root,
     Object.fromEntries(names.map((name: string) => [name, null])),
@@ -685,6 +698,11 @@ export function saveConnections(root: string, input: unknown): void {
     );
   const updates: Record<string, string> = {};
   for (const [name, raw] of Object.entries(input)) {
+    if (name.startsWith("TEST_ACCESS_"))
+      throw new ConnectionSaveError(
+        "managed_test_account",
+        "Manage this account in the project�s Test login settings to rotate its credentials safely.",
+      );
     if (!isAllowed(name, root))
       throw new ConnectionSaveError(
         "unsupported_connection",

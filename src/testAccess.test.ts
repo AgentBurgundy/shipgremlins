@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { inspectTestAccess, type TestAccess } from "./testAccess.ts";
+import {
+  inspectTestAccess,
+  parseTestAccess,
+  parsePasswordRecipe,
+  parseIdentityAssertions,
+  type TestAccess,
+} from "./testAccess.ts";
 
 const password: TestAccess = {
   kind: "password",
@@ -76,5 +82,81 @@ describe("explicit browser test access", () => {
       ready: true,
       message: "The existing sign-in recipe and its credential are saved.",
     });
+  });
+});
+
+describe("bounded login recipes", () => {
+  const recipe = {
+    loginPath: "/",
+    usernameSelector: "#email",
+    passwordSelector: "#password",
+    submitSelector: "#submit",
+    successSelector: "#account",
+    authenticatedPath: "/account",
+  };
+  const steps = [
+    { kind: "click", selector: "#open-login" },
+    { kind: "fill", selector: "#email", credential: "username" },
+    { kind: "click", selector: "#next" },
+    { kind: "fill", selector: "#password", credential: "password" },
+    { kind: "click", selector: "#submit" },
+  ];
+  it("preserves a modal and two-step recipe, stable identity and protected assertions", () => {
+    const account = {
+      id: "f3077381-1dca-4bc6-9949-c5c3a900959b",
+      name: "Member",
+      usernameSecret: "TEST_USER",
+      passwordSecret: "TEST_PASS",
+      assertions: [
+        { kind: "principal", selector: "#user-email" },
+        { kind: "tenant", selector: "#tenant", equals: "Sandbox" },
+      ],
+    };
+    expect(
+      parseTestAccess({
+        kind: "password",
+        ...recipe,
+        steps,
+        accounts: [account],
+      }),
+    ).toEqual({ kind: "password", ...recipe, steps, accounts: [account] });
+  });
+  it.each(
+    [
+      [{ kind: "navigate", path: "https://external.invalid/" }, ...steps],
+      [...steps, { kind: "navigate", path: "/other" }],
+      steps.slice(0, -1),
+      [...steps, { kind: "fill", selector: "#again", credential: "password" }],
+      [...steps, { kind: "evaluate", script: "not allowed" }],
+      [...steps, { kind: "wait", selector: "#account", state: "attached" }],
+    ].map((invalidSteps) => ({ invalidSteps })),
+  )(
+    "rejects unsupported, ambiguous or unbounded actions",
+    ({ invalidSteps }) => {
+      expect(() =>
+        parsePasswordRecipe({ ...recipe, steps: invalidSteps }),
+      ).toThrow();
+    },
+  );
+  it.each([
+    "//external.invalid/",
+    "/%2fexternal.invalid/",
+    "/%5cexternal.invalid/",
+    "/login?next=external",
+    "/login#fragment",
+  ])("rejects unsafe same-origin path %s", (loginPath) => {
+    expect(() => parsePasswordRecipe({ ...recipe, loginPath })).toThrow();
+  });
+  it("does not accept arbitrary code or weakening principal comparisons", () => {
+    expect(() =>
+      parseIdentityAssertions([
+        { kind: "principal", selector: "#user", equals: "anyone" },
+      ]),
+    ).toThrow();
+    expect(() =>
+      parseIdentityAssertions([
+        { kind: "tenant", selector: "#tenant", equals: "" },
+      ]),
+    ).toThrow();
   });
 });

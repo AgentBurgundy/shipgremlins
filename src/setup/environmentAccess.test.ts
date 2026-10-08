@@ -21,6 +21,7 @@ import { parseTestAccess } from "../testAccess.ts";
 import { assertBrowserSecretSafety } from "./credentialScope.ts";
 import { loadProject } from "../config.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
+import { ManagedAccessError } from "../localRunners/managedAccess.ts";
 import type { PlannerDockerRun } from "../pmPlanner/docker.ts";
 
 let root: string;
@@ -471,5 +472,150 @@ describe("project environment onboarding", () => {
     expect(() =>
       assertBrowserSecretSafety(loadProject(root, "app").config, root),
     ).toThrow();
+  });
+});
+
+describe("verification on configured agent services", () => {
+  it.each([
+    ["selector_unusable", "login_controls_changed"],
+    ["authentication_unproven", "login_unverified"],
+    ["credentials_rejected", "login_rejected"],
+    ["identity_mismatch", "identity_mismatch"],
+  ])(
+    "turns runner %s into an actionable diagnosis without requiring legacy selector fields",
+    async (code, expected) => {
+      saveConnections(root, {
+        TEST_MEMBER_EMAIL: "private-member",
+        TEST_MEMBER_PASSWORD: "private-password",
+      });
+      const docker = {
+        startJob: vi.fn(async () => {
+          throw new ManagedAccessError(code, "Untrusted exception details");
+        }),
+        stopJob: vi.fn(async () => {}),
+        cleanupEnvironment: vi.fn(async () => {}),
+        removeJob: vi.fn(async () => {}),
+      } as unknown as DockerRunners;
+      const service = createEnvironmentAccess({
+        root,
+        packageRoot,
+        docker,
+        env: {},
+        selectRunner: async () => ({ id: "worker-home", name: "Home runner" }),
+      });
+      await service.verify("app");
+      await service.idle();
+      expect(service.status("app")).toMatchObject({
+        status: "failed",
+        diagnosis: { code: expected, action: "edit_login" },
+      });
+      expect(JSON.stringify(service.status("app"))).not.toContain(
+        "Untrusted exception details",
+      );
+      expect(docker.cleanupEnvironment).toHaveBeenCalledOnce();
+    },
+  );
+  it("reserves a runner, uses its private browser job, and names that runner in readiness", async () => {
+    saveConnections(root, {
+      TEST_MEMBER_EMAIL: "private-member",
+      TEST_MEMBER_PASSWORD: "private-password",
+    });
+    const release = vi.fn(async () => {}),
+      selectRunner = vi.fn(async () => ({
+        id: "worker-home",
+        name: "Homelab runner",
+        release,
+      }));
+    let payload:
+        import("../localRunners/docker.ts").DockerJobPayload | undefined,
+      id = "";
+    const docker = {
+      prepareWorker: vi.fn(async () => {}),
+      startJob: vi.fn(async (input) => {
+        payload = input.payload;
+        id = input.id;
+        return { id, name: id, image: "synthetic" };
+      }),
+      inspectJob: vi.fn(async () => ({
+        exists: true,
+        running: false,
+        status: "exited",
+        exitCode: 0,
+        workerId: "worker-home",
+      })),
+      artifacts: vi.fn(async () => ({
+        files: [],
+        result: {
+          ok: true,
+          kind: "verify",
+          nonce: id,
+          accessReceipt: {
+            version: 1,
+            ...payload!.testAccess,
+            origin: "http://app.test:3000",
+            proof: {
+              signedOut: true,
+              signedIn: true,
+              protectedRoute: true,
+              receivingContext: true,
+            },
+          },
+          checks: [{ name: "Browser opens application", passed: true }],
+        },
+      })),
+      readArtifact: vi.fn(async () =>
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]),
+      ),
+      stopJob: vi.fn(async () => {}),
+      cleanupEnvironment: vi.fn(async () => {}),
+      removeJob: vi.fn(async () => {}),
+    } as unknown as DockerRunners;
+    const service = createEnvironmentAccess({
+      root,
+      packageRoot,
+      docker,
+      selectRunner,
+      env: {},
+    });
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "passed",
+      runnerId: "worker-home",
+      runnerName: "Homelab runner",
+    });
+    expect(selectRunner).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(payload).toMatchObject({
+      accessProbe: true,
+      project: "app",
+      browserTarget: "http://app.test:3000",
+      credentials: {
+        GREMLINS_TEST_USERNAME_1: "private-member",
+        GREMLINS_TEST_PASSWORD_1: "private-password",
+      },
+    });
+  });
+  it("does not silently fall back to controller Docker when no agent service can be chosen", async () => {
+    config({
+      kind: "url",
+      role: "staging",
+      url: "http://app.test:3000",
+      access: { kind: "public" },
+    });
+    const docker = { startJob: vi.fn() } as unknown as DockerRunners;
+    const service = createEnvironmentAccess({
+      root,
+      packageRoot,
+      docker,
+      env: {},
+    });
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "failed",
+      message: expect.stringContaining("Set up an agent service"),
+    });
+    expect(docker.startJob).not.toHaveBeenCalled();
   });
 });

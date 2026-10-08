@@ -316,7 +316,7 @@
         summary.append(node("dt", key), node("dd", value));
       expectation.textContent = isIdea()
         ? "We’ll create your repository, add the product brief, and save the crew. Next, review and start the foundation build. We'll set up Linear and check your connections when you do. PM schedules stay paused."
-        : "Next, choose the user outcome you want to improve. Your crew investigates before proposing a bounded change for you to approve and build. Testing setup can wait until the work needs it.";
+        : "Next, AI will inspect this app and suggest your crew. We’ll connect its test environment and any test account before browser patrols. You choose when the crew starts.";
     }
     function update() {
       const ready = crew()?.ready();

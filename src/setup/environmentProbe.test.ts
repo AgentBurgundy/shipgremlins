@@ -453,11 +453,20 @@ describe("safe environment diagnostics", () => {
     ).toBeUndefined();
     expect(
       environmentChecks(
-        Array.from({ length: 65 }, () => ({
+        Array.from({ length: 161 }, () => ({
           name: "Browser opens application",
           passed: true,
         })),
       ),
     ).toBeUndefined();
+    // Eight accounts can each report a bounded 12-step login plus its proofs.
+    expect(
+      environmentChecks(
+        Array.from({ length: 160 }, () => ({
+          name: "Browser opens application",
+          passed: true,
+        })),
+      ),
+    ).toHaveLength(160);
   });
 });

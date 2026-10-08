@@ -51,6 +51,11 @@ import {
   type DockerRunners,
 } from "./docker.ts";
 import { RunnerWorkspaceError } from "./workspace.ts";
+import {
+  ManagedAccessError,
+  managedAccessFailureMessage,
+} from "./managedAccess.ts";
+import { TestEnvironmentError } from "../testEnvironments/index.ts";
 import type {
   LocalJob,
   LocalJobInput,
@@ -62,6 +67,26 @@ import type {
 
 const ID =
   /^(?:job|worker)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SETUP_ID =
+  /^job-setup-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const liveSetupOwners = new Set<string>();
+interface SetupReservation {
+  project: string;
+  jobId: string;
+  ownerPid?: number;
+  ownerId?: string;
+}
+function setupOwnerAlive(reservation: SetupReservation): boolean {
+  if (!reservation.ownerPid || !reservation.ownerId) return false;
+  if (reservation.ownerPid === process.pid)
+    return liveSetupOwners.has(reservation.ownerId);
+  try {
+    process.kill(reservation.ownerPid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const MAX_WORKERS = 4;
 const RECENT_JOBS = 500;
@@ -94,6 +119,7 @@ interface State {
   launched: Record<string, boolean>;
   operation: RunnerOperation;
   usage?: UsageLedger;
+  setupReservations?: Record<string, SetupReservation>;
 }
 
 export class LocalRunnerError extends Error {
@@ -132,6 +158,7 @@ export interface LocalRunnersOptions {
   clock?: () => Date;
   executionLimits?: (project: string) => ExecutionLimits;
   admissionBlocker?: (job: LocalJob, active: LocalJob[]) => string | undefined;
+  requiresManagedAccess?: (job: LocalJob) => boolean;
   reconcileCompletedJob?: (
     job: LocalJob,
     result: Record<string, unknown>,
@@ -140,6 +167,15 @@ export interface LocalRunnersOptions {
 }
 
 export interface LocalRunners {
+  reserveSetupWorker(
+    project: string,
+    jobId: string,
+  ): Promise<{
+    id: string;
+    name: string;
+    remoteId?: string;
+    release(): Promise<void>;
+  }>;
   withConfigurationMutation: ConfigurationMutation;
   status(): Promise<LocalRunnerStatus>;
   create(): Promise<LocalWorker>;
@@ -478,6 +514,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   const captured = new Map<string, { fingerprint: string; at: number }>();
   const sideEffectWarnings = new Map<string, string>();
   const releasedResources = new Set<string>();
+  const setupReservations = new Set<string>();
   let historicalTerminalEnvironments: Set<string> | undefined;
   let lastEnvironmentSweep: number | undefined;
   const now = () => clock().toISOString();
@@ -485,12 +522,13 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   async function releaseResources(job: LocalJob): Promise<void> {
     if (releasedResources.has(job.id)) return;
     try {
-      await options.releaseJobResources?.(job.id);
       if (
         TERMINAL.has(job.status) &&
-        !historicalTerminalEnvironments?.has(job.id)
+        (!historicalTerminalEnvironments?.has(job.id) ||
+          docker.requiresAccessCleanup?.(job.id))
       )
         await docker.cleanupEnvironment?.(job.id);
+      await options.releaseJobResources?.(job.id);
       sideEffectWarnings.delete(`resources:${job.id}`);
       if (TERMINAL.has(job.status)) releasedResources.add(job.id);
     } catch {
@@ -707,6 +745,27 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         !state.jobs.every(validJob) ||
         !record(state.launched) ||
         (state.usage !== undefined && !validLedger(state.usage)) ||
+        (state.setupReservations !== undefined &&
+          (!record(state.setupReservations) ||
+            Object.entries(state.setupReservations).some(
+              ([id, reservation]) =>
+                !ID.test(id) ||
+                !record(reservation) ||
+                typeof reservation.project !== "string" ||
+                !NAME.test(reservation.project) ||
+                typeof reservation.jobId !== "string" ||
+                !SETUP_ID.test(reservation.jobId) ||
+                ((reservation.ownerPid !== undefined ||
+                  reservation.ownerId !== undefined) &&
+                  (!Number.isSafeInteger(reservation.ownerPid) ||
+                    Number(reservation.ownerPid) < 1 ||
+                    typeof reservation.ownerId !== "string" ||
+                    !/^[0-9a-f-]{36}$/.test(reservation.ownerId))) ||
+                Object.keys(reservation).some(
+                  (key) =>
+                    !["project", "jobId", "ownerPid", "ownerId"].includes(key),
+                ),
+            ))) ||
         Object.entries(state.launched).some(
           ([id, value]) => !ID.test(id) || typeof value !== "boolean",
         ) ||
@@ -730,6 +789,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
               "launched",
               "operation",
               "usage",
+              "setupReservations",
             ].includes(key),
         )
       )
@@ -1257,12 +1317,34 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       return;
     }
     if (container.status !== "exited" || container.exitCode !== 0) {
+      let accessMessage: string | undefined;
+      try {
+        const result = (await docker.artifacts(job.id)).result;
+        if (record(result?.accessFailure))
+          accessMessage = managedAccessFailureMessage(
+            result.accessFailure.code,
+          );
+        if (record(result?.startupFailure)) {
+          const failure = result.startupFailure;
+          if (failure.phase === "test-access")
+            accessMessage = managedAccessFailureMessage(failure.code);
+          if (failure.phase === "environment")
+            accessMessage =
+              failure.code === "app_health_unreachable"
+                ? "The test app could not be reached from its runner's Docker network. Check the app's listening address and host bridge/firewall rules; no PM was started."
+                : "The runner could not prepare the test app. Check its Docker recipe, health endpoint and required app inputs; no PM was started.";
+        }
+      } catch {
+        /* Missing output is not proof of a particular failure cause. */
+      }
       failed(
         state,
         job,
         worker,
-        "The worker job stopped unsuccessfully. Inspect its redacted logs before retrying.",
+        accessMessage ??
+          "The worker job stopped unsuccessfully. Inspect its redacted logs before retrying.",
         container.exitCode,
+        accessMessage ? "configuration" : "worker-exit",
       );
       return;
     }
@@ -1509,7 +1591,9 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         state,
         job,
         worker,
-        "This job could not be prepared. Check project configuration and saved connections. No agent was started.",
+        error instanceof Error && error.name === "JobReadinessError"
+          ? error.message
+          : "This job could not be prepared. Check project configuration and saved connections. No agent was started.",
         undefined,
         "configuration",
       );
@@ -1574,7 +1658,14 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       job.failure = undefined;
       worker.status = "busy";
     } catch (error) {
-      if (error instanceof RunnerWorkspaceError) {
+      if (
+        error instanceof ManagedAccessError ||
+        error instanceof TestEnvironmentError
+      ) {
+        settleBudget(job, (state.usage ??= {}), clock(), true);
+        failed(state, job, worker, error.message, undefined, "configuration");
+        worker.message = error.message;
+      } else if (error instanceof RunnerWorkspaceError) {
         // Workspace admission fails before Docker receives an agent container or
         // its credentials. Retain the work and require an explicit new run after
         // the operator repairs storage; elapsed time cannot fix this condition.
@@ -1607,6 +1698,40 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
 
   async function tickOnce(): Promise<void> {
     await exclusive(async (state) => {
+      // A persisted setup check belongs to this controller only while its caller
+      // is alive. After a restart, stop its private browser before freeing either
+      // the worker or identity. Failure keeps the reservation quarantined.
+      for (const [workerId, reservation] of Object.entries(
+        state.setupReservations ?? {},
+      )) {
+        if (
+          setupReservations.has(reservation.jobId) ||
+          setupOwnerAlive(reservation)
+        )
+          continue;
+        try {
+          const worker = state.runners.find((item) => item.id === workerId);
+          await docker.prepareWorker?.(workerId, worker?.remoteId);
+          await docker.stopJob(reservation.jobId);
+          await docker.cleanupEnvironment?.(reservation.jobId);
+          await options.releaseJobResources?.(reservation.jobId);
+          delete state.setupReservations![workerId];
+          if (worker) {
+            worker.busy = false;
+            worker.status = worker.paused
+              ? "paused"
+              : worker.verifiedAt
+                ? "ready"
+                : "provisioning";
+          }
+          save(state);
+        } catch {
+          sideEffectWarnings.set(
+            `resources:${reservation.jobId}`,
+            "An interrupted test-access check is awaiting runner cleanup. Its account remains reserved.",
+          );
+        }
+      }
       // One namespace sweep recovers historical resources. Avoid three Docker
       // subprocesses per retained terminal run when restarting a large history.
       if (docker.reconcileEnvironments && !historicalTerminalEnvironments)
@@ -1641,11 +1766,14 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       ) {
         lastEnvironmentSweep = clock().getTime();
         await docker
-          .reconcileEnvironments?.(
-            state.jobs
+          .reconcileEnvironments?.([
+            ...Object.values(state.setupReservations ?? {}).map(
+              (reservation) => reservation.jobId,
+            ),
+            ...state.jobs
               .filter((job) => !TERMINAL.has(job.status))
               .map((job) => job.id),
-          )
+          ])
           .catch(() => {
             state.operation = {
               phase: "error",
@@ -1691,6 +1819,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         if (stopping) break;
         if (
           worker.paused ||
+          state.setupReservations?.[worker.id] ||
           state.jobs.some(
             (job) => job.workerId === worker.id && job.status === "running",
           )
@@ -1711,6 +1840,17 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
                   item.type !== "verify" &&
                   (!item.workerId || item.workerId === worker.id) &&
                   (docker.canRun?.(worker.remoteId, item.project) ?? true) &&
+                  (() => {
+                    if (
+                      !options.requiresManagedAccess?.(item) ||
+                      (docker.canCheckAccess?.(worker.remoteId, item.project) ??
+                        !worker.remoteId)
+                    )
+                      return true;
+                    item.message =
+                      "Waiting for an available agent service that supports managed test access. Update the remote worker or start a compatible runner.";
+                    return false;
+                  })() &&
                   canLaunch(state, item),
               )
             : undefined);
@@ -1786,6 +1926,85 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   }
 
   const api: LocalRunners = {
+    reserveSetupWorker: (project, jobId) =>
+      exclusive(async (state) => {
+        if (!NAME.test(project) || !SETUP_ID.test(jobId))
+          throw new LocalRunnerError("Choose a valid project access check.");
+        const worker = state.runners.find(
+          (item) =>
+            item.verifiedAt &&
+            !item.paused &&
+            !state.setupReservations?.[item.id] &&
+            !state.jobs.some(
+              (job) => job.workerId === item.id && job.status === "running",
+            ) &&
+            (docker.canCheckAccess?.(item.remoteId, project) ??
+              docker.canRun?.(item.remoteId, project) ??
+              true),
+        );
+        if (!worker)
+          throw new LocalRunnerError(
+            "Start an available runner with access to this project, then try the sign-in check again. A busy runner must finish its current work first.",
+            409,
+          );
+        await docker.prepareWorker?.(worker.id, worker.remoteId);
+        state.setupReservations ??= {};
+        const ownerId = randomUUID();
+        state.setupReservations[worker.id] = {
+          project,
+          jobId,
+          ownerPid: process.pid,
+          ownerId,
+        };
+        worker.busy = true;
+        worker.status = "busy";
+        worker.message = `Checking test access for ${project}.`;
+        save(state);
+        setupReservations.add(jobId);
+        liveSetupOwners.add(ownerId);
+        return {
+          id: worker.id,
+          name: worker.name,
+          remoteId: worker.remoteId,
+          release: () =>
+            exclusive(async (current) => {
+              if (
+                current.setupReservations?.[worker.id]?.jobId !== jobId ||
+                current.setupReservations[worker.id]?.ownerId !== ownerId
+              )
+                return;
+              try {
+                await docker.stopJob(jobId);
+                await docker.cleanupEnvironment?.(jobId);
+                await options.releaseJobResources?.(jobId);
+              } catch (error) {
+                // This caller will return; any cooperating controller may retry
+                // cleanup, but the durable reservation still fences all reuse.
+                delete current.setupReservations[worker.id]!.ownerPid;
+                delete current.setupReservations[worker.id]!.ownerId;
+                save(current);
+                throw error;
+              }
+              delete current.setupReservations[worker.id];
+              setupReservations.delete(jobId);
+              liveSetupOwners.delete(ownerId);
+              const active = current.runners.find(
+                (item) => item.id === worker.id,
+              );
+              if (active) {
+                active.busy = false;
+                active.status = active.paused ? "paused" : "ready";
+                active.message = "Test access check finished.";
+              }
+              save(current);
+            }).finally(() => {
+              // The caller is finished even when cleanup failed. The durable
+              // reservation keeps capacity quarantined until tick can retry.
+              setupReservations.delete(jobId);
+              liveSetupOwners.delete(ownerId);
+            }),
+        };
+      }),
     async status() {
       const state = read();
       return {
@@ -1881,9 +2100,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           throw new LocalRunnerError("That local worker was not found.", 404);
         if (!["verify", "pause", "resume", "repair", "remove"].includes(action))
           throw new LocalRunnerError("Choose a valid worker action.");
-        const busy = state.jobs.some(
-          (job) => job.workerId === id && job.status === "running",
-        );
+        const busy =
+          Boolean(state.setupReservations?.[id]) ||
+          state.jobs.some(
+            (job) => job.workerId === id && job.status === "running",
+          );
         if (action === "pause") {
           worker.paused = true;
           worker.status = "paused";
@@ -1935,8 +2156,13 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         throw new LocalRunnerError("Choose a valid configuration target.");
       const release = acquire();
       try {
-        const jobs = read().jobs;
+        const current = read();
+        const jobs = current.jobs;
         if (
+          Object.values(current.setupReservations ?? {}).some(
+            (reservation) =>
+              !target.project || reservation.project === target.project,
+          ) ||
           jobs.some(
             (job) =>
               (!target.project || job.project === target.project) &&
