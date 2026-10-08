@@ -25,7 +25,8 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 COPY *.mjs ./
 COPY git-askpass.sh /opt/gremlins/git-askpass.sh
-RUN chmod 755 /opt/gremlins/git-askpass.sh \
+RUN chmod 644 /opt/gremlins/*.mjs \
+    && chmod 755 /opt/gremlins/git-askpass.sh \
     && mkdir -p /work/home /output \
     && chown -R node:node /work /output \
     && git config --system user.name ShipGremlins \
