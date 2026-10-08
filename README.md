@@ -362,6 +362,11 @@ npm run lint
 
 Tests use fake providers and mocked HTTP responses; normal unit tests need no provider credentials. Read [CONTRIBUTING.md](CONTRIBUTING.md) before a larger change. If you want to follow the project, a GitHub star helps other builders find it.
 
+When changing the runner image or packaged installation, also run
+`node runner-local/runtime-permissions-smoke.mjs` with Docker available. It builds
+from owner-only source files to check that the non-root runtime can still read its
+scripts and start its browser.
+
 ## Field guide
 
 | Start here                                         | Go deeper                                                    |
