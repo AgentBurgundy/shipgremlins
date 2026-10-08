@@ -16,6 +16,7 @@ import { initializeSetup } from "../setup/files.ts";
 import { createLocalRunners } from "../localRunners/engine.ts";
 import {
   createProjectOnboarding,
+  ProjectOnboardingError,
   type OnboardingState,
   type ProjectOnboardingOptions,
 } from "../projectOnboarding/index.ts";
@@ -143,6 +144,121 @@ const target = {
 };
 
 describe("authenticated project onboarding", () => {
+  it("prepares a saved Docker recommendation through one authenticated action, then tests the saved environment", async () => {
+    const f = await fixture();
+    const path = "/api/projects/app/onboarding/prepare-docker";
+    const initial = await f.state();
+    const input = {
+      revision: initial.revision,
+      configurationRevision: initial.configurationRevision,
+    };
+    const prepare = vi
+      .spyOn(f.onboarding, "prepareDocker")
+      .mockImplementation(async () => {
+        const config = JSON.parse(readFileSync(f.projectFile, "utf8"));
+        config.verification = { mode: "browser", environment: "pm-test" };
+        config.environments = {
+          "pm-test": {
+            kind: "docker",
+            role: "preview",
+            recipe: {
+              kind: "dockerfile",
+              dockerfile: "test/Dockerfile",
+              context: ".",
+            },
+            port: 3000,
+            access: { kind: "public" },
+          },
+        };
+        writeFileSync(f.projectFile, JSON.stringify(config));
+        return f.onboarding.status("app");
+      });
+    expect((await f.call(path, input, false)).status).toBe(401);
+    expect((await f.call(path)).status).toBe(405);
+    expect((await f.call(path + "?token=no", input)).status).toBe(400);
+    for (const invalid of [
+      {},
+      { ...input, revision: "old" },
+      { ...input, target },
+      { ...input, credentials: "private" },
+    ])
+      expect((await f.call(path, invalid)).status).toBe(400);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(f.environmentAccess.verify).not.toHaveBeenCalled();
+    const response = await f.call(path, input);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      environment: {
+        name: "pm-test",
+        profile: "docker",
+        verification: { status: "testing" },
+      },
+    });
+    expect(prepare).toHaveBeenCalledExactlyOnceWith("app", input);
+    expect(f.environmentAccess.verify).toHaveBeenCalledExactlyOnceWith("app");
+    expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(
+      f.environmentAccess.verify.mock.invocationCallOrder[0]!,
+    );
+    expect(await f.runners.jobs()).toEqual([]);
+    expect((await f.call(path, input)).status).toBe(409);
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+  it("does not start Docker verification when its saved recommendation conflicts", async () => {
+    const f = await fixture();
+    const initial = await f.state();
+    vi.spyOn(f.onboarding, "prepareDocker").mockRejectedValue(
+      new ProjectOnboardingError(
+        "The inspected source changed. Analyze again.",
+        409,
+      ),
+    );
+    const response = await f.call(
+      "/api/projects/app/onboarding/prepare-docker",
+      {
+        revision: initial.revision,
+        configurationRevision: initial.configurationRevision,
+      },
+    );
+    expect(response.status).toBe(409);
+    expect(f.environmentAccess.verify).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(readFileSync(f.projectFile, "utf8")).verification,
+    ).toEqual({ mode: "repository" });
+  });
+  it("does not expose an obsolete Vercel setup failure after selecting a Docker environment", async () => {
+    const environmentSetup = {
+      status: vi.fn(() => ({
+        status: "needs_input",
+        step: "find_preview",
+        message: "Old Vercel setup needs a preview.",
+        action: "retry",
+      })),
+      busy: () => false,
+      close: async () => {},
+      idle: async () => {},
+    } as unknown as NonNullable<DashboardOptions["environmentSetup"]>;
+    const f = await fixture({ environmentSetup });
+    const config = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    config.verification = { mode: "browser", environment: "fixture" };
+    config.environments = {
+      fixture: {
+        kind: "docker",
+        role: "preview",
+        recipe: {
+          kind: "dockerfile",
+          dockerfile: "examples/Dockerfile",
+          context: ".",
+        },
+        port: 3000,
+        access: { kind: "public" },
+      },
+    };
+    writeFileSync(f.projectFile, JSON.stringify(config));
+    const state = await f.state();
+    expect(state.environment?.profile).toBe("docker");
+    expect(JSON.stringify(state)).not.toContain("Old Vercel setup");
+    expect(environmentSetup.status).not.toHaveBeenCalled();
+  });
   it("starts automatic environment setup only through authenticated bounded POST input and returns its progress", async () => {
     let preparing = false;
     const environmentSetup = {

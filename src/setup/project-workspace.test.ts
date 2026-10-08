@@ -6,11 +6,13 @@ class Element {
   children: Element[] = [];
   attributes = new Map<string, string>();
   className = "";
-  classList = { add: () => {} };
+  classList = { add: () => {}, toggle: () => {} };
   parentElement: Element | null = null;
   textContent = "";
   value = "";
   open = false;
+  hidden = false;
+  id = "";
   disabled = false;
   listeners = new Map<string, () => unknown>();
   href = "";
@@ -34,6 +36,19 @@ class Element {
   }
   fire(name: string) {
     return this.listeners.get(name)?.();
+  }
+  showModal() {
+    this.open = true;
+  }
+  close() {
+    this.open = false;
+  }
+  reportValidity() {
+    return true;
+  }
+  querySelectorAll(selector: string) {
+    const tags = selector.split(",").map((tag) => tag.toUpperCase());
+    return all(this).filter((item) => tags.includes(item.tagName));
   }
   contains(item: Element): boolean {
     return this === item || this.children.some((child) => child.contains(item));
@@ -365,7 +380,10 @@ describe("focused project crew workspace", () => {
         ?.href,
     ).toBe("/activity?run=coding-1");
   });
-  function workspace(withWelcome = false) {
+  function workspace(
+    withWelcome = false,
+    api: (url: string, body?: unknown) => Promise<object> = async () => ({}),
+  ) {
     const root = new Element("MAIN"),
       pages = {
         current: "project",
@@ -403,12 +421,79 @@ describe("focused project crew workspace", () => {
       });
     const view = ui.createProjectWorkspace(root, {
       pages,
-      api: async () => ({}),
+      api,
       getJobs: () => jobs,
     });
     view.setStatus(state, false);
     return { root, pages, project, state, view, jobs, ui };
   }
+  it("loads and edits a PM's browser requirement, and clears it to the project default without changing automation", async () => {
+    const brief = {
+      name: "Security gremlin v2",
+      mandate: "Exercise account isolation in the app.",
+      verificationRequirement: "browser",
+      paths: ["src/auth"],
+      sharedTouchpoints: [],
+      metric: "/account",
+      schedule: "0 13 * * *",
+      wipLimit: 2,
+      promotionBatchSize: null,
+      charter: { goal: "Protect customer data" },
+    };
+    const api = vi.fn(async (_url: string, _body?: unknown) => ({
+        revision: "brief-1",
+        brief,
+      })),
+      f = workspace(false, api);
+    f.pages.pm = f.project.areas[0]!.key;
+    f.pages.tab = "brief";
+    f.view.render();
+    await all(f.root)
+      .find((item) => item.textContent === "Edit brief")!
+      .fire("click");
+    const dialog = all(f.ui.testDocument.body).find(
+        (item) => item.className === "pm-brief-dialog",
+      )!,
+      control = all(dialog).find(
+        (item) => item.id === "edit-brief-verificationRequirement",
+      )!;
+    expect(dialog.open).toBe(true);
+    expect(control.value).toBe("browser");
+    expect(text(dialog)).toContain("Repository checks sufficient");
+    await all(dialog)
+      .find((item) => item.textContent === "Close ×")!
+      .fire("click");
+    expect(dialog.open).toBe(false);
+    await all(f.root)
+      .find((item) => item.textContent === "Edit brief")!
+      .fire("click");
+    const current = all(dialog).find(
+      (item) => item.id === "edit-brief-verificationRequirement",
+    )!;
+    current.value = "repository";
+    await all(dialog)
+      .find((item) => item.textContent === "Save product brief")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shipgremlins/pms/security-gremlin-v2/brief",
+      {
+        revision: "brief-1",
+        brief: { ...brief, verificationRequirement: "repository" },
+      },
+    );
+    current.value = "";
+    await all(dialog)
+      .find((item) => item.textContent === "Save product brief")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shipgremlins/pms/security-gremlin-v2/brief",
+      {
+        revision: "brief-1",
+        brief: { ...brief, verificationRequirement: null },
+      },
+    );
+    expect(f.project.areas[0]!.enabled).toBe(false);
+  });
   it("puts incomplete setup before PM cards and moves optional growth suggestions below an active crew", () => {
     const f = workspace(true),
       position = (className: string) =>

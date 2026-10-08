@@ -1954,6 +1954,29 @@
                     </div>
                   </div>
 
+                  <div class="field">
+                    <label for="pm-verification-requirement"
+                      >How must this PM verify its work?</label
+                    >
+                    <select
+                      id="pm-verification-requirement"
+                      aria-describedby="pm-verification-help"
+                    >
+                      <option value="">Follow project testing mode</option>
+                      <option value="browser">
+                        Browser walkthrough required
+                      </option>
+                      <option value="repository">
+                        Repository checks sufficient
+                      </option>
+                    </select>
+                    <p id="pm-verification-help">
+                      Browser-required PMs need a verified test app. Repository
+                      checks permit code-only work; they do not disable the
+                      project’s browser environment.
+                    </p>
+                  </div>
+
                   <section
                     class="pm-charter-create"
                     aria-labelledby="new-pm-charter-title"

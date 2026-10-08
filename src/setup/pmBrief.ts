@@ -1,7 +1,11 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { loadProject } from "../config.ts";
+import {
+  loadProject,
+  isPmVerificationRequirement,
+  type PmVerificationRequirement,
+} from "../config.ts";
 import {
   parsePmCharter,
   printableBrief,
@@ -21,6 +25,7 @@ export class PmBriefError extends Error {
   }
 }
 export interface PmBrief {
+  verificationRequirement?: PmVerificationRequirement | null;
   name: string;
   mandate: string;
   charter: PmCharter;
@@ -32,6 +37,7 @@ export interface PmBrief {
   promotionBatchSize?: number | null;
 }
 const fields = [
+  "verificationRequirement",
   "name",
   "mandate",
   "charter",
@@ -73,6 +79,7 @@ export function readPmBrief(root: string, project: string, areaKey: string) {
     }
   }
   const brief: PmBrief = {
+    verificationRequirement: area.verificationRequirement ?? null,
     name: area.name,
     mandate,
     charter: area.charter ?? {},
@@ -114,6 +121,13 @@ export function savePmBrief(
       409,
     );
   const value = { ...current.brief, ...input.brief };
+  if (
+    value.verificationRequirement != null &&
+    !isPmVerificationRequirement(value.verificationRequirement)
+  )
+    throw new PmBriefError(
+      "Choose browser walkthrough required, repository checks sufficient, or the project testing mode.",
+    );
   if (
     value.promotionBatchSize != null &&
     !validPromotionBatchSize(value.promotionBatchSize)
@@ -183,6 +197,9 @@ export function savePmBrief(
   if (value.promotionBatchSize == null)
     delete raw.areas[area].promotionBatchSize;
   else raw.areas[area].promotionBatchSize = value.promotionBatchSize;
+  if (value.verificationRequirement == null)
+    delete raw.areas[area].verificationRequirement;
+  else raw.areas[area].verificationRequirement = value.verificationRequirement;
   saveEditableConfig(root, {
     path: document.path,
     revision: input.revision,

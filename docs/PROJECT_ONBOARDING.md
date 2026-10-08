@@ -84,6 +84,21 @@ The analysis card shows saved connection status for this project's source provid
 
 ## Two ways to test a web app
 
+When source analysis finds an existing Dockerfile with no missing inputs and
+source-backed public test access, **Set up Docker & test** saves that recipe and
+opens the isolated app in Chromium in one action. A connected Vercel account
+does not hide the Docker recommendation. Unrelated Linear or PM edits do not
+discard it; changed source is checked before saving. Existing browser targets
+are preserved. Recipes needing secrets, login details or new setup files still
+show those steps first.
+
+For ShipGremlins itself, use the existing
+[`examples/dashboard-test` fixture](../examples/dashboard-test/README.md).
+It runs the real dashboard and HTTP handlers with disposable projects and
+synthetic provider adapters. No Vercel deployment or real dashboard password is
+needed. Its synthetic session makes the dashboard's forms and controls available
+for testing; it does not prove real provider integrations or agent execution.
+
 |             | Deployed staging                                                      | Disposable Docker app                                                                 |
 | ----------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Use when    | You already have a working test deployment or rely on hosted services | The app can run in a Linux container with test-only dependencies                      |
@@ -93,6 +108,14 @@ The analysis card shows saved connection status for this project's source provid
 | Cleanup     | Keeps your hosted environment                                         | Removes the run's app, private network, disposable services, and managed build image  |
 
 The Docker app is separate from the gremlin worker: one hosts your application; the other runs Claude and Playwright. The app receives only its named test inputs. The AI worker receives only the job's source/Linear/model access and configured browser test-account credentials. Neither gets the host Docker socket. Application commands run inside containers, not on your server.
+
+A PM brief can select **Browser walkthrough required**. Such PMs cannot patrol or enable
+automation until a browser environment is configured and its access check passes.
+AI crew suggestions specify this when their work depends on UI journeys; review
+the requirement when adopting or editing the PM. **Repository checks sufficient**
+keeps backend and infrastructure PMs usable without an app. This is a minimum
+requirement, so it does not disable a browser environment already configured for
+the project. Code-only Discovery remains available while setup is unfinished.
 
 ## Detect → choose → test → ready
 

@@ -5,6 +5,7 @@ import type {
 import type { SourceControl } from "../sourceControl/types.ts";
 import type { EnvironmentTarget } from "../projectCapabilities.ts";
 import type { PmDraft } from "../pmPlanner/index.ts";
+import type { RecommendedDockerStatus } from "./recommendedDocker.ts";
 
 export class ProjectOnboardingError extends Error {
   constructor(
@@ -147,6 +148,7 @@ export interface SetupPull {
   baseSha: string;
 }
 export interface OnboardingState {
+  recommendedDocker?: RecommendedDockerStatus;
   project: string;
   revision: string;
   configurationRevision: string;

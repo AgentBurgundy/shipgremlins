@@ -17,7 +17,7 @@ import {
 import { join, dirname, resolve, parse, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { CronExpressionParser } from "cron-parser";
-import { loadProject } from "../config.ts";
+import { loadProject, isPmVerificationRequirement } from "../config.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { validConnectionId } from "../projectCapabilities.ts";
 import { ID_RE } from "../telemetry/config.ts";
@@ -1196,6 +1196,7 @@ export function createLinearProvisioning(options: {
       "name",
       "mandate",
       "charter",
+      "verificationRequirement",
       "paths",
       "sharedTouchpoints",
       "metric",
@@ -1223,6 +1224,13 @@ export function createLinearProvisioning(options: {
         "Provide a PM key, name (1–100 characters), and mandate (1–12000 characters).",
       );
     validateName(input.key, "area");
+    if (
+      input.verificationRequirement !== undefined &&
+      !isPmVerificationRequirement(input.verificationRequirement)
+    )
+      throw new LinearProvisioningError(
+        "Choose browser walkthrough required, repository checks sufficient, or leave the testing requirement unset.",
+      );
     assertResourceAvailable(options.root, project);
     let charter: PmCharter | undefined;
     if (input.charter !== undefined) {
@@ -1330,6 +1338,9 @@ export function createLinearProvisioning(options: {
           ...(instanceId ? { instanceId } : {}),
           name: input.name,
           mandate: input.mandate,
+          ...(input.verificationRequirement === undefined
+            ? {}
+            : { verificationRequirement: input.verificationRequirement }),
           ...(charter ? { charter } : {}),
           paths: input.paths ?? [],
           sharedTouchpoints: input.sharedTouchpoints ?? [],

@@ -8,6 +8,7 @@
     "metric",
     "schedule",
     "wipLimit",
+    "verificationRequirement",
     "charter",
   ];
   const copy = (value) => JSON.parse(JSON.stringify(value));
@@ -31,13 +32,15 @@
     for (const key of fields.filter((key) => key !== "charter")) {
       const existing = input[key];
       const preserve =
-        String(existing ?? "").trim() &&
-        (!previousGenerated ||
-          input.editedFields?.includes(key) ||
-          JSON.stringify(existing) !==
-            JSON.stringify(previousGenerated[key])) &&
-        (input.editedFields?.includes(key) ||
-          String(existing) !== defaults[key]);
+        (key === "verificationRequirement" &&
+          input.editedFields?.includes(key)) ||
+        (String(existing ?? "").trim() &&
+          (!previousGenerated ||
+            input.editedFields?.includes(key) ||
+            JSON.stringify(existing) !==
+              JSON.stringify(previousGenerated[key])) &&
+          (input.editedFields?.includes(key) ||
+            String(existing) !== defaults[key]));
       if (preserve) {
         values[key] = ["paths", "sharedTouchpoints"].includes(key)
           ? String(existing)
@@ -47,6 +50,7 @@
           : key === "wipLimit"
             ? Number(existing)
             : existing;
+        if (key === "verificationRequirement" && !existing) delete values[key];
         kept.push(key);
       } else filled.push(key);
     }
@@ -69,6 +73,8 @@
       typeof value === "string" && value.length > 0 && value.length <= limit;
     if (
       !draft ||
+      (draft.verificationRequirement !== undefined &&
+        !["browser", "repository"].includes(draft.verificationRequirement)) ||
       !draft.charter ||
       !Object.keys(charterText).every((key) =>
         text(draft.charter[key], 4000),
@@ -107,7 +113,9 @@
         "The AI suggestion was incomplete. Your form is unchanged; try again or fill it in yourself.",
       );
     const result = Object.fromEntries(
-      fields.map((key) => [key, copy(draft[key])]),
+      fields
+        .filter((key) => draft[key] !== undefined)
+        .map((key) => [key, copy(draft[key])]),
     );
     result.charter = Object.fromEntries(
       [...Object.keys(charterText), ...Object.keys(charterLists)].map((key) => [
@@ -269,6 +277,14 @@
           ["Metric", draft.metric],
           ["Schedule (UTC)", draft.schedule],
           ["WIP limit", String(draft.wipLimit)],
+          [
+            "Testing requirement",
+            draft.verificationRequirement === "browser"
+              ? "Browser walkthrough required"
+              : draft.verificationRequirement === "repository"
+                ? "Repository checks sufficient"
+                : "Follow project testing mode",
+          ],
           ["Area label", `pm:${draft.key}`],
           ...Object.entries(charterText).map(([key, label]) => [
             label,

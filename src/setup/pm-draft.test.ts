@@ -155,6 +155,59 @@ function deferred() {
 }
 
 describe("PM draft suggestions", () => {
+  it.each(["browser", "repository"])(
+    "keeps a reviewed %s requirement in the suggested PM draft",
+    async (requirement) => {
+      const response = {
+          ...plan(),
+          draft: { ...plan().draft, verificationRequirement: requirement },
+        },
+        f = fixture(async () => response);
+      await f.helper.generate();
+      expect(f.apply).toHaveBeenCalledWith(response.draft, input());
+      expect(
+        f
+          .all()
+          .some(
+            (element) =>
+              element.textContent ===
+              (requirement === "browser"
+                ? "Browser walkthrough required"
+                : "Repository checks sufficient"),
+          ),
+      ).toBe(true);
+    },
+  );
+  it.each(["repository", ""])(
+    "preserves an explicit human testing choice %j when regenerating",
+    (requirement) => {
+      const f = fixture(),
+        current = {
+          ...input(),
+          verificationRequirement: requirement,
+          editedFields: ["verificationRequirement"],
+        },
+        generated = { ...plan().draft, verificationRequirement: "browser" },
+        result = f.merge(current, generated, generated);
+      if (requirement)
+        expect(result.values).toHaveProperty(
+          "verificationRequirement",
+          requirement,
+        );
+      else expect(result.values).not.toHaveProperty("verificationRequirement");
+      expect(result.kept).toContain("verificationRequirement");
+    },
+  );
+  it("rejects an unsupported testing requirement without filling or saving", async () => {
+    const f = fixture(async () => ({
+      ...plan(),
+      draft: { ...plan().draft, verificationRequirement: "skip" },
+    }));
+    await f.helper.generate();
+    expect(f.apply).not.toHaveBeenCalled();
+    expect(f.get()).toEqual(input());
+    expect(f.status().textContent).toContain("Your form is unchanged");
+  });
   it("refreshes untouched AI suggestions for a changed mission while retaining human edits", () => {
     const f = fixture();
     const previous = {

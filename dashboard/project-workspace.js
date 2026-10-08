@@ -399,7 +399,9 @@
             ? key === "promotionBatchSize" && !input.value.trim()
               ? null
               : Number(input.value)
-            : input.value.trim();
+            : key === "verificationRequirement"
+              ? input.value || null
+              : input.value.trim();
       value.charter = editor.charter?.read() || {};
       return value;
     }
@@ -504,6 +506,36 @@
             max: 12000,
           }),
         );
+        const testingField = node("div", "field"),
+          testingLabel = node("label", "", "How must this PM verify its work?"),
+          testing = node("select");
+        testing.id = testingLabel.htmlFor =
+          "edit-brief-verificationRequirement";
+        for (const [value, label] of [
+          ["", "Follow project testing mode"],
+          ["browser", "Browser walkthrough required"],
+          ["repository", "Repository checks sufficient"],
+        ]) {
+          const option = node("option", "", label);
+          option.value = value;
+          testing.append(option);
+        }
+        testing.value = brief.verificationRequirement || "";
+        fields.set("verificationRequirement", {
+          input: testing,
+          list: false,
+          number: false,
+        });
+        testingField.append(
+          testingLabel,
+          testing,
+          node(
+            "p",
+            "",
+            "Browser-required PMs need a verified test app. Repository checks permit code-only work; they do not disable the project’s browser environment.",
+          ),
+        );
+        direction.append(testingField);
         const charterRoot = node("div");
         direction.append(charterRoot);
         editor.charter = window.createPmCharter(
@@ -578,8 +610,8 @@
         locked ||
         editor.busy ||
         !editor.form ||
-        ![...editor.form.querySelectorAll("input,textarea")].every((input) =>
-          input.reportValidity(),
+        ![...editor.form.querySelectorAll("input,textarea,select")].every(
+          (input) => input.reportValidity(),
         )
       )
         return;

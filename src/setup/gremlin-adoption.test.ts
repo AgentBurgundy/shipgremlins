@@ -188,6 +188,7 @@ function fixture(linear = false) {
   field(fields, "textarea", "pm-mandate");
   field(fields, "input", "pm-name");
   field(fields, "input", "pm-key");
+  field(fields, "select", "pm-verification-requirement");
   field(fields, "select", "pm-linear-project");
   const ai = add(fields, "div", "pm-ai-draft");
   add(ai, "section", "", "pm-ai-draft-preview").hidden = true;
@@ -1118,95 +1119,112 @@ describe("adoption creation transaction", () => {
     expect(context.pmAdoption.contextChanged).toHaveBeenCalledTimes(3);
   });
 
-  it("accepts POST success once, preserves the welcome on refresh failure, and never starts discovery", async () => {
-    const f = fixture();
-    f.get("pm-project").value = "shop";
-    f.get("pm-name").value = "Moss";
-    f.get("pm-key").value = "moss";
-    f.get("pm-mandate").value = adopted.mandate;
-    f.helper.review();
-    const controls: Record<string, { value: string; reset?: () => void }> = {
-      "pm-wip": { value: "3" },
-      "pm-metric": { value: "/" },
-      "pm-paths": { value: "" },
-      "pm-shared-paths": { value: "" },
-      "pm-mixpanel-report": { value: "" },
-    };
-    Object.assign(f.form, { reset: vi.fn() });
-    let submit!: (event: { preventDefault(): void }) => Promise<void>;
-    const start = app.indexOf(
-      '  $("pm-create-form").addEventListener("submit",',
-    );
-    const end = app.indexOf(
-      '  $("pm-create-form").addEventListener(\n    "invalid",',
-      start,
-    );
-    const normalizedEnd =
-      end < 0
-        ? app.indexOf(
-            '  $("pm-create-form").addEventListener(\r\n    "invalid",',
-            start,
-          )
-        : end;
-    expect(normalizedEnd).toBeGreaterThan(start);
-    const api = vi.fn(async () => ({
-      projectInstanceId: "created-project",
-      areaInstanceId: "created-pm",
-      linear: { status: "pending" },
-    }));
-    const discover = vi.fn(),
-      navigate = vi.fn();
-    runInNewContext(app.slice(start, normalizedEnd), {
-      $: (id: string) =>
-        id === "pm-create-form"
-          ? Object.assign(f.form, {
-              addEventListener: (_type: string, fn: typeof submit) => {
-                submit = fn;
-              },
-            })
-          : controls[id] || f.get(id),
-      pmCreating: false,
-      pmPlanning: false,
-      formsLocked: false,
-      pmAdoption: f.helper,
-      pmCharter: { read: () => ({}), reset() {} },
-      pmDraft: { reset() {} },
-      pmKeyEdited: false,
-      pmEditedFields: new Set(),
-      pmCreationDrafts: new Map(),
-      renderLinearSetup() {},
-      message() {},
-      updatePmCreationReview() {},
-      api,
-      linearResultMessage: () => "Linear setup pending.",
-      refreshStatus: vi.fn(async () => {
-        throw new Error("Offline");
-      }),
-      refreshConfigFiles: vi.fn(async () => {}),
-      refreshLinearResources: vi.fn(async () => {}),
-      areaActions: new Map(),
-      pmCreateDialog: { close() {}, dataset: {} },
-      pages: { navigate },
-      projectWorkspace: { discover },
-    });
-    await submit({ preventDefault() {} });
-    expect(api).toHaveBeenCalledTimes(1);
-    expect(f.helper.accepted).toMatchObject({
-      ...adopted,
-      projectInstanceId: "created-project",
-      areaInstanceId: "created-pm",
-    });
-    expect(f.form.hidden).toBe(true);
-    expect(
-      f.dialog
-        .all()
-        .some((node) =>
-          node.textContent.includes("Some setup information could not refresh"),
-        ),
-    ).toBe(true);
-    await submit({ preventDefault() {} });
-    expect(api).toHaveBeenCalledTimes(1);
-    expect(discover).not.toHaveBeenCalled();
-    expect(navigate).not.toHaveBeenCalled();
-  });
+  it.each([undefined, "browser", "repository"])(
+    "accepts POST success with testing requirement %s once, preserves the welcome on refresh failure, and never starts discovery",
+    async (verificationRequirement) => {
+      const f = fixture();
+      f.get("pm-project").value = "shop";
+      f.get("pm-name").value = "Moss";
+      f.get("pm-key").value = "moss";
+      f.get("pm-mandate").value = adopted.mandate;
+      f.get("pm-verification-requirement").value =
+        verificationRequirement || "";
+      f.helper.review();
+      const controls: Record<string, { value: string; reset?: () => void }> = {
+        "pm-wip": { value: "3" },
+        "pm-metric": { value: "/" },
+        "pm-paths": { value: "" },
+        "pm-shared-paths": { value: "" },
+        "pm-mixpanel-report": { value: "" },
+      };
+      Object.assign(f.form, { reset: vi.fn() });
+      let submit!: (event: { preventDefault(): void }) => Promise<void>;
+      const start = app.indexOf(
+        '  $("pm-create-form").addEventListener("submit",',
+      );
+      const end = app.indexOf(
+        '  $("pm-create-form").addEventListener(\n    "invalid",',
+        start,
+      );
+      const normalizedEnd =
+        end < 0
+          ? app.indexOf(
+              '  $("pm-create-form").addEventListener(\r\n    "invalid",',
+              start,
+            )
+          : end;
+      expect(normalizedEnd).toBeGreaterThan(start);
+      const api = vi.fn(async () => ({
+        projectInstanceId: "created-project",
+        areaInstanceId: "created-pm",
+        linear: { status: "pending" },
+      }));
+      const discover = vi.fn(),
+        navigate = vi.fn();
+      runInNewContext(app.slice(start, normalizedEnd), {
+        $: (id: string) =>
+          id === "pm-create-form"
+            ? Object.assign(f.form, {
+                addEventListener: (_type: string, fn: typeof submit) => {
+                  submit = fn;
+                },
+              })
+            : controls[id] || f.get(id),
+        pmCreating: false,
+        pmPlanning: false,
+        formsLocked: false,
+        pmAdoption: f.helper,
+        pmCharter: { read: () => ({}), reset() {} },
+        pmDraft: { reset() {} },
+        pmKeyEdited: false,
+        pmEditedFields: new Set(),
+        pmCreationDrafts: new Map(),
+        renderLinearSetup() {},
+        message() {},
+        updatePmCreationReview() {},
+        api,
+        linearResultMessage: () => "Linear setup pending.",
+        refreshStatus: vi.fn(async () => {
+          throw new Error("Offline");
+        }),
+        refreshConfigFiles: vi.fn(async () => {}),
+        refreshLinearResources: vi.fn(async () => {}),
+        areaActions: new Map(),
+        pmCreateDialog: { close() {}, dataset: {} },
+        pages: { navigate },
+        projectWorkspace: { discover },
+      });
+      await submit({ preventDefault() {} });
+      expect(api).toHaveBeenCalledTimes(1);
+      expect(api).toHaveBeenCalledWith(
+        expect.any(String),
+        verificationRequirement
+          ? expect.objectContaining({ verificationRequirement })
+          : expect.not.objectContaining({
+              verificationRequirement: expect.anything(),
+            }),
+        "POST",
+        90000,
+      );
+      expect(f.helper.accepted).toMatchObject({
+        ...adopted,
+        projectInstanceId: "created-project",
+        areaInstanceId: "created-pm",
+      });
+      expect(f.form.hidden).toBe(true);
+      expect(
+        f.dialog
+          .all()
+          .some((node) =>
+            node.textContent.includes(
+              "Some setup information could not refresh",
+            ),
+          ),
+      ).toBe(true);
+      await submit({ preventDefault() {} });
+      expect(api).toHaveBeenCalledTimes(1);
+      expect(discover).not.toHaveBeenCalled();
+      expect(navigate).not.toHaveBeenCalled();
+    },
+  );
 });

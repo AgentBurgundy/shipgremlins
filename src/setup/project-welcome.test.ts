@@ -543,6 +543,37 @@ describe("repository-first project welcome", () => {
     expect(text(f.root)).toContain("Grow your crew");
     f.view.destroy();
   });
+  it("keeps an optional Docker browser setup entry visible for an active repository crew without starting setup", async () => {
+    const api = vi.fn(async () => ({
+        ...setup(true),
+        recommendedDocker: {
+          status: "ready",
+          message: "Inspected fixture is available.",
+        },
+      })),
+      f = fixture(api),
+      project = readyProject();
+    await settle();
+    project.areas[0]!.enabled = project.areas[0]!.codingEnabled = true;
+    project.readiness.steps = project.readiness.steps.filter(
+      (step) => !["test_access", "browser_verification"].includes(step.id),
+    );
+    project.readiness.steps.push({ id: "verification", ready: true });
+    f.view.mount(
+      f.root,
+      { ...project, verification: { mode: "repository" } },
+      { suggestionsOnly: true, setupOnly: true },
+    );
+    expect(text(f.root)).toContain(
+      "Repository checks do not open the app in a browser",
+    );
+    expect(byText(f.root, "Set up Docker & test").href).toBe(
+      "/projects/app?tab=environment",
+    );
+    expect(api).toHaveBeenCalledExactlyOnceWith("/api/projects/app/onboarding");
+    expect(f.onCreatePm).not.toHaveBeenCalled();
+    f.view.destroy();
+  });
   it("points repository-first promotion setup to a deployment before activating coders", async () => {
     const f = fixture(async () => setup(true)),
       project = readyProject();

@@ -3731,6 +3731,7 @@
     "pm-metric": "metric",
     "pm-schedule": "schedule",
     "pm-wip": "wipLimit",
+    "pm-verification-requirement": "verificationRequirement",
   };
   $("pm-create-form").addEventListener(
     "input",
@@ -3774,6 +3775,9 @@
     metric: $("pm-metric").value,
     schedule: $("pm-schedule").value,
     wipLimit: $("pm-wip").value,
+    ...($("pm-verification-requirement").value
+      ? { verificationRequirement: $("pm-verification-requirement").value }
+      : {}),
   });
   pmDraft = window.createPmDraft($("pm-ai-draft"), {
     api,
@@ -3799,10 +3803,11 @@
         metric: "pm-metric",
         schedule: "pm-schedule",
         wipLimit: "pm-wip",
+        verificationRequirement: "pm-verification-requirement",
       }))
         $(id).value = Array.isArray(values[key])
           ? values[key].join("\n")
-          : String(values[key]);
+          : String(values[key] ?? "");
       pmCharter.fill(values.charter);
       pmGeneratedValues = readPmDraft();
       for (const key of kept) {
@@ -4075,6 +4080,9 @@
       schedule: $("pm-schedule").value.trim(),
       wipLimit: Number($("pm-wip").value),
       metric: $("pm-metric").value.trim() || "/",
+      ...($("pm-verification-requirement").value
+        ? { verificationRequirement: $("pm-verification-requirement").value }
+        : {}),
     };
     if (!input.name || !input.mandate) {
       message(

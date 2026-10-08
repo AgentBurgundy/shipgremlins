@@ -40,6 +40,7 @@ const input = {
   mandate: "Own checkout reliability and payment error recovery.",
 };
 const suggestion = {
+  verificationRequirement: "browser",
   name: "Checkout Gremlin",
   key: "checkout",
   paths: ["src/checkout/"],
@@ -124,6 +125,30 @@ function fixture(extra: Partial<PmPlannerOptions> = {}) {
   };
 }
 describe("draft-only mandate planner", () => {
+  it("retains explicit testing requirements while reading legacy saved suggestions", () => {
+    const paths = ["src/checkout/", "src/shared.ts"];
+    for (const verificationRequirement of ["browser", "repository"])
+      expect(
+        validatePmDraft({ ...suggestion, verificationRequirement }, paths, [])
+          .draft.verificationRequirement,
+      ).toBe(verificationRequirement);
+    const { verificationRequirement: _requirement, ...legacy } = suggestion;
+    expect(
+      validatePmDraft(legacy, paths, []).draft.verificationRequirement,
+    ).toBeUndefined();
+    for (const verificationRequirement of ["auto", "", null, true])
+      expect(() =>
+        validatePmDraft({ ...suggestion, verificationRequirement }, paths, []),
+      ).toThrow();
+    expect(PM_DRAFT_SCHEMA.required).toContain("verificationRequirement");
+  });
+  it("rejects a newly generated draft that omits its testing requirement", async () => {
+    const { verificationRequirement: _requirement, ...legacy } = suggestion;
+    const f = fixture({ execute: async () => legacy });
+    await expect(f.planner.plan(input)).rejects.toMatchObject({
+      code: "invalid_draft",
+    });
+  });
   it("reuses source-grounded crew evidence without another source scan and labels its age honestly", async () => {
     const report: OnboardingReport = {
       summary: "Checkout and account controls.",

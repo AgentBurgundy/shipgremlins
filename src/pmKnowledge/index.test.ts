@@ -80,6 +80,21 @@ function fixture(runId = 1) {
   return { job, project, area, documents, result, artifacts, docker, store };
 }
 describe("PM knowledge retention", () => {
+  it("invalidates retained investigation when the owner's testing requirement changes", async () => {
+    const f = fixture();
+    await f.store.capture(f.job, f.docker);
+    const areaFile = join(f.project.dir, "areas.json");
+    const raw = JSON.parse(readFileSync(areaFile, "utf8"));
+    raw.areas.core.verificationRequirement = "browser";
+    writeFileSync(areaFile, JSON.stringify(raw));
+    const changed = loadProject(root, "app");
+    expect(knowledgeRevision(changed, changed.areas[0]!)).not.toBe(
+      f.job.discoveryRevision,
+    );
+    expect(f.store.onboardingProgress(changed)).toEqual({
+      investigated: false,
+    });
+  });
   it("reports investigation progress only from complete knowledge for the current owner revision and identities", async () => {
     const f = fixture();
     expect(f.store.onboardingProgress(f.project)).toEqual({

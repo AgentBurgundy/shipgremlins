@@ -56,6 +56,24 @@ const proposal = () => ({
 });
 
 describe("source-grounded crew and login suggestions", () => {
+  it("requires an explicit testing choice for new AI crews while retaining legacy saved drafts", () => {
+    const legacy = suggestedPm();
+    const draft: Record<string, unknown> = { ...legacy.draft };
+    delete draft.verificationRequirement;
+    const value = { ...proposal(), suggestedPms: [{ ...legacy, draft }] };
+    expect(
+      validateProjectSetup(value, snapshot).suggestedPms?.[0]?.draft
+        ?.verificationRequirement,
+    ).toBeUndefined();
+    expect(() =>
+      validateProjectSetup(value, snapshot, { requireCrewDrafts: true }),
+    ).toThrow();
+    draft.verificationRequirement = "repository";
+    expect(
+      validateProjectSetup(value, snapshot, { requireCrewDrafts: true })
+        .suggestedPms?.[0]?.draft?.verificationRequirement,
+    ).toBe("repository");
+  });
   it("provides distinct editable drafts with derived labels and ongoing charters", () => {
     const suggestedPms = [
       suggestedPm(),
@@ -72,6 +90,7 @@ describe("source-grounded crew and login suggestions", () => {
       name: "Sprout",
       mandate: suggestedPms[0]!.mandate,
       draft: {
+        verificationRequirement: "browser",
         key: "account-journey",
         label: "pm:account-journey",
         charter: suggestedPms[0]!.draft.charter,
@@ -84,6 +103,9 @@ describe("source-grounded crew and login suggestions", () => {
       maxItems: 5,
     });
     expect(PROJECT_SETUP_PROMPT).toContain("must NOT become a permanent ban");
+    expect(PROJECT_SETUP_PROMPT).toContain(
+      "Never silently choose repository just because environment setup is unfinished",
+    );
     expect(PROJECT_SETUP_PROMPT).toContain(
       "this analysis itself has no browser",
     );
@@ -104,6 +126,7 @@ describe("source-grounded crew and login suggestions", () => {
       { ...valid.draft, paths: ["invented.ts"] },
       { ...valid.draft, schedule: "not cron" },
       { ...valid.draft, enabled: true },
+      { ...valid.draft, verificationRequirement: "auto" },
       { ...valid.draft, label: "pm:someone-else" },
       { ...valid.draft, charter: { goal: "Missing full brief" } },
     ]) {

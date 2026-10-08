@@ -47,6 +47,7 @@ import { listConnectionIds } from "../oauthConnection/profiles.ts";
 import {
   hasPmMandate,
   hasPmMapping,
+  pmVerificationBlocker,
   promotionEnvironmentBlocker,
 } from "../setup/pmReadiness.ts";
 import { createPmKnowledge, knowledgeRevision } from "../pmKnowledge/index.ts";
@@ -334,6 +335,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
   }
   function assertPmTestAccess(project: Project, input: LocalJobInput) {
     if (input.type !== "pm" || input.pmMode === "discovery") return;
+    const area = project.areas.find((item) => item.key === input.area);
+    const requirement = area && pmVerificationBlocker(project, area);
+    if (requirement) throw new JobReadinessError(requirement.message);
     const access = pmTestAccess(project);
     if (!access.ready) throw new JobReadinessError(access.message);
     if (
@@ -1374,6 +1378,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       )) {
         if (
           area.enabled &&
+          !pmVerificationBlocker(project, area) &&
           !foundationNeeded(root, project) &&
           pmTestAccess(project).ready &&
           (effectiveVerification(project.config).mode === "repository" ||

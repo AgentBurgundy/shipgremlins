@@ -1474,6 +1474,260 @@ const vercelState = (target: Record<string, unknown> = {}) => ({
   },
 });
 
+describe("recommended Docker browser setup", () => {
+  const target = {
+    kind: "docker",
+    role: "staging",
+    recipe: {
+      kind: "dockerfile",
+      dockerfile: "examples/dashboard-test/Dockerfile",
+      context: ".",
+    },
+    port: 3000,
+    healthPath: "/fixture/health",
+    access: { kind: "public" },
+  };
+  const recommendation = () => ({
+    ...state(),
+    status: "analyzed",
+    stale: true,
+    environmentSetupSupported: true,
+    report: { recommendation: "docker", docker: target },
+    recommendedDocker: {
+      status: "ready",
+      message: "Use the inspected dashboard fixture.",
+      blockers: [],
+      environment: "local-test",
+      target,
+    },
+  });
+  const connectedVercel = () => ({
+    serviceConnections: [
+      { provider: "vercel", id: "default", connected: true },
+    ],
+  });
+  const card = (root: Element) =>
+    walk(root).find(
+      (item) => item.className === "onboarding-docker-recommendation",
+    )!;
+  const action = (root: Element, label: string) =>
+    walk(root).find(
+      (item) => item.tagName === "BUTTON" && item.textContent === label,
+    )!;
+  const project = {
+    name: "shop",
+    repo: "owner/shop",
+    verification: { mode: "repository" },
+  };
+
+  it("offers the source-validated Docker recipe despite unrelated setup staleness and never auto-picks connected Vercel", async () => {
+    const api = vi.fn(async (_path: string, _body?: unknown) =>
+        recommendation(),
+      ),
+      f = fixture(api, connectedVercel),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(api).toHaveBeenCalledExactlyOnceWith(
+      "/api/projects/shop/onboarding",
+    );
+    expect(card(root).hidden).toBe(false);
+    expect(text(card(root))).toContain("Currently checking code only");
+    expect(text(card(root))).toContain("examples/dashboard-test/Dockerfile");
+    expect(
+      walk(root).find((item) => item.className === "onboarding-automatic")!
+        .hidden,
+    ).toBe(true);
+    expect(action(root, "Set up Docker & test").disabled).toBe(false);
+    await action(root, "Review environment settings").fire("click");
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-dockerfile")
+        ?.value,
+    ).toBe(target.recipe.dockerfile);
+    expect(f.panel.isDirty()).toBe(false);
+    expect(f.created).not.toHaveBeenCalled();
+    f.panel.destroy();
+  });
+
+  it("sends only reviewed revisions on click and shows actual probe progress before a pass", async () => {
+    let data: object = recommendation();
+    const api = vi.fn(async (path: string, _body?: unknown) => {
+      if (path.endsWith("/prepare-docker"))
+        data = {
+          ...recommendation(),
+          configurationRevision: "config-docker",
+          environment: {
+            name: "local-test",
+            profile: "docker",
+            target,
+            verification: { status: "testing" },
+          },
+          recommendedDocker: {
+            ...recommendation().recommendedDocker,
+            status: "configured",
+          },
+        };
+      return data;
+    });
+    const f = fixture(api, connectedVercel),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    await action(root, "Set up Docker & test").fire("click");
+    expect(api.mock.calls.filter(([, body]) => body)).toEqual([
+      [
+        "/api/projects/shop/onboarding/prepare-docker",
+        { revision: "analysis-1", configurationRevision: "config-1" },
+      ],
+    ]);
+    expect(f.saved).toHaveBeenCalledExactlyOnceWith("shop");
+    expect(f.panel.isDirty()).toBe(false);
+    expect(card(root).hidden).toBe(true);
+    expect(text(root)).toContain("saved recipe is not a passing test");
+    expect(
+      walk(root).find((item) => item.className === "onboarding-verification")!
+        .hidden,
+    ).toBe(false);
+    expect(f.created).not.toHaveBeenCalled();
+    f.panel.destroy();
+  });
+
+  it("keeps manual edits and disables the shortcut across status refreshes", async () => {
+    const api = vi.fn(async (_path: string, _body?: unknown) =>
+        recommendation(),
+      ),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    await action(root, "Review environment settings").fire("click");
+    const dockerfile = walk(root).find(
+      (item) => item.id === "onboarding-shop-dockerfile",
+    )!;
+    dockerfile.value = "custom/Dockerfile";
+    dockerfile.fire("input");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(action(root, "Set up Docker & test").disabled).toBe(true);
+    await f.panel.refresh("shop");
+    expect(walk(root).find((item) => item.id === dockerfile.id)!.value).toBe(
+      "custom/Dockerfile",
+    );
+    expect(f.panel.isDirty()).toBe(true);
+    await action(root, "Set up Docker & test").fire("click");
+    expect(api.mock.calls.filter(([, body]) => body)).toEqual([]);
+    f.panel.destroy();
+  });
+
+  it("shows a source-change refusal without claiming a configured environment or retrying", async () => {
+    const api = vi.fn(async (_path: string, body?: unknown) => {
+        if (body)
+          throw new Error("The inspected source changed. Analyze again.");
+        return recommendation();
+      }),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    await action(root, "Set up Docker & test").fire("click");
+    expect(text(root)).toContain("The inspected source changed");
+    expect(text(root)).not.toContain("Local Docker setup saved");
+    expect(card(root).hidden).toBe(false);
+    expect(f.saved).not.toHaveBeenCalled();
+    await f.panel.refresh("shop");
+    expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+    f.panel.destroy();
+  });
+
+  it("shows required local setup blockers and opens review without writing a target", async () => {
+    const data = recommendation();
+    Object.assign(data.recommendedDocker, {
+      status: "blocked",
+      target: undefined,
+      message: "A database connection is required.",
+      blockers: ["A database connection is required."],
+    });
+    const api = vi.fn(async (_path: string, _body?: unknown) => data),
+      f = fixture(api, connectedVercel),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(action(root, "Set up Docker & test")).toBeUndefined();
+    expect(text(card(root))).toContain("A database connection is required.");
+    await action(root, "Review local setup").fire("click");
+    expect(
+      walk(root).find((item) => item.className === "onboarding-choice")!.hidden,
+    ).toBe(false);
+    expect(api.mock.calls.filter(([, body]) => body)).toEqual([]);
+    f.panel.destroy();
+  });
+
+  it.each([undefined, { recommendation: "hosted" }])(
+    "keeps Vercel onboarding when Docker is unavailable for report %j",
+    async (report) => {
+      const data = {
+        ...state(),
+        environmentSetupSupported: true,
+        ...(report ? { report } : {}),
+        recommendedDocker: {
+          status: "blocked",
+          message: "The report does not recommend Docker.",
+          blockers: [],
+        },
+      };
+      const api = vi.fn(async (_path: string, body?: unknown) => ({
+          ...data,
+          ...(body
+            ? {
+                environmentSetup: {
+                  status: "preparing",
+                  step: "find_preview",
+                  message: "Finding preview.",
+                },
+              }
+            : {}),
+        })),
+        f = fixture(api, connectedVercel),
+        root = new Element();
+      f.panel.mount(root, project);
+      await settle();
+      expect(card(root).hidden).toBe(true);
+      expect(
+        walk(root).find((item) => item.className === "onboarding-automatic")!
+          .hidden,
+      ).toBe(false);
+      expect(api).toHaveBeenCalledWith(
+        "/api/projects/shop/onboarding/prepare-environment",
+        { configurationRevision: "config-1" },
+      );
+      f.panel.destroy();
+    },
+  );
+
+  it("keeps an already selected Vercel environment and hides local preparation", async () => {
+    const api = vi.fn(async () => ({
+        ...recommendation(),
+        ...vercelState(),
+        environment: {
+          ...vercelState().environment,
+          verification: { status: "passed" },
+        },
+        recommendedDocker: {
+          status: "blocked",
+          message: "A different browser environment is selected.",
+          blockers: [],
+        },
+      })),
+      f = fixture(api, connectedVercel),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(card(root).hidden).toBe(true);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(text(root)).not.toContain("Run this app in Docker");
+    f.panel.destroy();
+  });
+});
+
 describe("explicit app sign-in onboarding", () => {
   const accessPanel = (root: Element) =>
     walk(root).find((item) => item.className === "onboarding-app-access")!;

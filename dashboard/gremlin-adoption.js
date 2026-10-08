@@ -187,6 +187,7 @@
       creature,
       el("h3", "", "Their job"),
       summary,
+      $("pm-verification-requirement").closest(".field"),
       el(
         "p",
         "adoption-contract",

@@ -82,6 +82,7 @@ ${JSON.stringify(
       scheduleUtc: area.schedule,
       wipLimit: area.wipLimit,
       label: area.label,
+      verificationRequirement: area.verificationRequirement,
     },
     charter: area.charter ?? {},
     dashboardMandate: area.mandate ?? null,
@@ -241,6 +242,11 @@ export function buildPmPatrolPrompt(input: PmPatrolPromptInput): string {
     effectiveWorkflow(input.project.config).kind === "promotion";
   const verification = effectiveVerification(input.project.config);
   const browser = verification.mode === "browser";
+  const browserRequired = input.area.verificationRequirement === "browser";
+  if (browserRequired && !browser)
+    throw new Error(
+      "This PM requires a browser walkthrough. Configure and verify a non-production test environment before starting its patrol.",
+    );
   const mode = browser
     ? `Browser verification: controller-selected ${JSON.stringify({ name: verification.environment, kind: verification.target.kind, role: verification.target.role, url: input.preview ?? null })}. Use Playwright MCP on this non-production target, record the actual deployment/ref when known, and save real screenshots under /output for evidence you cite. Cover the devices, roles, empty/loading/error states and accessibility needs relevant to the charter. You may generate safe fixtures such as CSVs or images for this target. Keep fixtures isolated and identify cleanup needs. The deployed baseline may differ from the checkout; never treat it as proof that an unmerged change works.`
     : "Verification mode: repository. Inspect code, documentation, interfaces and tests; run relevant configured checks only in the isolated workspace when safe. Cite commands, exit codes and actual output. A browser/deployment is not required, screenshots must not be invented, and code-only findings must not be called runtime-reproduced. Missing runtime access does not prevent a useful repository review.";
@@ -256,6 +262,18 @@ export function buildPmPatrolPrompt(input: PmPatrolPromptInput): string {
     learnedContext(input.memory),
     EVIDENCE,
     mode,
+    ...(browser
+      ? [
+          "BROWSER ACCESS SCOPE: Public access means no extra sign-in credentials are needed to enter this target; it does not prohibit testing reachable app features or a synthetic session already established by the fixture. Exercise accessible workflows within your assigned scope using isolated data. Do not invent an authentication restriction from the public access setting, and do not claim a login was tested merely because a fixture provided a session.",
+        ]
+      : []),
+    ...(browserRequired
+      ? [
+          `REQUIRED BROWSER WALKTHROUGH — first investigative priority.
+After reading only the owner scope and setup information needed to proceed, use Playwright on the supplied non-production target and complete a bounded, meaningful user journey before a broad source crawl or full test-suite run. Clear pending QA criteria first when supplied; otherwise choose the most important unresolved journey in this PM's area. Record the actual interactions, expected and observed outcome, relevant failure state, and real screenshot evidence. For a layout or responsive journey cover phone 390×844 and desktop 1280×800. A landing-page load or screenshot alone is not a completed journey.
+Use source reading and focused checks to explain what you observe. A passing repository suite cannot replace this PM's required walkthrough. You do not need to cover every page in one patrol: finish the chosen slice, state what remains, and rotate coverage in memory.md. If the app or necessary access blocks the journey, record the concrete blocker and "Incomplete investigation" without claiming browser verification or substituting a static review as completion.`,
+        ]
+      : []),
     ...(input.project.config.ideaPlanId && !browser
       ? [
           `IDEA FOUNDATION: This project began from a reviewed idea. Inspect the checkout before assuming an app exists. If it contains only a brief or no runnable application yet, use the owner's first milestone to propose the smallest useful foundation with meaningful automated tests and a documented start command. A missing app, package.json, Dockerfile or preview is expected at this stage, not an environment blocker. Do not run nonexistent scripts or ask for a test URL before there is code to run. ${promotion ? "Prepare scoped tickets under the PROMOTION TICKET POLICY." : "Coding still starts only after the owner approves a proposal;"} do not implement it yourself.`,

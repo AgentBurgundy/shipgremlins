@@ -29,6 +29,11 @@ import {
 } from "./repository.ts";
 import { publishSetupDraft } from "./publish.ts";
 import { confirmationState, confirmSetup } from "./confirmation.ts";
+import {
+  recommendedDocker,
+  prepareRecommendedDocker,
+  type PrepareDockerInput,
+} from "./recommendedDocker.ts";
 import { crewAnalysisContext, crewSourceIdentity } from "./crewContext.ts";
 import { sourceOwnershipPaths } from "./projectSetup.ts";
 import {
@@ -155,6 +160,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
         state.configurationRevision !== configurationRevision &&
         !setupConfirmation.confirmed,
       setupConfirmation,
+      recommendedDocker: recommendedDocker(state, projectConfig),
       recommendationsReviewable:
         !!state.report?.projectSetup &&
         (state.recommendationSourceRevision
@@ -545,6 +551,46 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
     status,
     busy,
     apply,
+    async prepareDocker(project: string, input: PrepareDockerInput) {
+      if (busy(project))
+        throw new ProjectOnboardingError(
+          "Wait for repository analysis before preparing Docker.",
+          409,
+          "busy",
+        );
+      await prepareRecommendedDocker({
+        root,
+        store,
+        project,
+        input,
+        checkHead: async (project, branch) => {
+          const signal = AbortSignal.timeout(15000);
+          const credential = await bounded(
+            source().resolveCredential({
+              provider: project.config.provider ?? "github",
+              serverUrl: project.config.serverUrl,
+              repository: project.config.repo,
+              write: false,
+              minValidityMs: 60000,
+            }),
+            signal,
+          );
+          return (
+            await bounded(
+              resolveRepositoryHead({
+                project,
+                branch,
+                credential,
+                fetch: fetcher,
+                signal,
+              }),
+              signal,
+            )
+          ).sha;
+        },
+      });
+      return status(project);
+    },
     async confirm(project: string, input: ConfirmProjectSetupInput) {
       if (busy(project))
         throw new ProjectOnboardingError(

@@ -36,6 +36,29 @@ function fixture() {
   return { root, file, areas };
 }
 describe("owner PM brief", () => {
+  it("sets, preserves and clears a testing requirement without altering neighboring PMs", () => {
+    const f = fixture();
+    const original = readPmBrief(f.root, "demo", "core");
+    expect(original.brief.verificationRequirement).toBeNull();
+    const required = savePmBrief(f.root, "demo", "core", {
+      revision: original.revision,
+      brief: { verificationRequirement: "browser" },
+    });
+    expect(required.brief.verificationRequirement).toBe("browser");
+    const edited = savePmBrief(f.root, "demo", "core", {
+      revision: required.revision,
+      brief: { metric: "/import" },
+    });
+    expect(edited.brief.verificationRequirement).toBe("browser");
+    const inherited = savePmBrief(f.root, "demo", "core", {
+      revision: edited.revision,
+      brief: { verificationRequirement: null },
+    });
+    expect(inherited.brief.verificationRequirement).toBeNull();
+    const raw = JSON.parse(readFileSync(f.file, "utf8"));
+    expect(raw.areas.core).not.toHaveProperty("verificationRequirement");
+    expect(raw.areas.other).toEqual(f.areas.areas.other);
+  });
   it("sets, preserves, and clears a PM batch override independently of its scope and neighbors", () => {
     const f = fixture();
     const original = readPmBrief(f.root, "demo", "core");
@@ -106,6 +129,9 @@ describe("owner PM brief", () => {
     ).toContain("Resumable imports");
   });
   it.each([
+    { verificationRequirement: "automatic" },
+    { verificationRequirement: true },
+    { verificationRequirement: "" },
     { enabled: false },
     { linearProjectId: "other" },
     { label: "pm:other" },

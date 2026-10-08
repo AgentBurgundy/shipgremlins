@@ -464,17 +464,25 @@
         vercelIdentity(target) === vercelIdentity(s.observedPreview?.target)
           ? s.observedPreview?.url
           : undefined;
-      const proposed = s.data?.stale ? null : s.data?.report?.docker;
+      const recommended =
+        s.data?.recommendedDocker?.status === "ready"
+          ? s.data.recommendedDocker.target
+          : null;
+      const proposed =
+        recommended || (s.data?.stale ? null : s.data?.report?.docker);
       const local = target?.kind === "docker" ? target : proposed;
       const profile =
-        environment?.profile || s.data?.report?.recommendation || "hosted";
+        environment?.profile ||
+        (recommended && "docker") ||
+        s.data?.report?.recommendation ||
+        "hosted";
       const advanced = {};
       for (const key of ["start", "env", "services", "migrate", "seed"])
         if (local?.[key] !== undefined) advanced[key] = local[key];
       return {
         ...protectionDraft(target, s.project),
         ...accessDraft(
-          target,
+          target || recommended,
           s.data?.environment?.legacySignIn,
           s.project.name,
           s.project.instanceId,
@@ -607,6 +615,11 @@
         s.message.setAttribute("role", "status");
         s.analysis = node("section", undefined, "onboarding-analysis");
         s.automatic = node("section", undefined, "onboarding-automatic");
+        s.localSetup = node(
+          "section",
+          undefined,
+          "onboarding-docker-recommendation",
+        );
         s.appAccess = node("section", undefined, "onboarding-app-access");
         s.appAccess.id = "project-app-access";
         s.form = node("section", undefined, "onboarding-choice");
@@ -617,6 +630,7 @@
           s.foundation,
           s.steps,
           s.message,
+          s.localSetup,
           s.appAccess,
           s.automatic,
           s.analysis,
@@ -815,10 +829,18 @@
         }
       }
     }
+    function hasDockerRecommendation(s) {
+      return Boolean(
+        s.data?.recommendedDocker &&
+        (s.data.report?.recommendation === "docker" ||
+          s.data.recommendedDocker.target?.kind === "docker"),
+      );
+    }
     function canPrepareEnvironment(s) {
       if (!s.data?.environmentSetupSupported) return false;
       if (s.project.ideaPlanId && s.data.foundation?.stage !== "ready")
         return false;
+      if (!s.data.environment && hasDockerRecommendation(s)) return false;
       if (s.data.environment) {
         const connection = hostingConnection(s);
         return (
@@ -952,8 +974,11 @@
         if (destroyed || entries.get(s.project.name) !== s) return;
         s.data = data;
         s.loaded = true;
-        if (action === "configure") {
-          s.notice = "Environment saved. Test it before the crew uses it.";
+        if (action === "configure" || action === "prepare-docker") {
+          s.notice =
+            action === "prepare-docker"
+              ? "Local Docker setup saved. Follow the browser test below; a saved recipe is not a passing test."
+              : "Environment saved. Test it before the crew uses it.";
           s.showForm = false;
           s.showAnalysis = false;
           s.draft = initialDraft(s);
@@ -1307,6 +1332,8 @@
       return wrap;
     }
     function updateFormActions(s) {
+      if (s.localPrepare)
+        s.localPrepare.disabled = disabled(s) || s.loading || dirty(s);
       const preparing =
         s.preparePending || s.data?.environmentSetup?.status === "preparing";
       if (!s.accessPending && !preparing && s.accessLockedControls) {
@@ -2475,6 +2502,7 @@
         suggested = !setup && !s.data?.environment && canPrepareEnvironment(s),
         visible =
           available &&
+          (s.data?.environment || !hasDockerRecommendation(s)) &&
           (!s.data?.environment ||
             s.data.environment.target.kind === "vercel") &&
           (preparing ||
@@ -2767,6 +2795,7 @@
         s.project.ideaPlanId && s.data?.foundation?.stage !== "ready",
       );
       s.foundation.hidden = !buildFirst;
+      s.localSetup.hidden = true;
       s.appAccess.hidden = buildFirst || !s.draft;
       s.automatic.hidden = true;
       s.steps.hidden = buildFirst;
@@ -3407,7 +3436,116 @@
         }
       }
       paintAutomatic(s);
+      paintDockerRecommendation(s);
       updateFormActions(s);
+    }
+    function paintDockerRecommendation(s) {
+      const recommendation = s.data?.recommendedDocker;
+      if (!hasDockerRecommendation(s) || s.data.environment || !s.draft) return;
+      const ready = recommendation.status === "ready";
+      s.localSetup.hidden = false;
+      s.localSetup.replaceChildren();
+      s.localSetup.append(
+        node("span", "RECOMMENDED TEST ENVIRONMENT", "eyebrow muted"),
+        node(
+          "h3",
+          ready
+            ? "Run this app in Docker. Test it in the browser."
+            : "Finish the local test setup.",
+        ),
+        node("p", recommendation.message),
+      );
+      if (s.project.verification?.mode === "repository")
+        s.localSetup.append(
+          node(
+            "p",
+            "Currently checking code only. No browser walkthrough is included until a browser environment is configured and verified.",
+            "onboarding-help",
+          ),
+        );
+      const target = recommendation.target;
+      if (target) {
+        const summary = node("dl", undefined, "environment-target-summary");
+        for (const [label, value] of [
+          ["Recipe", target.recipe?.dockerfile || target.recipe?.image],
+          ["App port", target.port],
+          ["Ready check", target.healthPath || "/"],
+          [
+            "Access",
+            target.access?.kind === "public"
+              ? "Public pages"
+              : "Review app sign-in",
+          ],
+        ]) {
+          if (value === undefined) continue;
+          const row = node("div");
+          row.append(node("dt", label), node("dd", String(value)));
+          summary.append(row);
+        }
+        s.localSetup.append(summary);
+      }
+      const blockers = recommendation.blockers?.filter(
+        (item) => item !== recommendation.message,
+      );
+      if (blockers?.length)
+        s.localSetup.append(list(blockers, "onboarding-help"));
+      const actions = node("div", undefined, "onboarding-actions");
+      const openSettings = () => {
+        if (disabled(s)) return;
+        s.showForm = true;
+        s.showAnalysis = false;
+        paint(s);
+        s.form.scrollIntoView?.({ block: "start", behavior: "smooth" });
+      };
+      const prepare = button(
+        ready
+          ? s.busy
+            ? "Preparing local app…"
+            : "Set up Docker & test"
+          : "Review local setup",
+        async () => {
+          if (
+            disabled(s) ||
+            s.loading ||
+            dirty(s) ||
+            destroyed ||
+            entries.get(s.project.name) !== s
+          )
+            return;
+          if (!ready) return openSettings();
+          await run(s, "prepare-docker", {
+            revision: s.data.revision,
+            configurationRevision: s.data.configurationRevision,
+          });
+        },
+        true,
+      );
+      prepare.disabled = disabled(s) || s.loading || dirty(s);
+      s.localPrepare = prepare;
+      const review = button(
+        ready ? "Review environment settings" : "Analyze again",
+        () => {
+          if (disabled(s) || dirty(s)) return;
+          if (ready) return openSettings();
+          return run(s, "discover", { revision: s.data.revision });
+        },
+      );
+      review.disabled = disabled(s);
+      actions.append(prepare, review);
+      s.localSetup.append(
+        actions,
+        node(
+          "p",
+          dirty(s)
+            ? "Your environment edits are kept. Save or discard them before applying this suggestion."
+            : ready
+              ? "This saves the reviewed local recipe and starts a real browser access test. It does not start a PM or enable automation."
+              : "Review the blocker or analyze the current source again. Your environment stays unchanged until you save.",
+          "onboarding-help",
+        ),
+      );
+      if (!s.showAnalysis) s.analysis.hidden = true;
+      if (!s.showForm) s.appAccess.hidden = true;
     }
     function deactivate() {
       for (const s of entries.values()) {

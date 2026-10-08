@@ -617,7 +617,10 @@ export function createDashboardServer(
     return {
       ...state,
       environmentSetupSupported: true,
-      environmentSetup: environmentSetup.status(name),
+      environmentSetup:
+        verification.mode === "browser" && verification.target.kind !== "vercel"
+          ? undefined
+          : environmentSetup.status(name),
       ...(previewAccess ? { previewAccess } : {}),
       ...(project.config.ideaPlanId
         ? { foundation: await foundation.status(name) }
@@ -3486,6 +3489,7 @@ export function createDashboardServer(
                       instanceId: areaInstanceId,
                       enabled,
                       codingEnabled,
+                      verificationRequirement,
                       linearProjectId,
                       mandate,
                       charter,
@@ -3507,6 +3511,7 @@ export function createDashboardServer(
                     ),
                     enabled,
                     codingEnabled: codingEnabled ?? enabled,
+                    verificationRequirement,
                     linearProjectId,
                     mandate,
                     charter,
@@ -3914,7 +3919,7 @@ export function createDashboardServer(
           return;
         }
         const onboardingRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|prepare-environment|setup-pr|cancel|screenshot))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|prepare-environment|prepare-docker|setup-pr|cancel|screenshot))?$/.exec(
             url.pathname,
           );
         if (onboardingRoute) {
@@ -3982,6 +3987,33 @@ export function createDashboardServer(
                   : {}),
                 ...(input.force === true ? { force: true } : {}),
               });
+              json(res, 202, await onboardingState(name));
+            } else if (action === "prepare-docker") {
+              if (
+                Object.keys(input).some(
+                  (key) => !["revision", "configurationRevision"].includes(key),
+                ) ||
+                typeof input.revision !== "string" ||
+                !/^[a-f0-9]{64}$/.test(input.revision) ||
+                typeof input.configurationRevision !== "string" ||
+                !/^[a-f0-9]{64}$/.test(input.configurationRevision)
+              )
+                throw new RequestError(
+                  400,
+                  "Use the current Docker recommendation and project settings to prepare this app.",
+                );
+              if (setupBusy(name))
+                throw new RequestError(
+                  409,
+                  "Wait for this project's setup or environment test before preparing Docker.",
+                );
+              await runners().withConfigurationMutation({ project: name }, () =>
+                projectOnboarding.prepareDocker(name, {
+                  revision: input.revision as string,
+                  configurationRevision: input.configurationRevision as string,
+                }),
+              );
+              await environmentAccess.verify(name);
               json(res, 202, await onboardingState(name));
             } else if (action === "confirm") {
               if (setupBusy(name))

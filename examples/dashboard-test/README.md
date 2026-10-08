@@ -6,6 +6,12 @@ Choose this fixture when a PM needs to inspect ShipGremlins onboarding, projects
 
 ## Run with a managed Docker environment
 
+From this repository's project, open **Environment** and analyze the code. Choose
+**Set up Docker & test** on the recommendation. ShipGremlins saves the existing
+recipe below and opens the app in Chromium. Review the passing browser check,
+then run your dashboard PM. Set that PM's verification requirement to **Browser
+walkthrough required** so it cannot silently fall back to repository-only work.
+
 Use the configuration in [`recipe.json`](./recipe.json): repository build, Dockerfile `examples/dashboard-test/Dockerfile`, context `.`, app port `3000`, health path `/fixture/health`, public access. The managed environment builds the admitted repository commit and creates a fresh fixture directory per container. No app secrets or service containers are required. Merge this fixture into the repository branch before asking an existing installation to build it.
 
 ```json
