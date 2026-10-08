@@ -49,7 +49,8 @@
       generation = 0,
       trigger = null,
       loading = false,
-      oauthPending = false;
+      oauthPending = false,
+      resourceRefreshControl = null;
     const writes = new Set();
     const project = (name) =>
       getStatus()?.projects?.find((p) => p.name === name);
@@ -122,6 +123,7 @@
       const s = state,
         p = project(s.name),
         profile = profileFor(p);
+      resourceRefreshControl = null;
       body.replaceChildren();
       body.append(
         el("p", "linear-onboarding-project", `${s.name} · ${s.repo}`),
@@ -139,11 +141,13 @@
         const pending = el(
           "p",
           "linear-onboarding-progress",
-          "Finding your Linear team…",
+          s.refreshingResources
+            ? "Refreshing Linear teams and projects…"
+            : "Finding your Linear team…",
         );
         pending.setAttribute("role", "status");
         body.append(pending);
-        return;
+        if (!s.resourcesLoaded || s.stage !== "configure") return;
       }
       if (s.stage === "ready") {
         body.append(
@@ -275,7 +279,8 @@
         return;
       }
       const team = s.teams.find((t) => t.id === s.teamId),
-        creating = s.teams.length === 0 && !s.teamId;
+        creating = s.teams.length === 0 && !s.teamId,
+        missingSelection = Boolean(s.teamId && !team);
       body.append(
         el(
           "h3",
@@ -296,7 +301,7 @@
             : "We’ll keep existing mappings and create only the missing PM projects and labels.",
         ),
       );
-      if (s.teams.length > 1 && !s.configuredTeam) {
+      if ((s.teams.length > 1 || missingSelection) && !s.configuredTeam) {
         const label = el(
             "label",
             "linear-onboarding-team-label",
@@ -308,6 +313,16 @@
         const placeholder = el("option", "", "Choose a team");
         placeholder.value = "";
         select.append(placeholder);
+        if (missingSelection) {
+          const unavailable = el(
+            "option",
+            "",
+            `${s.teamName || "Previously selected team"} · unavailable`,
+          );
+          unavailable.value = s.teamId;
+          unavailable.disabled = true;
+          select.append(unavailable);
+        }
         for (const item of s.teams) {
           const option = el(
             "option",
@@ -320,12 +335,14 @@
         select.value = s.teamId;
         select.disabled = locked();
         select.addEventListener("change", () => {
-          if (!current(s)) {
+          if (locked() || !current(s)) {
             render();
             return;
           }
           s.teamId = select.value;
+          s.teamName = s.teams.find((item) => item.id === s.teamId)?.name || "";
           s.error = "";
+          s.notice = "";
           render();
           body.querySelector("select")?.focus();
         });
@@ -345,6 +362,22 @@
           `Using ${profile?.workspace?.name || profile?.label || "your saved Linear account"}.`,
         ),
       );
+      if (missingSelection) {
+        const unavailable = el(
+          "p",
+          "linear-onboarding-error",
+          s.configuredTeam
+            ? "Your configured team was not returned by Linear. Check this connection’s team access, then refresh. Your mapping has been kept."
+            : "Your selected team was not returned by Linear. Choose another team or refresh again. Your selection has been kept.",
+        );
+        unavailable.setAttribute("role", "alert");
+        body.append(unavailable);
+      }
+      if (s.notice) {
+        const notice = el("p", "linear-onboarding-account", s.notice);
+        notice.setAttribute("role", "status");
+        body.append(notice);
+      }
       const actions = el("div", "linear-onboarding-actions");
       actions.append(
         action(
@@ -355,19 +388,29 @@
               : "Set up Linear",
           () => setup(s),
           true,
-          !creating && !s.teamId,
+          !creating && (!s.teamId || missingSelection),
         ),
       );
+      resourceRefreshControl = action(
+        s.refreshingResources ? "Refreshing…" : "Refresh teams & projects",
+        () => load(s, { refreshResources: true, restoreFocus: true }),
+      );
+      actions.append(resourceRefreshControl);
       body.append(actions);
     }
-    async function load(s) {
+    async function load(
+      s,
+      { refreshResources = false, restoreFocus = false } = {},
+    ) {
       if (locked() || !current(s)) {
         render();
         return;
       }
       const stamp = generation;
       loading = true;
+      s.refreshingResources = refreshResources;
       s.error = "";
+      s.notice = "";
       render();
       try {
         const p = project(s.name);
@@ -375,41 +418,58 @@
           s.stage = "connect";
           return;
         }
-        if (uuid.test(p.linear?.teamId || "")) {
+        if (uuid.test(p.linear?.teamId || "") && !refreshResources) {
           s.teamId = p.linear.teamId;
           s.teamName = p.linear.teamName || "Your configured Linear team";
           s.configuredTeam = true;
           s.teams = [{ id: s.teamId, name: s.teamName }];
+          s.resourcesLoaded = true;
           s.stage = "configure";
           return;
         }
+        const configuredTeamBefore = p.linear?.teamId || "";
         const result = await api(
           `/api/linear/resources?connection=${encodeURIComponent(s.connectionId)}`,
         );
         if (!current(s, stamp)) return;
+        if ((project(s.name)?.linear?.teamId || "") !== configuredTeamBefore) {
+          s.stage = "stale";
+          s.error =
+            "This project’s Linear team mapping changed. Reload setup before continuing.";
+          return;
+        }
         if (!Array.isArray(result.teams))
           throw new Error(
             "Linear did not return its teams. Try again before creating anything.",
           );
-        s.teams = result.teams.filter(
+        const teams = result.teams.filter(
           (t) => uuid.test(t?.id || "") && typeof t.name === "string",
         );
-        if (s.teams.length !== result.teams.length)
+        if (teams.length !== result.teams.length)
           throw new Error(
             "Linear returned incomplete team details. Refresh before continuing.",
           );
-        if (!s.teams.some((t) => t.id === s.teamId))
-          s.teamId = s.teams.length === 1 ? s.teams[0].id : "";
+        const keptSelection = Boolean(s.teamId);
+        s.teams = teams;
+        if (!s.teamId) s.teamId = teams.length === 1 ? teams[0].id : "";
+        s.teamName =
+          teams.find((team) => team.id === s.teamId)?.name || s.teamName;
+        s.resourcesLoaded = true;
         s.stage = "configure";
+        if (refreshResources)
+          s.notice = `Teams and projects refreshed.${keptSelection ? " Your selection is kept." : ""}`;
       } catch (error) {
         if (current(s, stamp)) {
-          s.stage = "error";
+          s.stage = s.resourcesLoaded ? "configure" : "error";
           s.error = error.message || "Linear teams could not be loaded.";
         }
       } finally {
         if (state === s && generation === stamp) {
           loading = false;
+          s.refreshingResources = false;
           render();
+          if (restoreFocus)
+            resourceRefreshControl?.focus({ preventScroll: true });
         }
       }
     }
@@ -418,7 +478,10 @@
         render();
         return;
       }
-      if (s.teams.length && !s.teams.some((t) => t.id === s.teamId)) {
+      if (
+        (s.teamId || s.teams.length) &&
+        !s.teams.some((t) => t.id === s.teamId)
+      ) {
         s.error = "Choose a team before setting up Linear.";
         render();
         return;
@@ -502,6 +565,9 @@
         stage: "configure",
         error: "",
         configuredTeam: false,
+        resourcesLoaded: false,
+        refreshingResources: false,
+        notice: "",
       };
       if (!dialog.open) dialog.showModal();
       render();
@@ -512,7 +578,10 @@
       open,
       close,
       isBusy: () => loading || writes.size > 0,
-      refresh: () => (state && dialog.open ? load(state) : Promise.resolve()),
+      refresh: () =>
+        state && dialog.open
+          ? load(state, { refreshResources: true })
+          : Promise.resolve(),
       resume: (name) => open(name),
     };
   };

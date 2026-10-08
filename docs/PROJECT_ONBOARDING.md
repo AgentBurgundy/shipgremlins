@@ -13,8 +13,10 @@ An existing repository opens **Investigate → Choose your crew → Adopt**. The
 background setup investigation recommends one to five PMs with distinct product
 areas, source evidence and editable briefs. It does not create a generic Product
 Understanding PM. Choose **Adopt** on the suggestions you want, review the filled-in
-brief, and confirm. Remaining suggestions stay available after the first adoption;
-already adopted roles are identified so you do not create duplicates.
+brief, and confirm. After the first adoption, **Overview** shows how many suggestions
+remain with **Continue choosing your crew**, which opens their full briefs in
+**Your crew**. Suggestions survive reloads; already adopted roles are identified
+so you do not create duplicates.
 
 An existing project without PMs has the same **Find my gremlins** action. This
 investigation reads bounded repository source and saved setup context; it does

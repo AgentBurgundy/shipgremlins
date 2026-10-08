@@ -104,6 +104,7 @@
 }
 .linear-onboarding-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   padding-top: 4px;
 }

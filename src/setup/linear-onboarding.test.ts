@@ -166,6 +166,192 @@ function deferred<T>() {
 }
 
 describe("focused Linear onboarding", () => {
+  it("refreshes externally created teams directly in the modal without creating anything", async () => {
+    const f = fixture({ teams: [] });
+    await f.ui.open("forevermods");
+    expect(f.text()).toContain("Create a team for this app?");
+    f.api.mockResolvedValueOnce({
+      teams: [{ id: OTHER, name: "Created in Linear", key: "NEW" }],
+      projects: [{ id: "project-1", name: "Existing project" }],
+    });
+    await f.button("Refresh teams & projects").fire("click");
+    expect(f.text()).toContain("Created in Linear");
+    expect(f.text()).toContain("Teams and projects refreshed.");
+    expect(f.button("Set up Linear").disabled).toBe(false);
+    expect(f.button("Refresh teams & projects").focus).toHaveBeenCalledWith({
+      preventScroll: true,
+    });
+    expect(f.api.mock.calls).toEqual([
+      ["/api/linear/resources?connection=default"],
+      ["/api/linear/resources?connection=default"],
+    ]);
+    expect(f.onSaved).not.toHaveBeenCalled();
+    expect(f.onReady).not.toHaveBeenCalled();
+  });
+  it("keeps a chosen team visible and disabled while refreshing, then restores its selection", async () => {
+    const f = fixture({
+      teams: [
+        { id: TEAM, name: "A" },
+        { id: OTHER, name: "B" },
+      ],
+    });
+    await f.ui.open("forevermods");
+    const select = f.dialog.querySelector("select")!;
+    select.value = OTHER;
+    await select.fire("change");
+    const pending = deferred<Record<string, unknown>>();
+    f.api.mockReturnValueOnce(pending.promise);
+    const refreshing = f.button("Refresh teams & projects").fire("click");
+    expect(f.text()).toContain("Refreshing Linear teams and projects…");
+    expect(f.dialog.querySelector("select")?.value).toBe(OTHER);
+    expect(f.dialog.querySelector("select")?.disabled).toBe(true);
+    expect(f.button("Set up Linear").disabled).toBe(true);
+    expect(f.button("Refreshing…").disabled).toBe(true);
+    await f.ui.refresh();
+    expect(f.api).toHaveBeenCalledTimes(2);
+    pending.resolve({
+      teams: [
+        { id: OTHER, name: "Renamed B" },
+        { id: TEAM, name: "A" },
+      ],
+      projects: [],
+    });
+    await refreshing;
+    expect(f.dialog.querySelector("select")?.value).toBe(OTHER);
+    expect(f.text()).toContain("Renamed B");
+    expect(f.text()).toContain("Your selection is kept.");
+    expect(f.button("Set up Linear").disabled).toBe(false);
+    expect(f.api.mock.calls.every((call) => call.length === 1)).toBe(true);
+  });
+  it.each(["network", "invalid-response"])(
+    "preserves a selected team and the last valid choices after a %s refresh failure",
+    async (failure) => {
+      const f = fixture({
+        teams: [
+          { id: TEAM, name: "A" },
+          { id: OTHER, name: "B" },
+        ],
+      });
+      await f.ui.open("forevermods");
+      const select = f.dialog.querySelector("select")!;
+      select.value = OTHER;
+      await select.fire("change");
+      if (failure === "network")
+        f.api.mockRejectedValueOnce(new Error("Linear is offline. Try again."));
+      else
+        f.api.mockResolvedValueOnce({
+          teams: [
+            { id: TEAM, name: "Wrong replacement" },
+            { id: "invalid", name: "Broken" },
+          ],
+        });
+      await f.button("Refresh teams & projects").fire("click");
+      expect(f.dialog.querySelector("select")?.value).toBe(OTHER);
+      expect(f.text()).toContain(
+        failure === "network" ? "Linear is offline" : "incomplete team details",
+      );
+      expect(f.text()).toContain("B");
+      expect(f.text()).not.toContain("Wrong replacement");
+      expect(f.button("Refresh teams & projects").disabled).toBe(false);
+      await f.button("Refresh teams & projects").fire("click");
+      expect(f.dialog.querySelector("select")?.value).toBe(OTHER);
+      expect(f.text()).toContain("Your selection is kept.");
+      expect(f.api.mock.calls.every((call) => call.length === 1)).toBe(true);
+    },
+  );
+  it("refreshes configured teams through the saved account without changing their mapping", async () => {
+    const f = fixture({
+      linear: { connectionId: "work", teamId: TEAM, teamName: "Original team" },
+    });
+    await f.ui.open("forevermods");
+    f.api.mockResolvedValueOnce({
+      teams: [
+        { id: TEAM, name: "Updated team" },
+        { id: OTHER, name: "New team" },
+      ],
+      projects: [],
+    });
+    await f.button("Refresh teams & projects").fire("click");
+    expect(f.api).toHaveBeenCalledExactlyOnceWith(
+      "/api/linear/resources?connection=work",
+    );
+    expect(f.text()).toContain("Updated team");
+    expect(f.dialog.querySelector("select")).toBeNull();
+    expect(f.project.linear?.teamId).toBe(TEAM);
+    expect(f.onSaved).not.toHaveBeenCalled();
+  });
+  it("keeps a missing selection explicit and blocks setup instead of silently switching teams", async () => {
+    const f = fixture();
+    await f.ui.open("forevermods");
+    const previousSetup = f.button("Set up Linear");
+    f.api.mockResolvedValueOnce({ teams: [], projects: [] });
+    await f.button("Refresh teams & projects").fire("click");
+    expect(f.dialog.querySelector("select")?.value).toBe(TEAM);
+    expect(f.text()).toContain("Galactic Basic · unavailable");
+    expect(f.text()).toContain("Your selection has been kept.");
+    expect(f.button("Set up Linear").disabled).toBe(true);
+    await previousSetup.fire("click");
+    expect(f.api.mock.calls.every((call) => call.length === 1)).toBe(true);
+    f.api.mockResolvedValueOnce({
+      teams: [{ id: OTHER, name: "New team" }],
+      projects: [],
+    });
+    await f.button("Refresh teams & projects").fire("click");
+    expect(f.dialog.querySelector("select")?.value).toBe(TEAM);
+    const select = f.dialog.querySelector("select")!;
+    select.value = OTHER;
+    await select.fire("change");
+    expect(f.button("Set up Linear").disabled).toBe(false);
+  });
+  it.each(["incarnation", "repo", "account", "connection", "mapping"])(
+    "rejects a late manual refresh after the %s changes",
+    async (field) => {
+      const f = fixture();
+      await f.ui.open("forevermods");
+      const pending = deferred<Record<string, unknown>>();
+      f.api.mockReturnValueOnce(pending.promise);
+      const refreshing = f.button("Refresh teams & projects").fire("click");
+      if (field === "incarnation") f.project.instanceId = "replacement";
+      if (field === "repo") f.project.repo = "owner/replacement";
+      if (field === "account")
+        f.status.serviceConnections[0]!.account.id = "replacement";
+      if (field === "connection") f.project.linear = { connectionId: "other" };
+      if (field === "mapping") f.project.linear = { teamId: OTHER };
+      pending.resolve({
+        teams: [{ id: OTHER, name: "Wrong refreshed team" }],
+        projects: [],
+      });
+      await refreshing;
+      expect(f.text()).toContain("changed. Reload setup");
+      expect(f.text()).not.toContain("Wrong refreshed team");
+      expect(f.button("Reload project setup").disabled).toBe(false);
+      expect(f.api.mock.calls.every((call) => call.length === 1)).toBe(true);
+    },
+  );
+  it("can close during manual refresh without late responses reopening or replacing another project's modal", async () => {
+    const f = fixture();
+    await f.ui.open("forevermods");
+    const pending = deferred<Record<string, unknown>>();
+    f.api.mockReturnValueOnce(pending.promise);
+    const refreshing = f.button("Refresh teams & projects").fire("click");
+    await f.button("Close ×").fire("click");
+    f.status.projects.push({
+      name: "other-app",
+      instanceId: "other",
+      repo: "owner/other",
+    });
+    await f.ui.open("other-app");
+    pending.resolve({
+      teams: [{ id: OTHER, name: "Late stale team" }],
+      projects: [],
+    });
+    await refreshing;
+    expect(f.text()).toContain("other-app · owner/other");
+    expect(f.text()).not.toContain("Late stale team");
+    expect(f.dialog.open).toBe(true);
+    expect(f.ui.isBusy()).toBe(false);
+    expect(f.api.mock.calls.every((call) => call.length === 1)).toBe(true);
+  });
   it("starts disconnected users with Connect Linear and does not create resources", async () => {
     const f = fixture({ connected: false });
     await f.ui.open("forevermods", f.opener);

@@ -6,6 +6,7 @@ class Element {
   children: Element[] = [];
   parent: Element | null = null;
   textContent = "";
+  href = "";
   className = "";
   disabled = false;
   hidden = false;
@@ -123,7 +124,11 @@ type Project = {
   areas: { key: string; name?: string; mandate?: string }[];
 };
 type Api = (url: string, body?: unknown) => Promise<unknown>;
-function fixture(api: Api, overrides: Partial<Project> = {}) {
+function fixture(
+  api: Api,
+  overrides: Partial<Project> = {},
+  mountOptions: { hideWhenEmpty?: boolean; compact?: boolean } = {},
+) {
   const root = new Element("main");
   let project: Project = {
     name: "shop",
@@ -152,7 +157,7 @@ function fixture(api: Api, overrides: Partial<Project> = {}) {
       mount(
         root: Element,
         project: Project,
-        options?: { hideWhenEmpty: boolean },
+        options?: { hideWhenEmpty?: boolean; compact?: boolean },
       ): void;
       refresh(name: string): Promise<void>;
       resume(projects: Project[]): void;
@@ -184,7 +189,7 @@ function fixture(api: Api, overrides: Partial<Project> = {}) {
     onAdopt,
     isLocked: () => locked,
   });
-  view.mount(root, project);
+  view.mount(root, project, mountOptions);
   return {
     root,
     view,
@@ -205,6 +210,75 @@ function fixture(api: Api, overrides: Partial<Project> = {}) {
 }
 
 describe("AI crew recommendations", () => {
+  it("recovers a compact remaining-crew entry after reloading during first-PM Linear setup", async () => {
+    let finish!: (value: unknown) => void;
+    const api = vi.fn<Api>().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const f = fixture(
+      api,
+      {
+        areas: [{ key: "checkout", name: "Renamed Pip" }],
+        linear: { status: "running" },
+      },
+      { compact: true, hideWhenEmpty: true },
+    );
+    expect(f.root.children[0]!.hidden).toBe(true);
+    expect(api).toHaveBeenCalledExactlyOnceWith(
+      "/api/projects/shop/onboarding",
+    );
+    finish(report());
+    await settle();
+    expect(f.root.children[0]!.hidden).toBe(false);
+    expect(text(f.root)).toContain("2 suggested gremlins are waiting.");
+    const resume = walk(f.root).find((item) => item.tagName === "a")!;
+    expect(resume.textContent).toBe("Continue choosing your crew");
+    expect(resume.href).toBe("/projects/shop?tab=crew");
+    expect(button(f.root, "Adopt Nib")).toBeUndefined();
+    expect(
+      walk(f.root).filter((node) => node.className === "crew-recommendation"),
+    ).toHaveLength(0);
+    expect(f.onAdopt).not.toHaveBeenCalled();
+    f.view.mount(f.root, f.project, { hideWhenEmpty: true });
+    expect(button(f.root, "Adopt Nib")).toBeDefined();
+    expect(text(f.root)).not.toContain("Continue choosing your crew");
+    expect(api).toHaveBeenCalledOnce();
+    f.view.destroy();
+  });
+  it("updates the overview reminder as saved suggestions are adopted and hides it once the crew is complete", async () => {
+    const api = vi.fn(async () => report());
+    const f = fixture(
+      api,
+      { areas: [{ key: "checkout" }] },
+      { compact: true, hideWhenEmpty: true },
+    );
+    await settle();
+    f.setProject({
+      ...f.project,
+      areas: [{ key: "checkout" }, { key: "billing" }],
+    });
+    f.view.resume([f.project]);
+    expect(text(f.root)).toContain("1 suggested gremlin is waiting.");
+    f.setProject({
+      ...f.project,
+      areas: ["checkout", "billing", "search"].map((key) => ({ key })),
+    });
+    f.view.resume([f.project]);
+    expect(f.root.children[0]!.hidden).toBe(true);
+    expect(api).toHaveBeenCalledOnce();
+    f.view.destroy();
+    const empty = fixture(
+      async () => ({ status: "idle" }),
+      { areas: [{ key: "manual" }] },
+      { compact: true, hideWhenEmpty: true },
+    );
+    await settle();
+    expect(empty.root.children[0]!.hidden).toBe(true);
+    empty.view.destroy();
+  });
   it("does not substitute a legacy first PM when the latest investigation found no additional roles", async () => {
     const data = report();
     const f = fixture(async () => ({

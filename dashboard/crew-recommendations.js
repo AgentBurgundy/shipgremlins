@@ -279,17 +279,17 @@
       if (!current(state)) return;
       const data = state.data,
         choices = suggested(data),
-        inProgress = running(data);
-      state.node.hidden = Boolean(
-        state.hideWhenEmpty &&
-        !inProgress &&
-        !state.busy &&
-        !choices.some(
+        inProgress = running(data),
+        remaining = choices.filter(
           (item) => !state.project.areas?.some((area) => sameRole(area, item)),
-        ),
+        );
+      state.node.className = `crew-recommendations${state.compact ? " crew-recommendations-summary" : ""}`;
+      state.node.hidden = Boolean(
+        state.hideWhenEmpty && !inProgress && !state.busy && !remaining.length,
       );
       const signature = JSON.stringify([
         data,
+        state.compact,
         state.error,
         state.busy,
         state.loading,
@@ -303,6 +303,43 @@
       if (signature === state.signature) return;
       state.signature = signature;
       state.node.replaceChildren();
+      if (state.compact) {
+        const copy = el("div", undefined, "crew-recommendations-summary-copy");
+        const changedSource = data?.recommendationsReviewable === false;
+        copy.append(
+          el("span", "YOUR SUGGESTED CREW", "eyebrow muted"),
+          el(
+            "h2",
+            inProgress
+              ? "Your crew investigation is running."
+              : changedSource
+                ? `${remaining.length} saved gremlin suggestion${remaining.length === 1 ? "" : "s"}`
+                : `${remaining.length} suggested gremlin${remaining.length === 1 ? " is" : "s are"} waiting.`,
+          ),
+          el(
+            "p",
+            inProgress
+              ? data.message || "The repository investigation is running."
+              : changedSource
+                ? "The inspection source has changed. Review the saved suggestions and their source before continuing."
+                : state.error
+                  ? "Saved recommendations are still available. Open your crew to refresh their status."
+                  : "Your AI recommendations are saved. Pick up where you left off.",
+          ),
+        );
+        const resume = el(
+          "a",
+          inProgress
+            ? "Follow crew investigation"
+            : changedSource
+              ? "Review saved crew"
+              : "Continue choosing your crew",
+          "small-button",
+        );
+        resume.href = `/projects/${encodeURIComponent(state.project.name)}?tab=crew`;
+        state.node.append(copy, resume);
+        return;
+      }
       const hero = el("header", undefined, "crew-recommendations-heading");
       const copy = el("div");
       copy.append(el("span", "A CREW FOR YOUR APP", "eyebrow muted"));
@@ -495,6 +532,7 @@
         }
         state.project = project;
         state.hideWhenEmpty = Boolean(options.hideWhenEmpty);
+        state.compact = Boolean(options.compact);
         if (active !== state) deactivate();
         active = state;
         container.append(state.node);

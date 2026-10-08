@@ -80,6 +80,8 @@ interface Intent {
     key: string;
     created: boolean;
     reuse: boolean;
+    /** Missing on old journals: an unconfirmed creation must then be treated as ambiguous. */
+    creation?: "not-started" | "pending" | "rejected";
   };
   areas: Record<
     string,
@@ -119,6 +121,11 @@ const rejectedIcon = (error: unknown) =>
   error.category === "validation" &&
   error.fields.length === 1 &&
   error.fields[0] === "icon";
+const refusedTeamCreation = (error: unknown) =>
+  error instanceof LinearApiError &&
+  ["auth", "permission", "rate-limit", "limit", "validation"].includes(
+    error.category,
+  );
 function provisioningFailure(error: unknown, step: string) {
   let guidance = "Retry to resume this step.";
   let status = 502;
@@ -341,6 +348,10 @@ export function createLinearProvisioning(options: {
         typeof raw.team.key !== "string" ||
         typeof raw.team.created !== "boolean" ||
         typeof raw.team.reuse !== "boolean" ||
+        (raw.team.creation !== undefined &&
+          !["not-started", "pending", "rejected"].includes(
+            String(raw.team.creation),
+          )) ||
         !object(raw.areas)
       )
         throw new Error();
@@ -619,6 +630,7 @@ export function createLinearProvisioning(options: {
         },
         areas: { ...previousState?.areas },
       };
+      delete nextState.team.creation;
       for (const key of keys) {
         const chosen = input.areaProjects[key];
         const value = areaValue.areas[key] as Record<string, unknown>;
@@ -768,6 +780,9 @@ export function createLinearProvisioning(options: {
     return locked(project, async () => {
       let state = read(project);
       const config = loadProject(root, project);
+      const sourceRevisions = ["project.json", "areas.json"].map((file) =>
+        readEditableConfig(root, `projects/${project}/${file}`),
+      );
       const selectedAreas = config.areas.filter(
         (area) => !input.areaKey || area.key === input.areaKey,
       );
@@ -800,11 +815,79 @@ export function createLinearProvisioning(options: {
             409,
           );
         const selected = input.teamId ?? config.config.linear?.teamId;
-        if (state && selected && state.team.id !== selected)
-          throw new LinearProvisioningError(
-            "A different team is already reserved for this app. Existing projects and mappings were preserved.",
-            409,
+        let team: LinearTeam | null = null;
+        if (state && selected && state.team.id !== selected) {
+          const unmapped =
+            input.teamId !== undefined &&
+            !config.config.linear?.teamId &&
+            config.areas.every((area) => missingId(area.linearProjectId)) &&
+            !Object.keys(state.areas).length;
+          const unused =
+            state.team.reuse ||
+            (!state.team.created &&
+              ["not-started", "rejected"].includes(state.team.creation ?? ""));
+          if (!unmapped || !unused)
+            throw new LinearProvisioningError(
+              state.team.created || state.team.reuse || !unmapped
+                ? "This app is already linked to a different team. Use Edit project → Linear mappings to change its team and PM mappings together; existing resources were preserved."
+                : "An earlier creation for a different team is not confirmed. Retry the original setup before changing teams, or recover its saved IDs in Edit project → Linear mappings. The reservation is kept to avoid duplicate teams.",
+              409,
+            );
+          // A definite refusal can still accompany a partial response. Reconcile
+          // the exact ID before abandoning it; transport failures never get here.
+          if (!state.team.reuse) {
+            step = "checking the previous team reservation";
+            const previous = await client.getTeam(state.team.id);
+            if (previous) {
+              state.team.created = true;
+              state.team.name = previous.name;
+              delete state.team.creation;
+              atomic(statePath(project), state);
+              throw new LinearProvisioningError(
+                "The earlier setup created a different team. Retry its setup or change its mappings in Edit project; the existing team was preserved.",
+                409,
+              );
+            }
+          }
+          step = "checking the selected team";
+          team = await client.getTeam(selected);
+          if (!team || team.id !== selected)
+            throw new LinearProvisioningError(
+              "The selected Linear team is unavailable to this connection. The previous reservation was preserved.",
+              409,
+            );
+          if (
+            sourceRevisions.some(
+              (source) =>
+                readEditableConfig(root, source.path).revision !==
+                source.revision,
+            )
+          )
+            throw new LinearProvisioningError(
+              "Project or PM settings changed while checking teams. Refresh before retrying; the previous reservation was preserved.",
+              409,
+            );
+          // Retain the abandoned choice for recovery, without deleting or moving
+          // any Linear resource. The project lock protects this journal transition.
+          const archive = safe(
+            join(
+              directory,
+              "history",
+              runtimeKey(project),
+              `team-${state.team.id}.json`,
+            ),
           );
+          if (!existsSync(archive))
+            atomic(archive, { schema: 1, project, intent: state });
+          state.team = {
+            id: team.id,
+            name: team.name,
+            key: team.key,
+            created: true,
+            reuse: true,
+          };
+          atomic(statePath(project), state);
+        }
         const legacy: LinearProjectResource[] = [];
         step = "checking existing PM projects";
         for (const area of config.areas)
@@ -817,7 +900,6 @@ export function createLinearProvisioning(options: {
               );
             legacy.push(resource);
           }
-        let team: LinearTeam | null = null;
         if (!state) {
           let reuse = selected;
           if (!reuse && legacy.length) {
@@ -874,6 +956,7 @@ export function createLinearProvisioning(options: {
               key,
               created: !!team,
               reuse: !!team,
+              ...(!team ? { creation: "not-started" as const } : {}),
             },
             areas: {},
           };
@@ -895,15 +978,29 @@ export function createLinearProvisioning(options: {
               409,
             );
           step = "creating the Linear team";
-          team = await client.createTeam({
-            id: state.team.id,
-            key: state.team.key,
-            name: state.team.name,
-            description: `ShipGremlins app: ${project}. Each PM mandate has its own project.`,
-          });
+          const priorUnambiguous = ["not-started", "rejected"].includes(
+            state.team.creation ?? "",
+          );
+          state.team.creation = "pending";
+          atomic(statePath(project), state);
+          try {
+            team = await client.createTeam({
+              id: state.team.id,
+              key: state.team.key,
+              name: state.team.name,
+              description: `ShipGremlins app: ${project}. Each PM mandate has its own project.`,
+            });
+          } catch (error) {
+            if (priorUnambiguous && refusedTeamCreation(error)) {
+              state.team.creation = "rejected";
+              atomic(statePath(project), state);
+            }
+            throw error;
+          }
         }
         if (team.id !== state.team.id) throw new Error();
         state.team.created = true;
+        delete state.team.creation;
         state.connectionId = connectionId;
         state.team.name = team.name;
         step = "saving the team mapping";
