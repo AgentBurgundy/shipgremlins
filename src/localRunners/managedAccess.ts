@@ -52,6 +52,8 @@ const failureMessages: Record<string, string> = {
     "The PM browser did not receive the verified session. Check the selected runner and retry Test access.",
   helper_unavailable:
     "The private test browser became unavailable. Check the selected runner and retry Test access.",
+  storage_redaction_limit:
+    "The app's browser storage exceeded the private browser's redaction budget. Reduce cached data for the dedicated test account, then retry Test access. No browser content was shared with the gremlin.",
   browser_unavailable:
     "The runner could not start its private test browser. Check Docker and available memory, then retry Test access.",
   invalid_evidence:

@@ -54,6 +54,12 @@ Passing authentication does not establish role permissions, tenant isolation,
 billing correctness or a completed product journey. Put those expectations in the
 PM's brief. Automatic test-data reset is not included.
 
+The private browser also redacts cookies and browser storage before returning
+evidence. Ordinary application caches are supported, including large JSON values
+with nested session fields. A cache that exceeds the bounded privacy budget stops
+the check with a storage-specific explanation; it is not reported as an incorrect
+password or a crashed browser.
+
 ## Supported login flows
 
 Same-origin password forms, login modals, and email-then-password forms are supported
