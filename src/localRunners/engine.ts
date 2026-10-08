@@ -1973,9 +1973,18 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
                 current.setupReservations[worker.id]?.ownerId !== ownerId
               )
                 return;
-              await docker.stopJob(jobId);
-              await docker.cleanupEnvironment?.(jobId);
-              await options.releaseJobResources?.(jobId);
+              try {
+                await docker.stopJob(jobId);
+                await docker.cleanupEnvironment?.(jobId);
+                await options.releaseJobResources?.(jobId);
+              } catch (error) {
+                // This caller will return; any cooperating controller may retry
+                // cleanup, but the durable reservation still fences all reuse.
+                delete current.setupReservations[worker.id]!.ownerPid;
+                delete current.setupReservations[worker.id]!.ownerId;
+                save(current);
+                throw error;
+              }
               delete current.setupReservations[worker.id];
               setupReservations.delete(jobId);
               liveSetupOwners.delete(ownerId);
@@ -1988,6 +1997,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
                 active.message = "Test access check finished.";
               }
               save(current);
+            }).finally(() => {
+              // The caller is finished even when cleanup failed. The durable
+              // reservation keeps capacity quarantined until tick can retry.
+              setupReservations.delete(jobId);
+              liveSetupOwners.delete(ownerId);
             }),
         };
       }),

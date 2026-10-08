@@ -117,6 +117,7 @@ interface Saved {
 }
 interface Assignment extends Active {
   cancel?: boolean;
+  cleanupOnly?: boolean;
   ttlMs?: number;
   payload?: DockerJobPayload;
 }
@@ -391,6 +392,24 @@ export function createRemoteWorker(options: {
         }
         if (!jobPattern.test(job.id) || !tokenPattern.test(job.lease))
           throw new RemoteWorkerError("Invalid job assignment.", 502);
+        if (job.cleanupOnly === true) {
+          if (job.cancel !== true)
+            throw new RemoteWorkerError(
+              "Invalid browser cleanup assignment.",
+              502,
+            );
+          await stop(job);
+          await request(
+            "report",
+            { id: job.id, lease: job.lease, cleanupOnly: true },
+            state.token,
+          );
+          if (state.active?.id === job.id && state.active.lease === job.lease) {
+            delete state.active;
+            save(state);
+          }
+          return;
+        }
         if (
           state.active &&
           (state.active.id !== job.id || state.active.lease !== job.lease)
@@ -731,8 +750,15 @@ export function createRemoteWorker(options: {
         if (job.payload.accessProbe || job.payload.testAccess) {
           await options.docker.stopJob(job.id);
           await options.docker.cleanupEnvironment?.(job.id);
-          if (artifacts.result)
-            artifacts.result = { ...artifacts.result, cleanupConfirmed: true };
+          artifacts.result = {
+            ...(artifacts.result ?? {
+              ok: false,
+              kind: job.payload.kind,
+              error:
+                "The worker exited without a result. This run did not verify its assigned work.",
+            }),
+            cleanupConfirmed: true,
+          };
         }
         await request(
           "report",

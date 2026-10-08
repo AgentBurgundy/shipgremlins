@@ -1209,9 +1209,11 @@ describe("durable local worker engine", () => {
     cleanup.mockRejectedValueOnce(new Error("runner unreachable"));
     await expect(reservation.release()).rejects.toThrow(/could not complete/);
     expect((await f.engine.status()).runners[0]?.busy).toBe(true);
-    await reservation.release();
+    // The verification caller has returned after failure. Tick must reclaim
+    // its reservation without a second callback or a controller restart.
     await f.engine.tick();
     expect((await f.engine.job(job.id))?.status).toBe("running");
+    expect(cleanup).toHaveBeenCalledTimes(2);
   });
   it("does not steal a live setup reservation from a cooperating engine instance", async () => {
     const f = fixture();

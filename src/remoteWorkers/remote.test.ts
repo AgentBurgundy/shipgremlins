@@ -857,6 +857,84 @@ describe("remote worker process", () => {
       close: () => new Promise<void>((done) => server.close(() => done())),
     };
   }
+  it.each(["expired", "missing-result"])(
+    "recovers managed browser cleanup after %s without claiming successful work",
+    async (scenario) => {
+      const f = await serverFixture();
+      try {
+        const registration = f.hub.createEnrollment({
+          name: "Managed worker",
+          projects: ["alpha"],
+        });
+        const docker = dockerFixture();
+        docker.docker.cleanupEnvironment = vi.fn(async () => {});
+        const worker = createRemoteWorker({
+          root: root(),
+          controller: f.origin,
+          docker: docker.docker,
+        });
+        await worker.enroll(registration.code);
+        await worker.step(); // Advertise managed-browser protocol before assignment.
+        await f.adapter.prepareWorker!("worker-process", registration.id);
+        await f.adapter.startJob({
+          id: "job-managed",
+          workerId: "worker-process",
+          payload: {
+            ...payload,
+            browserTarget: "https://test.invalid/",
+            testAccess: {
+              version: 1,
+              identityId: "public",
+              generation: "public",
+              leaseGeneration: "job-managed",
+              access: { kind: "public" },
+            },
+          },
+        });
+        await worker.step();
+        if (scenario === "expired") {
+          f.advance(136000);
+          expect(await f.adapter.inspectJob("job-managed")).toMatchObject({
+            running: false,
+            exitCode: 124,
+          });
+          await expect(
+            f.adapter.cleanupEnvironment!("job-managed"),
+          ).rejects.toThrow(/not confirmed/);
+          expect(f.adapter.canCheckAccess!(registration.id, "alpha")).toBe(
+            false,
+          );
+        } else {
+          docker.jobs.set("job-managed", {
+            exists: true,
+            running: false,
+            status: "exited",
+            exitCode: 137,
+            workerId: "worker-process",
+          });
+          docker.setOutput({ result: null, files: [] });
+        }
+        await worker.step();
+        expect(docker.docker.cleanupEnvironment).toHaveBeenCalledWith(
+          "job-managed",
+        );
+        await expect(
+          f.adapter.cleanupEnvironment!("job-managed"),
+        ).resolves.toBeUndefined();
+        expect((await f.adapter.artifacts("job-managed")).result).toMatchObject(
+          { ok: false, cleanupConfirmed: true },
+        );
+        expect(await f.adapter.inspectJob("job-managed")).toMatchObject({
+          running: false,
+          exitCode: scenario === "expired" ? 124 : 137,
+        });
+        expect(docker.docker.startJob).toHaveBeenCalledOnce();
+        expect(f.adapter.canCheckAccess!(registration.id, "alpha")).toBe(true);
+      } finally {
+        await f.close();
+      }
+    },
+  );
   it("runs the real authenticated HTTP protocol, survives process restart, and uploads PNG proof", async () => {
     const f = await serverFixture();
     try {
@@ -1167,6 +1245,67 @@ describe("managed access worker protocol", () => {
       access: { kind: "public" },
     },
   };
+  it("accepts only a cleanup acknowledgment for the original terminal lease, never late work or replacement authority", async () => {
+    const f = fixture();
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    f.hub.poll(f.worker.token, { accessProtocol: 1 });
+    await f.adapter.startJob({
+      id: "job-access",
+      workerId: "worker-one",
+      payload: probe,
+    });
+    const assignment = f.hub.poll(f.worker.token, { accessProtocol: 1 }).job!;
+    const cleanup = {
+      id: "job-access",
+      lease: assignment.lease,
+      cleanupOnly: true,
+    };
+    expect(() => f.hub.report(f.worker.token, cleanup)).toThrow(
+      /terminal browser cleanup/,
+    );
+    f.advance(136000);
+    await f.adapter.inspectJob("job-access");
+    const recovered = createRemoteWorkers({ root: f.directory });
+    expect(recovered.poll(f.worker.token, { accessProtocol: 1 }).job).toEqual({
+      ...cleanup,
+      cancel: true,
+    });
+    expect(() =>
+      recovered.report(f.worker.token, { ...cleanup, lease: "0".repeat(64) }),
+    ).toThrow(/does not belong/);
+    expect(() =>
+      recovered.report(f.worker.token, { ...cleanup, result: { ok: true } }),
+    ).toThrow(/Invalid remote cleanup/);
+    expect(() =>
+      recovered.report(f.worker.token, {
+        id: "job-access",
+        lease: assignment.lease,
+        running: false,
+        exitCode: 0,
+        logs: "",
+        result: { ok: true, cleanupConfirmed: true },
+      }),
+    ).toThrow(/has ended/);
+    recovered.report(f.worker.token, cleanup);
+    recovered.report(f.worker.token, cleanup); // A lost HTTP acknowledgment is safe to retry.
+    expect(await f.adapter.inspectJob("job-access")).toMatchObject({
+      exitCode: 124,
+    });
+    expect((await f.adapter.artifacts("job-access")).result).toMatchObject({
+      ok: false,
+      cleanupConfirmed: true,
+      error: expect.stringContaining("lease expired"),
+    });
+    await f.adapter.removeJob("job-access");
+    await f.adapter.startJob({
+      id: "job-access",
+      workerId: "worker-one",
+      payload: probe,
+    });
+    expect(() => recovered.report(f.worker.token, cleanup)).toThrow(
+      /does not belong/,
+    );
+  });
   it("requires the current worker protocol before accepting private access checks", async () => {
     const f = fixture();
     await f.adapter.prepareWorker!("worker-one", f.worker.id);

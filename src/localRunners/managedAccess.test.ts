@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,7 +62,7 @@ const payload: DockerJobPayload = {
 };
 
 function fixture(mode: "ready" | "rejected" | "wrong-receipt" = "ready") {
-  const root = mkdtempSync(join(tmpdir(), "sg-managed-browser-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "sg-managed-browser-")));
   roots.push(root);
   const calls: Array<{ args: string[]; options?: DockerRunOptions }> = [];
   type Container = {
