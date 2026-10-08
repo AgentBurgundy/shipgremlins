@@ -1,3 +1,11 @@
+import { LocalRunnerError } from "../localRunners/engine.ts";
+import {
+  runAccessProbe,
+  RunnerProbeError,
+  type AccessProbeRunner,
+} from "./runnerAccessProbe.ts";
+import { TestIdentityBusyError } from "../testAccess/leases.ts";
+import type { DockerJobPayload } from "../localRunners/docker.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -52,6 +60,8 @@ export interface EnvironmentVerification {
   screenshotUrl?: string;
   imageId?: string;
   commitSha?: string;
+  runnerId?: string;
+  runnerName?: string;
 }
 interface Stored extends EnvironmentVerification {
   fingerprint: string;
@@ -203,6 +213,10 @@ export function createEnvironmentAccess(options: {
   env?: NodeJS.ProcessEnv;
   docker?: DockerRunners;
   run?: PlannerDockerRun;
+  selectRunner?: (
+    project: Project,
+    jobId: string,
+  ) => Promise<AccessProbeRunner>;
 }) {
   const root = resolve(options.root),
     run = options.run ?? runPlannerDocker;
@@ -446,15 +460,116 @@ export function createEnvironmentAccess(options: {
         } catch {
           throw diagnosed("account_credentials_missing");
         }
-        let result: Awaited<ReturnType<typeof probe>> | undefined;
-        let identity: Pick<EnvironmentVerification, "imageId" | "commitSha"> =
-          {};
+        let result: { checks: EnvironmentCheck[]; png: Buffer } | undefined;
+        let identity: Pick<
+          EnvironmentVerification,
+          "imageId" | "commitSha" | "runnerId" | "runnerName"
+        > = {};
         const source =
           options.sourceControl ??
           createSourceControl({ root, env: values, fetch: options.fetch });
         let leased = false;
         try {
-          if (target.kind === "docker") {
+          if (!options.run) {
+            if (!options.selectRunner)
+              throw new EnvironmentAccessError(
+                "Set up an agent service before checking this app. Access must be tested on the runner that will use it.",
+                409,
+              );
+            const selected = await options.selectRunner(project, job);
+            try {
+              const payload: Omit<
+                DockerJobPayload,
+                "kind" | "nonce" | "testAccess"
+              > = { browserVerification: true, credentials: {} };
+              if (target.kind === "docker") {
+                if (target.recipe.kind === "dockerfile") {
+                  leased = true;
+                  const credential = await source.acquireLease({
+                    jobId: job,
+                    provider: project.config.provider ?? "github",
+                    serverUrl: project.config.serverUrl,
+                    repository: project.config.repo,
+                    minutes: 30,
+                    write: false,
+                  });
+                  const head = await resolveRepositoryHead({
+                    project,
+                    credential,
+                    fetch: options.fetch,
+                  });
+                  payload.repoUrl = head.repoUrl;
+                  payload.provider = project.config.provider ?? "github";
+                  payload.branch = inspectionBranch(project.config);
+                  payload.expectedCommitSha = head.sha;
+                  payload.credentials![
+                    payload.provider === "gitlab"
+                      ? "GITLAB_TOKEN"
+                      : "GITHUB_TOKEN"
+                  ] = credential.token;
+                  identity.commitSha = head.sha;
+                }
+                const env = Object.fromEntries(
+                  Object.entries(target.env ?? {}).map(([key, ref]) => {
+                    const value = values[ref];
+                    if (!value)
+                      throw new EnvironmentAccessError(
+                        "Save the test application's required inputs before checking access.",
+                      );
+                    return [key, value];
+                  }),
+                );
+                payload.testEnvironment = { target, env };
+              } else {
+                const environment = await resolveEnvironment(target, {
+                  env: values,
+                  branch: inspectionBranch(project.config),
+                  fetch: options.fetch,
+                  vercelConnectionFor:
+                    options.vercelConnectionFor ??
+                    ((connectionId) =>
+                      createVercelConnection({
+                        root,
+                        env: values,
+                        fetch: options.fetch,
+                        connectionId,
+                      })),
+                });
+                payload.browserTarget = environment.url;
+                if (
+                  target.kind === "vercel" &&
+                  target.bypassSecret &&
+                  values[target.bypassSecret]
+                )
+                  payload.credentials!.GREMLINS_PREVIEW_BYPASS =
+                    values[target.bypassSecret]!;
+              }
+              result = await runAccessProbe({
+                root,
+                project,
+                runner: selected,
+                docker,
+                jobId: job,
+                access: target.access,
+                values,
+                payload,
+              });
+              completedChecks = result.checks;
+              identity = {
+                ...identity,
+                runnerId: selected.id,
+                runnerName: selected.name,
+              };
+            } finally {
+              try {
+                await selected.release?.();
+              } catch {
+                // Cleanup failure takes precedence over a successful access result.
+                // eslint-disable-next-line no-unsafe-finally
+                throw diagnosed("cleanup_pending", completedChecks);
+              }
+            }
+          } else if (target.kind === "docker") {
             if (!docker.smokeEnvironment)
               throw new EnvironmentAccessError(
                 "This controller does not support managed Docker environments.",
@@ -569,6 +684,26 @@ export function createEnvironmentAccess(options: {
         });
       })
       .catch((error) => {
+        if (error instanceof RunnerProbeError) {
+          const mapped: Record<string, string> = {
+            credentials_rejected: "login_rejected",
+            selector_unusable: "login_controls_changed",
+            authentication_unproven: "login_unverified",
+            helper_unavailable: "browser_unavailable",
+            invalid_access: "login_unverified",
+          };
+          error = diagnosed(
+            mapped[error.code] ??
+              (environmentDiagnosis({ code: error.code })
+                ? error.code
+                : "invalid_evidence"),
+            completedChecks,
+          );
+        }
+        if (error instanceof LocalRunnerError)
+          error = new EnvironmentAccessError(error.message, error.status);
+        if (error instanceof TestIdentityBusyError)
+          error = new EnvironmentAccessError(error.message, 409);
         const failure: EnvironmentVerification = {
           status: "failed",
           checkedAt: new Date().toISOString(),

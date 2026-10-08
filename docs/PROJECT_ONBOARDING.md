@@ -107,7 +107,7 @@ for testing; it does not prove real provider integrations or agent execution.
 | Each PM run | Visits the selected staging environment                               | Starts its own app and services on a private Docker network                           |
 | Cleanup     | Keeps your hosted environment                                         | Removes the run's app, private network, disposable services, and managed build image  |
 
-The Docker app is separate from the gremlin worker: one hosts your application; the other runs Claude and Playwright. The app receives only its named test inputs. The AI worker receives only the job's source/Linear/model access and configured browser test-account credentials. Neither gets the host Docker socket. Application commands run inside containers, not on your server.
+The Docker app, AI worker, and managed browser helper are separate containers. The app receives its named test inputs; the AI worker receives the job's source/Linear/model access and a restricted browser connection. Passwords, preview bypass values and browser sessions stay in the private helper. None receives the host Docker socket. Application commands run inside containers, not on your server.
 
 A PM brief can select **Browser walkthrough required**. Such PMs cannot patrol or enable
 automation until a browser environment is configured and its access check passes.
@@ -121,11 +121,11 @@ the project. Code-only Discovery remains available while setup is unfinished.
 
 1. **Analyze the repository.** Read the recommendation, inspected files, missing inputs and limitations. Analysis is not proof that the app runs. Claude Code and Docker must be available on the controller for this step.
 2. **Choose hosted staging or Docker.** For hosted staging, select an existing named environment or enter a test URL. For Docker, review the proposed image/Dockerfile, port, health path, services and commands. The app must listen on `0.0.0.0` inside its container.
-3. **Save required Connections.** Environment configuration holds variable names, never secret values. Named inputs appear in Connections after saving. Add dedicated credentials for external test services if needed.
-4. **Test environment.** ShipGremlins starts Chromium, opens the app, checks any configured password logins, and retains a private screenshot. Docker environments remain alive through the browser check, then are removed. Failed checks stay failed. Changing the selected environment invalidates the previous result.
+3. **Connect app access.** In **App sign-in**, enter a dedicated test account and choose **Connect & test**, or explicitly choose public coverage. The source investigation supplies the password recipe when available. External service inputs still belong in Connections; configuration stores references rather than secret values.
+4. **Test on the assigned runner.** ShipGremlins opens the app, checks configured accounts with signed-out and protected-page controls, and verifies the browser context the PM will receive. Review the masked screenshot and actual checks. Docker environments remain alive through verification and are then removed. Failed checks stay failed; changing the environment invalidates the previous result.
 5. **Return to your crew.** Choose **Open project** when PMs already exist, or adopt your first PM if the project has none. Review install/test commands and the worker toolchain before coding, and connect Linear for patrols. Repository discovery does not require browser setup. Automation remains paused until you enable it.
 
-The setup browser test runs on the controller's Docker host. A remote worker must separately be able to reach a hosted URL and supply the required architecture/toolchain. A URL reachable only from the controller does not certify remote network access. Each Docker-backed job creates its app on the machine executing that job.
+Managed setup verification uses an available assigned agent service, including a compatible enrolled remote worker. If none is available, start or update one before testing. The selected runner must reach the hosted app and support its toolchain; a controller-only network check is not a substitute. Each Docker-backed job creates its app on the machine executing that job. Every managed PM run prepares fresh access again, so the earlier setup result is not a session guarantee.
 
 ### When a check fails
 
@@ -139,7 +139,7 @@ identifies the last attempt. Opening a repair keeps your unsaved settings.
 | Preview credential missing, or Vercel protection stops the browser | Automatic setup reconciles preview access and retries once. If provider access is unavailable, the result names the connection or permission to repair. |
 | App cannot be reached                                              | **Review environment** checks the selected address and Docker network path.                                                                             |
 | Login selector matches zero or several elements                    | **Fix sign-in settings** opens the relevant selector. Scope it to one control inside the login form.                                                    |
-| Test credentials missing or explicitly rejected                    | **Manage test credentials** opens Connections. Verify the account belongs to this test environment.                                                     |
+| Test credentials missing or explicitly rejected                    | **Manage test account** reopens inline account setup. Verify the account belongs to this test environment, then reconnect.                              |
 | Signed-in confirmation not found                                   | Review the success selector and login result. A timeout alone does not prove the password is wrong.                                                     |
 
 Saved Vercel credentials are labeled separately from verified browser access.
@@ -168,18 +168,20 @@ The fixture can exercise dashboard flows and configuration validation. It does n
 
 ## Test accounts
 
-Under **Test accounts**, choose public access or a same-origin password login.
-The login path and selectors describe the form; username/password **references**
-name credentials that you save separately in Connections. This configuration
-does not create accounts or grant roles. Up to eight accounts can be checked
-independently. [Field-by-field test login setup →](TEST_ACCOUNTS.md)
+Under **App sign-in**, connect an existing dedicated account with **Connect &
+test**. Password forms, modals, and same-origin multi-step recipes are supported;
+the advanced inspector exposes detected controls when a correction is needed.
+An exclusive account reservation prevents overlapping managed runs from mutating
+the same identity. Ordinary runs use the first configured account; existing
+multi-account configurations are checked separately during setup.
+[Connect a test account →](TEST_ACCOUNTS.md)
 
-The check verifies sign-in, not RBAC correctness. Email OTP, magic links, MFA,
-multi-step forms, and external SSO are not supported by this guided checker.
-Existing legacy Neon OTP settings are retained but are not an end-to-end login
-verification. PM mandates should cover roles, tenant boundaries, and allowed
-test actions. Account leasing and automatic data resets are not implemented;
-avoid sharing mutable accounts across simultaneous patrols.
+The check verifies authentication and any configured principal/tenant assertions,
+not RBAC correctness. Email OTP, magic links, MFA and external SSO need dedicated
+adapters. Legacy Neon OTP settings are retained without claiming end-to-end
+verification. PM briefs should name role boundaries and allowed test actions;
+automatic test-data resets are not implemented. Public fixtures may expose
+synthetic signed-in UI, but their results do not verify real provider login.
 
 ## Docker configuration example
 

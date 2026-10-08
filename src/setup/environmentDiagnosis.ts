@@ -24,6 +24,56 @@ export interface EnvironmentCheck {
 
 // Browser output is untrusted. Only these controller-owned explanations reach the UI.
 const catalog = {
+  app_health_unreachable: [
+    "The runner cannot reach the test app",
+    "Check that the app listens on 0.0.0.0 and that Docker bridge networking and the host firewall allow containers to communicate. The PM has not started.",
+    "edit_environment",
+  ],
+  app_health_response: [
+    "The test app's health check failed",
+    "The health endpoint returned an unsuccessful response. Check its path and the app's required test inputs, then test again.",
+    "edit_environment",
+  ],
+  app_exited: [
+    "The test app stopped during startup",
+    "Check its Docker startup command and required test inputs. The app stopped before the runner could open it; no PM was started.",
+    "edit_environment",
+  ],
+  app_memory_limit: [
+    "The test app ran out of memory",
+    "The app exceeded its Docker memory limit during startup. Reduce startup memory or adjust its test recipe, then test again.",
+    "edit_environment",
+  ],
+  environment_failed: [
+    "The test app could not be prepared",
+    "Check its Docker recipe, source access and required test inputs. No PM was started.",
+    "edit_environment",
+  ],
+  login_controls_changed: [
+    "A sign-in step needs updating",
+    "A saved sign-in step no longer identifies one usable control in this app. Review the detected login flow; the saved credentials were preserved.",
+    "edit_login",
+  ],
+  identity_mismatch: [
+    "The signed-in identity did not match",
+    "The test account or workspace did not match its configured assertion. Check the chosen account and workspace; the identity requirement was preserved.",
+    "edit_login",
+  ],
+  public_confirmation: [
+    "The sign-in marker also appears publicly",
+    "The selected confirmation appears before authentication. Choose a marker exclusive to the signed-in app before relying on this account.",
+    "edit_login",
+  ],
+  receiving_context_failed: [
+    "The runner could not confirm its signed-in browser",
+    "Authentication did not establish the browser context used for testing. Retry on the selected agent service; no signed-in readiness was recorded.",
+    "retry",
+  ],
+  session_expired: [
+    "The test session expired",
+    "The test app signed the account out before access could be confirmed. Reconnect the account and check the app's session policy.",
+    "edit_login",
+  ],
   preview_credential_missing: [
     "Preview access needs reconnecting",
     "The saved preview-access reference has no credential value. Connect preview access, then test again.",
@@ -46,7 +96,7 @@ const catalog = {
   ],
   browser_unavailable: [
     "The browser could not start",
-    "Check Docker and the browser worker on the controller, then retry.",
+    "Check Docker and the browser worker on the selected agent service, then retry.",
     "retry",
   ],
   environment_unreachable: [
@@ -214,7 +264,7 @@ export function environmentDiagnosis(
 export function environmentChecks(
   value: unknown,
 ): EnvironmentCheck[] | undefined {
-  if (!Array.isArray(value) || value.length > 64) return undefined;
+  if (!Array.isArray(value) || value.length > 160) return undefined;
   const name =
     /^(Browser opens application|Test account [1-8] signs in|Test account [1-8]: (login page opens|username field|password field|submit control|signed-in confirmation))$/;
   const checks: EnvironmentCheck[] = [];
@@ -223,7 +273,12 @@ export function environmentChecks(
       !check ||
       typeof check !== "object" ||
       typeof check.name !== "string" ||
-      !name.test(check.name) ||
+      !(
+        name.test(check.name) ||
+        /^(?:Test account [1-8]: )?(?:Browser opens application|Login page opens|Sign-in step (?:[1-9]|1[0-2])|Signed-out context cannot see the protected confirmation|Protected route opens with the expected test identity|PM browser receives the verified context)$/.test(
+          check.name,
+        )
+      ) ||
       typeof check.passed !== "boolean"
     )
       return undefined;

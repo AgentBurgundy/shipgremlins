@@ -25,6 +25,8 @@ import {
 import { startLeaseWatchdog } from "../../runner-local/lease.mjs";
 import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import { RunnerWorkspaceError } from "../localRunners/workspace.ts";
+import { ManagedAccessError } from "../localRunners/managedAccess.ts";
+import { TestEnvironmentError } from "../testEnvironments/index.ts";
 import type {
   DockerArtifacts,
   DockerJobInspection,
@@ -573,6 +575,91 @@ describe("remote worker enrollment and scope", () => {
 });
 
 describe("remote worker process", () => {
+  it.each([
+    {
+      error: new ManagedAccessError(
+        "selector_unusable",
+        "Untrusted exception text",
+      ),
+      phase: "test-access",
+      code: "selector_unusable",
+    },
+    {
+      error: new TestEnvironmentError(
+        "Untrusted exception text",
+        "health_timeout",
+      ),
+      phase: "environment",
+      code: "health_timeout",
+    },
+  ])(
+    "preserves a known $phase startup failure across a failed report without launching again",
+    async ({ error, phase, code }) => {
+      const d = dockerFixture(),
+        directory = root();
+      d.docker.cleanupEnvironment = vi.fn(async () => {});
+      vi.mocked(d.docker.startJob).mockRejectedValue(error);
+      const job = {
+        id: "job-one",
+        workerId: "worker-one",
+        lease: "b".repeat(64),
+        ttlMs: 120000,
+        payload: { ...payload, remoteLease: true },
+      };
+      const reports: Record<string, unknown>[] = [];
+      const fetcher = vi.fn(
+        async (url: string | URL | Request, init?: RequestInit) => {
+          if (String(url).endsWith("/report")) {
+            reports.push(JSON.parse(String(init?.body)));
+            expect(d.docker.cleanupEnvironment).toHaveBeenCalledWith(job.id);
+            return new Response(JSON.stringify({}), {
+              status: reports.length === 1 ? 503 : 200,
+            });
+          }
+          return new Response(
+            JSON.stringify(
+              String(url).endsWith("/enroll")
+                ? {
+                    id: "remote-12345678-1234-1234-1234-123456789012",
+                    token: "a".repeat(64),
+                  }
+                : { job },
+            ),
+            { status: 200 },
+          );
+        },
+      );
+      const options = {
+        root: directory,
+        controller: "https://controller.example",
+        docker: d.docker,
+        fetch: fetcher,
+      };
+      const worker = createRemoteWorker(options);
+      await worker.enroll("c".repeat(64));
+      await expect(worker.step()).rejects.toThrow(
+        "rejected this worker request",
+      );
+      await createRemoteWorker(options).step();
+      expect(d.docker.startJob).toHaveBeenCalledOnce();
+      expect(reports).toHaveLength(2);
+      expect(reports[1]).toMatchObject({
+        running: false,
+        exitCode: 1,
+        result: {
+          ok: false,
+          kind: "pm",
+          cleanupConfirmed: true,
+          startupFailure: { phase, code },
+        },
+      });
+      expect(JSON.stringify(reports)).not.toContain("Untrusted exception text");
+      expect(
+        JSON.parse(readFileSync(join(directory, "remote-worker.json"), "utf8"))
+          .active,
+      ).toBeUndefined();
+    },
+  );
   it("renews a mutable admission deadline while app preparation outlasts its first lease", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     const d = dockerFixture();
@@ -1061,5 +1148,113 @@ describe("remote worker process", () => {
       read: () => ({ expiresAt: 120001 }),
     })();
     expect(stopBad).toHaveBeenCalledOnce();
+  });
+});
+
+describe("managed access worker protocol", () => {
+  const probe: DockerJobPayload = {
+    kind: "verify",
+    nonce: "job-access",
+    project: "alpha",
+    accessProbe: true,
+    browserVerification: true,
+    browserTarget: "https://test.invalid/",
+    testAccess: {
+      version: 1,
+      identityId: "public",
+      generation: "public",
+      leaseGeneration: "lease",
+      access: { kind: "public" },
+    },
+  };
+  it("requires the current worker protocol before accepting private access checks", async () => {
+    const f = fixture();
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    expect(f.adapter.canCheckAccess!(f.worker.id, "alpha")).toBe(false);
+    await expect(
+      f.adapter.startJob({
+        id: "job-access",
+        workerId: "worker-one",
+        payload: probe,
+      }),
+    ).rejects.toThrow(/Update this agent/);
+    f.hub.poll(f.worker.token, { accessProtocol: 1 });
+    expect(f.adapter.canCheckAccess!(f.worker.id, "alpha")).toBe(true);
+    await f.adapter.startJob({
+      id: "job-access",
+      workerId: "worker-one",
+      payload: probe,
+    });
+    expect(
+      f.hub.poll(f.worker.token, { accessProtocol: 1 }).job?.payload,
+    ).toMatchObject({ accessProbe: true, project: "alpha" });
+  });
+  it("requires cleanup acknowledgement and keeps retired routing through restart and sequential accounts", async () => {
+    const f = fixture();
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    f.hub.poll(f.worker.token, { accessProtocol: 1 });
+    await f.adapter.startJob({
+      id: "job-access",
+      workerId: "worker-one",
+      payload: probe,
+    });
+    const assignment = f.hub.poll(f.worker.token, { accessProtocol: 1 }).job!;
+    await expect(f.adapter.cleanupEnvironment!("job-access")).rejects.toThrow(
+      /not confirmed/,
+    );
+    f.hub.report(f.worker.token, {
+      id: "job-access",
+      lease: assignment.lease,
+      running: false,
+      exitCode: 0,
+      logs: "",
+      result: { ok: true, kind: "verify", cleanupConfirmed: true },
+    });
+    await f.adapter.cleanupEnvironment!("job-access");
+    await f.adapter.removeJob("job-access");
+    const restarted = f.hub.adapter(f.local.docker);
+    await restarted.stopJob("job-access");
+    await restarted.cleanupEnvironment!("job-access");
+    expect(f.local.docker.stopJob).not.toHaveBeenCalled();
+    expect((await restarted.inspectJob("job-access")).exists).toBe(false);
+    await restarted.prepareWorker!("worker-one", f.worker.id);
+    await restarted.startJob({
+      id: "job-access",
+      workerId: "worker-one",
+      payload: probe,
+    });
+    expect(
+      f.hub.poll(f.worker.token, { accessProtocol: 1 }).job?.lease,
+    ).not.toBe(assignment.lease);
+    await expect(restarted.cleanupEnvironment!("job-access")).rejects.toThrow(
+      /not confirmed/,
+    );
+  });
+  it("allows cleanup when an access assignment is canceled before it ever reaches the daemon", async () => {
+    const f = fixture();
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    f.hub.poll(f.worker.token, { accessProtocol: 1 });
+    await f.adapter.startJob({
+      id: "job-access",
+      workerId: "worker-one",
+      payload: probe,
+    });
+    await f.adapter.stopJob("job-access");
+    await expect(
+      f.adapter.cleanupEnvironment!("job-access"),
+    ).resolves.toBeUndefined();
+  });
+  it("enforces project enrollment even though the access check is a verify job", async () => {
+    const f = fixture();
+    await f.adapter.prepareWorker!("worker-one", f.worker.id);
+    f.hub.poll(f.worker.token, { accessProtocol: 1 });
+    expect(f.adapter.canCheckAccess!(f.worker.id, "other")).toBe(false);
+    await expect(
+      f.adapter.startJob({
+        id: "job-access",
+        workerId: "worker-one",
+        payload: { ...probe, project: "other" },
+      }),
+    ).rejects.toThrow(/cannot accept/);
   });
 });

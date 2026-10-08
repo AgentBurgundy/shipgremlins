@@ -22,11 +22,36 @@ import type {
   DockerJobPayload,
   DockerRunners,
 } from "../localRunners/docker.ts";
-import { createDeliveryController, deliveryEnvironment } from "./controller.ts";
+import {
+  createDeliveryController,
+  deliveryEnvironment,
+  reviewPrompt,
+} from "./controller.ts";
+import type { PmReviewPlan } from "./types.ts";
 import { deliveryConfiguration } from "./index.ts";
 import { createPromotionExecutor } from "./executor.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
 const roots: string[] = [];
+it("keeps managed QA independent without asking the PM to export its private session", () => {
+  const plan = {
+    id: "plan",
+    deployment: {
+      url: "https://preview.example.test",
+      branch: "pm-staging",
+      sha: "a".repeat(40),
+      id: "deployment",
+    },
+    deliveries: [],
+  } as unknown as PmReviewPlan;
+  expect(reviewPrompt(plan, true)).toContain(
+    "sign in again in a fresh context",
+  );
+  expect(reviewPrompt(plan, true)).toContain("omit the session field");
+  expect(reviewPrompt(plan, true)).not.toContain(
+    "save Playwright storageState",
+  );
+  expect(reviewPrompt(plan)).toContain("save Playwright storageState");
+});
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });

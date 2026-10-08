@@ -1728,6 +1728,483 @@ describe("recommended Docker browser setup", () => {
   });
 });
 
+describe("project-scoped test accounts", () => {
+  const resultPanel = (root: Element) =>
+    walk(root).find((item) => item.className === "onboarding-verification")!;
+  const recipe = {
+    loginPath: "/sign-in/password",
+    usernameSelector: "#email",
+    passwordSelector: "#password",
+    submitSelector: "#sign-in",
+    successSelector: '[data-testid="account-menu"]',
+  };
+  const managed = () => ({
+    ...vercelState({ access: undefined }),
+    stale: true,
+    testAccountSetupSupported: true,
+    testAccounts: [] as Array<{
+      id?: string;
+      name: string;
+      index: number;
+      usernameSaved: boolean;
+      passwordSaved: boolean;
+    }>,
+    testAccountSuggestion: {
+      kind: "password",
+      summary: "Password sign-in found.",
+      recipe,
+      sourceRevision: "source-auth-1",
+    },
+  });
+  const project = { name: "shop", instanceId: "one", repo: "owner/shop" };
+  const find = (root: Element, label: string) =>
+    walk(root).find(
+      (item) => item.tagName === "BUTTON" && item.textContent === label,
+    )!;
+  const field = (root: Element, key: string) =>
+    walk(root).find((item) => item.id === `onboarding-shop-test-${key}`)!;
+  const fill = (
+    root: Element,
+    username = "test@example.test",
+    password = " pass word ",
+  ) => {
+    for (const [key, value] of [
+      ["username", username],
+      ["password", password],
+    ]) {
+      const input = field(root, key!);
+      input.value = value!;
+      input.fire("input");
+    }
+  };
+  const savedState = (status = "testing") => ({
+    ...managed(),
+    configurationRevision: "account-saved",
+    environment: {
+      ...vercelState().environment,
+      target: {
+        ...vercelState().environment.target,
+        access: {
+          kind: "password",
+          ...recipe,
+          accounts: [
+            {
+              name: "Test user",
+              usernameSecret: "PRIVATE_EMAIL",
+              passwordSecret: "PRIVATE_PASSWORD",
+            },
+          ],
+        },
+      },
+      verification: { status },
+    },
+    testAccounts: [
+      {
+        id: "account-one",
+        name: "Test user",
+        index: 0,
+        usernameSaved: true,
+        passwordSaved: true,
+      },
+    ],
+  });
+  it("automatically uses source-valid detection despite command staleness and asks only for the account", async () => {
+    const api = vi.fn(async (_path: string, _body?: unknown) => managed()),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(field(root, "username").value).toBe("");
+    expect(field(root, "password").value).toBe("");
+    expect(find(root, "Connect & test")).toBeDefined();
+    expect(find(root, "Use detected password login")).toBeUndefined();
+    expect(find(root, "Save & add test credentials")).toBeUndefined();
+    expect(find(root, "Set up app sign-in")).toBeUndefined();
+    expect(text(root)).not.toContain("Your app sign-in is not set up yet");
+    expect(text(root)).toContain("Where your crew will test");
+    expect(text(root)).not.toContain("Username secret reference");
+    expect(
+      walk(root)
+        .filter((item) => item.tagName === "DIALOG")
+        .every((item) => !item.open),
+    ).toBe(true);
+    expect(api).toHaveBeenCalledExactlyOnceWith(
+      "/api/projects/shop/onboarding",
+    );
+    expect(f.panel.isDirty()).toBe(false);
+    f.panel.destroy();
+  });
+  it("saves and tests with one private request, clears entered secrets, and stays on the project", async () => {
+    const api = vi.fn(async (_path: string, body?: unknown) =>
+        body ? savedState() : managed(),
+      ),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    fill(root);
+    const password = field(root, "password");
+    await find(root, "Connect & test").fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/connect-test-account",
+      {
+        configurationRevision: "config-1",
+        sourceRevision: "source-auth-1",
+        account: {
+          name: "Test user",
+          username: "test@example.test",
+          password: " pass word ",
+        },
+      },
+    );
+    expect(password.value).toBe("");
+    expect(text(root)).toContain("Checking your test account");
+    expect(text(root)).not.toContain("Your crew can test while signed in");
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    expect(f.saved).toHaveBeenCalledExactlyOnceWith("shop");
+    expect(f.created).not.toHaveBeenCalled();
+    expect(f.panel.isDirty()).toBe(false);
+    f.panel.destroy();
+  });
+  it("reuses saved credentials without exposing or resending them, and does not replace other accounts", async () => {
+    const state = savedState("passed");
+    state.testAccounts.push({
+      id: "account-two",
+      name: "Viewer",
+      index: 1,
+      usernameSaved: true,
+      passwordSaved: true,
+    });
+    const api = vi.fn(async (_path: string, _body?: unknown) => state),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    await find(root, "Manage test account").fire("click");
+    expect(field(root, "username").value).toBe("");
+    expect(field(root, "password").value).toBe("");
+    const selection = walk(root).find(
+      (item) => item.id === "onboarding-shop-test-account",
+    )!;
+    selection.value = "1";
+    selection.fire("change");
+    await find(root, "Connect & test").fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/connect-test-account",
+      {
+        configurationRevision: "account-saved",
+        account: { id: "account-two", name: "Viewer" },
+      },
+    );
+    expect(JSON.stringify(api.mock.calls)).not.toContain("PRIVATE_PASSWORD");
+    f.panel.destroy();
+  });
+  it("keeps account entries and manual recipe edits after a conflict without navigating or losing suggestions", async () => {
+    let data = managed();
+    const api = vi.fn(async (_path: string, body?: unknown) => {
+        if (body)
+          throw new Error(
+            "Project settings changed. Refresh before connecting.",
+          );
+        return data;
+      }),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    fill(root);
+    const login = walk(root).find(
+      (item) => item.id === "onboarding-shop-loginPath",
+    )!;
+    login.value = "/test-login";
+    login.fire("input");
+    await find(root, "Connect & test").fire("click");
+    expect(text(root)).toContain("Project settings changed");
+    data = { ...data, configurationRevision: "config-elsewhere" };
+    await f.panel.refresh("shop");
+    expect(field(root, "username").value).toBe("test@example.test");
+    expect(field(root, "password").value).toBe(" pass word ");
+    expect(walk(root).find((item) => item.id === login.id)!.value).toBe(
+      "/test-login",
+    );
+    expect(f.panel.isDirty()).toBe(true);
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+    f.panel.destroy();
+  });
+  it("does not re-submit an accepted account when dashboard refresh fails", async () => {
+    const api = vi.fn(async (_path: string, body?: unknown) =>
+        body ? savedState() : managed(),
+      ),
+      f = fixture(api),
+      root = new Element();
+    f.saved.mockImplementation(async () => {
+      throw new Error("Offline");
+    });
+    f.panel.mount(root, project);
+    await settle();
+    fill(root);
+    await find(root, "Connect & test").fire("click");
+    expect(text(root)).toContain("your account is saved");
+    expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    f.panel.destroy();
+  });
+  it("keeps the original revision and treats a saved pass as previous evidence while only credentials are edited", async () => {
+    let data = savedState("passed");
+    const api = vi.fn(async (_path: string, _body?: unknown) => data),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    await find(root, "Manage test account").fire("click");
+    fill(root);
+    expect(f.panel.isDirty()).toBe(true);
+    expect(text(root)).toContain("Previous check");
+    expect(text(root)).toContain("Connect & test to verify your changes");
+    data = { ...data, configurationRevision: "changed-elsewhere" };
+    await f.panel.refresh("shop");
+    expect(field(root, "password").value).toBe(" pass word ");
+    await find(root, "Connect & test").fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/connect-test-account",
+      expect.objectContaining({ configurationRevision: "account-saved" }),
+    );
+    f.panel.destroy();
+  });
+  it("offers an explicit inline stale-settings recovery that keeps account entries", async () => {
+    let data = managed();
+    const api = vi.fn(async (_path: string, body?: unknown) =>
+        body ? savedState() : data,
+      ),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    fill(root);
+    data = { ...data, configurationRevision: "new-settings" };
+    await f.panel.refresh("shop");
+    expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+    await find(root, "Discard setting edits & reload").fire("click");
+    expect(field(root, "username").value).toBe("test@example.test");
+    expect(field(root, "password").value).toBe(" pass word ");
+    expect(text(root)).toContain("Your account entries are kept");
+    await find(root, "Connect & test").fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/connect-test-account",
+      expect.objectContaining({ configurationRevision: "new-settings" }),
+    );
+    f.panel.destroy();
+  });
+  it("does not show old passed browser checks as current after the result is invalidated", async () => {
+    const data = {
+      ...savedState("untested"),
+      environment: {
+        ...savedState("untested").environment,
+        verification: {
+          status: "untested",
+          checks: [
+            { name: "Browser opens application", passed: true },
+            { name: "Test account 1 signs in", passed: true },
+          ],
+        },
+      },
+    };
+    const f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(text(resultPanel(root))).not.toContain("Passed");
+    expect(text(resultPanel(root))).toContain("Not yet tested");
+    f.panel.destroy();
+  });
+  it("retains multi-step sign-in and account identity assertions through expert environment edits", () => {
+    const { window } = fixture();
+    const steps = [
+      { kind: "navigate", path: "/" },
+      { kind: "click", selector: "#open-login" },
+      { kind: "fill", selector: "#email", credential: "username" },
+      { kind: "click", selector: "#next" },
+      { kind: "fill", selector: "#password", credential: "password" },
+      { kind: "click", selector: "#sign-in" },
+    ];
+    const accounts = [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Member",
+        usernameSecret: "APP_USERNAME",
+        passwordSecret: "APP_PASSWORD",
+        assertions: [
+          { kind: "principal", selector: "#current-email" },
+          { kind: "tenant", selector: "#tenant", equals: "Test workspace" },
+        ],
+      },
+    ];
+    expect(
+      window.readOnboardingTarget({
+        ...hosted(),
+        accessKind: "password",
+        ...recipe,
+        steps,
+        authenticatedPath: "/account",
+        accounts,
+      }),
+    ).toMatchObject({
+      target: {
+        access: { ...recipe, steps, authenticatedPath: "/account", accounts },
+      },
+    });
+  });
+  it("shows the runner that actually checked the saved account", async () => {
+    const data = savedState("passed");
+    const f = fixture(
+        vi.fn(async () => ({
+          ...data,
+          environment: {
+            ...data.environment,
+            verification: {
+              status: "passed",
+              runnerId: "worker-one",
+              runnerName: "Homelab runner",
+            },
+          },
+        })),
+      ),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(text(resultPanel(root))).toContain("Checked onHomelab runner");
+    f.panel.destroy();
+  });
+  it.each(["forget", "destroy", "replace"])(
+    "ignores a late credential response after %s and prevents duplicate submission",
+    async (action) => {
+      let release!: (value: object) => void;
+      const api = vi.fn(
+          async (_path: string, body?: unknown): Promise<object> =>
+            body
+              ? new Promise((resolve) => {
+                  release = resolve;
+                })
+              : managed(),
+        ),
+        f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, project);
+      await settle();
+      fill(root);
+      const submit = find(root, "Connect & test"),
+        pending = submit.fire("click");
+      await submit.fire("click");
+      if (action === "forget") f.panel.forget("shop");
+      else if (action === "destroy") f.panel.destroy();
+      else
+        f.panel.mount(new Element(), { ...project, instanceId: "replacement" });
+      release(savedState());
+      await pending;
+      expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(1);
+      expect(f.saved).not.toHaveBeenCalled();
+      f.panel.destroy();
+    },
+  );
+  it.each(["email-code", "sso"])(
+    "explains unsupported %s without silently selecting public or asking for a password",
+    async (kind) => {
+      const data = {
+        ...managed(),
+        testAccountSuggestion: {
+          kind,
+          summary: "Different method.",
+          sourceRevision: "source-auth-1",
+        },
+      };
+      const api = vi.fn(async (_path: string, _body?: unknown) => data),
+        f = fixture(api),
+        root = new Element();
+      f.panel.mount(root, project);
+      await settle();
+      expect(text(root)).toContain("not supported yet");
+      expect(field(root, "password")).toBeUndefined();
+      expect(find(root, "Explore public pages for now")).toBeDefined();
+      expect(api.mock.calls.filter(([, body]) => body)).toHaveLength(0);
+      f.panel.destroy();
+    },
+  );
+  it("preserves an existing public-only choice despite a detected password recipe", async () => {
+    const data = { ...managed(), environment: vercelState().environment };
+    const api = vi.fn(async (_path: string, _body?: unknown) => data),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(text(root)).toContain("Public pages only");
+    expect(field(root, "password")).toBeUndefined();
+    expect(api).toHaveBeenCalledTimes(1);
+    await find(root, "Add sign-in").fire("click");
+    expect(field(root, "password")).toBeDefined();
+    f.panel.destroy();
+  });
+  it("keeps unknown authentication unknown until an explicit coverage choice", async () => {
+    const data = { ...managed(), testAccountSuggestion: undefined };
+    const api = vi.fn(async (_path: string, _body?: unknown) => data),
+      f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    expect(text(root)).toContain("What should your crew be able to test");
+    expect(api).toHaveBeenCalledTimes(1);
+    await find(root, "Connect a test account").fire("click");
+    expect(find(root, "Find sign-in")).toBeDefined();
+    expect(field(root, "password")).toBeUndefined();
+    expect(api).toHaveBeenCalledTimes(1);
+    f.panel.destroy();
+  });
+  it("repairs missing credentials inline instead of sending the user to Connections", async () => {
+    const data = {
+      ...savedState("failed"),
+      testAccounts: [
+        {
+          id: "account-one",
+          name: "Test user",
+          index: 0,
+          usernameSaved: false,
+          passwordSaved: false,
+        },
+      ],
+      environmentSetupSupported: true,
+      environmentSetup: {
+        status: "needs_input",
+        step: "test_access",
+        action: "manage_credentials",
+        message: "Credentials missing.",
+      },
+      environment: {
+        ...savedState("failed").environment,
+        verification: {
+          status: "failed",
+          diagnosis: {
+            action: "manage_credentials",
+            title: "Test account missing",
+            detail: "Connect it.",
+          },
+        },
+      },
+    };
+    const f = fixture(vi.fn(async () => data)),
+      root = new Element();
+    f.panel.mount(root, project);
+    await settle();
+    await find(root, "Add test credentials").fire("click");
+    expect(field(root, "password")).toBeDefined();
+    expect(f.window.dashboardPages.navigate).not.toHaveBeenCalled();
+    expect(
+      walk(root).find((item) => item.className === "onboarding-automatic")!
+        .hidden,
+    ).toBe(true);
+    f.panel.destroy();
+  });
+});
+
 describe("explicit app sign-in onboarding", () => {
   const accessPanel = (root: Element) =>
     walk(root).find((item) => item.className === "onboarding-app-access")!;

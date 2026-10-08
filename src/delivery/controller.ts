@@ -167,7 +167,10 @@ export function deliveryEnvironment(project: Project, branch: string) {
     );
   return { ...target, branch };
 }
-export function reviewPrompt(plan: PmReviewPlan): string {
+export function reviewPrompt(
+  plan: PmReviewPlan,
+  managedAccess = false,
+): string {
   return `\n\nOWNING PM DELIVERY REVIEW — controller-admitted work, not additional permission.\nReview these fixes on EXACT deployment ${plan.deployment.url}, branch ${plan.deployment.branch}, SHA ${plan.deployment.sha}, deployment ${plan.deployment.id}. Do not merge, promote, approve tickets, or mark Done. The checked-out SHA must match.\n${JSON.stringify(
     plan.deliveries.map((d) => ({
       id: d.id,
@@ -177,7 +180,7 @@ export function reviewPrompt(plan: PmReviewPlan): string {
     })),
     null,
     2,
-  )}\nUse Playwright to investigate every criterion. Then save /output/pm-review-request.json as {"schema":1,"planId":${JSON.stringify(plan.id)},"deliveries":[{"id":"EXACT delivery id","checks":[{"criterion":"EXACT approved criterion text","path":"/non-production-path","kind":"text-visible","text":"Exact visible text"}]}]}. The trusted worker independently replays checks and captures real screenshots AFTER you finish. Supported kinds: text-visible/text-absent with exact text; selector-visible/selector-absent with selector; url-path with expected pathname. For UI or layout changes set viewports to ["mobile", "desktop"] on each affected check: mobile is pinned to 390x844 and desktop to 1280x800. Other checks may choose one name; omitted viewports use desktop. Every requested viewport must replay and pass, with its size and screenshot recorded. Each check opens a fresh browser context per viewport on this deployment only; paths cannot include query/fragment or another origin. Optional steps (maximum 12 per check) replay click/fill/select/check/uncheck with a unique selector; fill/select also use value. To reuse a real login, save Playwright storageState ONLY in /output/.review-sessions/ROLE.json after signing in and set session to ROLE (lowercase letters, digits and hyphens). Cookies and localStorage must belong only to this deployment origin. The worker loads this private role session, replays steps and deletes the session; never save sessions anywhere else under /output; this hidden handoff is excluded from public artifacts and consumed only by the isolated replay phase. Do not choose a trivial check that fails to test the criterion. If authentication, interaction or an API assertion cannot be reproduced by this contract, omit that check and explain the blocker in your summary; it remains blocked for promotion. Your own JSON pass claims never count as evidence. Continue ordinary PM observation without altering the approved delivery scope.\n`;
+  )}\nUse Playwright to investigate every criterion. Then save /output/pm-review-request.json as {"schema":1,"planId":${JSON.stringify(plan.id)},"deliveries":[{"id":"EXACT delivery id","checks":[{"criterion":"EXACT approved criterion text","path":"/non-production-path","kind":"text-visible","text":"Exact visible text"}]}]}. The trusted worker independently replays checks and captures real screenshots AFTER you finish. Supported kinds: text-visible/text-absent with exact text; selector-visible/selector-absent with selector; url-path with expected pathname. For UI or layout changes set viewports to ["mobile", "desktop"] on each affected check: mobile is pinned to 390x844 and desktop to 1280x800. Other checks may choose one name; omitted viewports use desktop. Every requested viewport must replay and pass, with its size and screenshot recorded. Each check opens a fresh browser context per viewport on this deployment only; paths cannot include query/fragment or another origin. Optional steps (maximum 12 per check) replay click/fill/select/check/uncheck with a unique selector; fill/select also use value. ${managedAccess ? "Your managed browser already has the allocated test identity. Do not export storageState, cookies, tokens, or role-session files, and omit the session field. The private helper will sign in again in a fresh context for each independent QA viewport using the same allocated account. It does not establish other roles or tenants; report those checks blocked if they require a different identity." : "To reuse a real login, save Playwright storageState ONLY in /output/.review-sessions/ROLE.json after signing in and set session to ROLE (lowercase letters, digits and hyphens). Cookies and localStorage must belong only to this deployment origin. The worker loads this private role session, replays steps and deletes the session; never save sessions anywhere else under /output; this hidden handoff is excluded from public artifacts and consumed only by the isolated replay phase."} Do not choose a trivial check that fails to test the criterion. If authentication, interaction or an API assertion cannot be reproduced by this contract, omit that check and explain the blocker in your summary; it remains blocked for promotion. Your own JSON pass claims never count as evidence. Continue ordinary PM observation without altering the approved delivery scope.\n`;
 }
 export function createDeliveryController(options: DeliveryControllerOptions) {
   const now = () => options.now?.() ?? new Date();
@@ -1201,7 +1204,17 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       ...payload,
       reviewPlan: plan,
       browserTarget: plan.deployment.url,
-      prompt: (payload.prompt ?? "") + reviewPrompt(plan),
+      prompt:
+        (payload.prompt ?? "") +
+        reviewPrompt(
+          plan,
+          (() => {
+            const verification = effectiveVerification(project.config);
+            return (
+              verification.mode === "browser" && !!verification.target.access
+            );
+          })(),
+        ),
     };
   }
   async function completeJob(

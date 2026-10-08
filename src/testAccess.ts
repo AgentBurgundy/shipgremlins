@@ -1,19 +1,71 @@
+import { createHash } from "node:crypto";
+import {
+  parsePasswordRecipe,
+  parseIdentityAssertions,
+  type PasswordRecipe,
+  type IdentityAssertion,
+} from "../runner-local/access-schema.mjs";
+export {
+  parsePasswordRecipe,
+  parseIdentityAssertions,
+} from "../runner-local/access-schema.mjs";
+export type {
+  PasswordRecipe,
+  LoginStep,
+  IdentityAssertion,
+} from "../runner-local/access-schema.mjs";
+export interface TestAccount {
+  id?: string;
+  name: string;
+  usernameSecret: string;
+  passwordSecret: string;
+  assertions?: IdentityAssertion[];
+}
 /** Declarative browser login for isolated test accounts. Values are secret references. */
 export type TestAccess =
   | { kind: "public" }
-  | {
-      kind: "password";
-      loginPath: string;
-      usernameSelector: string;
-      passwordSelector: string;
-      submitSelector: string;
-      successSelector: string;
-      accounts: Array<{
-        name: string;
-        usernameSecret: string;
-        passwordSecret: string;
-      }>;
-    };
+  | (PasswordRecipe & { kind: "password"; accounts: TestAccount[] });
+export function testIdentityMetadata(
+  access: Extract<TestAccess, { kind: "password" }>,
+  index: number,
+) {
+  const account = access.accounts[index];
+  if (!account) throw new Error("Choose an existing test account.");
+  const hash = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+  return {
+    id:
+      account.id ??
+      hash(`${account.usernameSecret}\0${account.passwordSecret}`).slice(0, 32),
+    generation: hash(
+      JSON.stringify([account.usernameSecret, account.passwordSecret]),
+    ),
+  };
+}
+export function managedTestScope(project: {
+  name: string;
+  instanceId?: string;
+}) {
+  return createHash("sha256")
+    .update(`${project.name}\0${project.instanceId ?? ""}`)
+    .digest("hex")
+    .slice(0, 24)
+    .toUpperCase();
+}
+export function assertManagedTestScope(
+  access: TestAccess | undefined,
+  project: { name: string; instanceId?: string },
+) {
+  const prefix = `TEST_ACCESS_${managedTestScope(project)}_`;
+  if (
+    testAccessSecretNames(access).some(
+      (ref) => ref.startsWith("TEST_ACCESS_") && !ref.startsWith(prefix),
+    )
+  )
+    throw new Error(
+      "Managed test credentials belong to a different project. Connect a dedicated account for this project.",
+    );
+}
 
 const forbidden =
   /^(?:SHIPGREMLINS_|NODE_|LD_|DYLD_|GREMLINS_|PATH$|HOME$|APP_PRIVATE_KEY$|GITHUB_TOKEN$|GITLAB_TOKEN$|LINEAR_API_KEY$|VERCEL_TOKEN$|RAILWAY_TOKEN$|GCP_SERVICE_ACCOUNT_JSON$|CLAUDE_CODE_OAUTH_TOKEN$|ANTHROPIC_API_KEY$)/;
@@ -59,24 +111,14 @@ export function parseTestAccess(value: unknown): TestAccess | undefined {
           "submitSelector",
           "successSelector",
           "accounts",
+          "steps",
+          "authenticatedPath",
         ].includes(key),
     )
   )
     throw invalid();
-  if (
-    !text(value.loginPath, 500) ||
-    !value.loginPath.startsWith("/") ||
-    value.loginPath.startsWith("//") ||
-    /[\\?#]/.test(value.loginPath)
-  )
-    throw invalid();
-  const selectors = [
-    "usernameSelector",
-    "passwordSelector",
-    "submitSelector",
-    "successSelector",
-  ] as const;
-  for (const key of selectors) if (!text(value[key], 500)) throw invalid();
+  const { kind: _kind, accounts: _accounts, ...rawRecipe } = value;
+  const recipe = parsePasswordRecipe(rawRecipe);
   if (
     !Array.isArray(value.accounts) ||
     !value.accounts.length ||
@@ -84,13 +126,27 @@ export function parseTestAccess(value: unknown): TestAccess | undefined {
   )
     throw invalid();
   const names = new Set<string>();
+  const ids = new Set<string>();
   const accounts = value.accounts.map((item) => {
     if (
       !object(item) ||
       Object.keys(item).some(
-        (key) => !["name", "usernameSecret", "passwordSecret"].includes(key),
+        (key) =>
+          ![
+            "id",
+            "name",
+            "usernameSecret",
+            "passwordSecret",
+            "assertions",
+          ].includes(key),
       ) ||
       !text(item.name, 80) ||
+      (item.id !== undefined &&
+        (typeof item.id !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            item.id,
+          ) ||
+          ids.has(item.id))) ||
       !validTestSecret(item.usernameSecret) ||
       !validTestSecret(item.passwordSecret) ||
       item.usernameSecret === item.passwordSecret ||
@@ -98,7 +154,11 @@ export function parseTestAccess(value: unknown): TestAccess | undefined {
     )
       throw invalid();
     names.add(item.name.toLowerCase());
+    if (typeof item.id === "string") ids.add(item.id);
+    const assertions = parseIdentityAssertions(item.assertions);
     return {
+      ...(typeof item.id === "string" ? { id: item.id } : {}),
+      ...(assertions ? { assertions } : {}),
       name: item.name,
       usernameSecret: item.usernameSecret,
       passwordSecret: item.passwordSecret,
@@ -106,11 +166,7 @@ export function parseTestAccess(value: unknown): TestAccess | undefined {
   });
   return {
     kind: "password",
-    loginPath: value.loginPath,
-    usernameSelector: value.usernameSelector as string,
-    passwordSelector: value.passwordSelector as string,
-    submitSelector: value.submitSelector as string,
-    successSelector: value.successSelector as string,
+    ...recipe,
     accounts,
   };
 }
@@ -149,7 +205,13 @@ export function resolveTestAccess(
         throw new Error(
           "Save the selected test-account username and password in Connections, then retry.",
         );
-      return { name: account.name, username, password };
+      return {
+        ...(account.id ? { id: account.id } : {}),
+        ...(account.assertions ? { assertions: account.assertions } : {}),
+        name: account.name,
+        username,
+        password,
+      };
     }),
   };
 }

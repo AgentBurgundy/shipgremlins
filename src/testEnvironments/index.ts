@@ -103,7 +103,7 @@ function privateScratch(): string {
   }
 }
 const cloneScript = `import {spawnSync} from 'node:child_process';import{mkdirSync,statSync}from'node:fs';let raw='';for await(const c of process.stdin){raw+=c;if(raw.length>32768)process.exit(1)}const p=JSON.parse(raw);const env={PATH:process.env.PATH,HOME:'/work',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_COUNT:'4',GIT_CONFIG_KEY_3:'http.followRedirects',GIT_CONFIG_VALUE_3:'false',GIT_CONFIG_KEY_0:'http.'+new URL(p.repoUrl).origin+'/.extraHeader',GIT_CONFIG_VALUE_0:p.token?'Authorization: Basic '+Buffer.from((p.provider==='gitlab'?'oauth2':'x-access-token')+':'+p.token).toString('base64'):'',GIT_CONFIG_KEY_1:'core.hooksPath',GIT_CONFIG_VALUE_1:'/dev/null',GIT_CONFIG_KEY_2:'credential.helper',GIT_CONFIG_VALUE_2:''};const git=(args)=>{const r=spawnSync('git',args,{cwd:'/work/repo',env,encoding:'utf8',timeout:120000,maxBuffer:1048576});if(r.status!==0)throw Error('Source checkout failed');return r.stdout.trim()};mkdirSync('/work/repo');git(['init']);git(['fetch','--depth','1','--',p.repoUrl,p.commitSha]);if(git(['rev-parse','FETCH_HEAD'])!==p.commitSha)throw Error('Source changed');const mode=git(['ls-tree',p.commitSha,'--',p.dockerfile]);if(!/^100(?:644|755) blob /.test(mode))throw Error('Dockerfile must be a tracked regular file');git(['archive','--format=tar','--output=/work/context.tar',p.context==='.'?p.commitSha:p.commitSha+':'+p.context]);if(statSync('/work/context.tar').size>268435456)throw Error('Build context too large');console.log('Checkout prepared');`;
-const probeScript = `const u=process.argv[1];let status=0;const end=Date.now()+60000;while(Date.now()<end){try{const r=await fetch(u,{redirect:'manual',signal:AbortSignal.timeout(3000)});status=r.status;await r.body?.cancel();if(status>=200&&status<400){console.log(JSON.stringify({status}));process.exit(0)}}catch{}await new Promise(r=>setTimeout(r,500))}process.exit(1);`;
+const probeScript = `const u=process.argv[1];let status=0,errorCode='';const end=Date.now()+60000;while(Date.now()<end){try{const r=await fetch(u,{redirect:'manual',signal:AbortSignal.timeout(3000)});status=r.status;errorCode='';await r.body?.cancel();if(status>=200&&status<400){console.log(JSON.stringify({status}));process.exit(0)}}catch(e){status=0;errorCode=['ENOTFOUND','EAI_AGAIN','ECONNREFUSED','ETIMEDOUT'].includes(e.cause?.code)?e.cause.code:e.name==='TimeoutError'?'ETIMEDOUT':''}await new Promise(r=>setTimeout(r,500))}console.log(JSON.stringify({status,errorCode}));process.exit(1);`;
 
 /** All commands below are fixed Docker operations; application code never executes on the host. */
 export function createTestEnvironments(options: {
@@ -492,7 +492,7 @@ export function createTestEnvironments(options: {
         { env: appEnv, timeoutMs: 30_000, maxBytes: 4096 },
       );
       const url = `http://app.test:${target.port}`;
-      const health = await checked(
+      const health = await run(
         [
           "run",
           "--rm",
@@ -515,6 +515,50 @@ export function createTestEnvironments(options: {
         ],
         { timeoutMs: 70_000, maxBytes: 4096 },
       );
+      if (health.code !== 0) {
+        // Read only owned container state and fixed probe fields. App logs,
+        // response bodies and Docker stderr can contain private application data.
+        const app = await inspect("container", `${prefix(job)}-app`, job).catch(
+          () => null,
+        );
+        if (app?.State?.OOMKilled === true)
+          throw new TestEnvironmentError(
+            "The test app exceeded its Docker memory limit before its health check passed. Reduce startup memory or adjust its test recipe, then test the environment again. No agent was started.",
+            "app_memory_limit",
+          );
+        if (app?.State?.Running === false && app.State.Status !== "created")
+          throw new TestEnvironmentError(
+            `The test app stopped before its health check passed${Number.isSafeInteger(app.State.ExitCode) ? ` (exit ${app.State.ExitCode})` : ""}. Check the app's startup command and required test inputs, then test the environment again. No agent was started.`,
+            "app_exited",
+          );
+        let status = 0,
+          errorCode = "";
+        try {
+          const detail = JSON.parse(health.stdout.trim());
+          if (
+            Number.isInteger(detail.status) &&
+            detail.status >= 100 &&
+            detail.status <= 599
+          )
+            status = detail.status;
+          if (
+            ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ETIMEDOUT"].includes(
+              detail.errorCode,
+            )
+          )
+            errorCode = detail.errorCode;
+        } catch {
+          // Malformed or non-probe output is deliberately omitted.
+        }
+        throw new TestEnvironmentError(
+          status
+            ? `The test app's health check returned HTTP ${status} instead of a successful response. Check the configured health path and app startup, then test the environment again. No agent was started.`
+            : errorCode === "ENOTFOUND" || errorCode === "EAI_AGAIN"
+              ? "The test runner could not resolve app.test on its private Docker network. Check Docker DNS and bridge networking, then test the environment again. No agent was started."
+              : `The test runner could not reach the app on port ${target.port} within 60 seconds. Check that the app listens on 0.0.0.0 and that Docker bridge networking and the host firewall allow containers to communicate. Then test the environment again. No agent was started.`,
+          status ? "app_health_response" : "app_health_unreachable",
+        );
+      }
       let status: number;
       try {
         status = JSON.parse(health.stdout.trim()).status;

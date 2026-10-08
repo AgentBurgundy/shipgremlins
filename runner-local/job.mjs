@@ -13,6 +13,11 @@ import {
 import { join } from "node:path";
 import { browserSmoke } from "./runner-smoke.mjs";
 import { prepareBrowserAccess } from "./browser-access.mjs";
+import { AccessFailure, accessFailure } from "./access-executor.mjs";
+import {
+  validateManagedAccess,
+  managedAccessRequest,
+} from "./managed-access.mjs";
 import { startLeaseWatchdog } from "./lease.mjs";
 import { chromium } from "playwright";
 import { createActivityWriter } from "./activity.mjs";
@@ -212,6 +217,7 @@ async function run(command, args, options = {}) {
   });
 }
 let kind = "unknown";
+let managedReceipt;
 try {
   mkdirSync("/output", { recursive: true });
   const deadline = Date.now() + 60_000;
@@ -235,6 +241,20 @@ try {
   if (!input || !["verify", "pm", "developer"].includes(input.kind))
     throw new Error("Unsupported job kind.");
   kind = input.kind;
+  if (input.managedAccess) {
+    validateManagedAccess(input.managedAccess);
+    if (
+      Object.keys(input.credentials || {}).some(
+        (key) =>
+          key === "GREMLINS_PREVIEW_BYPASS" || /^GREMLINS_TEST_/.test(key),
+      )
+    )
+      throw new AccessFailure("invalid_access");
+    const ready = await managedAccessRequest(input.managedAccess);
+    managedReceipt = ready.receipt;
+    if (!managedReceipt?.proof?.receivingContext)
+      throw new AccessFailure("receiving_context_failed");
+  }
   if (
     input.maxRuntimeMinutes !== undefined ||
     input.remainingRuntimeMs !== undefined
@@ -279,7 +299,40 @@ try {
     if (input.reviewPlan.jobId !== input.nonce)
       throw new Error("Delivery review belongs to another job.");
   }
-  if (kind === "verify") {
+  if (kind === "verify" && input.accessProbe === true) {
+    if (!input.managedAccess) throw new AccessFailure("invalid_access");
+    const verified = await managedAccessRequest(input.managedAccess, "/verify");
+    const screenshot = await managedAccessRequest(
+      input.managedAccess,
+      "/screenshot",
+    );
+    if (
+      typeof screenshot.screenshot !== "string" ||
+      screenshot.screenshot.length > 16 * 1024 * 1024
+    )
+      throw new AccessFailure("helper_unavailable");
+    writeFileSync(
+      "/output/access-screenshot.png",
+      Buffer.from(screenshot.screenshot, "base64"),
+    );
+    writeFileSync(
+      "/output/result.json",
+      JSON.stringify({
+        ok: true,
+        kind,
+        nonce: input.nonce,
+        accessReceipt: verified.receipt,
+        checks: verified.checks,
+        completedAt: new Date().toISOString(),
+      }),
+    );
+    activity.emit(
+      "result",
+      "App access verified",
+      "The runner opened the app and checked its prepared browser context.",
+      "succeeded",
+    );
+  } else if (kind === "verify") {
     await browserSmoke("/output", input.nonce);
     activity.emit(
       "check",
@@ -447,28 +500,45 @@ try {
         cwd: "/work/repo",
         env,
       });
+    if (input.managedAccess)
+      writeFileSync(
+        "/work/managed-access.json",
+        JSON.stringify({
+          endpoint: input.managedAccess.endpoint,
+          token: input.managedAccess.token,
+        }),
+        { mode: 0o600 },
+      );
     writeFileSync(
       "/work/mcp.json",
       JSON.stringify({
         mcpServers: discovery
           ? {}
           : {
-              playwright: {
-                command: "node",
-                args: [
-                  "/opt/gremlins/node_modules/@playwright/mcp/cli.js",
-                  "--headless",
-                  "--executable-path",
-                  chromium.executablePath(),
-                  "--no-sandbox",
-                  ...prepareBrowserAccess("/work", {
-                    url: input.browserTarget,
-                    credentials,
-                  }),
-                  "--output-dir",
-                  "/output/screenshots",
-                ],
-              },
+              playwright: input.managedAccess
+                ? {
+                    command: "node",
+                    args: [
+                      "/opt/gremlins/access-client.mjs",
+                      "/work/managed-access.json",
+                    ],
+                  }
+                : {
+                    command: "node",
+                    args: [
+                      "/opt/gremlins/node_modules/@playwright/mcp/cli.js",
+                      "--headless",
+                      "--executable-path",
+                      chromium.executablePath(),
+                      "--no-sandbox",
+                      ...prepareBrowserAccess("/work", {
+                        url: input.browserTarget,
+                        credentials,
+                      }),
+                      "--output-dir",
+                      "/output/screenshots",
+                    ],
+                  },
             },
       }),
       { mode: 0o600 },
@@ -559,6 +629,13 @@ try {
               activity.emit("check", name, undefined, status),
           })
         : { checks: [] };
+    if (input.managedAccess) {
+      const verified = await managedAccessRequest(
+        input.managedAccess,
+        "/verify",
+      );
+      managedReceipt = verified.receipt;
+    }
     writeFileSync(
       "/output/result.json",
       JSON.stringify(
@@ -568,6 +645,7 @@ try {
           nonce: input.nonce,
           commitSha: baseSha,
           branch: input.branch,
+          ...(managedReceipt ? { accessReceipt: managedReceipt } : {}),
           ...(input.pmMode ? { pmMode: input.pmMode } : {}),
           ...(grumblin ? { grumblin } : {}),
           ...deliveryResult,
@@ -604,6 +682,9 @@ try {
         ok: false,
         kind,
         error: message,
+        ...(error instanceof AccessFailure
+          ? { accessFailure: accessFailure(error) }
+          : {}),
         completedAt: new Date().toISOString(),
       },
       null,

@@ -51,29 +51,96 @@ try {
       "/output/pm-review-request.json",
       256 * 1024,
     );
-  mkdirSync("/work/review-sessions", { recursive: true, mode: 0o700 });
-  const sessions = "/input/.review-sessions";
-  if (existsSync(sessions)) {
-    const info = lstatSync(sessions);
-    if (!info.isDirectory() || info.isSymbolicLink())
-      throw new Error("Unsafe private review sessions.");
-    const files = readdirSync(sessions);
-    if (files.length > 20) throw new Error("Too many private review sessions.");
-    for (const file of files)
-      if (/^[a-z][a-z0-9-]{0,39}\.json$/.test(file))
-        copy(
-          join(sessions, file),
-          join("/work/review-sessions", file),
-          128 * 1024,
-        );
+  if (input.managedAccess) {
+    const { endpoint, token } = input.managedAccess;
+    const url = new URL(endpoint);
+    if (
+      url.protocol !== "http:" ||
+      !/^gremlins-auth-[a-z0-9-]+$/.test(url.hostname) ||
+      url.port !== "4719" ||
+      !["/", "/mcp"].includes(url.pathname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !/^[a-f0-9]{64}$/.test(token)
+    )
+      throw new Error("Invalid private review browser.");
+    const requestFile = "/output/pm-review-request.json";
+    const request = existsSync(requestFile)
+      ? JSON.parse(readFileSync(requestFile, "utf8"))
+      : {};
+    if (existsSync(requestFile)) unlinkSync(requestFile);
+    const response = await fetch(new URL("/review", endpoint), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        plan: input.plan,
+        commitSha: input.plan.deployment.sha,
+        request,
+      }),
+      signal: AbortSignal.timeout(9 * 60 * 1000),
+    });
+    const result = await response.json();
+    if (
+      !response.ok ||
+      result.ok !== true ||
+      !Array.isArray(result.files) ||
+      result.files.length > 101 ||
+      result.files.reduce(
+        (size, file) =>
+          size + (typeof file.base64 === "string" ? file.base64.length : 1e9),
+        0,
+      ) >
+        32 * 1024 * 1024
+    )
+      throw new Error("Private review failed.");
+    mkdirSync("/output/review-screenshots", { recursive: true });
+    for (const file of result.files) {
+      if (
+        file.name !== "pm-review-proof.json" &&
+        !/^review-screenshots\/[a-f0-9]{40}-(desktop|mobile)\.png$/.test(
+          file.name,
+        )
+      )
+        throw new Error("Invalid private review artifact.");
+      writeFileSync(
+        join("/output", file.name),
+        Buffer.from(file.base64, "base64"),
+        { mode: 0o600, flag: "wx" },
+      );
+    }
+    if (!existsSync("/output/pm-review-proof.json"))
+      throw new Error("Missing private review proof.");
+  } else {
+    mkdirSync("/work/review-sessions", { recursive: true, mode: 0o700 });
+    const sessions = "/input/.review-sessions";
+    if (existsSync(sessions)) {
+      const info = lstatSync(sessions);
+      if (!info.isDirectory() || info.isSymbolicLink())
+        throw new Error("Unsafe private review sessions.");
+      const files = readdirSync(sessions);
+      if (files.length > 20)
+        throw new Error("Too many private review sessions.");
+      for (const file of files)
+        if (/^[a-z][a-z0-9-]{0,39}\.json$/.test(file))
+          copy(
+            join(sessions, file),
+            join("/work/review-sessions", file),
+            128 * 1024,
+          );
+    }
+    await runReviewReceipts({
+      plan: input.plan,
+      commitSha: input.plan.deployment.sha,
+      outputDirectory: "/output",
+      chromium,
+      bypass: input.bypass,
+    });
   }
-  await runReviewReceipts({
-    plan: input.plan,
-    commitSha: input.plan.deployment.sha,
-    outputDirectory: "/output",
-    chromium,
-    bypass: input.bypass,
-  });
   if (input.bypass) {
     const file = "/output/pm-review-proof.json";
     let proof = readFileSync(file, "utf8");

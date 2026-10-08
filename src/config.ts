@@ -1,3 +1,4 @@
+import { managedTestScope } from "./testAccess.ts";
 // Loads hub.json and projects/<name>/{project,areas,tiers}.json and validates
 // them by hand (no schema library): every field the dispatcher or a workflow
 // reads is checked here, so a typo in config fails hub CI, not a 3am run.
@@ -13,6 +14,7 @@ import {
 } from "./telemetry/config.ts";
 import {
   parseProjectCapabilities,
+  projectSecretNames,
   validateWorkerSecretReferences,
   validBranch,
   validConnectionId,
@@ -544,6 +546,15 @@ export function loadProject(root: string, name: string): Project {
   }
   try {
     validateWorkerSecretReferences(config);
+    const testPrefix = `TEST_ACCESS_${managedTestScope(config)}_`;
+    if (
+      projectSecretNames(config).some(
+        (ref) => ref.startsWith("TEST_ACCESS_") && !ref.startsWith(testPrefix),
+      )
+    )
+      throw new Error(
+        "Managed test credentials belong to a different project. Connect a dedicated account for this project.",
+      );
   } catch (error) {
     throw new ConfigError(pf, (error as Error).message);
   }

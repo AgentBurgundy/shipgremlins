@@ -24,7 +24,7 @@ import { createOnboardingStore } from "../projectOnboarding/store.ts";
 import { validateSetupAnalysis } from "../projectOnboarding/analysis.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
 import { VercelSetupError } from "../vercelSetup/types.ts";
-import { saveConnections } from "../setup/connections.ts";
+import { readConnections, saveConnections } from "../setup/connections.ts";
 import type { EnvironmentVerification } from "../setup/environmentAccess.ts";
 
 interface SetupResponse extends OnboardingState {
@@ -830,5 +830,72 @@ describe("authenticated project onboarding", () => {
       ).status,
     ).toBe(200);
     expect(discover).not.toHaveBeenCalled();
+  });
+});
+
+describe("inline managed test account API", () => {
+  const recipe = {
+    loginPath: "/login",
+    usernameSelector: "#email",
+    passwordSelector: "#password",
+    submitSelector: "#submit",
+    successSelector: "#account",
+  };
+  async function browserFixture() {
+    const f = await fixture();
+    const raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    raw.environments = { "pm-test": { ...target, access: { kind: "public" } } };
+    raw.verification = { mode: "browser", environment: "pm-test" };
+    writeFileSync(f.projectFile, JSON.stringify(raw));
+    return f;
+  }
+  it("saves privately, queues verification once and returns only credential presence", async () => {
+    const f = await browserFixture(),
+      before = await f.state();
+    const request = {
+      configurationRevision: before.configurationRevision,
+      recipe,
+      account: {
+        name: "Member",
+        username: "private-member",
+        password: "private-password",
+      },
+    };
+    const route = "/api/projects/app/onboarding/connect-test-account";
+    expect((await f.call(route, request, false)).status).toBe(401);
+    const response = await f.call(route, request);
+    expect(response.status).toBe(202);
+    const data = (await response.json()) as Record<string, unknown>;
+    expect(data.testAccountSetupSupported).toBe(true);
+    expect(data.testAccounts).toMatchObject([
+      { name: "Member", index: 0, usernameSaved: true, passwordSaved: true },
+    ]);
+    expect(JSON.stringify(data)).not.toContain("private-member");
+    expect(JSON.stringify(data)).not.toContain("private-password");
+    expect(f.environmentAccess.verify).toHaveBeenCalledExactlyOnceWith("app");
+    expect(Object.values(readConnections(f.root))).toContain(
+      "private-password",
+    );
+    expect((await f.call(route, request)).status).toBe(409);
+    expect(f.environmentAccess.verify).toHaveBeenCalledTimes(1);
+  });
+  it("rejects stale settings without queuing a browser or disclosing submitted credentials", async () => {
+    const f = await browserFixture();
+    const response = await f.call(
+      "/api/projects/app/onboarding/connect-test-account",
+      {
+        configurationRevision: "0".repeat(64),
+        recipe,
+        account: {
+          name: "Member",
+          username: "private-member",
+          password: "private-password",
+        },
+      },
+    );
+    expect(response.status).toBe(409);
+    expect(await response.text()).not.toContain("private-password");
+    expect(f.environmentAccess.verify).not.toHaveBeenCalled();
+    expect(readConnections(f.root)).toEqual({});
   });
 });

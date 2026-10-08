@@ -1,6 +1,6 @@
 {
   "name": "shipgremlins",
-  "version": "0.23.2",
+  "version": "0.24.0",
   "private": true,
   "files": [
     "bin/shipgremlins.mjs",
@@ -12,7 +12,13 @@
     "projects/_templates/",
     "prompts/",
     "dashboard/",
-    "runner-local/",
+    "runner-local/Dockerfile",
+    "runner-local/.dockerignore",
+    "runner-local/package.json",
+    "runner-local/package-lock.json",
+    "runner-local/*.mjs",
+    "runner-local/*.d.mts",
+    "runner-local/git-askpass.sh",
     "site/dist/index.html",
     "site/dist/operator.css",
     "LICENSE"

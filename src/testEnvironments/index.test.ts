@@ -19,6 +19,8 @@ function fixture() {
   const containers = new Map<string, Record<string, string>>();
   const builds = new Map<string, Record<string, string>>();
   let failHealth = false;
+  let healthOutput = "";
+  let appState: Record<string, unknown> | undefined;
   const run: DockerRun = async (args, options) => {
     calls.push({ args, options });
     const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" }),
@@ -82,7 +84,12 @@ function fixture() {
     if (args[0] === "inspect") {
       const l = containers.get(args.at(-1)!);
       return l
-        ? ok(JSON.stringify({ Config: { Labels: l } }))
+        ? ok(
+            JSON.stringify({
+              Config: { Labels: l },
+              ...(args.at(-1)!.endsWith("-app") ? { State: appState } : {}),
+            }),
+          )
         : missing("container");
     }
     if (args[0] === "image") {
@@ -135,7 +142,11 @@ function fixture() {
     if (args[0] === "run") {
       if (name.endsWith("-health"))
         return failHealth
-          ? { code: 1, stdout: "", stderr: "SECRET must never escape" }
+          ? {
+              code: 1,
+              stdout: healthOutput,
+              stderr: "SECRET must never escape",
+            }
           : ok('{"status":200}');
       containers.set(name, labels());
       return ok();
@@ -159,8 +170,10 @@ function fixture() {
     networks,
     containers,
     builds,
-    fail: () => {
+    fail: (output = "", state?: Record<string, unknown>) => {
       failHealth = true;
+      healthOutput = output;
+      appState = state;
     },
   };
 }
@@ -368,11 +381,72 @@ describe("managed application lifecycle", () => {
   it("cleans on failed readiness and never exposes provider output", async () => {
     const f = fixture();
     f.fail();
-    await expect(f.api.start({ jobId: "job-test", target })).rejects.toThrow(
-      "could not start",
-    );
+    await expect(
+      f.api.start({ jobId: "job-test", target }),
+    ).rejects.toMatchObject({
+      name: "TestEnvironmentError",
+      code: "app_health_unreachable",
+      message: expect.stringContaining(
+        "Docker bridge networking and the host firewall",
+      ),
+    });
     expect(f.containers.size).toBe(0);
     expect(f.networks.size).toBe(0);
+  });
+  it.each([
+    {
+      output: '{"status":503}',
+      state: undefined,
+      code: "app_health_response",
+      detail: "HTTP 503",
+    },
+    {
+      output: '{"status":0,"errorCode":"ENOTFOUND"}',
+      state: undefined,
+      code: "app_health_unreachable",
+      detail: "Docker DNS",
+    },
+    {
+      output: "",
+      state: { Running: false, Status: "exited", ExitCode: 2 },
+      code: "app_exited",
+      detail: "exit 2",
+    },
+    {
+      output: "",
+      state: {
+        Running: false,
+        Status: "exited",
+        ExitCode: 137,
+        OOMKilled: true,
+      },
+      code: "app_memory_limit",
+      detail: "memory limit",
+    },
+  ])(
+    "retains a safe actionable health failure for $code and cleans resources",
+    async ({ output, state, code, detail }) => {
+      const f = fixture();
+      f.fail(output, state);
+      await expect(
+        f.api.start({ jobId: "job-health", target }),
+      ).rejects.toMatchObject({
+        code,
+        message: expect.stringContaining(detail),
+      });
+      expect(f.containers.size).toBe(0);
+      expect(f.networks.size).toBe(0);
+    },
+  );
+  it("does not expose raw app or Docker output in a health failure", async () => {
+    const f = fixture();
+    f.fail('{"status":"SECRET","errorCode":"SECRET","body":"SECRET"}');
+    const error = await f.api
+      .start({ jobId: "job-health", target })
+      .catch((error) => error);
+    expect(error.message).not.toContain("SECRET");
+    expect(error.message).toContain("No agent was started");
+    expect(f.calls.some((call) => call.args[0] === "logs")).toBe(false);
   });
   it("cleans on failed browser authentication callback", async () => {
     const f = fixture();

@@ -43,6 +43,7 @@ interface Worker {
   platform?: string;
   architecture?: string;
   logicalId?: string;
+  accessProtocol?: 1;
 }
 interface Job {
   id: string;
@@ -60,6 +61,8 @@ interface Job {
   result: Record<string, unknown> | null;
   files: DockerArtifacts["files"];
   trustedReview?: { planHash: string; commitSha: string };
+  requiresAccessCleanup?: true;
+  retired?: true;
 }
 interface State {
   schema: 1;
@@ -196,6 +199,7 @@ export function createRemoteWorkers(options: {
             platform,
             architecture,
             logicalId,
+            accessProtocol,
             enrollmentExpiresAt,
             tokenHash,
           }) => ({
@@ -208,6 +212,7 @@ export function createRemoteWorkers(options: {
             platform,
             architecture,
             logicalId,
+            accessProtocol,
             capability: "docker" as const,
             enrolled: !!tokenHash,
             online:
@@ -319,10 +324,14 @@ export function createRemoteWorkers(options: {
         };
       });
     },
-    poll(token: string) {
+    poll(token: string, capabilities?: unknown) {
       return store.change((state) => {
         const worker = authenticate(state, token);
         worker.lastSeenAt = clock();
+        worker.accessProtocol =
+          isRecord(capabilities) && capabilities.accessProtocol === 1
+            ? 1
+            : undefined;
         const job = Object.values(state.jobs).find(
           (j) => j.remoteId === worker.id && j.status !== "exited",
         );
@@ -518,6 +527,19 @@ export function createRemoteWorkers(options: {
             (!project || ownsProject(worker, project))
           );
         },
+        canCheckAccess(remoteId, project) {
+          if (!remoteId) return true;
+          const worker = store.read().workers.find((w) => w.id === remoteId);
+          return (
+            !!worker &&
+            worker.accessProtocol === 1 &&
+            !worker.revokedAt &&
+            !!worker.tokenHash &&
+            !!worker.lastSeenAt &&
+            clock() - worker.lastSeenAt < 60000 &&
+            (!project || ownsProject(worker, project))
+          );
+        },
         async startJob(input) {
           const remoteId = routing.get(input.workerId);
           if (!remoteId) return local.startJob(input);
@@ -528,7 +550,7 @@ export function createRemoteWorkers(options: {
               !worker ||
               worker.revokedAt ||
               !worker.tokenHash ||
-              (input.payload.kind !== "verify" &&
+              ((input.payload.kind !== "verify" || input.payload.accessProbe) &&
                 (!input.payload.project ||
                   !ownsProject(worker, input.payload.project)))
             )
@@ -536,8 +558,16 @@ export function createRemoteWorkers(options: {
                 "This remote worker cannot accept work for this project.",
                 403,
               );
+            if (
+              (input.payload.accessProbe || input.payload.testAccess) &&
+              worker.accessProtocol !== 1
+            )
+              throw new RemoteWorkerError(
+                "Update this agent service before testing managed sign-in. Its current version does not support private access verification.",
+                409,
+              );
             const existing = getJob(state, input.id);
-            if (existing) {
+            if (existing && !existing.retired) {
               if (
                 existing.workerId !== input.workerId ||
                 existing.remoteId !== remoteId ||
@@ -574,6 +604,9 @@ export function createRemoteWorkers(options: {
               workerId: identifier(input.workerId),
               remoteId,
               payload: input.payload,
+              ...(input.payload.accessProbe || input.payload.testAccess
+                ? { requiresAccessCleanup: true as const }
+                : {}),
               lease: randomBytes(32).toString("hex"),
               createdAt: clock(),
               status: "assigned",
@@ -590,7 +623,7 @@ export function createRemoteWorkers(options: {
             const job = state.jobs[id]!;
             expire(job);
             return {
-              exists: true,
+              exists: !job.retired,
               running: job.status !== "exited",
               status: job.status === "exited" ? "exited" : "running",
               exitCode: job.exitCode,
@@ -603,6 +636,7 @@ export function createRemoteWorkers(options: {
           if (!remoteJob(id)) return local.stopJob(id);
           store.change((state) => {
             const job = state.jobs[id]!;
+            if (job.retired) return;
             job.canceled = true;
             if (!job.leasedAt) {
               job.status = "exited";
@@ -611,6 +645,9 @@ export function createRemoteWorkers(options: {
                 ok: false,
                 kind: job.payload.kind,
                 error: "Canceled before remote launch.",
+                ...(job.requiresAccessCleanup
+                  ? { cleanupConfirmed: true }
+                  : {}),
               };
             }
           });
@@ -652,16 +689,49 @@ export function createRemoteWorkers(options: {
                 "Stop the remote job before removing it.",
                 409,
               );
+            if (
+              job.requiresAccessCleanup &&
+              job.result?.cleanupConfirmed !== true
+            )
+              throw new RemoteWorkerError(
+                "The agent service has not confirmed private-browser cleanup. Its test account remains reserved.",
+                409,
+              );
             for (const file of job.files) {
               const path = filePath(id, file.name);
               if (existsSync(path)) unlinkSync(path);
             }
-            delete state.jobs[id];
+            if (job.requiresAccessCleanup) {
+              // Persist routing and confirmed cleanup across controller restart and
+              // sequential account probes using the same reserved worker/job ID.
+              job.retired = true;
+              job.files = [];
+              job.logs = "";
+              job.result = { cleanupConfirmed: true };
+            } else delete state.jobs[id];
           });
         },
+        requiresAccessCleanup(id) {
+          const job = remoteJob(id);
+          return job
+            ? !!job.requiresAccessCleanup &&
+                job.result?.cleanupConfirmed !== true
+            : (local.requiresAccessCleanup?.(id) ?? false);
+        },
         async cleanupEnvironment(id) {
-          // The remote daemon cleans its app after its final evidence upload.
-          if (!remoteJob(id)) await local.cleanupEnvironment?.(id);
+          const job = remoteJob(id);
+          if (!job) {
+            await local.cleanupEnvironment?.(id);
+            return;
+          }
+          if (
+            job.requiresAccessCleanup &&
+            job.result?.cleanupConfirmed !== true
+          )
+            throw new RemoteWorkerError(
+              "The agent service has not confirmed private-browser cleanup. Its test account remains reserved.",
+              409,
+            );
         },
         async verifyReview(id, plan, reviewOptions) {
           const job = remoteJob(id);
@@ -760,7 +830,7 @@ export function createRemoteWorkers(options: {
           path === "/api/remote/worker/enroll"
             ? api.enroll(input)
             : path === "/api/remote/worker/poll"
-              ? api.poll(token)
+              ? api.poll(token, input)
               : path === "/api/remote/worker/report"
                 ? api.report(token, input)
                 : path === "/api/remote/worker/artifact"

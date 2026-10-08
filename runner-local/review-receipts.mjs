@@ -92,6 +92,7 @@ export async function runReviewReceipts({
   outputDirectory,
   chromium,
   bypass,
+  contextFactory,
   sessionDirectory = "/work/review-sessions",
   now = () => new Date(),
 }) {
@@ -194,7 +195,11 @@ export async function runReviewReceipts({
     return state;
   }
   try {
-    browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+    if (!contextFactory)
+      browser = await chromium.launch({
+        headless: true,
+        args: ["--no-sandbox"],
+      });
     for (const delivery of plan.deliveries) {
       const drafts = request.deliveries.filter(
         (row) => row?.id === delivery.id,
@@ -258,13 +263,19 @@ export async function runReviewReceipts({
             };
             let context;
             try {
-              const state = storageState(check.session ?? draft.session);
-              context = await browser.newContext({
-                serviceWorkers: "block",
-                viewport: REVIEW_VIEWPORTS[viewportName],
-                ...(state ? { storageState: state } : {}),
-              });
-              const page = await context.newPage();
+              const managed = contextFactory
+                ? await contextFactory(REVIEW_VIEWPORTS[viewportName])
+                : undefined;
+              if (managed) context = managed.context;
+              else {
+                const state = storageState(check.session ?? draft.session);
+                context = await browser.newContext({
+                  serviceWorkers: "block",
+                  viewport: REVIEW_VIEWPORTS[viewportName],
+                  ...(state ? { storageState: state } : {}),
+                });
+              }
+              const page = managed ? managed.page : await context.newPage();
               // The shared CDP guard intercepts every redirect hop, including
               // public reviews that have no bypass credential or private session.
               await installBrowserAccess(page, {
@@ -351,10 +362,15 @@ export async function runReviewReceipts({
                 ...(check.expected ? { expected: check.expected } : {}),
               };
               const screenshotName = `review-screenshots/${receipt.id}-${viewportName}.png`;
-              const bytes = await page.screenshot({
-                fullPage: true,
-                timeout: 15_000,
-              });
+              const bytes = managed
+                ? Buffer.from(
+                    await managed.screenshot({ fullPage: true }),
+                    "base64",
+                  )
+                : await page.screenshot({
+                    fullPage: true,
+                    timeout: 15_000,
+                  });
               if (
                 bytes.length > 10 * 1024 * 1024 ||
                 !bytes

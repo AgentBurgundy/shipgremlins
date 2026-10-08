@@ -60,6 +60,7 @@ import type { ExecutionLimits } from "../execution.ts";
 import {
   inspectTestAccess,
   resolveTestAccess,
+  testIdentityMetadata,
   type TestAccess,
 } from "../testAccess.ts";
 import { resolveRepositoryHead } from "../projectOnboarding/repository.ts";
@@ -77,6 +78,11 @@ import {
 import { environmentVerificationStatus } from "../setup/environmentAccess.ts";
 import type { DeliveryRecord } from "../delivery/types.ts";
 import { codingWorkInProgress } from "./workInProgress.ts";
+import {
+  createTestIdentityLeases,
+  testIdentityKey,
+  TestIdentityBusyError,
+} from "../testAccess/leases.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -227,7 +233,7 @@ function projectSecrets(
     ...saved,
     ...env,
   });
-  access?.accounts.forEach((account, index) => {
+  access?.accounts.slice(0, 1).forEach((account, index) => {
     result[`GREMLINS_TEST_USERNAME_${index + 1}`] = account.username;
     result[`GREMLINS_TEST_PASSWORD_${index + 1}`] = account.password;
   });
@@ -239,17 +245,18 @@ function accessInstruction(
   legacySignIn = false,
 ): string {
   if (access?.kind === "public")
-    return "The owner explicitly selected public-only testing. Explore only signed-out and guest journeys. Signed-in flows, account permissions, private data and billing actions are untested unless independently verified with authorized test access. Report these coverage limits in the outcome; opening a landing page is not a full application walkthrough. Do not ask for a test account as though this choice were an accidental omission.";
+    return "The owner explicitly selected public-only testing. Explore reachable public and guest journeys without requesting a real account. A disposable fixture may provide its own synthetic launch session or demo identity; use that documented fixture entry to walk its UI and label all results synthetic. Such a fixture does not verify real authentication, account permissions, tenant isolation or billing. Report these coverage limits in the outcome; opening a landing page is not a full application walkthrough. Do not ask for a test account as though this choice were an accidental omission.";
   if (!access)
     return legacySignIn
       ? "Use the existing sign-in recipe below. Report actual sign-in results and leave any inaccessible journeys explicitly unverified."
       : "No app sign-in method has been selected. Signed-in journeys remain untested; report this coverage limit explicitly.";
-  return `Use only these dedicated test accounts for the selected environment. Playwright MCP privately resolves secret names: pass the plain string GREMLINS_TEST_USERNAME_1 or GREMLINS_TEST_PASSWORD_1 as the browser_fill_form or browser_type value (use the matching number for each account; do not wrap the name in tags). Do not read, print or paste the actual values into tool calls. Private browser access blocks navigation and writes outside the selected app origin, including external SSO. Distinguish those worker restrictions from application defects. Login recipe: ${JSON.stringify({ ...access, accounts: access.accounts.map((account, index) => ({ name: account.name, usernameVariable: `GREMLINS_TEST_USERNAME_${index + 1}`, passwordVariable: `GREMLINS_TEST_PASSWORD_${index + 1}` })) })}. This login configuration is not proof of RBAC correctness; test roles and isolation explicitly.`;
+  return `Your managed browser starts with a freshly verified sign-in for the dedicated test identity ${JSON.stringify(access.accounts[0]?.name)}. Use this browser directly to walk the assigned product journeys. Passwords and browser session state remain private to its helper. Do not attempt to read credentials or export session state. If the session expires, report the blocked journey; do not substitute a public landing-page visit or claim verification. The account is reserved for this run. This sign-in proof does not establish roles, permissions, tenant isolation, or product correctness; verify those separately when in scope.`;
 }
 
 export function createJobPreparation(options: JobPreparationOptions) {
   const { root } = options;
   const env = options.env ?? process.env;
+  const identities = createTestIdentityLeases(root);
   const projectKnowledge = createProjectKnowledge({ root });
   function sharedContext(project: Project, area: AreaConfig, job: LocalJob) {
     const value =
@@ -342,6 +349,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
     if (!access.ready) throw new JobReadinessError(access.message);
     if (
       effectiveVerification(project.config).mode === "browser" &&
+      !(
+        effectiveVerification(project.config) as {
+          target?: { access?: TestAccess };
+        }
+      ).target?.access &&
       environmentVerificationStatus(root, project, connections()).status !==
         "passed"
     )
@@ -1205,7 +1217,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
                 ? [
                     accessInstruction(verification.target.access, !!signIn),
                     "Playwright MCP automatically applies saved Vercel preview access privately to the selected app only. With private access configured, external navigation and writes are blocked; report worker restrictions separately from app defects. Navigate directly to its clean URL; never put bypass credentials in URLs or browser tool calls. If Vercel sign-in still appears, report the browser check blocked. curl responses are not browser evidence.",
-                    grumblin
+                    grumblin && !verification.target.access
                       ? "No database or hosting credentials are available; use the browser's normal sign-in with the supplied test account placeholders."
                       : `Sign-in recipe: ${JSON.stringify(signIn ? { ...signIn, databaseUrlSecret: "GREMLINS_PREVIEW_DATABASE_URL" } : null)}.`,
                   ]
@@ -1286,6 +1298,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
       registryUnavailable = true;
     }
     const outcomes = await Promise.allSettled([
+      Promise.resolve().then(() => identities.release(id)),
       sourceControl.releaseLease?.(id),
       ...[...accountIds].map((connectionId) =>
         Promise.resolve().then(() => linearFor(connectionId).releaseLease(id)),
@@ -1322,19 +1335,60 @@ export function createJobPreparation(options: JobPreparationOptions) {
         // an admitted baseline and must not wait on the sync they are fixing.
         await options.beforePmStart?.(job);
       }
-      const payload = await prepare(job);
+      let payload = await prepare(job);
       if (
         job.type === "pm" &&
         job.pmMode &&
         job.pmMode !== "discovery" &&
         options.pinPmBaseline
       )
-        return await options.pinPmBaseline(job, payload);
-      return job.type === "pm" && !job.pmMode && options.beforePm
-        ? await options.beforePm(job, payload)
-        : payload;
+        payload = await options.pinPmBaseline(job, payload);
+      if (job.type === "pm" && !job.pmMode && options.beforePm)
+        payload = await options.beforePm(job, payload);
+      if (
+        job.project &&
+        payload.browserVerification !== false &&
+        job.pmMode !== "discovery" &&
+        (payload.browserTarget || payload.testEnvironment)
+      ) {
+        const project = projectFor(job),
+          verification = effectiveVerification(project.config);
+        if (verification.mode === "browser" && verification.target.access) {
+          const access = verification.target.access;
+          if (access.kind === "password") {
+            const account = access.accounts[0]!;
+            const username = payload.credentials?.GREMLINS_TEST_USERNAME_1;
+            if (!username)
+              throw new JobReadinessError(
+                "Reconnect this project's test account before running its signed-in journeys.",
+              );
+            const lease = identities.acquire(
+              testIdentityKey(project.config, username),
+              job.id,
+            );
+            const identity = testIdentityMetadata(access, 0);
+            payload.testAccess = {
+              version: 1,
+              identityId: identity.id,
+              generation: identity.generation,
+              leaseGeneration: lease.generation,
+              access: { ...access, accounts: [account] },
+            };
+          } else
+            payload.testAccess = {
+              version: 1,
+              identityId: "public",
+              generation: "public",
+              leaseGeneration: job.id,
+              access,
+            };
+        }
+      }
+      return payload;
     } catch (error) {
       await releaseJobResources(job.id);
+      if (error instanceof TestIdentityBusyError)
+        throw new LocalJobDeferredError(error.message);
       if (
         (error instanceof SourceControlError ||
           error instanceof OAuthConnectionError) &&
@@ -1481,7 +1535,41 @@ export function createJobPreparation(options: JobPreparationOptions) {
     scheduledJobs,
     releaseJobResources,
     completeJob: knowledge.capture,
+    requiresManagedAccess: (job: LocalJob) => {
+      if (
+        !job.project ||
+        job.pmMode === "discovery" ||
+        job.developerKind === "sync"
+      )
+        return false;
+      const verification = effectiveVerification(
+        loadProject(root, job.project).config,
+      );
+      return verification.mode === "browser" && !!verification.target.access;
+    },
     admissionBlocker: (job: LocalJob, active: LocalJob[]) => {
+      if (
+        job.project &&
+        job.pmMode !== "discovery" &&
+        job.developerKind !== "sync"
+      ) {
+        const project = loadProject(root, job.project),
+          verification = effectiveVerification(project.config);
+        if (
+          verification.mode === "browser" &&
+          verification.target.access?.kind === "password"
+        ) {
+          const account = verification.target.access.accounts[0]!;
+          const username = connections()[account.usernameSecret];
+          if (username) {
+            const blocked = identities.blocker(
+              testIdentityKey(project.config, username),
+              job.id,
+            );
+            if (blocked) return blocked;
+          }
+        }
+      }
       if (job.type !== "developer" || !job.project || !job.area)
         return undefined;
       const project = loadProject(root, job.project),
