@@ -6,6 +6,16 @@ import { startAccessHelper } from "./access-helper.mjs";
 const username = "fixture-account@example.test",
   password = "fixture-private-password-7654",
   cookie = "fixture-session-cookie-791253";
+const nestedToken = "fixture-nested-storage-token-18273645";
+const refreshToken = "fixture-json-encoded-token-56473829";
+const cache = {
+  padding: "",
+  session: { token: nestedToken },
+  encoded: JSON.stringify({ refreshToken }),
+};
+cache.padding = "x".repeat(114296 - JSON.stringify(cache).length);
+const largeCache = JSON.stringify(cache);
+assert.equal(largeCache.length, 114296);
 let expired = false,
   submissions = 0,
   externalRequests = 0;
@@ -40,7 +50,7 @@ const app = createServer(async (req, res) => {
       "content-type": "text/html",
     });
     res.end(
-      `<script>sessionStorage.setItem('private-value','fixture-session-storage-9341');location.href='/protected';</script>`,
+      `<script>sessionStorage.setItem('private-value','fixture-session-storage-9341');localStorage.setItem('app-cache',${JSON.stringify(largeCache)});location.href='/protected';</script>`,
     );
     return;
   }
@@ -76,7 +86,7 @@ const app = createServer(async (req, res) => {
   }
   if (authenticated)
     res.end(
-      `<h1>Private workspace</h1><div id="account">${username}</div><div id="tenant">Fixture team</div><p id="session-proof"></p><script>document.querySelector('#session-proof').textContent=sessionStorage.getItem('private-value')?'Session storage survived':'No session storage';</script><a href="/signout">Sign out</a>`,
+      `<h1>Private workspace</h1><div id="account">${username}</div><div id="tenant">Fixture team</div><p>${nestedToken}</p><p>${refreshToken}</p><p id="session-proof"></p><script>document.querySelector('#session-proof').textContent=sessionStorage.getItem('private-value')?'Session storage survived':'No session storage';</script><a href="/signout">Sign out</a>`,
     );
   else
     res.end(
@@ -164,6 +174,8 @@ try {
     password,
     cookie,
     "fixture-session-storage-9341",
+    nestedToken,
+    refreshToken,
   ])
     assert.ok(
       !text.includes(secret),

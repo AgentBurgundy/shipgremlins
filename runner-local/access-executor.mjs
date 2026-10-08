@@ -1,6 +1,10 @@
 import { browserOrigin, installBrowserAccess } from "./browser-access.mjs";
 import { suggestLoginControlRepair } from "./access-repair.mjs";
 import {
+  createAccessRedaction,
+  RedactionBudgetError,
+} from "./access-redaction.mjs";
+import {
   parsePasswordRecipe,
   parseIdentityAssertions,
 } from "./access-schema.mjs";
@@ -28,6 +32,8 @@ const messages = {
     "The PM browser did not receive the verified test session.",
   helper_unavailable:
     "The private test-access browser is unavailable. Retry on a healthy runner.",
+  storage_redaction_limit:
+    "The app's browser storage exceeds safe redaction limits. Reduce its test-session cache or review the test fixture; authenticated access was not handed to the agent.",
 };
 export class AccessFailure extends Error {
   constructor(code) {
@@ -140,7 +146,7 @@ export async function prepareAuthenticatedContext(browser, input) {
 
 async function prepareAttempt(browser, input, onUnusableLoginControl) {
   const checks = [],
-    secrets = new Set(
+    secrets = createAccessRedaction(
       [
         input.bypass,
         input.access?.accounts[0].username,
@@ -216,34 +222,22 @@ async function prepareAttempt(browser, input, onUnusableLoginControl) {
       }
     };
     const refreshSecrets = async () => {
-      const collect = (value, depth = 0) => {
-        if (typeof value !== "string" || !value) return;
-        if (value.length > 65536 || secrets.size > 512)
-          throw new AccessFailure("helper_unavailable");
-        secrets.add(value);
-        if (depth >= 6) return;
-        try {
-          const parsed = JSON.parse(value);
-          const walk = (item, level) => {
-            if (level > 6) return;
-            if (typeof item === "string") collect(item, level);
-            else if (item && typeof item === "object")
-              for (const nested of Object.values(item)) walk(nested, level + 1);
-          };
-          if (parsed !== value) walk(parsed, depth + 1);
-        } catch (error) {
-          if (error instanceof AccessFailure) throw error;
-        }
-      };
-      const state = await context.storageState();
-      for (const cookie of state.cookies) collect(cookie.value);
-      for (const origin of state.origins)
-        for (const entry of origin.localStorage) collect(entry.value);
-      // Session storage is never exported to the agent either.
-      const entries = await page
-        .evaluate(() => Object.values(sessionStorage))
-        .catch(() => []);
-      for (const value of entries) collect(value);
+      try {
+        const state = await context.storageState();
+        for (const cookie of state.cookies) secrets.collect(cookie.value);
+        for (const origin of state.origins)
+          for (const entry of origin.localStorage) secrets.collect(entry.value);
+        // Session storage is never exported to the agent either. An unreadable
+        // context must fail closed rather than silently omit its private values.
+        const entries = await page.evaluate(() =>
+          Object.values(sessionStorage),
+        );
+        for (const value of entries) secrets.collect(value);
+      } catch (error) {
+        if (error instanceof RedactionBudgetError)
+          throw new AccessFailure("storage_redaction_limit");
+        throw error;
+      }
     };
     const assertIdentity = async () => {
       if (!input.access) return;
@@ -385,34 +379,16 @@ async function prepareAttempt(browser, input, onUnusableLoginControl) {
       checked("Protected route opens with the expected test identity");
     }
     await refreshSecrets();
-    const redact = (value) => {
-      let text = String(value);
-      for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
-        for (const variant of new Set([
-          secret,
-          encodeURIComponent(secret),
-          JSON.stringify(secret).slice(1, -1),
-        ]))
-          if (variant) {
-            if (variant.length < 8) {
-              const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              text = text.replace(
-                new RegExp(
-                  `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`,
-                  "gu",
-                ),
-                "[private]",
-              );
-            } else text = text.split(variant).join("[private]");
-          }
-      }
-      return text;
-    };
+    const redact = secrets.redact;
     const screenshot = async ({ fullPage = false } = {}) => {
       await refreshSecrets();
       const mask = [page.locator("input,textarea,[contenteditable=true]")];
-      for (const secret of secrets)
-        mask.push(page.getByText(secret, { exact: secret.length < 8 }));
+      const plan = secrets.screenshotPlan();
+      // Descendant boxes also cover fixed-position app roots when body has no height.
+      if (plan.maskAll) mask.push(page.locator("body, body *"));
+      else
+        for (const value of plan.values)
+          mask.push(page.getByText(value, { exact: value.length < 8 }));
       return (
         await page.screenshot({
           type: "png",

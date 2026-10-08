@@ -481,6 +481,7 @@ describe("verification on configured agent services", () => {
     ["authentication_unproven", "login_unverified"],
     ["credentials_rejected", "login_rejected"],
     ["identity_mismatch", "identity_mismatch"],
+    ["storage_redaction_limit", "storage_redaction_limit"],
   ])(
     "turns runner %s into an actionable diagnosis without requiring legacy selector fields",
     async (code, expected) => {
@@ -507,7 +508,13 @@ describe("verification on configured agent services", () => {
       await service.idle();
       expect(service.status("app")).toMatchObject({
         status: "failed",
-        diagnosis: { code: expected, action: "edit_login" },
+        diagnosis: {
+          code: expected,
+          action:
+            expected === "storage_redaction_limit"
+              ? "edit_environment"
+              : "edit_login",
+        },
       });
       expect(JSON.stringify(service.status("app"))).not.toContain(
         "Untrusted exception details",

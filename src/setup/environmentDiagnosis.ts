@@ -99,6 +99,11 @@ const catalog = {
     "Check Docker and the browser worker on the selected agent service, then retry.",
     "retry",
   ],
+  storage_redaction_limit: [
+    "The app's browser storage exceeds the privacy limit",
+    "The private browser could not safely redact this much stored data. Reduce cached data for the dedicated test account, then test again. No browser content was shared with the gremlin; this does not mean the password is wrong.",
+    "edit_environment",
+  ],
   environment_unreachable: [
     "The app could not be reached",
     "The browser could not finish opening the app. Check the test address and network access from the worker.",
