@@ -102,6 +102,27 @@ it("loads each PM's optional promotion target and rejects invalid sizes", () => 
     expect(() => loadProject(root, "demo")).toThrow(/promotionBatchSize/);
   }
 });
+it("loads explicit PM testing requirements without changing legacy defaults", () => {
+  const areas = structuredClone(AREAS) as {
+    areas: { core: Record<string, unknown> };
+  };
+  writeProject("demo", { areas });
+  expect(
+    loadProject(root, "demo").areas[0]!.verificationRequirement,
+  ).toBeUndefined();
+  for (const value of ["browser", "repository"]) {
+    areas.areas.core.verificationRequirement = value;
+    writeProject("demo", { areas });
+    expect(loadProject(root, "demo").areas[0]!.verificationRequirement).toBe(
+      value,
+    );
+  }
+  for (const value of ["auto", "", true, null]) {
+    areas.areas.core.verificationRequirement = value;
+    writeProject("demo", { areas });
+    expect(() => loadProject(root, "demo")).toThrow(/verificationRequirement/);
+  }
+});
 it("binds recreated PM memory branches to a validated instance while retaining legacy branch names", () => {
   writeProject("demo");
   expect(loadProject(root, "demo").areas[0]!.memoryBranch).toBe("pm/demo/core");

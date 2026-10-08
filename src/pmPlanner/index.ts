@@ -1,6 +1,11 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { loadProject, type Project } from "../config.ts";
+import {
+  loadProject,
+  isPmVerificationRequirement,
+  type PmVerificationRequirement,
+  type Project,
+} from "../config.ts";
 import { effectiveWorkflow, inspectionBranch } from "../projectCapabilities.ts";
 import {
   createSourceControl,
@@ -32,6 +37,8 @@ export class PmPlannerError extends Error {
   }
 }
 export interface PmDraft {
+  /** Optional only for compatibility with previously saved suggestions. */
+  verificationRequirement?: PmVerificationRequirement;
   name: string;
   key: string;
   /** Derived from the validated key, never an AI-selected routing label. */
@@ -74,6 +81,7 @@ const SYSTEM = `You draft complete, editable product-manager configuration for h
 Fill every schema field with a useful, concise suggestion. Preserve the original mandate by returning no replacement mandate. Suggest a focused, memorable PM name and unique kebab-case key, specific ownership paths and shared touchpoints chosen EXACTLY from supplied repository paths. Do not invent paths or claim independent code review. Only file/directory names are current; an optional savedSourceInspection contains actual earlier source excerpts at its labeled commit. Use those excerpts to inform product responsibilities while flagging any assumptions that need rechecking. If no saved inspection is supplied, only names are available. Consider existing PM ownership: prefer a focused scope, and identify shared dependencies or overlaps that need coordination in the rationale. Do not alter other PMs or shared project permission tiers.
 The owner will meet and adopt this PM as a working Gremlin. Give it a short, warm creature name with character, inspired by its responsibility; keep the technical key descriptive of its job. The charter must remain practical and professional. A playful name does not imply feelings, personal history, qualifications, or abilities beyond the configured PM workflow.
 Use a conservative UTC five-field schedule, daily at 13:00 UTC by default, and a WIP limit of 1-5, normally 1-3. The metric is a proposed page path, event, or named outcome for the user to confirm, not a claim that telemetry is configured. Do not invent existing baselines, numeric targets, customer research, credentials, test accounts, provider resource IDs, or integrations.
+Set verificationRequirement to "browser" when this PM must walk through an existing interface or verify user interactions, and "repository" when code, API, CLI or background-system investigation is sufficient. This is a minimum coverage requirement, not a way to disable the project's configured browser testing. Base the choice on the owner's scope and supplied source evidence; do not claim a runnable environment or test accounts are already configured. Explain uncertain scope in the rationale so the owner can review it.
 Provide the full product charter:
 - ambition: the product experience or capability this mandate should help make possible.
 - goal: the concrete outcome this PM should pursue, consistent with the original mandate.
@@ -120,10 +128,15 @@ export const PM_DRAFT_SCHEMA: Record<string, unknown> = {
     "metric",
     "schedule",
     "wipLimit",
+    "verificationRequirement",
     "charter",
     "rationale",
   ],
   properties: {
+    verificationRequirement: {
+      type: "string",
+      enum: ["browser", "repository"],
+    },
     name: { type: "string", minLength: 1, maxLength: 100 },
     key: {
       type: "string",
@@ -407,6 +420,8 @@ export function validatePmDraft(
     throw invalid();
   if (
     !printable(value.name, 100) ||
+    (value.verificationRequirement !== undefined &&
+      !isPmVerificationRequirement(value.verificationRequirement)) ||
     typeof value.key !== "string" ||
     value.key.length > 63 ||
     !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(value.key) ||
@@ -466,6 +481,9 @@ export function validatePmDraft(
   }
   return {
     draft: {
+      ...(value.verificationRequirement === undefined
+        ? {}
+        : { verificationRequirement: value.verificationRequirement }),
       name: value.name.trim(),
       key: value.key,
       label: `pm:${value.key}`,
@@ -648,6 +666,12 @@ export function createPmPlanner(options: PmPlannerOptions) {
           project.areas.map((area) => area.key),
           secrets,
         );
+        if (!result.draft.verificationRequirement)
+          throw new PmPlannerError(
+            "AI omitted this PM's testing requirement. Try again or choose it manually; nothing was saved.",
+            "invalid_draft",
+            422,
+          );
         return {
           ...result,
           repository: context.repository,

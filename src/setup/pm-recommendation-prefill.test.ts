@@ -68,6 +68,7 @@ function fixture() {
     "pm-schedule": "schedule",
     "pm-metric": "metric",
     "pm-wip": "wipLimit",
+    "pm-verification-requirement": "verificationRequirement",
   };
   let charter: object = {};
   const fill = vi.fn((value: object) => {
@@ -148,6 +149,7 @@ const suggested = () => ({
     schedule: "0 12 * * 1-5",
     wipLimit: 2,
     metric: "/checkout",
+    verificationRequirement: "browser",
     charter: {
       goal: "Raise checkout completion",
       ambition: "Trustworthy purchase flow",
@@ -176,6 +178,7 @@ describe("recommendation adoption handoff", () => {
     expect(f.get("pm-shared-paths").value).toBe("src/auth.ts");
     expect(f.get("pm-schedule").value).toBe("0 12 * * 1-5");
     expect(f.get("pm-wip").value).toBe("2");
+    expect(f.get("pm-verification-requirement").value).toBe("browser");
     expect(f.context.pmCharter.fill).toHaveBeenCalledWith(
       suggestion.draft.charter,
     );

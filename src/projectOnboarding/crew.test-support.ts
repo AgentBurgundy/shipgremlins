@@ -9,6 +9,7 @@ export function suggestedPm(
     evidence: [{ path, quote: "Sign in" }],
     rationale: `The inspected ${path} grounds this proposed responsibility.`,
     draft: {
+      verificationRequirement: "browser" as const,
       name,
       key,
       paths: [path],

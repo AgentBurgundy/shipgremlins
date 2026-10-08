@@ -84,6 +84,7 @@ function edit(
     };
     areas: {
       core: {
+        verificationRequirement?: "browser" | "repository";
         enabled: boolean;
         codingEnabled?: boolean;
         linearProjectId: string;
@@ -165,6 +166,57 @@ function chooseBrowserAccess(access: TestAccess = { kind: "public" }) {
   });
 }
 describe("local job preparation", () => {
+  it("keeps browser-required PMs out of repository-only admission, scheduling and queued launch while allowing discovery", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "repository" };
+      raw.environments = {};
+    });
+    const prepared = setup();
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      area: "core",
+      runOnce: true,
+    };
+    const admitted = await prepared.validate(input);
+    edit("areas.json", (raw) => {
+      raw.areas.core.verificationRequirement = "browser";
+    });
+    await expect(prepared.validate(input)).rejects.toThrow(
+      "requires a browser walkthrough",
+    );
+    expect(
+      (await prepared.scheduledJobs()).some((entry) => entry.type === "pm"),
+    ).toBe(false);
+    await expect(
+      prepared.prepareJob({
+        ...job,
+        ...input,
+        ticket: undefined,
+        discoveryRevision: admitted.discoveryRevision,
+      }),
+    ).rejects.toThrow("requires a browser walkthrough");
+    await expect(
+      prepared.validate({ ...input, pmMode: "discovery" }),
+    ).resolves.toMatchObject({ area: { key: "core" } });
+    edit("areas.json", (raw) => {
+      raw.areas.core.verificationRequirement = "repository";
+    });
+    await expect(prepared.validate(input)).resolves.toMatchObject({
+      area: { key: "core" },
+    });
+    expect(
+      (await prepared.scheduledJobs()).some((entry) => entry.type === "pm"),
+    ).toBe(true);
+    edit("areas.json", (raw) => {
+      raw.areas.core.verificationRequirement = "browser";
+    });
+    chooseBrowserAccess();
+    await expect(prepared.validate(input)).resolves.toMatchObject({
+      area: { key: "core" },
+    });
+  });
   it("lets admitted promotion repairs prepare without waiting on their own staging sync", async () => {
     const beforePmStart = vi.fn(async () => {
       throw new LocalJobDeferredError(

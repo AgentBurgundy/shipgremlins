@@ -87,7 +87,15 @@ export interface ProjectConfig extends ProjectCapabilities {
   } | null;
 }
 
+export type PmVerificationRequirement = "browser" | "repository";
+export function isPmVerificationRequirement(
+  value: unknown,
+): value is PmVerificationRequirement {
+  return value === "browser" || value === "repository";
+}
 export interface AreaConfig {
+  /** Minimum patrol coverage; omission follows the project's testing mode. */
+  verificationRequirement?: PmVerificationRequirement;
   /** Distinct PM-tested tickets required before an automatic promotion is opened. */
   promotionBatchSize?: number;
   /** Controller-issued identity for a fresh PM that reuses a deleted key. */
@@ -578,6 +586,17 @@ export function loadProject(root: string, name: string): Project {
             "a controller-issued PM instance UUID",
           );
     areas.push({
+      ...(a.verificationRequirement === undefined
+        ? {}
+        : {
+            verificationRequirement: need(
+              af,
+              a,
+              "verificationRequirement",
+              isPmVerificationRequirement,
+              '"browser" or "repository"',
+            ),
+          }),
       ...(instanceId ? { instanceId } : {}),
       ...(charter ? { charter } : {}),
       ...(a.mixpanelReportId === undefined

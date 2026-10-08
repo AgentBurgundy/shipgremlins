@@ -65,6 +65,44 @@ function fixture(): PmPromptInput {
 }
 
 describe("PM prompt policy and knowledge contracts", () => {
+  it("requires a real bounded browser journey before source crawls for UI PMs and leaves discovery available", () => {
+    const input = fixture();
+    input.area.verificationRequirement = "browser";
+    expect(() => buildPmPatrolPrompt(input)).toThrow(
+      "requires a browser walkthrough",
+    );
+    expect(() => buildPmDiscoveryPrompt(input)).not.toThrow();
+    input.project.config.verification = {
+      mode: "browser",
+      environment: "fixture",
+    };
+    input.project.config.environments = {
+      fixture: {
+        kind: "url",
+        role: "preview",
+        url: "http://fixture:4311",
+        access: { kind: "public" },
+      },
+    };
+    const prompt = buildPmPatrolPrompt(input);
+    expect(prompt.indexOf("REQUIRED BROWSER WALKTHROUGH")).toBeLessThan(
+      prompt.indexOf("CONFIGURED PATROL COMMANDS"),
+    );
+    expect(prompt).toContain(
+      "A landing-page load or screenshot alone is not a completed journey",
+    );
+    expect(prompt).toContain(
+      "does not prohibit testing reachable app features or a synthetic session",
+    );
+    expect(prompt).toContain(
+      "You do not need to cover every page in one patrol",
+    );
+    input.area.verificationRequirement = "repository";
+    expect(buildPmPatrolPrompt(input)).toContain("Browser verification:");
+    expect(buildPmPatrolPrompt(input)).not.toContain(
+      "REQUIRED BROWSER WALKTHROUGH",
+    );
+  });
   it.each(["patrol", "exploration"] as const)(
     "allows scoped approval in promotion %s but keeps discovery and knowledge contexts read-only",
     (focus) => {

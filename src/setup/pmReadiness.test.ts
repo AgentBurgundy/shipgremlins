@@ -88,6 +88,57 @@ function fixture() {
   };
 }
 describe("PM readiness and automation controls", () => {
+  it("blocks only the UI PM when its minimum browser requirement has no runtime", async () => {
+    const f = fixture();
+    const areas = JSON.parse(readFileSync(f.areasFile, "utf8"));
+    areas.areas.core.verificationRequirement = "browser";
+    areas.areas.backend = {
+      ...areas.areas.core,
+      label: "pm:backend",
+      verificationRequirement: "repository",
+    };
+    writeFileSync(f.areasFile, JSON.stringify(areas));
+    const readiness = f.inspect();
+    expect(readiness.areas[0]).toMatchObject({
+      canRun: false,
+      canEnable: false,
+      configured: false,
+      blockers: [
+        expect.objectContaining({
+          id: "pm_browser_required",
+          action: "environment",
+        }),
+      ],
+      coding: { canEnable: true },
+    });
+    expect(readiness.areas[1]).toMatchObject({ canRun: true, canEnable: true });
+    await expect(
+      setPmAutomation(f.root, "demo", "core", f.input(true), {
+        context: async () => f.context,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      blockers: [expect.objectContaining({ id: "pm_browser_required" })],
+    });
+    const raw = JSON.parse(readFileSync(f.projectFile, "utf8"));
+    raw.verification = { mode: "browser", environment: "preview" };
+    raw.environments = {
+      preview: {
+        kind: "url",
+        role: "preview",
+        url: "https://preview.example.test",
+        access: { kind: "public" },
+      },
+    };
+    writeFileSync(f.projectFile, JSON.stringify(raw));
+    f.context.environmentVerification = () => ({ status: "untested" });
+    expect(f.inspect().areas.every((area) => !area.canRun)).toBe(true);
+    expect(f.inspect().areas[0]!.blockers).toContainEqual(
+      expect.objectContaining({ id: "browser_verification" }),
+    );
+    f.context.environmentVerification = () => ({ status: "passed" });
+    expect(f.inspect().areas.every((area) => area.canRun)).toBe(true);
+  });
   it.each(["repository", "url", "docker", "cloud-run"])(
     "keeps %s source patrols available but blocks promotion coding without supported deployment provenance",
     (kind) => {

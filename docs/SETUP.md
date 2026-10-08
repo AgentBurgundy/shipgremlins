@@ -45,10 +45,13 @@ project**, then choose the path that fits your app:
    dialog is open, use **Refresh teams & projects** to load it without closing the
    dialog or clearing your current selection.
 6. **Connect a test environment.** For a runnable app, the next step opens
-   Environment. **Connect Vercel** signs in and resumes preview discovery and
+   Environment. An existing Docker recipe can offer **Set up Docker & test**;
+   this saves the suggested recipe and checks the app in Chromium. **Connect Vercel** signs in and resumes preview discovery and
    testing automatically. Other hosting and Docker remain available. Once the
    test target is selected, you can add optional Sentry, Mixpanel or Datadog
    context. Read-only Discovery does not receive telemetry credentials.
+   PMs whose briefs require browser walkthroughs stay blocked until browser
+   access passes; repository-only verification does not satisfy that requirement.
 7. **Give it a first assignment.** Choose **Explore the codebase** to run
    **Discovery**, or **Prepare first mission** if source access, Claude Code, or
    a ready worker is missing. Linear and a browser environment are not required. A new idea instead

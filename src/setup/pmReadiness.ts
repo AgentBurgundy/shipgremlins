@@ -82,6 +82,21 @@ export function hasPmMandate(project: Project, area: AreaConfig): boolean {
     return false;
   }
 }
+/** An explicit UI mandate cannot silently become a repository-only patrol. */
+export function pmVerificationBlocker(
+  project: Project,
+  area: AreaConfig,
+): ReadinessBlocker | undefined {
+  return area.verificationRequirement === "browser" &&
+    effectiveVerification(project.config).mode !== "browser"
+    ? {
+        id: "pm_browser_required",
+        action: "environment",
+        message:
+          "This PM requires a browser walkthrough. Set up a non-production test environment and test app access before starting its patrol. Repository discovery is still available.",
+      }
+    : undefined;
+}
 /** Promotion coding needs provider deployment provenance and an actual access check. */
 export function promotionEnvironmentBlocker(
   project: Project,
@@ -305,6 +320,8 @@ export function inspectPmReadiness(
   });
   const areas = project.areas.map((area) => {
     const blockers = [...common];
+    const browserRequirement = pmVerificationBlocker(project, area);
+    if (browserRequirement) blockers.push(browserRequirement);
     if (!hasPmMapping(area))
       blockers.push({
         id: "linear_mapping",
@@ -335,7 +352,12 @@ export function inspectPmReadiness(
       });
     const codingBlockers = blockers.filter(
       (item) =>
-        !["worker", "test_access", "browser_verification"].includes(item.id),
+        ![
+          "worker",
+          "test_access",
+          "browser_verification",
+          "pm_browser_required",
+        ].includes(item.id),
     );
     if (promotionEnvironment) codingBlockers.push(promotionEnvironment);
     return {

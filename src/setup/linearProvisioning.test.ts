@@ -1315,6 +1315,7 @@ describe("Linear app and mandate provisioning", () => {
       key: "security",
       name: "Security",
       mandate: "Test RBAC with test accounts.",
+      verificationRequirement: "browser",
       enabled: false,
       codingEnabled: false,
       charter: {
@@ -1329,7 +1330,21 @@ describe("Linear app and mandate provisioning", () => {
     )!;
     expect(area.enabled).toBe(false);
     expect(area.mandate).toContain("RBAC");
+    expect(area.verificationRequirement).toBe("browser");
     expect(area.charter?.ambition).toBe("Prevent cross-account exposure.");
+    await expect(
+      f.create().addArea("demo", {
+        key: "bad-requirement",
+        name: "Bad",
+        mandate: "Inspect the UI",
+        verificationRequirement: "auto",
+      }),
+    ).rejects.toThrow("testing requirement");
+    expect(
+      loadProject(f.root, "demo").areas.some(
+        (item) => item.key === "bad-requirement",
+      ),
+    ).toBe(false);
     await f.create().provision("demo");
     await f.create().provision("demo");
     expect(f.client.createTeam).toHaveBeenCalledTimes(1);

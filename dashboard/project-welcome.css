@@ -359,3 +359,13 @@
     padding: 18px;
   }
 }
+.welcome-local-environment {
+  grid-column: 1 / -1;
+  padding: 13px 15px;
+  border: 1px solid #d3e2c8;
+  border-radius: 10px;
+  background: #f7fbf2;
+}
+.welcome-local-environment .welcome-note {
+  margin: 0 0 10px;
+}

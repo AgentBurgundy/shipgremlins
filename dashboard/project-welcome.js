@@ -253,7 +253,16 @@
         ],
         section = el("section", undefined, "welcome-setup-journey"),
         list = el("ol", undefined, "welcome-setup-steps");
-      if (s.suggestionsOnly && activeCrew && allReady) return null;
+      if (
+        s.suggestionsOnly &&
+        activeCrew &&
+        allReady &&
+        !(
+          s.data?.recommendedDocker?.status === "ready" &&
+          project.verification?.mode !== "browser"
+        )
+      )
+        return null;
       section.setAttribute("data-compact", String(s.suggestionsOnly));
       section.append(
         el("span", "CREW SETUP", "eyebrow muted"),
@@ -281,6 +290,24 @@
         track.append(el("span", undefined, done ? "complete" : "pending"));
       progress.append(track);
       section.append(progress);
+      if (
+        s.data?.recommendedDocker?.status === "ready" &&
+        project.verification?.mode !== "browser"
+      ) {
+        const local = el("div", undefined, "welcome-local-environment");
+        local.append(
+          el(
+            "p",
+            "A local Docker test app is ready to set up. Repository checks do not open the app in a browser.",
+            "welcome-note",
+          ),
+          link(
+            "Set up Docker & test",
+            `/projects/${encodeURIComponent(project.name)}?tab=environment`,
+          ),
+        );
+        section.append(local);
+      }
       list.setAttribute("aria-label", "Project setup progress");
       const next = steps.find(([, done]) => !done);
       for (const [label, done] of steps) {
