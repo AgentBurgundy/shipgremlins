@@ -1,7 +1,13 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, realpathSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  realpathSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -376,8 +382,14 @@ describe("pinned CLI catalog protocol", () => {
     await expect(nativeFixture("codex", "secret").execute()).rejects.toThrow(
       /unavailable/,
     );
+    const fixture = nativeFixture("codex");
+    const directory = join(fixture.root, "must-not-create");
     await expect(
-      readAiModelCatalog({ provider: "codex", auth: canonical() }),
+      readAiModelCatalog(
+        { provider: "codex", auth: canonical() },
+        { directory },
+      ),
     ).rejects.toThrow(/access-only/);
+    expect(existsSync(directory)).toBe(false);
   });
 });
