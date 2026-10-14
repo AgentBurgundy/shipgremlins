@@ -1,4 +1,5 @@
 import { LocalRunnerError } from "../localRunners/engine.ts";
+import { aiSecretValues } from "../ai/provider.ts";
 import {
   runAccessProbe,
   RunnerProbeError,
@@ -580,9 +581,10 @@ export function createEnvironmentAccess(options: {
         try {
           if (target.kind === "docker") {
             try {
-              assertPublicBuildValues(
-                target,
-                [
+              assertPublicBuildValues(target, [
+                ...aiSecretValues(values),
+                ...aiSecretValues(readConnections(root)),
+                ...[
                   ...new Set([
                     ...CONNECTIONS.map((connection) => connection.name),
                     ...projectConnections(root).map(
@@ -590,7 +592,7 @@ export function createEnvironmentAccess(options: {
                     ),
                   ]),
                 ].map((name) => values[name]),
-              );
+              ]);
             } catch {
               throw new EnvironmentAccessError(
                 "A public build argument contains a saved credential. Move it to a BuildKit TEST_* secret reference before retrying.",

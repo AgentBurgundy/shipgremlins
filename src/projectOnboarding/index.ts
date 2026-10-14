@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { loadProject } from "../config.ts";
+import {
+  aiSecretValues,
+  hasAiCredentials,
+  selectedAiCredential,
+} from "../ai/provider.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
 import {
   CONNECTIONS,
@@ -153,8 +158,8 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
       message:
         state.status === "idle" &&
         !state.report &&
-        !env().CLAUDE_CODE_OAUTH_TOKEN?.trim()
-          ? "Connect Claude Code in Connections to ask the Setup Gremlin to analyze this repository, or choose an existing test URL below without AI."
+        !hasAiCredentials(root, env())
+          ? "Connect your selected AI provider in Connections to ask the Setup Gremlin to analyze this repository, or choose an existing test URL below without AI."
           : state.message,
       updatedAt: state.updatedAt,
       ...(state.failure ? { failure: state.failure } : {}),
@@ -266,13 +271,9 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
     publishing: boolean,
   ) {
     const saved = env();
-    if (
-      !publishing &&
-      (!saved.CLAUDE_CODE_OAUTH_TOKEN?.trim() ||
-        /[\r\n\0]/.test(saved.CLAUDE_CODE_OAUTH_TOKEN))
-    )
+    if (!publishing && !hasAiCredentials(root, saved))
       throw new ProjectOnboardingError(
-        "Connect Claude Code in Connections before asking the Setup Gremlin to analyze this repository.",
+        "Connect your selected AI provider in Connections before asking the Setup Gremlin to analyze this repository.",
         400,
         "claude_missing",
       );
@@ -326,6 +327,8 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
           ),
         );
         const secrets = [
+          ...aiSecretValues(saved),
+          ...aiSecretValues(readConnections(root)),
           ...Object.values(readConnections(root)),
           ...[...secretNames].map((name) => saved[name]),
           credential.token,
@@ -389,7 +392,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
           );
           await update(project, id, (next) => {
             next.stage = "analyzing-files";
-            next.message = `Claude is analyzing ${snapshot.files.length} safe source files. This is analysis, not environment verification.`;
+            next.message = `The selected AI is analyzing ${snapshot.files.length} safe source files. This is analysis, not environment verification.`;
           });
           const prompt = JSON.stringify({
             project,
@@ -413,7 +416,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
                 project,
                 projectInstanceId: projectConfig.config.instanceId,
               },
-              credential: saved.CLAUDE_CODE_OAUTH_TOKEN!,
+              ...selectedAiCredential(root, saved)!,
               system: SETUP_SYSTEM,
               schema: setupAnalysisSchema(projectConfig.areas.length > 0),
               signal,
@@ -461,7 +464,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
               ? "Setup timed out or was canceled. Retry explicitly; existing output was preserved."
               : publishing
                 ? "Setup publication could not finish. Retry to reconcile the existing draft branch; no branch will be overwritten."
-                : "Setup analysis could not finish. Check source access, Claude Code and Docker, then retry. No project configuration was changed.";
+                : "Setup analysis could not finish. Check source access, your AI connection and Docker, then retry. No project configuration was changed.";
         await update(project, id, (next) => {
           if (error instanceof PlannerExecutionError)
             next.failure = { code: error.code, stage: next.stage };
@@ -632,6 +635,8 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
         );
         const saved = env();
         const privateValues = [
+          ...aiSecretValues(saved),
+          ...aiSecretValues(readConnections(root)),
           credential.token,
           ...[
             ...CONNECTIONS.map((connection) => connection.name),

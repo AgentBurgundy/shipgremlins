@@ -1,6 +1,13 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
+import {
+  aiCredentials,
+  aiCredentialNames,
+  aiSecretValues,
+  hasAiCredentials,
+  resolveAiSelection,
+} from "../ai/provider.ts";
 import { CronExpressionParser } from "cron-parser";
 import {
   listProjectNames,
@@ -100,6 +107,8 @@ export class JobReadinessError extends Error {
 }
 
 export interface JobPreparationOptions {
+  /** Trusted controller refresh; model workers never write back account credentials. */
+  prepareCodexCredentials?: () => Promise<Record<string, string>>;
   deliveryRecords?: (project: string) => DeliveryRecord[];
   prepareSyncRepair?: (job: LocalJob) => Promise<DockerJobPayload>;
   beforePmStart?: (job: LocalJob) => Promise<void>;
@@ -389,10 +398,15 @@ export function createJobPreparation(options: JobPreparationOptions) {
         "LINEAR_API_KEY",
         "VERCEL_TOKEN",
         "CLAUDE_CODE_OAUTH_TOKEN",
+        "CODEX_AUTH_JSON",
       ]);
-      return [...names]
-        .map((name) => env[name] ?? saved[name])
-        .filter((value): value is string => Boolean(value));
+      return [
+        ...aiSecretValues(saved),
+        ...aiSecretValues(connections()),
+        ...[...names]
+          .map((name) => env[name] ?? saved[name])
+          .filter((value): value is string => Boolean(value)),
+      ];
     },
   });
   const linear = (key: string) =>
@@ -476,9 +490,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
         "Write and review this PM's mandate before running it.",
       );
     if (!input.runOnce || !checkConnections) return;
-    if (!connections().CLAUDE_CODE_OAUTH_TOKEN?.trim())
+    if (!hasAiCredentials(root, connections()))
       throw new JobReadinessError(
-        "Save a Claude Code connection in Connections before running a gremlin.",
+        "Connect the selected AI provider in Connections before running a gremlin.",
       );
     try {
       await sourceControl.resolveCredential?.({
@@ -921,9 +935,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const ownerRevision = ticket ? knowledgeRevision(project, area) : undefined;
     if (job.pmMode === "discovery") {
       const saved = connections();
-      if (!saved.CLAUDE_CODE_OAUTH_TOKEN?.trim())
+      if (!hasAiCredentials(root, saved))
         throw new JobReadinessError(
-          "Save a Claude Code connection before discovery.",
+          "Connect the selected AI provider before discovery.",
         );
       const provider = project.config.provider ?? "github";
       const branch = discoveryBranch(project.config);
@@ -942,6 +956,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         memory["mandate.md"] = readFileSync(mandatePath, "utf8");
       return {
         kind: "pm",
+        ai: resolveAiSelection(root, saved),
         pmMode: "discovery",
         browserVerification: false,
         nonce: job.id,
@@ -949,7 +964,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         repoUrl: `${(project.config.serverUrl ?? (provider === "gitlab" ? "https://gitlab.com" : "https://github.com")).replace(/\/$/, "")}/${project.config.repo}.git`,
         branch,
         credentials: {
-          CLAUDE_CODE_OAUTH_TOKEN: saved.CLAUDE_CODE_OAUTH_TOKEN,
+          ...aiCredentials(root, saved),
           [provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"]:
             credential.token,
         },
@@ -979,15 +994,14 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const checkoutBranch = job.type === "pm" ? deployedBranch : branch;
     const provider = project.config.provider ?? "github";
     const sourceKey = provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN";
-    const required = ["CLAUDE_CODE_OAUTH_TOKEN"];
+    const ai = resolveAiSelection(root, saved);
+    const required = aiCredentialNames(ai.provider);
     const missing = required.filter((name) => !saved[name]);
     if (missing.length)
       throw new Error(
         `Save these connections before running a job: ${missing.join(", ")}.`,
       );
-    const credentials: Record<string, string> = Object.fromEntries(
-      required.map((name) => [name, saved[name]!]),
-    );
+    const credentials: Record<string, string> = aiCredentials(root, saved);
     Object.assign(credentials, projectSecrets(root, project, env));
     if (grumblin) delete credentials.GREMLINS_PREVIEW_DATABASE_URL;
     let preview: string | undefined;
@@ -1189,6 +1203,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
     const payload: DockerJobPayload = {
       kind: job.type,
+      ai,
       ...(commitIdentity ? { commitIdentity } : {}),
       ...(job.pmMode ? { pmMode: job.pmMode } : {}),
       ...(grumblin &&
@@ -1275,6 +1290,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
       });
       payload.expectedCommitSha = head.sha;
       assertPublicBuildValues(verification.target, [
+        ...aiSecretValues(saved),
+        ...aiSecretValues(credentials),
+        ...aiSecretValues(readConnections(root)),
         ...Object.values(readConnections(root)),
         ...Object.values(credentials),
         ...[...CONNECTIONS, ...projectConnections(root)].map(
@@ -1355,6 +1373,36 @@ export function createJobPreparation(options: JobPreparationOptions) {
         "A job credential reservation could not be released; it remains bounded by its expiry.",
       );
   }
+  async function prepareAiPayload(
+    payload: DockerJobPayload,
+  ): Promise<DockerJobPayload> {
+    if (payload.ai?.provider !== "codex") return payload;
+    if (!options.prepareCodexCredentials)
+      throw new JobReadinessError(
+        "This controller cannot refresh Codex account access. Update ShipGremlins before running Codex jobs.",
+      );
+    const credentials = await options.prepareCodexCredentials();
+    if (!credentials.CODEX_AUTH_JSON)
+      throw new JobReadinessError(
+        "Reconnect Codex in Connections before running this job.",
+      );
+    const current = resolveAiSelection(root, connections());
+    if (
+      current.provider !== payload.ai.provider ||
+      current.model !== payload.ai.model
+    )
+      throw new LocalJobDeferredError(
+        "The selected AI provider changed while preparing this run. It will retry with the current provider.",
+      );
+    return {
+      ...payload,
+      credentials: {
+        ...payload.credentials,
+        CODEX_AUTH_JSON: credentials.CODEX_AUTH_JSON,
+      },
+    };
+  }
+
   async function prepareJob(job: LocalJob): Promise<DockerJobPayload> {
     try {
       if (job.developerKind === "sync") {
@@ -1362,7 +1410,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
           throw new JobReadinessError(
             "This controller cannot prepare staging repairs.",
           );
-        return await options.prepareSyncRepair(job);
+        return await prepareAiPayload(await options.prepareSyncRepair(job));
       }
       if (job.type === "pm" && job.pmMode !== "discovery") {
         assertPmTestAccess(projectFor(job), job);
@@ -1378,7 +1426,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         // an admitted baseline and must not wait on the sync they are fixing.
         await options.beforePmStart?.(job);
       }
-      let payload = await prepare(job);
+      let payload = await prepareAiPayload(await prepare(job));
       if (
         job.type === "pm" &&
         job.pmMode &&

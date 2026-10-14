@@ -1620,7 +1620,7 @@
             "p",
             "",
             blocker?.message ||
-              "Connect source control, Claude, and a verified worker to run discovery.",
+              "Connect source control, your selected AI provider, and a verified worker to run discovery.",
           ),
         );
         if (blocker?.action)

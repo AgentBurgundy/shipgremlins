@@ -1,4 +1,9 @@
 import { spawn } from "node:child_process";
+import {
+  codexSecretValues,
+  prepareCodexInvocation,
+  validateAiSelection,
+} from "./codex.mjs";
 import { validateGrumblinPayload } from "./grumblin-runtime.mjs";
 import {
   appendFileSync,
@@ -71,6 +76,7 @@ const allowedCredentials = new Set([
   "GITHUB_TOKEN",
   "GITLAB_TOKEN",
   "CLAUDE_CODE_OAUTH_TOKEN",
+  "CODEX_AUTH_JSON",
   "ANTHROPIC_API_KEY",
   "LINEAR_API_KEY",
   "GREMLINS_PREVIEW_BYPASS",
@@ -97,17 +103,22 @@ function log(value) {
   appendFileSync("/output/job.log", line + "\n");
   console.log(line);
 }
-const activity = createActivityWriter({
-  redact,
-  write: (line) => {
-    appendFileSync(
-      "/output/activity.jsonl",
-      line.slice("GREMLINS_ACTIVITY ".length) + "\n",
-    );
-    log(line);
-  },
-});
-const usage = createUsageCollector();
+function activityFor(provider = "claude") {
+  return createActivityWriter({
+    provider,
+    redact,
+    write: (line) => {
+      appendFileSync(
+        "/output/activity.jsonl",
+        line.slice("GREMLINS_ACTIVITY ".length) + "\n",
+      );
+      log(line);
+    },
+  });
+}
+let activity = activityFor();
+let usage = createUsageCollector();
+let codexInvocation;
 async function run(command, args, options = {}) {
   if (stopping) throw new Error("Job stopped.");
   if (!options.model)
@@ -158,6 +169,11 @@ async function run(command, args, options = {}) {
               const parsed = JSON.parse(line);
               if (parsed.type === "result" && parsed.is_error === true)
                 modelError = true;
+              if (
+                options.model &&
+                ["turn.failed", "error"].includes(parsed.type)
+              )
+                modelError = true;
               if (options.model) {
                 if (stream === modelStream) usage.modelRecord(parsed);
                 activity.modelRecord(parsed);
@@ -182,6 +198,8 @@ async function run(command, args, options = {}) {
           try {
             const parsed = JSON.parse(pending);
             if (parsed.type === "result" && parsed.is_error === true)
+              modelError = true;
+            if (["turn.failed", "error"].includes(parsed.type))
               modelError = true;
             if (stream === modelStream) usage.modelRecord(parsed);
             activity.modelRecord(parsed);
@@ -241,6 +259,9 @@ try {
   if (!input || !["verify", "pm", "developer"].includes(input.kind))
     throw new Error("Unsupported job kind.");
   kind = input.kind;
+  const ai = validateAiSelection(input.ai);
+  activity = activityFor(ai.provider);
+  usage = createUsageCollector({ provider: ai.provider, model: ai.model });
   if (input.managedAccess) {
     validateManagedAccess(input.managedAccess);
     if (
@@ -381,6 +402,7 @@ try {
               "GITHUB_TOKEN",
               "GITLAB_TOKEN",
               "CLAUDE_CODE_OAUTH_TOKEN",
+              "CODEX_AUTH_JSON",
             ].includes(key),
         ))
     )
@@ -398,12 +420,27 @@ try {
         (!allowedCredentials.has(key) &&
           !/^GREMLINS_TEST_(USERNAME|PASSWORD)_[1-8]$/.test(key)) ||
         typeof value !== "string" ||
-        value.length > 16384 ||
+        value.length > (key === "CODEX_AUTH_JSON" ? 65536 : 16384) ||
         /[\r\n\0]/.test(value)
       )
         throw new Error("Unsupported job credential.");
     }
-    secrets = Object.values(credentials)
+    if (
+      (ai.provider === "codex" &&
+        (!credentials.CODEX_AUTH_JSON ||
+          credentials.CLAUDE_CODE_OAUTH_TOKEN ||
+          credentials.ANTHROPIC_API_KEY)) ||
+      (ai.provider === "claude" && credentials.CODEX_AUTH_JSON)
+    )
+      throw new Error(
+        "Use only the selected AI provider's private connection.",
+      );
+    secrets = [
+      ...Object.values(credentials),
+      ...(ai.provider === "codex"
+        ? codexSecretValues(credentials.CODEX_AUTH_JSON)
+        : []),
+    ]
       .filter(Boolean)
       .flatMap((value) => [
         value,
@@ -509,44 +546,59 @@ try {
         }),
         { mode: 0o600 },
       );
-    writeFileSync(
-      "/work/mcp.json",
-      JSON.stringify({
-        mcpServers: discovery
-          ? {}
-          : {
-              playwright: input.managedAccess
-                ? {
-                    command: "node",
-                    args: [
-                      "/opt/gremlins/access-client.mjs",
-                      "/work/managed-access.json",
-                    ],
-                  }
-                : {
-                    command: "node",
-                    args: [
-                      "/opt/gremlins/node_modules/@playwright/mcp/cli.js",
-                      "--headless",
-                      "--executable-path",
-                      chromium.executablePath(),
-                      "--no-sandbox",
-                      ...prepareBrowserAccess("/work", {
-                        url: input.browserTarget,
-                        credentials,
-                      }),
-                      "--output-dir",
-                      "/output/screenshots",
-                    ],
-                  },
-            },
-      }),
-      { mode: 0o600 },
-    );
+    const mcpServers = discovery
+      ? {}
+      : {
+          playwright: input.managedAccess
+            ? {
+                command: "node",
+                args: [
+                  "/opt/gremlins/access-client.mjs",
+                  "/work/managed-access.json",
+                ],
+              }
+            : {
+                command: "node",
+                args: [
+                  "/opt/gremlins/node_modules/@playwright/mcp/cli.js",
+                  "--headless",
+                  "--executable-path",
+                  chromium.executablePath(),
+                  "--no-sandbox",
+                  ...prepareBrowserAccess("/work", {
+                    url: input.browserTarget,
+                    credentials,
+                  }),
+                  "--output-dir",
+                  "/output/screenshots",
+                ],
+              },
+        };
+    writeFileSync("/work/mcp.json", JSON.stringify({ mcpServers }), {
+      mode: 0o600,
+    });
     writeFileSync("/work/prompt.md", input.prompt, { mode: 0o600 });
+    if (ai.provider === "codex")
+      codexInvocation = prepareCodexInvocation({
+        selection: ai,
+        authJson: credentials.CODEX_AUTH_JSON,
+        cwd: "/work/repo",
+        directory: "/work",
+        env,
+        restricted: discovery,
+        ...(discovery
+          ? {
+              readonlyRoots: {
+                repository: "/work/repo",
+                memory: "/work/memory",
+              },
+              schema: JSON.parse(discoveryArguments().at(-1)),
+            }
+          : { mcpServers }),
+      });
     const modelOutput = await run(
-      "claude",
-      [
+      codexInvocation?.command ?? "claude",
+      codexInvocation?.args ?? [
         ...(discovery
           ? discoveryArguments()
           : ["--dangerously-skip-permissions"]),
@@ -559,11 +611,12 @@ try {
         "--strict-mcp-config",
         "--mcp-config",
         "/work/mcp.json",
+        ...(ai.model ? ["--model", ai.model] : []),
         "-p",
       ],
       {
         cwd: "/work/repo",
-        env,
+        env: codexInvocation?.env ?? env,
         model: true,
         input:
           input.prompt +
@@ -579,8 +632,16 @@ try {
           " Never print credentials.",
       },
     );
+    const finalMessage = codexInvocation?.readResult();
     if (discovery) {
-      const result = discoveryResult(modelOutput);
+      const result = discoveryResult(
+        finalMessage === undefined
+          ? modelOutput
+          : JSON.stringify({
+              type: "result",
+              structured_output: JSON.parse(finalMessage),
+            }),
+      );
       for (const [name, content] of Object.entries(result.documents))
         writeFileSync(join("/output", name), redact(content), { mode: 0o600 });
       activity.emit(
@@ -697,6 +758,13 @@ try {
 } finally {
   clearLease();
   clearDeadline();
+  if (typeof codexInvocation !== "undefined") {
+    try {
+      codexInvocation?.cleanup();
+    } catch {
+      process.exitCode = 1;
+    }
+  }
   // Text artifacts can contain echoed environment values even when tool logs do not.
   function clean(directory, depth = 0) {
     if (depth > 3) return;

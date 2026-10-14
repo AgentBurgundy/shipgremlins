@@ -1928,7 +1928,9 @@ describe("local job preparation", () => {
       root,
       env: { ...env, CLAUDE_CODE_OAUTH_TOKEN: "" },
     });
-    await expect(missingAi.validate(input)).rejects.toThrow("Claude Code");
+    await expect(missingAi.validate(input)).rejects.toThrow(
+      "selected AI provider",
+    );
   });
   it("checks manual PM mapping ownership and pins its workspace again before launch", async () => {
     chooseBrowserAccess();

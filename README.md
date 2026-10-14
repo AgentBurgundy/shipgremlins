@@ -144,7 +144,7 @@ Once the dashboard opens, choose where your gremlin will live:
   complete journey before merging. PMs explore after there is code.
   [Experimental idea builds →](docs/IDEA_TO_APP.md)
 
-Source control and Claude Code are enough to prepare an existing app's PM;
+Source control and your selected AI provider are enough to prepare an existing app's PM;
 Discovery also needs a ready worker. Save a Linear connection when you want
 proposals or approved coding work; the PM prepares missing mappings and labels
 using the project's selected account. Add a test environment when the gremlin needs to use a
@@ -155,6 +155,10 @@ The dashboard shows each crew's **Patrol plan** and separates finished runs from
 
 Separate pages keep Connections, Projects, Your gremlins, Activity, and Settings
 focused. Provider cards contain setup instructions and token creation links.
+In **Connections → AI provider**, choose Claude Code or Codex. Codex uses your
+ChatGPT account: choose **Sign in to Codex**, or import an existing managed
+`auth.json`. The selected provider handles setup suggestions, discovery, PMs,
+coding and repairs through the controller's workers. [AI setup →](docs/SETUP.md#choose-your-ai-provider)
 Connect Slack once for the workspace; every project inherits that channel unless
 you deliberately configure an override.
 
@@ -187,8 +191,8 @@ gremlins --help
 
 Configuration lives in the nearest existing configuration directory, or `~/.shipgremlins` outside one. Use `gremlins --home PATH setup` to choose another location. Add your app repository directly; local mode does not require `--hub-repo`.
 
-Follow the next assignment's setup steps. Discovery needs source control, Claude
-Code, and a ready worker; a regular PM run also needs Linear. Missing mappings and
+Follow the next assignment's setup steps. Discovery needs source control, your
+selected AI provider, and a ready worker; a regular PM run also needs Linear. Missing mappings and
 required connection verification can be prepared when you start that run.
 The worker runs on the CLI/dashboard server, even when you
 visit from a phone. Ready requires actual Chromium screenshot evidence.
@@ -232,7 +236,7 @@ position; closing the viewer leaves the worker running.
 
 **Let the PM learn the codebase first.** A **Discovery** run reads the actual
 repository and produces a feature map, ranked opportunities, and durable notes
-for later patrols. It needs source access, Claude Code, and a ready Docker worker;
+for later patrols. It needs source access, the selected AI provider, and a ready Docker worker;
 Linear and hosting setup can come later. Discovery does not file tickets, publish
 code, enable automation, or rewrite your brief. Give the PM ambition, users,
 success measures, priorities, guardrails, and non-goals in its **Product brief**.
@@ -333,7 +337,7 @@ Read the [manifest format and limitations](docs/LINEAR_LIFECYCLE.md) before enab
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
 | Local Docker jobs with GitHub/GitLab and optional browser targets        | Full live provider certification and broader deployment automation              |
 | Direct URLs; Vercel, Railway and Cloud Run discovery                     | Provider provisioning and broader staged promotion support                      |
-| Claude Code + Playwright MCP                                             | Additional AI providers and connection management                               |
+| Claude Code or Codex + Playwright MCP                                    | Additional AI providers                                                         |
 | Sentry + Datadog project logs; Mixpanel Insights                         | Broader telemetry queries and live certification                                |
 | Branded PM/developer Slack updates and local PostgreSQL activity history | Broader team collaboration and distributed queue coordination                   |
 | Persistent queue, local/remote Docker workers, logs and artifacts        | Automatic OS service installation, native macOS jobs and cloud fleet management |

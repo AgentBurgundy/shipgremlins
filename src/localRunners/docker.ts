@@ -30,6 +30,7 @@ import {
 } from "../testEnvironments/index.ts";
 
 export interface DockerJobPayload {
+  ai?: import("../ai/provider.ts").AiSelection;
   kind: "verify" | "pm" | "developer";
   accessProbe?: true;
   testAccess?: ManagedTestAccess;
@@ -153,6 +154,7 @@ const credentialNames = new Set([
   "GITHUB_TOKEN",
   "GITLAB_TOKEN",
   "CLAUDE_CODE_OAUTH_TOKEN",
+  "CODEX_AUTH_JSON",
   "ANTHROPIC_API_KEY",
   "LINEAR_API_KEY",
   "GREMLINS_PREVIEW_BYPASS",
@@ -255,6 +257,7 @@ export function validatePayload(payload: DockerJobPayload): string {
       (key) =>
         ![
           "kind",
+          "ai",
           "accessProbe",
           "testAccess",
           "managedAccess",
@@ -287,6 +290,29 @@ export function validatePayload(payload: DockerJobPayload): string {
     )
   )
     throw new Error("Invalid local job payload.");
+  if (
+    payload.ai !== undefined &&
+    (!record(payload.ai) ||
+      payload.kind === "verify" ||
+      Object.keys(payload.ai).some(
+        (key) => !["provider", "model"].includes(key),
+      ) ||
+      !["claude", "codex"].includes(String(payload.ai.provider)) ||
+      (payload.ai.model !== undefined &&
+        (typeof payload.ai.model !== "string" ||
+          !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(payload.ai.model))))
+  )
+    throw new Error("Choose a supported AI provider and model.");
+  if (
+    payload.ai?.provider === "codex" &&
+    (payload.credentials?.CLAUDE_CODE_OAUTH_TOKEN ||
+      payload.credentials?.ANTHROPIC_API_KEY)
+  )
+    throw new Error("Codex jobs accept only their selected AI connection.");
+  if (payload.ai?.provider !== "codex" && payload.credentials?.CODEX_AUTH_JSON)
+    throw new Error(
+      "Codex credentials require an explicitly selected Codex job.",
+    );
   if (
     payload.accessProbe !== undefined &&
     (payload.accessProbe !== true ||
@@ -461,13 +487,16 @@ export function validatePayload(payload: DockerJobPayload): string {
       Object.values(payload.commands ?? {}).some(Boolean) ||
       Object.keys(payload.credentials ?? {}).some(
         (key) =>
-          !["GITHUB_TOKEN", "GITLAB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"].includes(
-            key,
-          ),
+          ![
+            "GITHUB_TOKEN",
+            "GITLAB_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CODEX_AUTH_JSON",
+          ].includes(key),
       ))
   )
     throw new Error(
-      "Discovery accepts only source and Claude credentials and cannot run project commands or publish changes.",
+      "Discovery accepts only source and selected AI credentials and cannot run project commands or publish changes.",
     );
   if (payload.kind === "verify") {
     if (
@@ -529,7 +558,7 @@ export function validatePayload(payload: DockerJobPayload): string {
         (!credentialNames.has(key) &&
           !/^GREMLINS_TEST_(USERNAME|PASSWORD)_[1-8]$/.test(key)) ||
         typeof value !== "string" ||
-        value.length > 16384 ||
+        value.length > (key === "CODEX_AUTH_JSON" ? 65536 : 16384) ||
         [...value].some((character) => character.charCodeAt(0) < 32)
       )
         throw new Error("Unsupported job credential.");

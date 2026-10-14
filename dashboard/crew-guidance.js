@@ -8,7 +8,7 @@
   };
   const labels = {
     source: "Connect source control",
-    ai: "Connect Claude Code",
+    ai: "Connect AI",
     linear: "Connect Linear",
     mapping: "Prepare Linear",
     verify: "Verify connections",

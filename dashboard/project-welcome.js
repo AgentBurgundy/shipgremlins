@@ -674,7 +674,7 @@
           actions,
           el(
             "p",
-            "Inspection uses your source connection, Claude Code, and Docker. Linear and a hosted test app can come later.",
+            "Inspection uses your source connection, selected AI provider, and Docker. Linear and a hosted test app can come later.",
             "welcome-note",
           ),
         );

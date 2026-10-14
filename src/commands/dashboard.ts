@@ -11,6 +11,16 @@ import {
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { automaticPromotionKey } from "../delivery/batching.ts";
 import { createUsage } from "../usage/index.ts";
+import {
+  AiProviderError,
+  aiCredentialNames,
+  aiSecretValues,
+  aiStatus,
+  hasAiCredentials,
+  resolveAiSelection,
+  saveAiSelection,
+} from "../ai/provider.ts";
+import { CodexLoginError, createCodexLogin } from "../setup/codexLogin.ts";
 import { currentChanges } from "../improvements/currentChanges.ts";
 import {
   createImprovements,
@@ -129,6 +139,7 @@ import {
   RecoveryActionError,
 } from "../setup/recoveryActions.ts";
 import type { Ctx } from "../dispatcher/context.ts";
+import { createDockerPlanner } from "../pmPlanner/docker.ts";
 import {
   createPmPlanner,
   PmPlannerError,
@@ -310,7 +321,14 @@ function record(value: unknown): value is Record<string, unknown> {
 async function body(
   req: IncomingMessage,
   limit = MAX_BODY,
+  allowEmpty = false,
 ): Promise<Record<string, unknown>> {
+  if (
+    allowEmpty &&
+    !req.headers["transfer-encoding"] &&
+    (!req.headers["content-length"] || req.headers["content-length"] === "0")
+  )
+    return {};
   if (
     !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(
       req.headers["content-type"] ?? "",
@@ -357,6 +375,7 @@ async function body(
 }
 
 export interface DashboardOptions {
+  codexLogin?: ReturnType<typeof createCodexLogin>;
   /** Explicit HTTPS reverse-proxy origin; never inferred from forwarded headers. */
   publicUrl?: string;
   updater?: Updater;
@@ -461,6 +480,32 @@ export function createDashboardServer(
     options.docker ??
     createDockerRunners({ packageRoot, environmentNamespace: root });
   const docker = remote.adapter(localDocker);
+  const aiEnvironment = () => ({ ...readConnections(root), ...process.env });
+  const codexLogin =
+    options.codexLogin ??
+    createCodexLogin({
+      root,
+      packageRoot,
+      env: aiEnvironment,
+      ensureImage: () => localDocker.ensureImage(),
+    });
+  const plannerOptions = {
+    root,
+    packageRoot,
+    ensureImage: () => localDocker.ensureImage(),
+    prepareCodexCredentials: () => codexLogin.prepare(),
+  };
+  const planner = createDockerPlanner(plannerOptions);
+  const workspaceAiStatus = () => {
+    const status = aiStatus(root, aiEnvironment());
+    return {
+      ...status,
+      providers: Object.entries(status.providers).map(([id, provider]) => ({
+        id,
+        ...provider,
+      })),
+    };
+  };
   const sourceControl =
     options.sourceControl ?? createSourceControl({ root, session });
   const linearConnection =
@@ -493,7 +538,15 @@ export function createDashboardServer(
   const vercelConnectionFor = (id?: string) => selectedConnection("vercel", id);
   const projectOnboarding =
     options.projectOnboarding ??
-    createProjectOnboarding({ root, packageRoot, sourceControl });
+    createProjectOnboarding({
+      root,
+      packageRoot,
+      sourceControl,
+      execute: createDockerPlanner({
+        ...plannerOptions,
+        maxInputBytes: 2 * 1024 * 1024,
+      }),
+    });
   const environmentAccess =
     options.environmentAccess ??
     createEnvironmentAccess({
@@ -575,6 +628,7 @@ export function createDashboardServer(
     createEnvironmentGuide({
       root,
       packageRoot,
+      execute: planner,
       context: async (name) => {
         const setup = await projectOnboarding.status(name);
         return {
@@ -792,6 +846,7 @@ export function createDashboardServer(
     options.jobs ??
     createJobPreparation({
       root,
+      prepareCodexCredentials: () => codexLogin.prepare(),
       sourceControl,
       linearConnection,
       vercelConnection,
@@ -824,14 +879,18 @@ export function createDashboardServer(
         improvements.context(project, job),
     });
   const pmPlanner =
-    options.pmPlanner ?? createPmPlanner({ root, packageRoot, sourceControl });
-  const grumblins = options.grumblins ?? createGrumblins({ root, packageRoot });
+    options.pmPlanner ??
+    createPmPlanner({ root, packageRoot, sourceControl, execute: planner });
+  const grumblins =
+    options.grumblins ??
+    createGrumblins({ root, packageRoot, execute: planner });
   const grumblinLaunches = new Set<string>();
   const ideaCrew =
     options.ideaCrew ??
     createIdeaCrew({
       root,
       packageRoot,
+      execute: planner,
       sourceControl,
       addArea: linearProvisioning.addArea,
     });
@@ -1356,7 +1415,12 @@ export function createDashboardServer(
   const cleanOutput = (lines: string[]) => {
     let secrets: string[] = [];
     try {
-      secrets = Object.values(readConnections(root));
+      const stored = readConnections(root);
+      secrets = [
+        ...Object.values(stored),
+        ...aiSecretValues(stored),
+        ...aiSecretValues(aiEnvironment()),
+      ];
     } catch {
       // Workers already redact their injected credentials before writing logs.
     }
@@ -1442,13 +1506,13 @@ export function createDashboardServer(
             409,
           );
         if (
-          !{
+          !hasAiCredentials(root, {
             ...readConnections(root),
             ...process.env,
-          }.CLAUDE_CODE_OAUTH_TOKEN?.trim()
+          })
         )
           throw new IdeaCrewError(
-            "Connect Claude Code in Connections before building the foundation.",
+            "Connect your selected AI provider in Connections before building the foundation.",
             409,
           );
         const workers = (await runners().status()).runners;
@@ -1820,7 +1884,9 @@ export function createDashboardServer(
     const sources = await sourceControl.status();
     const serviceConnections = await serviceStatuses();
     const blockedSources = new Set<string>();
-    const required = new Set(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    const required = new Set(
+      aiCredentialNames(resolveAiSelection(root, aiEnvironment()).provider),
+    );
     function requireService(provider: OAuthProvider, id = "default") {
       const connection = serviceConnections.find(
         (item) => item.provider === provider && item.id === id,
@@ -1904,7 +1970,7 @@ export function createDashboardServer(
       sourceConnections: sources,
       serviceConnections,
       limitations: [
-        "Local workers use Claude Code. Each worker runs one job at a time.",
+        "Local workers use the AI provider selected in Connections. Each worker runs one job at a time.",
         "In the staged workflow, PMs QA coding changes and prepare promotion PRs automatically. Production releases follow your repository's merge rules.",
         "Closing the browser is safe. Keep the controller running for schedules and queued jobs.",
       ],
@@ -3563,6 +3629,63 @@ export function createDashboardServer(
           json(res, 202, updateStatus());
           return;
         }
+        if (url.pathname === "/api/ai") {
+          if (url.search)
+            throw new RequestError(
+              400,
+              "AI settings do not accept query parameters.",
+            );
+          if (req.method === "POST") {
+            const input = await body(req, 4096);
+            const secrets = [
+              ...aiSecretValues(aiEnvironment()),
+              ...aiSecretValues(readConnections(root)),
+            ];
+            const model = input.model;
+            if (
+              typeof model === "string" &&
+              secrets.some((secret) => model.includes(secret))
+            )
+              throw new RequestError(
+                400,
+                "Use a model ID here. Save credentials in Connections.",
+              );
+            saveAiSelection(root, input);
+          } else if (req.method !== "GET")
+            throw new RequestError(405, "Use GET or POST for AI settings.");
+          json(res, 200, workspaceAiStatus());
+          return;
+        }
+        if (url.pathname === "/api/ai/codex/login") {
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Codex sign-in does not accept query parameters.",
+            );
+          if (req.method === "GET") {
+            const status = await codexLogin.status();
+            if (status.status === "complete") startAutomaticWork();
+            json(res, 200, status);
+          } else if (req.method === "POST" || req.method === "DELETE") {
+            if (Object.keys(await body(req, 4096, true)).length)
+              throw new RequestError(
+                400,
+                "Codex sign-in takes an empty JSON object.",
+              );
+            json(
+              res,
+              200,
+              await (req.method === "POST"
+                ? codexLogin.start()
+                : codexLogin.cancel()),
+            );
+          } else
+            throw new RequestError(
+              405,
+              "Use GET, POST or DELETE for Codex sign-in.",
+            );
+          return;
+        }
         if (url.pathname === "/api/usage") {
           if (req.method !== "GET")
             throw new RequestError(405, "Use GET for usage.");
@@ -3749,6 +3872,7 @@ export function createDashboardServer(
             projects,
             sourceConnections,
             serviceConnections,
+            ai: workspaceAiStatus(),
             connections: [
               ...new Map(
                 [...CONNECTIONS, ...projectConnectionDefinitions(root)].map(
@@ -3857,16 +3981,21 @@ export function createDashboardServer(
               400,
               "Provide the saved credential names to clear.",
             );
-          await withConfigurationMutation({}, () =>
-            clearConnections(root, input.names),
-          );
+          await withConfigurationMutation({}, async () => {
+            clearConnections(root, input.names);
+            if (
+              Array.isArray(input.names) &&
+              input.names.includes("CODEX_AUTH_JSON")
+            )
+              await codexLogin.cancel();
+          });
           json(res, 200, { ok: true });
           return;
         }
         if (url.pathname === "/api/connections") {
           if (req.method !== "POST")
             throw new RequestError(405, "Use POST to save connections.");
-          const input = await body(req);
+          const input = await body(req, 128 * 1024);
           if (
             Object.keys(input).length !== 1 ||
             !Object.hasOwn(input, "values")
@@ -5692,7 +5821,9 @@ export function createDashboardServer(
         error instanceof EnvironmentAccessError ||
         error instanceof EnvironmentSetupError ||
         error instanceof ConfigEditorError ||
-        error instanceof RemoteWorkerError
+        error instanceof RemoteWorkerError ||
+        error instanceof AiProviderError ||
+        error instanceof CodexLoginError
           ? error.status
           : error instanceof ConnectionSaveError
             ? 400
@@ -5709,7 +5840,9 @@ export function createDashboardServer(
         error instanceof EnvironmentSetupError ||
         error instanceof ConfigEditorError ||
         error instanceof ConnectionSaveError ||
-        error instanceof RemoteWorkerError
+        error instanceof RemoteWorkerError ||
+        error instanceof AiProviderError ||
+        error instanceof CodexLoginError
           ? error.message
           : "Dashboard request failed. Check your local configuration files and permissions.";
       if (!res.headersSent) json(res, status, { error: message });
@@ -5727,10 +5860,10 @@ export function createDashboardServer(
     try {
       if (
         loadHub(root).runners.mode !== "local" ||
-        !{
+        !hasAiCredentials(root, {
           ...readConnections(root),
           ...process.env,
-        }.CLAUDE_CODE_OAUTH_TOKEN?.trim()
+        })
       )
         return;
       if (
@@ -5771,6 +5904,7 @@ export function createDashboardServer(
       vercelSetup.close(),
       vercelAccess.close(),
       environmentGuide.close(),
+      codexLogin.close(),
       Promise.resolve(manager?.stop()),
     ]).finally(() => activityStore.close());
   });

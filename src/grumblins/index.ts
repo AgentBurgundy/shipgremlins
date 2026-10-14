@@ -24,6 +24,7 @@ import { projectRuntimeKey } from "../projectIdentity.ts";
 import { readConnections } from "../setup/connections.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { redactHistory } from "../storage/activity.ts";
+import { aiSecretValues, selectedAiCredential } from "../ai/provider.ts";
 import {
   GRUMBLINS_SCHEMA,
   GRUMBLINS_SYSTEM,
@@ -98,13 +99,16 @@ export function createGrumblins(options: GrumblinsOptions) {
     ...readConnections(options.root),
     ...(options.env ?? process.env),
   });
-  const secrets = () =>
-    Object.entries(credentials())
+  const secrets = () => [
+    ...aiSecretValues(readConnections(options.root)),
+    ...aiSecretValues(credentials()),
+    ...Object.entries(credentials())
       .filter(
         ([key, value]) =>
           value && /TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL/.test(key),
       )
-      .map(([, value]) => value!);
+      .map(([, value]) => value!),
+  ];
   const redact = (value: string) => redactHistory(value, secrets());
   const pmKnowledge = createPmKnowledge({ root: options.root, secrets });
   const projectKnowledge = createProjectKnowledge({
@@ -482,10 +486,10 @@ export function createGrumblins(options: GrumblinsOptions) {
         "Grumblins are already being generated for this project.",
         409,
       );
-    const credential = credentials().CLAUDE_CODE_OAUTH_TOKEN;
-    if (!credential)
+    const aiCredential = selectedAiCredential(options.root, credentials());
+    if (!aiCredential)
       throw new GrumblinError(
-        "Connect Claude Code in Connections before generating Grumblins.",
+        "Connect your selected AI provider in Connections before generating Grumblins.",
       );
     const duration = Number.isFinite(options.timeoutMs)
       ? Math.max(1, Math.min(options.timeoutMs!, 180000))
@@ -519,7 +523,7 @@ export function createGrumblins(options: GrumblinsOptions) {
             project: name,
             projectInstanceId: first.current.config.instanceId,
           },
-          credential,
+          ...aiCredential,
           system: GRUMBLINS_SYSTEM,
           schema: GRUMBLINS_SCHEMA,
           prompt: JSON.stringify({
@@ -544,7 +548,7 @@ export function createGrumblins(options: GrumblinsOptions) {
         output.profiles.length !== 3
       )
         throw new GrumblinError(
-          "Claude did not return three valid simulated profiles. Try generating again.",
+          "The AI did not return three valid simulated profiles. Try generating again.",
           422,
         );
       const generatedAt = new Date().toISOString();
@@ -628,7 +632,7 @@ export function createGrumblins(options: GrumblinsOptions) {
       throw new GrumblinError(
         bounded.aborted
           ? "Grumblin generation stopped. Existing profiles were preserved."
-          : "Grumblin generation could not finish. Check Claude Code and Docker, then retry. Existing profiles were preserved.",
+          : "Grumblin generation could not finish. Check your AI connection and Docker, then retry. Existing profiles were preserved.",
         bounded.aborted ? 408 : 503,
       );
     } finally {

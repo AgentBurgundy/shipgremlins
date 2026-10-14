@@ -17,6 +17,7 @@ import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-pro
 import { loadProject, type AreaConfig, type Project } from "../config.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { readConnections } from "../setup/connections.ts";
+import { aiSecretValues } from "../ai/provider.ts";
 import { redactHistory } from "../storage/activity.ts";
 import type { LocalJob } from "../localRunners/types.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
@@ -288,8 +289,10 @@ export function createPmKnowledge(options: {
       );
     let secrets: string[];
     try {
-      secrets =
-        options.secrets?.() ?? Object.values(readConnections(options.root));
+      secrets = options.secrets?.() ?? [
+        ...Object.values(readConnections(options.root)),
+        ...aiSecretValues(readConnections(options.root)),
+      ];
     } catch {
       throw new Error(
         "Saved credentials could not be checked before storing PM knowledge.",

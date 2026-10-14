@@ -392,7 +392,7 @@ describe("dynamic simulated Grumblins", () => {
   it("requires saved Claude auth, rejects secret focus and exposes only safe categorized errors", async () => {
     await expect(
       fixture({ env: {} }).service.generate({ project: "studio" }),
-    ).rejects.toThrow("Connect Claude Code");
+    ).rejects.toThrow("Connect your selected AI provider");
     const f = fixture();
     await expect(
       f.service.generate({ project: "studio", focus: sourceToken }),

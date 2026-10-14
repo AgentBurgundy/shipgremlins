@@ -101,11 +101,52 @@ export function parseClaudeUsage(record) {
   return { ...value, totalTokens, complete: false };
 }
 
+/** Codex reports cached input as a subset of input, and reasoning as a subset
+ * of output. Neither is additive. Cache creation is not reported by exec.
+ * https://learn.chatgpt.com/docs/non-interactive-mode
+ * https://developers.openai.com/api/docs/guides/reasoning
+ */
+export function parseCodexUsage(record) {
+  if (
+    !record ||
+    typeof record !== "object" ||
+    record.type !== "turn.completed" ||
+    !record.usage ||
+    typeof record.usage !== "object"
+  )
+    return;
+  const usage = record.usage;
+  const valid = (value) => Number.isSafeInteger(value) && value >= 0;
+  if (
+    !valid(usage.input_tokens) ||
+    !valid(usage.output_tokens) ||
+    (usage.cached_input_tokens !== undefined &&
+      (!valid(usage.cached_input_tokens) ||
+        usage.cached_input_tokens > usage.input_tokens))
+  )
+    return;
+  const cached = usage.cached_input_tokens ?? null;
+  const totalTokens = usage.input_tokens + usage.output_tokens;
+  if (!Number.isSafeInteger(totalTokens)) return;
+  return {
+    inputTokens: cached === null ? null : usage.input_tokens - cached,
+    outputTokens: usage.output_tokens,
+    cacheReadInputTokens: cached,
+    cacheCreationInputTokens: null,
+    totalTokens: cached === null ? usage.output_tokens : totalTokens,
+    complete: false,
+  };
+}
+
 /** A fresh single-shot CLI process only: no resume/continue or streaming input.
  * Assistant output_tokens is a placeholder. Real per-response output arrives
  * in message_delta, whose usage counters are cumulative, not increments.
  */
-export function createUsageCollector({ now = () => new Date() } = {}) {
+export function createUsageCollector({
+  now = () => new Date(),
+  provider = "claude",
+  model,
+} = {}) {
   const messages = new Map();
   let activeMessage;
   let result;
@@ -151,6 +192,12 @@ export function createUsageCollector({ now = () => new Date() } = {}) {
   }
   function modelRecord(record) {
     if (!record || typeof record !== "object") return;
+    if (provider === "codex") {
+      const value = parseCodexUsage(record);
+      if (value) result = value;
+      if (["turn.failed", "error"].includes(record.type)) crash = true;
+      return;
+    }
     if (record.type === "result") {
       const value = parseClaudeUsage(record);
       if (value) result = value;
@@ -192,8 +239,13 @@ export function createUsageCollector({ now = () => new Date() } = {}) {
     if (!value) return;
     return {
       schemaVersion: 1,
-      source: "claude-code",
+      source: provider === "codex" ? "codex" : "claude-code",
       ...value,
+      ...(provider === "codex" &&
+      typeof model === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(model)
+        ? { model }
+        : {}),
       complete: value.complete && !crash,
       reportedAt: now().toISOString(),
     };
@@ -240,15 +292,19 @@ export function writeUsageArtifact(directory, value) {
     !Number.isFinite(Date.parse(value.reportedAt))
   )
     throw new Error("Invalid usage timestamp.");
+  const source = value.source === "codex" ? "codex" : "claude-code";
   const model =
     typeof value.model === "string" &&
-    /^(?:anthropic\.)?claude-[a-z0-9][a-z0-9._:-]{0,119}$/.test(value.model)
+    (source === "codex"
+      ? /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/
+      : /^(?:anthropic\.)?claude-[a-z0-9][a-z0-9._:-]{0,119}$/
+    ).test(value.model)
       ? value.model
       : undefined;
   const content =
     JSON.stringify({
       schemaVersion: 1,
-      source: "claude-code",
+      source,
       ...counts,
       totalTokens,
       complete: value.complete,

@@ -3,6 +3,7 @@ export function createActivityWriter(options: {
   write: (line: string) => void;
   redact?: (value: string) => string;
   now?: () => Date;
+  provider?: "claude" | "codex";
 }): {
   emit: (
     type: string,

@@ -21,6 +21,7 @@ export function createActivityWriter({
   write,
   redact = (value) => value,
   now = () => new Date(),
+  provider = "claude",
 }) {
   let sequence = 0,
     writtenBytes = 0,
@@ -45,6 +46,71 @@ export function createActivityWriter({
   }
   function modelRecord(record) {
     if (!record || typeof record !== "object") return;
+    if (provider === "codex") {
+      const item = record.item;
+      if (
+        record.type === "item.completed" &&
+        item?.type === "agent_message" &&
+        typeof item.text === "string" &&
+        item.text.trim()
+      ) {
+        summary = redact(item.text).slice(0, 4000);
+        emit("progress", "Agent update", summary);
+      } else if (
+        record.type === "item.started" &&
+        item?.type === "command_execution"
+      )
+        emit(
+          "tool",
+          "Command",
+          typeof item.command === "string" ? item.command : undefined,
+          "running",
+        );
+      else if (record.type === "item.started" && item?.type === "mcp_tool_call")
+        emit(
+          "tool",
+          `${String(item.server ?? "MCP")}: ${String(item.tool ?? "Tool")}`,
+          JSON.stringify(visible(item.arguments ?? {})),
+          "running",
+        );
+      else if (
+        record.type === "item.completed" &&
+        ["command_execution", "mcp_tool_call"].includes(item?.type)
+      )
+        emit(
+          "tool",
+          "Tool result",
+          item.status === "failed"
+            ? "The tool reported an error."
+            : "The tool completed.",
+          item.status === "failed" ? "failed" : "succeeded",
+        );
+      else if (record.type === "item.completed" && item?.type === "file_change")
+        emit(
+          "tool",
+          "Files changed",
+          JSON.stringify(
+            visible(
+              (item.changes ?? []).map((change) => ({
+                path: change.path,
+                kind: change.kind,
+              })),
+            ),
+          ),
+          item.status === "failed" ? "failed" : "succeeded",
+        );
+      else if (record.type === "turn.completed" && summary)
+        emit("summary", "Agent summary", summary, "succeeded");
+      else if (["turn.failed", "error"].includes(record.type))
+        emit(
+          "progress",
+          "Agent request failed",
+          "The selected AI provider could not complete this request.",
+          "failed",
+        );
+      // Reasoning items and raw tool output are intentionally never published.
+      return;
+    }
     if (record.type === "assistant")
       for (const block of record.message?.content ?? []) {
         if (block.type === "tool_use")

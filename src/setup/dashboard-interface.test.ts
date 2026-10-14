@@ -552,7 +552,10 @@ describe("dashboard interface surfaces", () => {
           .map((tile) => tile.querySelector("h3")!.textContent),
       search = f.get("connection-library-search");
     await f.button(f.nav("Connection categories"), "Start here").emit("click");
-    expect(visible()).toEqual(["Claude Code", "GitHub & GitLab"]);
+    expect(visible()).toEqual(["AI provider", "GitHub & GitLab"]);
+    search.value = "Codex";
+    await search.emit("input");
+    expect(visible()).toEqual(["AI provider"]);
     search.value = "Sentry";
     await search.emit("input");
     expect(visible()).toEqual(["Sentry"]);
@@ -567,7 +570,7 @@ describe("dashboard interface surfaces", () => {
     );
     await search.emit("keydown", { key: "Escape" });
     expect(search.value).toBe("");
-    expect(visible()).toEqual(["Claude Code", "GitHub & GitLab"]);
+    expect(visible()).toEqual(["AI provider", "GitHub & GitLab"]);
   });
   it("supports arrows, Home and End for connection categories", async () => {
     const f = fixture(),

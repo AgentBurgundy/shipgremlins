@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadHub, loadProject } from "../config.ts";
+import { hasAiCredentials, resolveAiSelection } from "../ai/provider.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
 import { isExampleHub, validateName } from "./files.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
@@ -323,13 +324,17 @@ export function inspectSetup(
       "warn",
       "Save supported tokens through gremlins setup. For additional settings or another environment file, run gremlins --env-file .env setup --check. Existing exported environment variables take precedence.",
     );
-  const ai = Boolean(deps.env.CLAUDE_CODE_OAUTH_TOKEN?.trim());
+  const ai = hasAiCredentials(root, deps.env);
+  const aiName =
+    resolveAiSelection(root, deps.env).provider === "codex"
+      ? "Codex"
+      : "Claude Code";
   add(
     "ai-runtime",
     ai ? "pass" : "warn",
     ai
-      ? "Claude runner credential is present; validity is not checked."
-      : "Save CLAUDE_CODE_OAUTH_TOKEN in dashboard Connections for local Claude workers. Other model providers are planned.",
+      ? `${aiName} runner credentials are present; validity is not checked.`
+      : `Connect ${aiName} in dashboard Connections before running AI jobs.`,
   );
   const evidenceConfigured =
     Boolean(deps.env.SHIPGREMLINS_VERIFICATION_FILE?.trim()) &&

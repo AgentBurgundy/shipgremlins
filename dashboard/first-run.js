@@ -213,9 +213,16 @@
             )
           );
         });
-    const aiReady = list(status.connections).some(
-      (item) => item.name === "CLAUDE_CODE_OAUTH_TOKEN" && item.configured,
-    );
+    const ai = window.aiConnectionState?.(status) || {
+      label: status.ai?.provider === "codex" ? "Codex" : "Claude Code",
+      configured: status.ai
+        ? status.ai.configured === true
+        : list(status.connections).some(
+            (item) =>
+              item.name === "CLAUDE_CODE_OAUTH_TOKEN" && item.configured,
+          ),
+    };
+    const aiReady = ai.configured;
     const base = {
       active: true,
       noProject: !project,
@@ -290,8 +297,8 @@
       return step(
         1,
         "Connect your AI.",
-        "Connect Claude Code to plan a crew and run its missions. You can add Linear and hosting when a task needs them.",
-        "Connect Claude Code",
+        `Connect ${ai.label} to plan a crew and run its missions. You can add Linear and hosting when a task needs them.`,
+        `Connect ${ai.label}`,
         "/connections#model-connections",
       );
     if (!project)
@@ -373,7 +380,7 @@
     if (blocker) {
       const links = {
         source: ["Connect source control", "/connections#source-control"],
-        ai: ["Connect Claude Code", "/connections#model-connections"],
+        ai: [`Connect ${ai.label}`, "/connections#model-connections"],
         worker: ["Set up a runner", "/runners#workers"],
         mandate: [
           "Finish its purpose",
@@ -448,7 +455,7 @@
     const progress = get("first-run-progress");
     const labels = [
       "Connect source",
-      "Connect Claude",
+      "Connect AI",
       "Add a project",
       "Find your crew",
       "Review scope",

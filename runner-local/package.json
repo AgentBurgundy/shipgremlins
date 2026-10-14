@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.289",
+    "@openai/codex": "0.162.1",
     "@playwright/mcp": "0.0.83",
     "playwright": "1.63.0"
   }

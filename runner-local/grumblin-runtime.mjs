@@ -48,13 +48,14 @@ export function validateGrumblinPayload(input) {
           "GITHUB_TOKEN",
           "GITLAB_TOKEN",
           "CLAUDE_CODE_OAUTH_TOKEN",
+          "CODEX_AUTH_JSON",
           "GREMLINS_PREVIEW_BYPASS",
         ].includes(key) &&
         !/^GREMLINS_TEST_(USERNAME|PASSWORD)_[1-8]$/.test(key),
     )
   )
     throw new Error(
-      "Grumblins accept only source, Claude, and dedicated browser-test credentials; no Linear or hosting credentials.",
+      "Grumblins accept only source, selected AI, and dedicated browser-test credentials; no Linear or hosting credentials.",
     );
   return snapshot;
 }

@@ -8,7 +8,7 @@
   };
   const setupLabels = {
     source: "Connect source control",
-    ai: "Connect Claude",
+    ai: "Connect AI",
     linear: "Connect Linear",
     mapping: "Prepare Linear",
     verify: "Verify connections",

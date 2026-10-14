@@ -166,7 +166,7 @@ export function parseTokenMeasurement(value: unknown): TokenMeasurement | null {
   result.complete = value.complete;
   if (
     typeof value.model === "string" &&
-    /^(?:(?:anthropic\.)?claude-[a-z0-9][a-z0-9._:-]{0,119}|sonnet|opus|haiku)$/.test(
+    /^(?:(?:anthropic\.)?claude-[a-z0-9][a-z0-9._:-]{0,119}|(?:gpt-|o[1-9])[a-z0-9][a-z0-9._:-]{0,119}|sonnet|opus|haiku)$/.test(
       value.model,
     )
   )
@@ -180,7 +180,7 @@ export function parseUsageArtifact(bytes: Buffer): TokenMeasurement | null {
     if (
       !object(value) ||
       value.schemaVersion !== 1 ||
-      value.source !== "claude-code" ||
+      !["claude-code", "codex"].includes(String(value.source)) ||
       !date(value.reportedAt)
     )
       return null;

@@ -175,6 +175,25 @@ describe("first useful mission guidance", () => {
       href: "/projects#project-form",
     });
   });
+  it("uses the selected Codex connection and never treats an unselected Claude token as ready", () => {
+    const status = {
+      ...connected(),
+      ai: { provider: "codex", configured: true },
+      connections: [],
+    };
+    expect(next(status).index).toBe(2);
+    expect(
+      next({
+        ...status,
+        ai: { provider: "codex", configured: false },
+        connections: connected().connections,
+      }),
+    ).toMatchObject({
+      index: 1,
+      label: "Connect Codex",
+      href: "/connections#model-connections",
+    });
+  });
   it("supports saved tokens but does not let one mask a broken OAuth connection", () => {
     const status = {
       ...connected(),
