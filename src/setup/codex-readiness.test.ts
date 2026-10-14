@@ -12,6 +12,11 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadProject } from "../config.ts";
 import { saveAiSelection } from "../ai/provider.ts";
+import {
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
 import { parseProjectCapabilities } from "../projectCapabilities.ts";
 import { parseTestAccess, validTestSecret } from "../testAccess.ts";
 import { type DockerRunners, type DockerRun } from "../localRunners/docker.ts";
@@ -107,6 +112,84 @@ const docker = {
 };
 
 describe("Codex-only setup and readiness boundaries", () => {
+  it("checks active scoped Codex coding instead of a disconnected workspace Claude choice", () => {
+    const f = fixture({ CODEX_AUTH_JSON: auth }),
+      project = loadProject(f.root, "app"),
+      target = projectAiTarget(project, "coder", project.areas[0]!);
+    saveAiSelection(f.root, { provider: "claude" });
+    saveAiRouting(
+      f.root,
+      target,
+      {
+        revision: readAiRouting(f.root, target, f.context.env).revision,
+        coder: { provider: "codex" },
+      },
+      f.context.env,
+    );
+    const path = join(f.root, "projects/app/areas.json"),
+      value = JSON.parse(readFileSync(path, "utf8"));
+    value.areas.core.enabled = false;
+    value.areas.core.codingEnabled = true;
+    writeFileSync(path, JSON.stringify(value));
+    expect(f.setup().checks.find((check) => check.id === "ai-runtime")).toEqual(
+      {
+        id: "ai-runtime",
+        status: "pass",
+        detail:
+          "Codex runner credentials are present; validity is not checked.",
+      },
+    );
+  });
+  it("reports both active routed accounts honestly and never substitutes the available account", () => {
+    const f = fixture({ CODEX_AUTH_JSON: auth }),
+      project = loadProject(f.root, "app"),
+      target = projectAiTarget(project, "pm", project.areas[0]!);
+    saveAiSelection(f.root, { provider: "claude" });
+    saveAiRouting(
+      f.root,
+      target,
+      {
+        revision: readAiRouting(f.root, target, f.context.env).revision,
+        pm: { provider: "claude" },
+        coder: { provider: "codex" },
+      },
+      f.context.env,
+    );
+    const path = join(f.root, "projects/app/areas.json"),
+      value = JSON.parse(readFileSync(path, "utf8"));
+    value.areas.core.enabled = true;
+    value.areas.core.codingEnabled = true;
+    writeFileSync(path, JSON.stringify(value));
+    expect(
+      f.setup().checks.find((check) => check.id === "ai-runtime"),
+    ).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining(
+        "Claude Code credentials are missing; Codex credentials are present",
+      ),
+    });
+  });
+  it("checks a project setup override when no PM or coding automation is active", () => {
+    const f = fixture({ CODEX_AUTH_JSON: auth }),
+      project = loadProject(f.root, "app"),
+      target = projectAiTarget(project, "setup");
+    saveAiSelection(f.root, { provider: "claude" });
+    saveAiRouting(
+      f.root,
+      target,
+      {
+        revision: readAiRouting(f.root, target, f.context.env).revision,
+        default: { provider: "codex" },
+      },
+      f.context.env,
+    );
+    expect(
+      f.setup().checks.find((check) => check.id === "ai-runtime"),
+    ).toMatchObject({
+      status: "pass",
+      detail: "Codex runner credentials are present; validity is not checked.",
+    });
+  });
   it("admits a selected Codex account without Claude credentials or a host Claude installation", () => {
     const f = fixture({ CODEX_AUTH_JSON: auth });
     saveAiSelection(f.root, { provider: "codex" });
@@ -117,7 +200,10 @@ describe("Codex-only setup and readiness boundaries", () => {
     });
     expect(
       f.readiness().steps.find((step) => step.id === "ai_connection"),
-    ).toMatchObject({ ready: true, message: "Codex connection is saved." });
+    ).toMatchObject({
+      ready: true,
+      message: "An AI connection is saved for PM work.",
+    });
     const report = f.setup();
     expect(report.ready).toBe(true);
     expect(
@@ -131,6 +217,50 @@ describe("Codex-only setup and readiness boundaries", () => {
     );
     expect(JSON.stringify(report)).not.toMatch(/synthetic-codex-|account-123/);
   });
+  it.each([
+    {
+      pm: "claude" as const,
+      coder: "codex" as const,
+      pmReady: false,
+      coderReady: true,
+    },
+    {
+      pm: "codex" as const,
+      coder: "claude" as const,
+      pmReady: true,
+      coderReady: false,
+    },
+  ])(
+    "keeps $pm PM readiness independent from $coder coding readiness",
+    ({ pm, coder, pmReady, coderReady }) => {
+      const f = fixture({ CODEX_AUTH_JSON: auth }),
+        project = loadProject(f.root, "app"),
+        target = projectAiTarget(project, "pm", project.areas[0]!);
+      saveAiSelection(f.root, { provider: "claude" });
+      saveAiRouting(
+        f.root,
+        target,
+        {
+          revision: readAiRouting(f.root, target, f.context.env).revision,
+          pm: { provider: pm },
+          coder: { provider: coder },
+        },
+        f.context.env,
+      );
+      const result = f.readiness().areas[0]!;
+      expect(result.canRun).toBe(pmReady);
+      expect(result.canEnable).toBe(pmReady);
+      expect(result.coding.canEnable).toBe(coderReady);
+      expect(result.blockers.some((item) => item.id === "ai_connection")).toBe(
+        !pmReady,
+      );
+      expect(
+        result.coding.enableBlockers.some(
+          (item) => item.id === "ai_connection",
+        ),
+      ).toBe(!coderReady);
+    },
+  );
   it.each([
     {
       provider: "claude" as const,

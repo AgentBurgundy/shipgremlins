@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { readConnections } from "../setup/connections.ts";
 import { assertNoSymlinks } from "../setup/files.ts";
 import { writePrivate } from "../remoteWorkers/storage.ts";
+import { readAiRouting, type AiRoutingTarget } from "./routing.ts";
 
 export type AiProvider = "claude" | "codex";
 export interface AiSelection {
@@ -111,7 +112,7 @@ export function aiSecretValues(env: NodeJS.ProcessEnv): string[] {
 }
 const selectionFile = (root: string) =>
   join(resolve(root), ".run", "ai", "selection.json");
-function selection(input: unknown): AiSelection {
+export function parseAiSelection(input: unknown): AiSelection {
   if (
     !object(input) ||
     Object.keys(input).some((key) => !["provider", "model"].includes(key)) ||
@@ -134,7 +135,7 @@ export function readAiSelection(root: string): AiSelection | undefined {
     assertNoSymlinks(file);
     if (!existsSync(file)) return undefined;
     if (!statSync(file).isFile() || statSync(file).size > 2048) throw Error();
-    return selection(JSON.parse(readFileSync(file, "utf8")));
+    return parseAiSelection(JSON.parse(readFileSync(file, "utf8")));
   } catch {
     throw new AiProviderError(
       "The saved AI provider selection could not be read. Choose a provider again in Connections.",
@@ -143,7 +144,7 @@ export function readAiSelection(root: string): AiSelection | undefined {
   }
 }
 export function saveAiSelection(root: string, input: unknown): AiSelection {
-  const value = selection(input);
+  const value = parseAiSelection(input);
   writePrivate(selectionFile(root), JSON.stringify(value));
   return value;
 }
@@ -205,7 +206,7 @@ export function saveCodexRefreshOrigin(
 export function codexAccountAuth(root: string, env: NodeJS.ProcessEnv): string {
   return normalizeCodexAuth(credentials(root, env).CODEX_AUTH_JSON ?? "");
 }
-export function resolveAiSelection(
+export function resolveWorkspaceAiSelection(
   root: string,
   env: NodeJS.ProcessEnv,
 ): AiSelection {
@@ -219,6 +220,16 @@ export function resolveAiSelection(
         : "claude",
   };
 }
+export function resolveAiSelection(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  scope?: AiRoutingTarget,
+): AiSelection {
+  if (!scope) return resolveWorkspaceAiSelection(root, env);
+  const { source: _source, ...selected } = readAiRouting(root, scope, env)
+    .effective[scope.role];
+  return selected;
+}
 export function aiCredentialNames(provider: AiProvider): string[] {
   return provider === "codex"
     ? ["CODEX_AUTH_JSON"]
@@ -227,17 +238,22 @@ export function aiCredentialNames(provider: AiProvider): string[] {
 export function hasAiCredentials(
   root: string,
   env: NodeJS.ProcessEnv,
+  selected?: AiSelection,
 ): boolean {
   return configured(
-    resolveAiSelection(root, env).provider,
+    (selected ? parseAiSelection(selected) : resolveAiSelection(root, env))
+      .provider,
     credentials(root, env),
   );
 }
 export function aiCredentials(
   root: string,
   env: NodeJS.ProcessEnv,
+  selected?: AiSelection,
 ): Record<string, string> {
-  const provider = resolveAiSelection(root, env).provider,
+  const provider = (
+      selected ? parseAiSelection(selected) : resolveAiSelection(root, env)
+    ).provider,
     values = credentials(root, env);
   if (!configured(provider, values))
     throw new AiProviderError(
@@ -251,16 +267,27 @@ export function aiCredentials(
 export function selectedAiCredential(
   root: string,
   env: NodeJS.ProcessEnv,
+  selected?: AiSelection,
 ): { ai: AiSelection; credential: string } | undefined {
-  if (!hasAiCredentials(root, env)) return undefined;
-  const ai = resolveAiSelection(root, env);
+  const ai = selected
+    ? parseAiSelection(selected)
+    : resolveAiSelection(root, env);
+  if (!hasAiCredentials(root, env, ai)) return undefined;
   return {
     ai,
-    credential: aiCredentials(root, env)[aiCredentialNames(ai.provider)[0]!]!,
+    credential: aiCredentials(root, env, ai)[
+      aiCredentialNames(ai.provider)[0]!
+    ]!,
   };
 }
-export function aiStatus(root: string, env: NodeJS.ProcessEnv) {
-  const selected = resolveAiSelection(root, env),
+export function aiStatus(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  selection?: AiSelection,
+) {
+  const selected = selection
+      ? parseAiSelection(selection)
+      : resolveAiSelection(root, env),
     values = credentials(root, env);
   return {
     ...selected,

@@ -1,6 +1,11 @@
 import { resolve } from "node:path";
 import { loadProject } from "../config.ts";
-import { aiSecretValues, selectedAiCredential } from "../ai/provider.ts";
+import {
+  aiSecretValues,
+  resolveAiSelection,
+  selectedAiCredential,
+} from "../ai/provider.ts";
+import { projectAiTarget } from "../ai/routing.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { readEditableConfig } from "./configEditor.ts";
 import {
@@ -138,7 +143,15 @@ export function createEnvironmentGuide(options: {
       throw new ProjectOnboardingError(
         "Keep credentials out of chat. Save tokens and test passwords in Connections.",
       );
-    const aiCredential = selectedAiCredential(root, saved);
+    const aiCredential = selectedAiCredential(
+      root,
+      saved,
+      resolveAiSelection(
+        root,
+        saved,
+        projectAiTarget({ config: projectConfig }, "setup"),
+      ),
+    );
     if (!aiCredential)
       throw new ProjectOnboardingError(
         "Connect your selected AI provider in Connections to ask a setup question. Finding and creating Vercel previews works without AI.",
@@ -169,6 +182,7 @@ export function createEnvironmentGuide(options: {
           422,
         );
       const response = await execute({
+        aiTarget: projectAiTarget({ config: projectConfig }, "setup"),
         usageContext: {
           kind: "setup-guidance",
           project,

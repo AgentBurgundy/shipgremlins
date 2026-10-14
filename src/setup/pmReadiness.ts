@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { hasAiCredentials, resolveAiSelection } from "../ai/provider.ts";
+import { projectAiTarget } from "../ai/routing.ts";
 import { CronExpressionParser } from "cron-parser";
 import { createScheduleCursor } from "../localRunners/scheduleCursor.ts";
 import {
@@ -131,6 +132,15 @@ export function inspectPmReadiness(
   context: ReadinessContext,
 ) {
   const config = project.config;
+  const workspaceRoot = resolve(project.dir, "../..");
+  const aiFor = (role: "pm" | "coder", area?: AreaConfig) =>
+    resolveAiSelection(
+      workspaceRoot,
+      context.env,
+      projectAiTarget(project, role, area),
+    );
+  const aiReady = (role: "pm" | "coder", area?: AreaConfig) =>
+    hasAiCredentials(workspaceRoot, context.env, aiFor(role, area));
   const provider = config.provider ?? "github";
   const server =
     config.serverUrl ??
@@ -208,10 +218,12 @@ export function inspectPmReadiness(
   add(
     "ai_connection",
     "AI connection",
-    hasAiCredentials(resolve(project.dir, "../.."), context.env),
+    project.areas.length
+      ? project.areas.some((area) => aiReady("pm", area))
+      : aiReady("pm"),
     "ai",
     "Connect the selected AI provider in Connections before running a gremlin.",
-    `${resolveAiSelection(resolve(project.dir, "../.."), context.env).provider === "codex" ? "Codex" : "Claude Code"} connection is saved.`,
+    "An AI connection is saved for PM work.",
   );
   add(
     "linear_connection",
@@ -321,7 +333,13 @@ export function inspectPmReadiness(
     status: browserVerified ? "passed" : "untested",
   });
   const areas = project.areas.map((area) => {
-    const blockers = [...common];
+    const blockers = common.filter((item) => item.id !== "ai_connection");
+    if (!aiReady("pm", area))
+      blockers.push({
+        id: "ai_connection",
+        action: "ai",
+        message: `Connect ${aiFor("pm", area).provider === "codex" ? "Codex" : "Claude Code"} in Connections for this PM, or change its AI choice.`,
+      });
     const browserRequirement = pmVerificationBlocker(project, area);
     if (browserRequirement) blockers.push(browserRequirement);
     if (!hasPmMapping(area))
@@ -359,8 +377,15 @@ export function inspectPmReadiness(
           "test_access",
           "browser_verification",
           "pm_browser_required",
+          "ai_connection",
         ].includes(item.id),
     );
+    if (!aiReady("coder", area))
+      codingBlockers.push({
+        id: "ai_connection",
+        action: "ai",
+        message: `Connect ${aiFor("coder", area).provider === "codex" ? "Codex" : "Claude Code"} in Connections for coding work, or change its AI choice.`,
+      });
     if (promotionEnvironment) codingBlockers.push(promotionEnvironment);
     return {
       key: area.key,

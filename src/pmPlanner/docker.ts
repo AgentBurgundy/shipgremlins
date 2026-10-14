@@ -4,11 +4,15 @@ import { parseClaudeUsage } from "../../runner-local/usage.mjs";
 import { createUsage, type UsageContext } from "../usage/index.ts";
 import { createDockerRunners, type DockerRun } from "../localRunners/docker.ts";
 import { createCodexLogin } from "../setup/codexLogin.ts";
-import { readAiSelection, type AiSelection } from "../ai/provider.ts";
+import { resolveAiSelection, type AiSelection } from "../ai/provider.ts";
+import type { AiRoutingTarget } from "../ai/routing.ts";
+import { readConnections } from "../setup/connections.ts";
 import { validateAiSelection } from "../../runner-local/codex.mjs";
 
 export interface PlannerExecution {
   ai?: AiSelection;
+  /** Trusted routing identity only; never sent to the model or worker. */
+  aiTarget?: AiRoutingTarget;
   /** Controller metadata only; never included in the prompt or container input. */
   usageContext?: UsageContext;
   credential: string;
@@ -108,7 +112,7 @@ process.stdin.on('end', () => {
   const env = { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/work/home', TMPDIR: '/tmp',
     CLAUDE_CODE_OAUTH_TOKEN: input.credential, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1' };
-  const args = ['--print', '--model', input.ai?.model ?? 'sonnet', '--tools', '', '--disable-slash-commands',
+  const args = ['--print', ...(input.ai?.model ? ['--model', input.ai.model] : []), '--tools', '', '--disable-slash-commands',
     '--safe-mode', '--restricted', '--setting-sources', '', '--strict-mcp-config',
     '--mcp-config', '{"mcpServers":{}}', '--no-chrome', '--permission-mode', 'dontAsk',
     '--permission-prompts', 'none', '--no-session-persistence', '--max-turns', '3',
@@ -204,7 +208,11 @@ export function createDockerPlanner(options: {
   ensureImage?: () => Promise<string>;
   /** Setup investigation can opt into larger bounded source context; PM drafts retain 512 KiB. */
   maxInputBytes?: number;
-  prepareCodexCredentials?: () => Promise<Record<string, string>>;
+  /** Same controller environment used to resolve the selected account; never forwarded to the planner. */
+  env?: () => NodeJS.ProcessEnv;
+  prepareCodexCredentials?: (
+    ai: AiSelection,
+  ) => Promise<Record<string, string>>;
 }): PlannerExecutor {
   const run = options.run ?? runPlannerDocker;
   const usage = options.root ? createUsage({ root: options.root }) : undefined;
@@ -235,20 +243,41 @@ export function createDockerPlanner(options: {
       Buffer.byteLength(serialize(input.credential)) > maximum
     )
       throw new PlannerExecutionError("input_limit", provider);
-    const before = options.root
-      ? JSON.stringify(readAiSelection(options.root))
-      : undefined;
+    const selectionStamp = () =>
+      options.root
+        ? JSON.stringify(
+            resolveAiSelection(
+              options.root,
+              {
+                ...readConnections(options.root),
+                ...Object.fromEntries(
+                  Object.entries(options.env?.() ?? process.env).filter(
+                    ([, value]) => value !== undefined,
+                  ),
+                ),
+              },
+              input.aiTarget,
+            ),
+          )
+        : undefined;
+    const before = selectionStamp();
+    if (
+      options.root &&
+      (input.aiTarget || options.env) &&
+      before !== JSON.stringify(ai)
+    )
+      throw new PlannerExecutionError("canceled", provider);
     let credential = input.credential;
     if (provider === "codex") {
       if (!options.root && !options.prepareCodexCredentials)
         throw new PlannerExecutionError("authentication", provider);
       let refreshed: Record<string, string>;
       try {
-        refreshed = await (options.prepareCodexCredentials?.() ??
+        refreshed = await (options.prepareCodexCredentials?.(ai) ??
           createCodexLogin({
             root: options.root!,
             packageRoot: options.packageRoot,
-          }).prepare());
+          }).prepare(ai));
       } catch {
         throw new PlannerExecutionError(
           input.signal.aborted ? "canceled" : "authentication",
@@ -258,10 +287,7 @@ export function createDockerPlanner(options: {
       if (!refreshed.CODEX_AUTH_JSON)
         throw new PlannerExecutionError("authentication", provider);
       credential = refreshed.CODEX_AUTH_JSON;
-      if (
-        options.root &&
-        JSON.stringify(readAiSelection(options.root)) !== before
-      )
+      if (options.root && selectionStamp() !== before)
         throw new PlannerExecutionError("canceled", provider);
     }
     if (input.signal.aborted)
@@ -295,6 +321,8 @@ export function createDockerPlanner(options: {
           );
     }
     if (input.signal.aborted)
+      throw new PlannerExecutionError("canceled", provider);
+    if (selectionStamp() !== before)
       throw new PlannerExecutionError("canceled", provider);
     if (!/^shipgremlins-local:[a-f0-9]{16}$/.test(image))
       throw new PlannerExecutionError("runtime_unavailable", provider);

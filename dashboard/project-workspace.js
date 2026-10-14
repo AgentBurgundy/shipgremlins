@@ -245,6 +245,11 @@
       signature = "",
       renderedRoute = "",
       sidebarSignature = "";
+    const aiRouting = window.createAiRouting?.({
+      api,
+      onSaved,
+      isLocked: () => locked,
+    });
     let request = null,
       generation = 0,
       timer = null,
@@ -1405,6 +1410,7 @@
         );
     }
     function settingsWorkspace(project) {
+      aiRouting?.mount(root, project);
       const tools = node("section", "project-tools");
       for (const [title, description, tab, label] of [
         [
@@ -1656,6 +1662,7 @@
       const content = node("section", "pm-workspace-content");
       content.setAttribute("aria-label", tabs.find(([key]) => key === tab)[1]);
       if (tab === "brief") {
+        aiRouting?.mount(content, project, area);
         const briefHeading = node("div", "pm-brief-heading");
         briefHeading.append(
           node("h3", "", "Mandate"),
@@ -1939,6 +1946,7 @@
         renderedRoute === currentRoute &&
         (options.operations?.protectFocus(root) ||
           options.onboarding?.protectFocus(root) ||
+          aiRouting?.protectFocus(root) ||
           grumblins?.protectFocus() ||
           missions?.protectFocus() ||
           welcome?.protectFocus() ||
@@ -2145,9 +2153,10 @@
       render,
       discover,
       openBrief,
-      isDirty,
+      isDirty: () => isDirty() || aiRouting?.isDirty(),
       isBusy: () =>
         editor.busy ||
+        aiRouting?.isBusy() ||
         launching ||
         missions?.isBusy() ||
         welcome?.isBusy() ||
@@ -2170,6 +2179,7 @@
             notices.delete(key);
             knowledgeErrors.delete(key);
           }
+        aiRouting?.forget(project, area);
         setupSuggestions?.forget(project, area);
         if (!area) options.onboarding?.forget(project);
         if (!area) options.operations?.forget(project);

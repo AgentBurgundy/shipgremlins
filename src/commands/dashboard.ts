@@ -11,6 +11,8 @@ import {
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { automaticPromotionKey } from "../delivery/batching.ts";
 import { createUsage } from "../usage/index.ts";
+import { createRunFlows } from "../runFlow/index.ts";
+import { createAiModels } from "../ai/models.ts";
 import {
   AiProviderError,
   aiCredentialNames,
@@ -20,6 +22,13 @@ import {
   resolveAiSelection,
   saveAiSelection,
 } from "../ai/provider.ts";
+import {
+  AiRoutingError,
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
+import type { AiSelection } from "../ai/provider.ts";
 import { CodexLoginError, createCodexLogin } from "../setup/codexLogin.ts";
 import { currentChanges } from "../improvements/currentChanges.ts";
 import {
@@ -406,6 +415,8 @@ export interface DashboardOptions {
   environmentGuide?: ReturnType<typeof createEnvironmentGuide>;
   delivery?: ReturnType<typeof createDeliveryController>;
   remote?: ReturnType<typeof createRemoteWorkers>;
+  aiModels?: Pick<ReturnType<typeof createAiModels>, "list"> &
+    Partial<Pick<ReturnType<typeof createAiModels>, "close">>;
   recoveryContext?: (project: Project, write: boolean) => Promise<Ctx>;
 }
 
@@ -450,6 +461,32 @@ export function createDashboardServer(
   let updateRunning = false;
   let updateFailure = "";
   const remote = options.remote ?? createRemoteWorkers({ root });
+  function enrichRunFlows<T extends LocalJob>(jobs: T[]) {
+    const offline = new Set(
+      remote
+        .status()
+        .workers.filter((worker) => !worker.online)
+        .map((worker) => worker.logicalId)
+        .filter(Boolean),
+    );
+    const unavailable = new Set(
+      jobs
+        .filter(
+          (job) =>
+            job.status === "running" &&
+            job.workerId &&
+            offline.has(job.workerId),
+        )
+        .map((job) => job.id),
+    );
+    return runFlows.enrich(jobs, async (id) => {
+      if (unavailable.has(id))
+        throw new Error(
+          "Remote worker is offline; cached logs cannot establish live progress.",
+        );
+      return docker.logs(id);
+    });
+  }
   const activeProjectOperations = new Map<string, number>();
   let configurationMutation = false;
   let activeMutationRequests = 0;
@@ -490,11 +527,20 @@ export function createDashboardServer(
       ensureImage: () => localDocker.ensureImage(),
     });
   const plannerOptions = {
+    env: () => aiEnvironment(),
     root,
     packageRoot,
     ensureImage: () => localDocker.ensureImage(),
-    prepareCodexCredentials: () => codexLogin.prepare(),
+    prepareCodexCredentials: (ai: AiSelection) => codexLogin.prepare(ai),
   };
+  const modelCatalog =
+    options.aiModels ??
+    createAiModels({
+      root,
+      packageRoot,
+      env: () => aiEnvironment(),
+      prepareCodexCredentials: (ai) => codexLogin.prepare(ai),
+    });
   const planner = createDockerPlanner(plannerOptions);
   const workspaceAiStatus = () => {
     const status = aiStatus(root, aiEnvironment());
@@ -846,7 +892,7 @@ export function createDashboardServer(
     options.jobs ??
     createJobPreparation({
       root,
-      prepareCodexCredentials: () => codexLogin.prepare(),
+      prepareCodexCredentials: (ai) => codexLogin.prepare(ai),
       sourceControl,
       linearConnection,
       vercelConnection,
@@ -897,6 +943,7 @@ export function createDashboardServer(
   const slack = options.slack ?? createSlackConnect({ root, session });
   const activityStore = options.activityStore ?? createActivityStore({ root });
   const tokenUsage = createUsage({ root });
+  const runFlows = createRunFlows({ root });
   let usageHistoryImported = false;
   const outputRead = createDashboardOutputReader();
   const knowledge = createPmKnowledge({ root });
@@ -1420,11 +1467,15 @@ export function createDashboardServer(
         ...Object.values(stored),
         ...aiSecretValues(stored),
         ...aiSecretValues(aiEnvironment()),
+        ...runFlows.secretValues(),
       ];
     } catch {
       // Workers already redact their injected credentials before writing logs.
     }
-    return publicActivityLogs(lines, secrets);
+    return publicActivityLogs(
+      lines.filter((line) => !line.startsWith("GREMLINS_FLOW ")),
+      secrets,
+    );
   };
   const liveLogs = (id: string) =>
     outputRead(
@@ -1506,10 +1557,18 @@ export function createDashboardServer(
             409,
           );
         if (
-          !hasAiCredentials(root, {
-            ...readConnections(root),
-            ...process.env,
-          })
+          !hasAiCredentials(
+            root,
+            {
+              ...readConnections(root),
+              ...process.env,
+            },
+            resolveAiSelection(
+              root,
+              aiEnvironment(),
+              projectAiTarget(loadProject(root, name), "coder"),
+            ),
+          )
         )
           throw new IdeaCrewError(
             "Connect your selected AI provider in Connections before building the foundation.",
@@ -1884,9 +1943,11 @@ export function createDashboardServer(
     const sources = await sourceControl.status();
     const serviceConnections = await serviceStatuses();
     const blockedSources = new Set<string>();
-    const required = new Set(
-      aiCredentialNames(resolveAiSelection(root, aiEnvironment()).provider),
-    );
+    const required = new Set<string>();
+    if (!listProjectNames(root).length)
+      aiCredentialNames(
+        resolveAiSelection(root, aiEnvironment()).provider,
+      ).forEach((name) => required.add(name));
     function requireService(provider: OAuthProvider, id = "default") {
       const connection = serviceConnections.find(
         (item) => item.provider === provider && item.id === id,
@@ -1906,6 +1967,17 @@ export function createDashboardServer(
     for (const name of listProjectNames(root)) {
       try {
         const project = loadProject(root, name);
+        const targets = project.areas.flatMap((area) => [
+          ...(area.enabled ? [projectAiTarget(project, "pm", area)] : []),
+          ...((area.codingEnabled ?? area.enabled)
+            ? [projectAiTarget(project, "coder", area)]
+            : []),
+        ]);
+        if (!targets.length) targets.push(projectAiTarget(project, "setup"));
+        for (const target of targets)
+          aiCredentialNames(
+            resolveAiSelection(root, aiEnvironment(), target).provider,
+          ).forEach((name) => required.add(name));
         requireService("linear", project.config.linear?.connectionId);
         const verification = effectiveVerification(project.config);
         if (verification.mode === "browser") {
@@ -1942,8 +2014,10 @@ export function createDashboardServer(
         /* Status reports broken project config separately. */
       }
     }
+    const status = await runners().status();
     return {
-      ...(await runners().status()),
+      ...status,
+      jobs: await enrichRunFlows(status.jobs),
       machine: {
         name: hostname(),
         platform: process.platform,
@@ -1970,7 +2044,7 @@ export function createDashboardServer(
       sourceConnections: sources,
       serviceConnections,
       limitations: [
-        "Local workers use the AI provider selected in Connections. Each worker runs one job at a time.",
+        "Workers use the AI provider selected for their PM or coding role, inheriting project and workspace defaults. Each worker runs one job at a time.",
         "In the staged workflow, PMs QA coding changes and prepare promotion PRs automatically. Production releases follow your repository's merge rules.",
         "Closing the browser is safe. Keep the controller running for schedules and queued jobs.",
       ],
@@ -3187,7 +3261,7 @@ export function createDashboardServer(
               .sort((a, b) => b.runId - a.runId)
               .slice(0, limit);
             json(res, 200, {
-              jobs,
+              jobs: await enrichRunFlows(jobs),
               historyAvailable,
               nextBeforeRunId:
                 jobs.length === limit ? jobs.at(-1)!.runId : null,
@@ -3627,6 +3701,119 @@ export function createDashboardServer(
               updateRunning = false;
             });
           json(res, 202, updateStatus());
+          return;
+        }
+        const aiRouteMatch =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})(?:\/pms\/([a-z][a-z0-9-]{0,62}))?\/ai$/.exec(
+            url.pathname,
+          );
+        if (aiRouteMatch) {
+          if (url.search)
+            throw new RequestError(
+              400,
+              "AI settings do not accept query parameters.",
+            );
+          if (req.method !== "GET" && req.method !== "PUT")
+            throw new RequestError(
+              405,
+              "Use GET or PUT for project AI settings.",
+            );
+          if (!listProjectNames(root).includes(aiRouteMatch[1]!))
+            throw new RequestError(404, "This project is unavailable.");
+          const project = loadProject(root, aiRouteMatch[1]!);
+          const area = aiRouteMatch[2]
+            ? project.areas.find((item) => item.key === aiRouteMatch[2])
+            : undefined;
+          if (aiRouteMatch[2] && !area)
+            throw new RequestError(404, "This PM is unavailable.");
+          const scope = projectAiTarget(project, "setup", area);
+          if (req.method === "PUT") {
+            const input = await body(req, 8192);
+            if (!listProjectNames(root).includes(project.config.name))
+              throw new RequestError(404, "This project is unavailable.");
+            const currentProject = loadProject(root, project.config.name);
+            const currentArea = area
+              ? currentProject.areas.find((item) => item.key === area.key)
+              : undefined;
+            if (
+              (area && !currentArea) ||
+              projectRuntimeKey(currentProject.config) !==
+                projectRuntimeKey(project.config) ||
+              JSON.stringify(
+                projectAiTarget(currentProject, "setup", currentArea),
+              ) !== JSON.stringify(scope)
+            )
+              throw new RequestError(
+                409,
+                "This project or PM changed while saving. Refresh before saving AI choices.",
+              );
+            const secrets = [
+              ...aiSecretValues(aiEnvironment()),
+              ...aiSecretValues(readConnections(root)),
+            ];
+            for (const key of ["default", "pm", "coder"]) {
+              const choice = input[key];
+              const model =
+                choice &&
+                typeof choice === "object" &&
+                !Array.isArray(choice) &&
+                "model" in choice
+                  ? choice.model
+                  : undefined;
+              if (
+                typeof model === "string" &&
+                secrets.some((secret) => model.includes(secret))
+              )
+                throw new RequestError(
+                  400,
+                  "Use a model ID here. Save credentials in Connections.",
+                );
+            }
+            saveAiRouting(root, scope, input, aiEnvironment());
+          }
+          const view = readAiRouting(root, scope, aiEnvironment());
+          const workspace = workspaceAiStatus();
+          json(res, 200, {
+            ...view,
+            effective: Object.fromEntries(
+              Object.entries(view.effective).map(([role, ai]) => [
+                role,
+                {
+                  ...ai,
+                  configured: hasAiCredentials(root, aiEnvironment(), {
+                    provider: ai.provider,
+                    ...(ai.model ? { model: ai.model } : {}),
+                  }),
+                },
+              ]),
+            ),
+            providers: Object.values(workspace.providers),
+            workspace: {
+              provider: workspace.provider,
+              model: workspace.model,
+              configured: workspace.configured,
+            },
+          });
+          return;
+        }
+        if (url.pathname === "/api/ai/models") {
+          if (req.method !== "GET")
+            throw new RequestError(405, "Use GET to load model choices.");
+          const providers = url.searchParams.getAll("provider");
+          if (
+            [...url.searchParams.keys()].some((key) => key !== "provider") ||
+            providers.length !== 1 ||
+            !["claude", "codex"].includes(providers[0]!)
+          )
+            throw new RequestError(
+              400,
+              "Choose Claude Code or Codex to load model choices.",
+            );
+          json(
+            res,
+            200,
+            await modelCatalog.list(providers[0] as "claude" | "codex"),
+          );
           return;
         }
         if (url.pathname === "/api/ai") {
@@ -5823,7 +6010,8 @@ export function createDashboardServer(
         error instanceof ConfigEditorError ||
         error instanceof RemoteWorkerError ||
         error instanceof AiProviderError ||
-        error instanceof CodexLoginError
+        error instanceof CodexLoginError ||
+        error instanceof AiRoutingError
           ? error.status
           : error instanceof ConnectionSaveError
             ? 400
@@ -5842,7 +6030,8 @@ export function createDashboardServer(
         error instanceof ConnectionSaveError ||
         error instanceof RemoteWorkerError ||
         error instanceof AiProviderError ||
-        error instanceof CodexLoginError
+        error instanceof CodexLoginError ||
+        error instanceof AiRoutingError
           ? error.message
           : "Dashboard request failed. Check your local configuration files and permissions.";
       if (!res.headersSent) json(res, status, { error: message });
@@ -5858,19 +6047,33 @@ export function createDashboardServer(
   server.headersTimeout = 10_000;
   function startAutomaticWork() {
     try {
-      if (
-        loadHub(root).runners.mode !== "local" ||
-        !hasAiCredentials(root, {
-          ...readConnections(root),
-          ...process.env,
-        })
-      )
-        return;
+      if (loadHub(root).runners.mode !== "local") return;
       if (
         listProjectNames(root).some((name) => {
           try {
-            return loadProject(root, name).areas.some(
-              (area) => area.enabled || (area.codingEnabled ?? area.enabled),
+            const project = loadProject(root, name);
+            return project.areas.some(
+              (area) =>
+                (area.enabled &&
+                  hasAiCredentials(
+                    root,
+                    aiEnvironment(),
+                    resolveAiSelection(
+                      root,
+                      aiEnvironment(),
+                      projectAiTarget(project, "pm", area),
+                    ),
+                  )) ||
+                ((area.codingEnabled ?? area.enabled) &&
+                  hasAiCredentials(
+                    root,
+                    aiEnvironment(),
+                    resolveAiSelection(
+                      root,
+                      aiEnvironment(),
+                      projectAiTarget(project, "coder", area),
+                    ),
+                  )),
             );
           } catch {
             return false;
@@ -5905,6 +6108,7 @@ export function createDashboardServer(
       vercelAccess.close(),
       environmentGuide.close(),
       codexLogin.close(),
+      modelCatalog.close?.(),
       Promise.resolve(manager?.stop()),
     ]).finally(() => activityStore.close());
   });

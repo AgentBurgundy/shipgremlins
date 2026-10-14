@@ -32,6 +32,9 @@ export interface LocalJobInput {
 }
 
 export interface LocalJob extends LocalJobInput {
+  /** Read-only presentation fields, restored from authenticated runner observations. */
+  ai?: import("../ai/provider.ts").AiSelection;
+  flow?: import("../../runner-local/run-flow.mjs").RunFlowSnapshot;
   id: string;
   runId: number;
   workerId?: string;

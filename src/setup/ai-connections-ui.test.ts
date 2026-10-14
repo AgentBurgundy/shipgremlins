@@ -35,6 +35,9 @@ class Element {
   append(...children: Element[]) {
     this.children.push(...children);
   }
+  replaceChildren(...children: Element[]) {
+    this.children = children;
+  }
   setAttribute(key: string, value: string) {
     this.attributes.set(key, value);
   }
@@ -55,6 +58,10 @@ const text = (root: Element): string =>
     .join(" ");
 const source = readFileSync(
   new URL("../../dashboard/ai-connections.js", import.meta.url),
+  "utf8",
+);
+const modelsSource = readFileSync(
+  new URL("../../dashboard/ai-models.js", import.meta.url),
   "utf8",
 );
 const view = (provider = "codex", configured = false, model?: string) => ({
@@ -88,7 +95,8 @@ function fixture(
   };
   const root = new Element("div"),
     claudeAccess = new Element("div"),
-    onSaved = vi.fn(async () => {});
+    onSaved = vi.fn(async () => {}),
+    modelRequests: string[] = [];
   const window = {
     addEventListener: (name: string, handler: () => void) =>
       events.set(name, handler),
@@ -107,7 +115,7 @@ function fixture(
       refresh(): Promise<void>;
     };
   };
-  runInNewContext(source, {
+  runInNewContext(modelsSource + "\n" + source, {
     window,
     document,
     URL,
@@ -119,7 +127,18 @@ function fixture(
   const control = window.createAiConnections({
     root,
     claudeAccess,
-    api,
+    api: (...args: Parameters<Api>) =>
+      args[0].startsWith("/api/ai/models?")
+        ? (modelRequests.push(args[0]),
+          Promise.resolve({
+            provider: args[0].endsWith("codex") ? "codex" : "claude",
+            source: "provider",
+            models: [
+              { id: "gpt-5.4", label: "Fixture Codex model" },
+              { id: "sonnet", label: "Fixture Claude model" },
+            ],
+          }))
+        : api(...args),
     onSaved,
   });
   control.render({ ai: view() });
@@ -144,6 +163,7 @@ function fixture(
     byId,
     radio,
     onSaved,
+    modelRequests,
   };
 }
 const settle = async () => {
@@ -310,6 +330,7 @@ describe("AI provider connection UI", () => {
     const f = fixture(api);
     await settle();
     const input = f.byId("codex-auth-json");
+    expect(f.modelRequests).toEqual(["/api/ai/models?provider=codex"]);
     input.value = authJson;
     expect(f.control.isDirty()).toBe(true);
     const form = all(f.root).find(
@@ -322,6 +343,10 @@ describe("AI provider connection UI", () => {
     expect(input.value).toBe("");
     expect(f.control.isDirty()).toBe(false);
     expect(text(f.root)).not.toContain("private-access");
+    expect(f.modelRequests).toEqual([
+      "/api/ai/models?provider=codex",
+      "/api/ai/models?provider=codex",
+    ]);
   });
   it("rejects API-key, malformed and oversized imports without sending or echoing them", async () => {
     const api = vi.fn<Api>(async (path) =>
@@ -417,9 +442,9 @@ describe("AI provider connection UI", () => {
     const f = fixture(api);
     await settle();
     const input = f.byId("ai-model");
-    expect(input.maxLength).toBe(100);
+    expect(input.tagName).toBe("SELECT");
     input.value = "gpt-5.4";
-    input.fire("input");
+    input.fire("change");
     f.control.render({ ai: view() });
     expect(input.value).toBe("gpt-5.4");
     await f.radio("Claude Code").fire("click");
@@ -503,7 +528,7 @@ describe("AI provider connection UI", () => {
     ).toBe(false);
     expect(model.value).toBe("gpt-5.4");
     model.value = "";
-    model.fire("input");
+    model.fire("change");
     const form = all(f.root).find(
       (item) => item.tagName === "FORM" && all(item).includes(model),
     )!;

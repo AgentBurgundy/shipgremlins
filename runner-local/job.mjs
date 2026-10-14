@@ -27,6 +27,14 @@ import { startLeaseWatchdog } from "./lease.mjs";
 import { chromium } from "playwright";
 import { createActivityWriter } from "./activity.mjs";
 import { createUsageCollector, writeUsageArtifact } from "./usage.mjs";
+import { createRunFlowWriter } from "./run-flow.mjs";
+import {
+  captureCodingState,
+  createCodingPhaseRunner,
+  runCodingWorkflow,
+  writeCodingCheckpoint,
+  writeCodingTask,
+} from "./coding-workflow.mjs";
 import {
   discoveryArguments,
   discoveryResult,
@@ -50,6 +58,7 @@ import {
   enforceDeadline,
   jobEnvironments,
   preparePublication,
+  restoreGitConfig,
 } from "./runtime.mjs";
 
 let current;
@@ -119,6 +128,14 @@ function activityFor(provider = "claude") {
 let activity = activityFor();
 let usage = createUsageCollector();
 let codexInvocation;
+let flow;
+let activePhase;
+let codingWorkflow;
+const phaseUsage = [];
+function phase(id, status) {
+  activePhase = id;
+  flow?.phase(id, status);
+}
 async function run(command, args, options = {}) {
   if (stopping) throw new Error("Job stopped.");
   if (!options.model)
@@ -148,10 +165,15 @@ async function run(command, args, options = {}) {
     });
     let modelError = false;
     let captured = "";
+    let diagnostic = "";
     let capturedBytes = 0;
     current.stdout.on("data", (chunk) => {
       capturedBytes += chunk.length;
       captured = (captured + chunk.toString("utf8")).slice(-1024 * 1024);
+    });
+    current.stderr.on("data", (chunk) => {
+      if (!options.model)
+        diagnostic = (diagnostic + chunk.toString("utf8")).slice(-16384);
     });
     const modelStream = current.stdout;
     const streams = [current.stdout, current.stderr];
@@ -175,7 +197,8 @@ async function run(command, args, options = {}) {
               )
                 modelError = true;
               if (options.model) {
-                if (stream === modelStream) usage.modelRecord(parsed);
+                if (stream === modelStream)
+                  (options.usageCollector ?? usage).modelRecord(parsed);
                 activity.modelRecord(parsed);
                 continue;
               }
@@ -201,7 +224,8 @@ async function run(command, args, options = {}) {
               modelError = true;
             if (["turn.failed", "error"].includes(parsed.type))
               modelError = true;
-            if (stream === modelStream) usage.modelRecord(parsed);
+            if (stream === modelStream)
+              (options.usageCollector ?? usage).modelRecord(parsed);
             activity.modelRecord(parsed);
           } catch {}
         }
@@ -227,10 +251,17 @@ async function run(command, args, options = {}) {
           ),
         );
       else if (code === 0 && !modelError && !stopping) done(captured);
-      else
-        reject(
-          new Error("A job command failed. Inspect the redacted job log."),
+      else {
+        const error = new Error(
+          "A job command failed. Inspect the redacted job log.",
         );
+        error.exitCode = code ?? 1;
+        // Provider envelopes are never forwarded into another model prompt.
+        error.output = options.model
+          ? ""
+          : redact(captured + "\n" + diagnostic);
+        reject(error);
+      }
     });
   });
 }
@@ -259,6 +290,17 @@ try {
   if (!input || !["verify", "pm", "developer"].includes(input.kind))
     throw new Error("Unsupported job kind.");
   kind = input.kind;
+  if (input.runFlow !== undefined) {
+    flow = createRunFlowWriter({
+      authorization: input.runFlow,
+      jobId: input.nonce,
+      kind,
+      write: (line) => process.stdout.write(line),
+    });
+    delete input.runFlow;
+  }
+  if (kind === "pm" || kind === "verify") phase("prepare", "running");
+  if (kind === "developer") phase("understand", "running");
   const ai = validateAiSelection(input.ai);
   activity = activityFor(ai.provider);
   usage = createUsageCollector({ provider: ai.provider, model: ai.model });
@@ -321,6 +363,8 @@ try {
       throw new Error("Delivery review belongs to another job.");
   }
   if (kind === "verify" && input.accessProbe === true) {
+    phase("prepare", "passed");
+    phase("browser", "running");
     if (!input.managedAccess) throw new AccessFailure("invalid_access");
     const verified = await managedAccessRequest(input.managedAccess, "/verify");
     const screenshot = await managedAccessRequest(
@@ -353,7 +397,11 @@ try {
       "The runner opened the app and checked its prepared browser context.",
       "succeeded",
     );
+    phase("browser", "passed");
+    phase("complete", "passed");
   } else if (kind === "verify") {
+    phase("prepare", "passed");
+    phase("browser", "running");
     await browserSmoke("/output", input.nonce);
     activity.emit(
       "check",
@@ -368,6 +416,8 @@ try {
       "succeeded",
     );
     log("Real Chromium screenshot created and verified.");
+    phase("browser", "passed");
+    phase("complete", "passed");
   } else {
     if (
       typeof input.prompt !== "string" ||
@@ -578,61 +628,143 @@ try {
       mode: 0o600,
     });
     writeFileSync("/work/prompt.md", input.prompt, { mode: 0o600 });
-    if (ai.provider === "codex")
-      codexInvocation = prepareCodexInvocation({
-        selection: ai,
-        authJson: credentials.CODEX_AUTH_JSON,
-        cwd: "/work/repo",
-        directory: "/work",
-        env,
-        restricted: discovery,
-        ...(discovery
-          ? {
-              readonlyRoots: {
-                repository: "/work/repo",
-                memory: "/work/memory",
-              },
-              schema: JSON.parse(discoveryArguments().at(-1)),
-            }
-          : { mcpServers }),
+    const stagedCoding =
+      kind === "developer" && !input.syncRepair && !input.promotionRepair;
+    let modelOutput = "",
+      finalMessage;
+    if (stagedCoding) {
+      const taskPrompt = redact(
+        input.prompt +
+          `\nTrusted checkout: ${repo.href}, branch ${input.branch}, source ${baseSha}.`,
+      );
+      writeCodingTask("/work/memory", taskPrompt);
+      const trustedRun = (command, args) =>
+        run(command, args, {
+          cwd: "/work/repo",
+          env,
+          requireCompleteOutput: command === "git",
+        });
+      codingWorkflow = await runCodingWorkflow({
+        baseSha,
+        criteria: input.delivery.acceptanceCriteria,
+        commands,
+        prompt: taskPrompt,
+        redact,
+        flow: {
+          phase: (id, status) => phase(id, status),
+          checkpoint: (value) => flow?.checkpoint(value),
+        },
+        checkpoint: (journal) => writeCodingCheckpoint("/output", journal),
+        state: () => {
+          restoreGitConfig("/work/repo", repo.href);
+          return captureCodingState({
+            directory: "/work/repo",
+            baseSha,
+            run: trustedRun,
+          });
+        },
+        check: async ({ command }) => {
+          try {
+            return {
+              code: 0,
+              output: await run(
+                "/bin/bash",
+                ["-o", "pipefail", "-lc", command],
+                { cwd: "/work/repo", env },
+              ),
+            };
+          } catch (error) {
+            if (!Number.isInteger(error.exitCode)) throw error;
+            return { code: error.exitCode, output: error.output ?? "" };
+          }
+        },
+        invoke: createCodingPhaseRunner({
+          ai,
+          credentials,
+          env,
+          mcpServers,
+          run,
+          redact,
+          onUsage: (value) => phaseUsage.push(value),
+          taskPrompt,
+        }),
       });
-    const modelOutput = await run(
-      codexInvocation?.command ?? "claude",
-      codexInvocation?.args ?? [
-        ...(discovery
-          ? discoveryArguments()
-          : ["--dangerously-skip-permissions"]),
-        "--output-format",
-        "stream-json",
-        "--include-partial-messages",
-        "--verbose",
-        "--max-turns",
-        "60",
-        "--strict-mcp-config",
-        "--mcp-config",
-        "/work/mcp.json",
-        ...(ai.model ? ["--model", ai.model] : []),
-        "-p",
-      ],
-      {
-        cwd: "/work/repo",
-        env: codexInvocation?.env ?? env,
-        model: true,
-        input:
-          input.prompt +
-          `\n\nTrusted checkout metadata: repository ${repo.href}, branch ${input.branch}, commit SHA ${baseSha}, run UTC time ${new Date().toISOString()}.` +
-          (discovery
-            ? "\n\nReturn the requested structured JSON documents. You have only read/search tools; the worker writes the four output files. No installs, scripts, browser tools, tickets, remote writes, or repository changes."
-            : input.browserVerification === false
-              ? "\n\nThis job uses repository verification. Capture reproducible test output and file references; screenshots are optional. Browser tools are available if local app testing is useful, but never claim a browser check you did not perform."
-              : "\n\nUse the Playwright MCP browser for visual verification. Save screenshots under /output/screenshots.") +
-          (kind === "pm"
-            ? " Owner direction and bounded learned context are included above."
-            : " Your memory snapshot is in /work/memory.") +
-          " Never print credentials.",
-      },
-    );
-    const finalMessage = codexInvocation?.readResult();
+    } else {
+      if (kind === "pm") {
+        phase("prepare", "passed");
+        phase("investigate", "running");
+      }
+      if (kind === "developer") {
+        phase("understand", "skipped");
+        phase("baseline", "skipped");
+        phase("tests", "skipped");
+        phase("build", "running");
+      }
+      if (ai.provider === "codex")
+        codexInvocation = prepareCodexInvocation({
+          selection: ai,
+          authJson: credentials.CODEX_AUTH_JSON,
+          cwd: "/work/repo",
+          directory: "/work",
+          env,
+          restricted: discovery,
+          ...(discovery
+            ? {
+                readonlyRoots: {
+                  repository: "/work/repo",
+                  memory: "/work/memory",
+                },
+                schema: JSON.parse(discoveryArguments().at(-1)),
+              }
+            : { mcpServers }),
+        });
+      modelOutput = await run(
+        codexInvocation?.command ?? "claude",
+        codexInvocation?.args ?? [
+          ...(discovery
+            ? discoveryArguments()
+            : ["--dangerously-skip-permissions"]),
+          "--output-format",
+          "stream-json",
+          "--include-partial-messages",
+          "--verbose",
+          "--max-turns",
+          "60",
+          "--strict-mcp-config",
+          "--mcp-config",
+          "/work/mcp.json",
+          ...(ai.model ? ["--model", ai.model] : []),
+          "-p",
+        ],
+        {
+          cwd: "/work/repo",
+          env: codexInvocation?.env ?? env,
+          model: true,
+          input:
+            input.prompt +
+            `\n\nTrusted checkout metadata: repository ${repo.href}, branch ${input.branch}, commit SHA ${baseSha}, run UTC time ${new Date().toISOString()}.` +
+            (discovery
+              ? "\n\nReturn the requested structured JSON documents. You have only read/search tools; the worker writes the four output files. No installs, scripts, browser tools, tickets, remote writes, or repository changes."
+              : input.browserVerification === false
+                ? "\n\nThis job uses repository verification. Capture reproducible test output and file references; screenshots are optional. Browser tools are available if local app testing is useful, but never claim a browser check you did not perform."
+                : "\n\nUse the Playwright MCP browser for visual verification. Save screenshots under /output/screenshots.") +
+            (kind === "pm"
+              ? " Owner direction and bounded learned context are included above."
+              : " Your memory snapshot is in /work/memory.") +
+            " Never print credentials.",
+        },
+      );
+      finalMessage = codexInvocation?.readResult();
+      if (kind === "pm") {
+        phase("investigate", "passed");
+        phase("record", "running");
+      }
+      if (kind === "developer") {
+        phase("build", "passed");
+        phase("review", "skipped");
+        phase("verify", "running");
+      }
+    }
     if (discovery) {
       const result = discoveryResult(
         finalMessage === undefined
@@ -652,6 +784,10 @@ try {
       );
     }
     if (kind === "pm") sanitizeKnowledge("/output", redact);
+    if (kind === "pm") {
+      phase("record", "passed");
+      phase("complete", "running");
+    }
     let publicationDirectory = "/work";
     const deliveryResult =
       kind === "developer"
@@ -688,8 +824,21 @@ try {
             },
             onCheck: (name, status) =>
               activity.emit("check", name, undefined, status),
+            beforePublish: async () => {
+              await codingWorkflow?.assertPublishable();
+              if (!codingWorkflow) phase("verify", "passed");
+              phase("publish", "running");
+            },
+            checksAuthorization: codingWorkflow?.checksAuthorization,
           })
         : { checks: [] };
+    if (kind === "developer") {
+      if (codingWorkflow) codingWorkflow.published(deliveryResult.noChanges);
+      else {
+        phase("verify", "passed");
+        phase("publish", deliveryResult.noChanges ? "skipped" : "passed");
+      }
+    }
     if (input.managedAccess) {
       const verified = await managedAccessRequest(
         input.managedAccess,
@@ -718,6 +867,7 @@ try {
       ),
     );
     log("Job completed.");
+    if (kind === "pm") phase("complete", "passed");
     activity.emit(
       "result",
       "Job completed",
@@ -753,6 +903,7 @@ try {
     ),
   );
   log(message);
+  if (activePhase) phase(activePhase, "blocked");
   activity.emit("result", "Job failed", message, "failed");
   process.exitCode = timedOut ? 124 : stopping ? 130 : 1;
 } finally {
@@ -783,7 +934,37 @@ try {
     }
   }
   try {
-    writeUsageArtifact("/output", usage.snapshot());
+    const snapshots =
+      typeof phaseUsage !== "undefined" && phaseUsage.length
+        ? phaseUsage
+        : [usage.snapshot()];
+    const available = snapshots.filter(Boolean);
+    const measurement = available.length
+      ? {
+          ...available.at(-1),
+          ...Object.fromEntries(
+            [
+              "inputTokens",
+              "outputTokens",
+              "cacheReadInputTokens",
+              "cacheCreationInputTokens",
+            ].map((key) => [
+              key,
+              available.some((value) => value[key] === null)
+                ? null
+                : available.reduce((sum, value) => sum + value[key], 0),
+            ]),
+          ),
+          totalTokens: available.reduce(
+            (sum, value) => sum + value.totalTokens,
+            0,
+          ),
+          complete:
+            available.length === snapshots.length &&
+            available.every((value) => value.complete),
+        }
+      : undefined;
+    writeUsageArtifact("/output", measurement);
   } catch {
     // Metrics are optional. Always sanitize evidence and preserve the job result
     // even if the reserved usage artifact could not be written.

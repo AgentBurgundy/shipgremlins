@@ -427,6 +427,7 @@ export function createRemoteWorkers(options: {
         );
         worker.lastSeenAt = clock();
         const secrets = [
+          ...(job.payload.runFlow ? [job.payload.runFlow.key] : []),
           ...aiSecretValues(job.payload.credentials ?? {}),
           ...Object.values(job.payload.credentials ?? {}),
           ...Object.values(job.payload.testEnvironment?.env ?? {}),
@@ -530,6 +531,7 @@ export function createRemoteWorkers(options: {
         if (!/\.(png|jpe?g|webp)$/i.test(name))
           content = Buffer.from(
             sanitize(content.toString("utf8"), [
+              ...(job.payload.runFlow ? [job.payload.runFlow.key] : []),
               ...aiSecretValues(job.payload.credentials ?? {}),
               ...Object.values(job.payload.credentials ?? {}),
               ...Object.values(job.payload.testEnvironment?.env ?? {}),

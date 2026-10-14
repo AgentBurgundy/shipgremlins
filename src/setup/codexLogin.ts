@@ -14,8 +14,10 @@ import {
   codexAccountAuth,
   codexWorkerAuth,
   normalizeCodexAuth,
+  parseAiSelection,
   resolveAiSelection,
   saveCodexRefreshOrigin,
+  type AiSelection,
 } from "../ai/provider.ts";
 import { createDockerRunners, type DockerRun } from "../localRunners/docker.ts";
 import { writePrivate } from "../remoteWorkers/storage.ts";
@@ -504,9 +506,11 @@ export function createCodexLogin(options: {
       save({ status: "canceled" });
       return current;
     },
-    async prepare(): Promise<Record<string, string>> {
-      if (resolveAiSelection(root, values()).provider !== "codex")
-        return aiCredentials(root, values());
+    async prepare(selection?: AiSelection): Promise<Record<string, string>> {
+      const ai = selection
+        ? parseAiSelection(selection)
+        : resolveAiSelection(root, values());
+      if (ai.provider !== "codex") return aiCredentials(root, values(), ai);
       const operation = await launch("refresh");
       await operation.task;
       if (operation.canceled || closed)

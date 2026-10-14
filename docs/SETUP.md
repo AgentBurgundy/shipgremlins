@@ -240,10 +240,19 @@ test results remain explicit. See [the full PM workflow](PM_WORKFLOW.md).
 ### Choose your AI provider
 
 Open **Connections → AI provider** and choose **Claude Code** or **Codex**.
-The choice applies to new setup suggestions, PM planning, discovery, patrols,
-coding and repairs on the controller's local or enrolled workers. Existing runs
-keep their original provider. Selecting a disconnected provider leaves new work
-waiting for that connection; usage limits never trigger a provider or billing fallback.
+This is the workspace default. Both providers can stay connected at once.
+In **Project → Settings → AI choices**, set a project default, **PM work**, and
+**Coding work** independently. In a PM's **Product brief → AI choices**, choose
+**This PM** and **Coding for this PM**. Leave a choice on **Inherit** to use its
+parent setting. Model dropdowns belong to each explicit provider choice;
+switching providers resets that choice's model override.
+
+PM and coding runs use, in order: individual PM override, project role override,
+project default, workspace default. Setup suggestions use the project default or
+workspace default. New queued work resolves the current choice before launch;
+existing runs keep their original provider. Selecting a disconnected provider
+leaves work blocked on that connection; usage limits never trigger a provider or
+billing fallback. Claude Code and Codex are the supported providers.
 
 For Codex, choose **Sign in to Codex**. The controller prepares its Docker image
 and displays a one-time code and the official ChatGPT sign-in link. Complete
@@ -259,14 +268,25 @@ The import is private account access: keep the configuration directory out of Gi
 
 Before a Codex run, the trusted controller refreshes the account and gives the
 worker only a current access snapshot. Refresh credentials stay on the controller.
-An optional **Advanced model setting** overrides the selected provider's model;
-leave it blank for its default. Switching providers resets that override.
+Choose a model from its dropdown, or keep **Provider default**. Codex choices come
+from the pinned runtime's model catalog. Claude Code choices come from its supported
+model list, with supported family aliases shown when the runtime is unavailable.
+The caption distinguishes a supported list from a provider catalog. Catalogs do
+not prove account entitlement; the selected model must be available when a run
+starts. A saved model absent from the current catalog stays visible as a disabled
+previous choice until you deliberately replace it. Switching providers resets the
+model choice to **Provider default**.
 Codex reports cached input as part of total input, so usage separates fresh and
 cached input without counting it twice. Cache-creation counts are unavailable
 from this runtime and remain unknown; these reports are marked partial.
 
 This provider selection is for controller-managed workers. Existing standalone
 GitHub Actions workflows retain their Claude configuration.
+
+Overview and Activity show the recorded stage of each active run. Expand a card's
+timeline to inspect its phase history without opening the run dialog. A stale
+worker shows its last observed stage; older runs without phase records say so.
+See the [coding process and evidence gates](CODING_WORKFLOW.md).
 
 ### Claude Code access
 
