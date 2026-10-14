@@ -213,6 +213,7 @@ function wrapper(options: {
   code?: number;
   timeout?: boolean;
   spawnError?: boolean;
+  ai?: { provider: "claude"; model?: string };
 }) {
   const stdin = new EventEmitter();
   const child = new EventEmitter() as EventEmitter & {
@@ -245,7 +246,9 @@ function wrapper(options: {
     }),
   });
   let output = "";
-  const spawn = vi.fn(() => child);
+  const spawn = vi.fn(
+    (_command: string, _args: string[], _options: unknown) => child,
+  );
   const process = {
     stdin,
     stdout: {
@@ -266,12 +269,29 @@ function wrapper(options: {
     },
     clearTimeout: vi.fn(),
   });
-  stdin.emit("data", JSON.stringify(input()));
+  stdin.emit(
+    "data",
+    JSON.stringify({ ...input(), ...(options.ai ? { ai: options.ai } : {}) }),
+  );
   stdin.emit("end");
   expect(output).not.toContain(credential);
   expect(output).not.toContain(input().prompt);
   return { output: JSON.parse(output), code: process.exitCode, spawn, child };
 }
+describe("Claude planner model defaults", () => {
+  it.each([undefined, "opus"])(
+    "preserves CLI default or explicit model %s",
+    (model) => {
+      const result = wrapper({
+        result: { subtype: "success", structured_output: { answer: true } },
+        ai: { provider: "claude", ...(model ? { model } : {}) },
+      });
+      const args = result.spawn.mock.calls[0]![1];
+      if (model) expect(args[args.indexOf("--model") + 1]).toBe(model);
+      else expect(args).not.toContain("--model");
+    },
+  );
+});
 
 describe("isolated planner diagnostic boundary", () => {
   it("keeps whole-tree provider metrics outside the structured draft and records even measured failures", async () => {

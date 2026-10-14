@@ -533,7 +533,9 @@ describe("local dashboard HTTP boundary", () => {
       area: "core",
     });
     expect(blocked.status).toBe(409);
-    expect(await blocked.text()).toContain("selected AI provider");
+    expect(await blocked.text()).toContain(
+      "Connect Claude Code in Connections for this PM",
+    );
   });
   it("protects mandate planning and returns only a draft without creating PM files", async () => {
     const plan = {

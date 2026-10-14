@@ -24,7 +24,12 @@ import { projectRuntimeKey } from "../projectIdentity.ts";
 import { readConnections } from "../setup/connections.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { redactHistory } from "../storage/activity.ts";
-import { aiSecretValues, selectedAiCredential } from "../ai/provider.ts";
+import {
+  aiSecretValues,
+  resolveAiSelection,
+  selectedAiCredential,
+} from "../ai/provider.ts";
+import { projectAiTarget } from "../ai/routing.ts";
 import {
   GRUMBLINS_SCHEMA,
   GRUMBLINS_SYSTEM,
@@ -486,7 +491,15 @@ export function createGrumblins(options: GrumblinsOptions) {
         "Grumblins are already being generated for this project.",
         409,
       );
-    const aiCredential = selectedAiCredential(options.root, credentials());
+    const aiCredential = selectedAiCredential(
+      options.root,
+      credentials(),
+      resolveAiSelection(
+        options.root,
+        credentials(),
+        projectAiTarget(first.current, "pm"),
+      ),
+    );
     if (!aiCredential)
       throw new GrumblinError(
         "Connect your selected AI provider in Connections before generating Grumblins.",
@@ -518,6 +531,7 @@ export function createGrumblins(options: GrumblinsOptions) {
           );
         bounded.addEventListener("abort", abort, { once: true });
         execute({
+          aiTarget: projectAiTarget(first.current, "pm"),
           usageContext: {
             kind: "grumblin-generation",
             project: name,

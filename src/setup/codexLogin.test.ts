@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DockerRun } from "../localRunners/docker.ts";
 import { readConnections, saveConnections } from "./connections.ts";
 import { createCodexLogin } from "./codexLogin.ts";
+import { saveAiSelection } from "../ai/provider.ts";
 
 const roots: string[] = [];
 const auth = (suffix = "seed") =>
@@ -117,6 +118,35 @@ function fixture(exported: NodeJS.ProcessEnv = {}) {
   };
 }
 describe("trusted Codex account helper", () => {
+  it("refreshes explicit scoped Codex jobs while the workspace defaults to Claude", async () => {
+    const f = fixture({ CLAUDE_CODE_OAUTH_TOKEN: "connected-claude" });
+    saveConnections(f.root, { CODEX_AUTH_JSON: auth() });
+    saveAiSelection(f.root, { provider: "claude" });
+    const pending = f.service.prepare({
+      provider: "codex",
+      model: "scoped-coder",
+    });
+    await settle();
+    expect(f.inputs).toEqual([{ mode: "refresh", auth: auth() }]);
+    f.finish();
+    const result = await pending;
+    expect(Object.keys(result)).toEqual(["CODEX_AUTH_JSON"]);
+    expect(JSON.parse(result.CODEX_AUTH_JSON!).tokens).toMatchObject({
+      access_token: "access-updated",
+      refresh_token: "",
+    });
+    await f.service.close();
+  });
+  it("uses an explicit Claude account without refreshing workspace-default Codex", async () => {
+    const f = fixture({ CLAUDE_CODE_OAUTH_TOKEN: "connected-claude" });
+    saveConnections(f.root, { CODEX_AUTH_JSON: auth() });
+    saveAiSelection(f.root, { provider: "codex" });
+    expect(await f.service.prepare({ provider: "claude" })).toEqual({
+      CLAUDE_CODE_OAUTH_TOKEN: "connected-claude",
+    });
+    expect(f.ensureImage).not.toHaveBeenCalled();
+    await f.service.close();
+  });
   it("starts a repository-free device login, exposes only the code, then persists auth privately and removes the helper", async () => {
     const f = fixture();
     await f.service.start();

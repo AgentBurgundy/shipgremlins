@@ -187,25 +187,28 @@
     const advanced = node("details", "ai-model-settings"),
       modelForm = node("form"),
       modelFields = node("fieldset"),
-      modelLabel = node("label", "field", "Model override (optional)"),
-      model = node("input"),
+      modelLabel = node("label", "field", "Model (optional)"),
+      model = node("select"),
+      modelHint = node("p", "setup-help ai-model-catalog"),
       modelSave = node("button", "small-button", "Save model");
-    advanced.append(node("summary", "", "Advanced model setting"));
+    advanced.append(node("summary", "", "Choose a model"));
     model.id = "ai-model";
-    model.type = "text";
-    model.maxLength = 100;
-    model.autocomplete = "off";
-    model.placeholder = "Provider default";
+    modelHint.id = "ai-model-catalog";
+    model.setAttribute("aria-describedby", modelHint.id);
+    const modelChoice = window
+      .createAiModelChoices({ api })
+      .bind(model, modelHint);
     modelLabel.htmlFor = model.id;
     modelSave.type = "submit";
     modelFields.append(
       node("legend", "sr-only", "AI model override"),
       modelLabel,
       model,
+      modelHint,
       node(
         "p",
         "setup-help",
-        "Leave blank to use the selected provider’s default. Existing runs keep their original provider and model.",
+        "Provider default uses the selected provider’s model choice. Existing runs keep their original provider and model.",
       ),
       modelSave,
     );
@@ -299,7 +302,7 @@
           provider,
           ...(override ? { model: override } : {}),
         });
-        model.value = saved.model || "";
+        modelChoice.set(saved.provider, saved.model || "");
         modelDirty = false;
         announce(`${names[saved.provider]} selected for new work.`);
         try {
@@ -327,6 +330,7 @@
         if (generation !== loginGeneration) return;
         login = response;
         if (login.status === "complete") {
+          modelChoice.refresh();
           announce(
             "Codex connected. Your ChatGPT sign-in is saved privately on this server.",
           );
@@ -366,7 +370,7 @@
       loading = true;
       try {
         saved = await api("/api/ai");
-        if (!modelDirty) model.value = saved.model || "";
+        if (!modelDirty) modelChoice.set(saved.provider, saved.model || "");
         if (saved.provider === "codex" && !inProgress()) {
           login = await api("/api/ai/codex/login");
           schedule();
@@ -442,6 +446,7 @@
       paint();
       try {
         await api("/api/connections/clear", { names: ["CODEX_AUTH_JSON"] });
+        modelChoice.refresh();
         loginGeneration += 1;
         login = { status: "canceled" };
         stop();
@@ -550,6 +555,7 @@
       paint();
       try {
         await api("/api/connections", { values: { CODEX_AUTH_JSON: value } });
+        modelChoice.refresh();
         clearPrivate();
         announce("Codex sign-in saved privately on this server.");
         try {
@@ -571,11 +577,15 @@
         paint();
       }
     });
-    model.addEventListener("input", () => {
+    model.addEventListener("change", () => {
       modelDirty = model.value !== (saved?.model || "");
     });
     modelForm.addEventListener("submit", (event) => {
       event.preventDefault();
+      if (!modelChoice.allowed(model.value)) {
+        announce("Choose an available model or Provider default.", true);
+        return;
+      }
       return select(saved?.provider, model.value.trim());
     });
     document.addEventListener("visibilitychange", schedule);
@@ -587,7 +597,8 @@
     return {
       render(status) {
         if (status?.ai) saved = status.ai;
-        if (!modelDirty && saved) model.value = saved.model || "";
+        if (!modelDirty && saved && !locked)
+          modelChoice.set(saved.provider, saved.model || "");
         paint();
       },
       setLocked(value) {
@@ -597,7 +608,10 @@
         if (unlocked) load();
         schedule();
       },
-      refresh: load,
+      refresh() {
+        if (!locked) modelChoice.refresh();
+        return load();
+      },
       isBusy: () => busy,
       isDirty: () => Boolean(authInput.value || modelDirty),
     };

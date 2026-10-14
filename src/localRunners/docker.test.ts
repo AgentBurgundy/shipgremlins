@@ -160,6 +160,47 @@ function fake() {
 }
 const verify = { kind: "verify", nonce: id } satisfies DockerJobPayload;
 
+it("accepts only the private bounded run-flow capability for the exact worker nonce", () => {
+  const authorization = {
+    version: 1,
+    key: "c".repeat(64),
+    maxRepairs: 2,
+  } as const;
+  expect(() =>
+    validatePayload({ ...verify, runFlow: authorization }),
+  ).not.toThrow();
+  for (const runFlow of [
+    { ...authorization, key: "bad" },
+    { ...authorization, maxRepairs: 99 },
+    { ...authorization, phase: "publish" },
+    { ...authorization, version: 2 },
+  ])
+    expect(() =>
+      validatePayload({ ...verify, runFlow } as DockerJobPayload),
+    ).toThrow();
+  expect(() =>
+    validatePayload({
+      ...verify,
+      nonce: "../../other",
+      runFlow: authorization,
+    }),
+  ).toThrow();
+});
+
+it("redacts the run-flow signing key from worker logs without altering signed protocol records", async () => {
+  const f = fake(),
+    key = "c".repeat(64);
+  await f.api.startJob({
+    id,
+    workerId,
+    payload: { ...verify, runFlow: { version: 1, key, maxRepairs: 2 } },
+  });
+  f.setLog(`accidental ${key}\nGREMLINS_FLOW {"mac":"public-proof"}`);
+  const lines = await f.api.logs(id);
+  expect(lines).not.toContain(key);
+  expect(lines).toContain('GREMLINS_FLOW {"mac":"public-proof"}');
+});
+
 it("binds only a verified per-job workspace while preserving separate output storage", async () => {
   const f = fake();
   const storage = {

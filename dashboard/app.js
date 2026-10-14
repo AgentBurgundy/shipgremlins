@@ -93,6 +93,15 @@
   let runnerStatus = null;
   let runnerPollTimer = null;
   let runnerLoading = false;
+  let runFeedFailed = false;
+  const overviewRunFlow = window.createRunFlowBoard?.($("overview-run-flow"), {
+    id: "overview-flow",
+    title: "Live agent work",
+  });
+  const activityRunFlow = window.createRunFlowBoard?.($("activity-run-flow"), {
+    id: "activity-flow",
+    title: "Run process",
+  });
   let runnerRequestBusy = false;
   let removeRunnerId = "";
   let selectedJobId = "";
@@ -350,6 +359,7 @@
     api,
     message,
     onSaved: async () => {
+      await aiConnections?.refresh();
       await refreshStatus();
       await refreshRunners();
     },
@@ -529,7 +539,20 @@
     $("connections-summary").textContent =
       `${count} ${count === 1 ? "connection" : "connections"} configured`;
   }
+  function renderRunBoards() {
+    const data = {
+      jobs: mergedJobs(),
+      projects: currentStatus?.projects || [],
+      loaded: Boolean(runnerStatus),
+      failed: runFeedFailed,
+      now: Date.now(),
+      selectedId: selectedJobId,
+    };
+    overviewRunFlow?.update(data);
+    activityRunFlow?.update(data);
+  }
   function renderOverview() {
+    renderRunBoards();
     const projects = Array.isArray(currentStatus?.projects)
       ? currentStatus.projects
       : [];
@@ -2343,6 +2366,7 @@
   $("load-history").addEventListener("click", () => refreshHistory(true));
   function renderJobs(jobs) {
     jobs = mergedJobs(jobs);
+    renderRunBoards();
     if (pages.run && !selectedJobId && jobs.some((job) => job.id === pages.run))
       selectJob(pages.run);
     renderRunIdentity();
@@ -2462,7 +2486,9 @@
     runnerLoading = true;
     updateRunnerControls();
     try {
-      renderRunners(await api("/api/runners"));
+      const status = await api("/api/runners");
+      runFeedFailed = false;
+      renderRunners(status);
       crewConsole?.connectionRestored();
       await refreshHistory();
       message($("runner-message"), "");
@@ -2472,6 +2498,8 @@
         `${error.message} Your other dashboard settings are still available. Use Refresh to try again.`,
         true,
       );
+      runFeedFailed = true;
+      renderRunBoards();
       crewConsole?.connectionFailed();
       // Do not silently retry forever if the worker service is unavailable.
       clearTimeout(runnerPollTimer);
@@ -3049,6 +3077,7 @@
     if (!selectedJobId) return;
     renderPatrolOutput();
     const job = mergedJobs().find((item) => item.id === selectedJobId);
+    window.renderRunFlowDetail?.($("run-flow-detail"), job);
     window.renderRunFailure?.($("run-failure"), job, (tab) =>
       runViewer.selectTab(tab, { focus: true }),
     );

@@ -31,6 +31,8 @@ import {
 
 export interface DockerJobPayload {
   ai?: import("../ai/provider.ts").AiSelection;
+  /** Private runner telemetry capability; never included in model context or environment. */
+  runFlow?: { version: 1; key: string; maxRepairs: 2 };
   kind: "verify" | "pm" | "developer";
   accessProbe?: true;
   testAccess?: ManagedTestAccess;
@@ -258,6 +260,7 @@ export function validatePayload(payload: DockerJobPayload): string {
         ![
           "kind",
           "ai",
+          "runFlow",
           "accessProbe",
           "testAccess",
           "managedAccess",
@@ -290,6 +293,20 @@ export function validatePayload(payload: DockerJobPayload): string {
     )
   )
     throw new Error("Invalid local job payload.");
+  if (
+    payload.runFlow !== undefined &&
+    (!record(payload.runFlow) ||
+      Object.keys(payload.runFlow).some(
+        (key) => !["version", "key", "maxRepairs"].includes(key),
+      ) ||
+      payload.runFlow.version !== 1 ||
+      payload.runFlow.maxRepairs !== 2 ||
+      typeof payload.runFlow.key !== "string" ||
+      !/^[a-f0-9]{64}$/.test(payload.runFlow.key) ||
+      typeof payload.nonce !== "string" ||
+      !/^job-[a-z0-9-]{1,100}$/.test(payload.nonce))
+  )
+    throw new Error("Invalid runner phase authorization.");
   if (
     payload.ai !== undefined &&
     (!record(payload.ai) ||
@@ -993,6 +1010,7 @@ export function createDockerRunners(options: {
         }
         secrets.set(input.id, [
           ...(secrets.get(input.id) ?? []),
+          ...(input.payload.runFlow ? [input.payload.runFlow.key] : []),
           ...Object.values(input.payload.credentials ?? {}).filter(Boolean),
         ]);
         try {

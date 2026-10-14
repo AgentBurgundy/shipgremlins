@@ -1,5 +1,10 @@
 import { resolve } from "node:path";
-import { aiSecretValues, selectedAiCredential } from "../ai/provider.ts";
+import {
+  aiSecretValues,
+  resolveAiSelection,
+  selectedAiCredential,
+} from "../ai/provider.ts";
+import { projectAiTarget } from "../ai/routing.ts";
 import { CronExpressionParser } from "cron-parser";
 import {
   loadProject,
@@ -555,7 +560,15 @@ export function createPmPlanner(options: PmPlannerOptions) {
             Object.entries(env).filter(([, value]) => value !== undefined),
           ),
         };
-        const aiCredential = selectedAiCredential(options.root, saved);
+        const aiCredential = selectedAiCredential(
+          options.root,
+          saved,
+          resolveAiSelection(
+            options.root,
+            saved,
+            projectAiTarget(project, "pm"),
+          ),
+        );
         if (!aiCredential)
           throw new PmPlannerError(
             "Connect your selected AI provider in Connections before using Fill with AI.",
@@ -646,6 +659,7 @@ export function createPmPlanner(options: PmPlannerOptions) {
         const workflow = effectiveWorkflow(project.config);
         const output = await bounded(
           execute({
+            aiTarget: projectAiTarget(project, "pm"),
             usageContext: {
               kind: "pm-planning",
               project: project.config.name,

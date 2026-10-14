@@ -1717,7 +1717,15 @@ describe("durable local worker engine", () => {
     await f.engine.tick();
     expect(f.mock.ensureImage).toHaveBeenCalledOnce();
     const check = f.calls[0]!;
-    expect(check.payload).toEqual({ kind: "verify", nonce: check.id });
+    expect(check.payload).toEqual({
+      kind: "verify",
+      nonce: check.id,
+      runFlow: {
+        version: 1,
+        key: expect.stringMatching(/^[a-f0-9]{64}$/),
+        maxRepairs: 2,
+      },
+    });
     expect((await f.engine.status()).runners[0]?.verifiedAt).toBeUndefined();
     f.finish(check.id);
     await f.engine.tick();

@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { loadProject } from "../config.ts";
+import { projectAiTarget } from "../ai/routing.ts";
+import { resolveAiSelection } from "../ai/provider.ts";
 import {
   aiSecretValues,
   hasAiCredentials,
@@ -158,7 +160,15 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
       message:
         state.status === "idle" &&
         !state.report &&
-        !hasAiCredentials(root, env())
+        !hasAiCredentials(
+          root,
+          env(),
+          resolveAiSelection(
+            root,
+            env(),
+            projectAiTarget(projectConfig, "setup"),
+          ),
+        )
           ? "Connect your selected AI provider in Connections to ask the Setup Gremlin to analyze this repository, or choose an existing test URL below without AI."
           : state.message,
       updatedAt: state.updatedAt,
@@ -271,7 +281,12 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
     publishing: boolean,
   ) {
     const saved = env();
-    if (!publishing && !hasAiCredentials(root, saved))
+    const ai = resolveAiSelection(
+      root,
+      saved,
+      projectAiTarget(loadProject(root, project), "setup"),
+    );
+    if (!publishing && !hasAiCredentials(root, saved, ai))
       throw new ProjectOnboardingError(
         "Connect your selected AI provider in Connections before asking the Setup Gremlin to analyze this repository.",
         400,
@@ -411,12 +426,13 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
             );
           const result = await bounded(
             execute({
+              aiTarget: projectAiTarget(projectConfig, "setup"),
               usageContext: {
                 kind: "setup-analysis",
                 project,
                 projectInstanceId: projectConfig.config.instanceId,
               },
-              ...selectedAiCredential(root, saved)!,
+              ...selectedAiCredential(root, saved, ai)!,
               system: SETUP_SYSTEM,
               schema: setupAnalysisSchema(projectConfig.areas.length > 0),
               signal,

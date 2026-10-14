@@ -2,7 +2,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadHub, loadProject } from "../config.ts";
-import { hasAiCredentials, resolveAiSelection } from "../ai/provider.ts";
+import {
+  hasAiCredentials,
+  resolveAiSelection,
+  type AiProvider,
+  type AiSelection,
+} from "../ai/provider.ts";
+import { projectAiTarget } from "../ai/routing.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
 import { isExampleHub, validateName } from "./files.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
@@ -156,6 +162,7 @@ export function inspectSetup(
     );
   }
   const projectsDir = join(root, "projects");
+  const selectedAi = new Map<AiProvider, AiSelection>();
   const names = selectedProject
     ? [selectedProject]
     : existsSync(projectsDir)
@@ -183,6 +190,30 @@ export function inspectSetup(
     try {
       validateName(name, "project");
       const project = loadProject(root, name);
+      let activeAi = false;
+      for (const area of project.areas) {
+        for (const role of ["pm", "coder"] as const) {
+          if (
+            role === "pm" ? area.enabled : (area.codingEnabled ?? area.enabled)
+          ) {
+            const selection = resolveAiSelection(
+              root,
+              deps.env,
+              projectAiTarget(project, role, area),
+            );
+            selectedAi.set(selection.provider, selection);
+            activeAi = true;
+          }
+        }
+      }
+      if (!activeAi) {
+        const selection = resolveAiSelection(
+          root,
+          deps.env,
+          projectAiTarget(project, "setup"),
+        );
+        selectedAi.set(selection.provider, selection);
+      }
       requireAccount("linear", project.config.linear?.connectionId);
       const verification = effectiveVerification(project.config);
       requiresPromotion ||=
@@ -324,17 +355,27 @@ export function inspectSetup(
       "warn",
       "Save supported tokens through gremlins setup. For additional settings or another environment file, run gremlins --env-file .env setup --check. Existing exported environment variables take precedence.",
     );
-  const ai = hasAiCredentials(root, deps.env);
-  const aiName =
-    resolveAiSelection(root, deps.env).provider === "codex"
-      ? "Codex"
-      : "Claude Code";
+  if (!names.length) {
+    const selection = resolveAiSelection(root, deps.env);
+    selectedAi.set(selection.provider, selection);
+  }
+  const aiAccounts = [...selectedAi.values()].map((selection) => ({
+    name: selection.provider === "codex" ? "Codex" : "Claude Code",
+    present: hasAiCredentials(root, deps.env, selection),
+  }));
+  const ai =
+    aiAccounts.length > 0 && aiAccounts.every((account) => account.present);
+  const aiName = aiAccounts[0]?.name;
   add(
     "ai-runtime",
     ai ? "pass" : "warn",
-    ai
-      ? `${aiName} runner credentials are present; validity is not checked.`
-      : `Connect ${aiName} in dashboard Connections before running AI jobs.`,
+    aiAccounts.length === 0
+      ? "Fix project configuration before checking its selected AI accounts."
+      : aiAccounts.length > 1
+        ? `${aiAccounts.map((account) => `${account.name} credentials ${account.present ? "are present" : "are missing"}`).join("; ")}. ${ai ? "Validity is not checked." : "Connect the missing selected accounts in dashboard Connections before running AI jobs."}`
+        : ai
+          ? `${aiName} runner credentials are present; validity is not checked.`
+          : `Connect ${aiName} in dashboard Connections before running AI jobs.`,
   );
   const evidenceConfigured =
     Boolean(deps.env.SHIPGREMLINS_VERIFICATION_FILE?.trim()) &&

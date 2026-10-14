@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createUsage } from "../usage/index.ts";
+import { createRunFlows } from "../runFlow/index.ts";
 import { isDeepStrictEqual } from "node:util";
 import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
 import { loadProject } from "../config.ts";
@@ -504,6 +505,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     });
   const clock = options.clock ?? (() => new Date());
   const tokenUsage = createUsage({ root: options.root, now: clock });
+  const runFlows = createRunFlows({ root: options.root, now: clock });
   let imageReady = false;
   let inFlight: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -549,7 +551,6 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
 
   function capture(job: LocalJob): void {
     const store = options.activityStore;
-    if (!store) return;
     const snapshot = { ...job };
     const fingerprint = JSON.stringify(snapshot);
     const previous = captured.get(job.id);
@@ -564,8 +565,17 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     }
     const task = (async () => {
       try {
-        if (snapshot.status === "queued") await store.recordRun(snapshot);
-        else await store.captureRun(snapshot, docker);
+        if (snapshot.status !== "queued") {
+          try {
+            runFlows.capture(snapshot, await docker.logs(snapshot.id));
+          } catch {
+            /* Last authenticated phase remains available independently of Docker/history. */
+          }
+        }
+        if (store) {
+          if (snapshot.status === "queued") await store.recordRun(snapshot);
+          else await store.captureRun(snapshot, docker);
+        }
         captured.set(job.id, { fingerprint, at: clock().getTime() });
         sideEffectWarnings.delete(`storage:${job.id}`);
       } catch {
@@ -1600,6 +1610,10 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         !isDeepStrictEqual(payload.grumblin, job.grumblin)
       )
         throw new Error();
+      payload = {
+        ...payload,
+        runFlow: runFlows.authorization(job, payload.ai),
+      };
     } catch (error) {
       if (stopping) {
         await keepQueued();

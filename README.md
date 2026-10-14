@@ -157,8 +157,16 @@ Separate pages keep Connections, Projects, Your gremlins, Activity, and Settings
 focused. Provider cards contain setup instructions and token creation links.
 In **Connections → AI provider**, choose Claude Code or Codex. Codex uses your
 ChatGPT account: choose **Sign in to Codex**, or import an existing managed
-`auth.json`. The selected provider handles setup suggestions, discovery, PMs,
-coding and repairs through the controller's workers. [AI setup →](docs/SETUP.md#choose-your-ai-provider)
+`auth.json`. Keep both providers connected. In **Project → Settings → AI choices**,
+choose a project default and separate PM/coding providers. Each PM's **Product brief →
+AI choices** can override its own work and associated coding. New runs inherit these
+choices; active runs keep their recorded provider. [AI setup →](docs/SETUP.md#choose-your-ai-provider)
+
+Coding workers plan against acceptance criteria, check the baseline, prove a failing
+test for behavior changes, implement, request a fresh read-only review, and run the
+final configured checks before publishing a draft. Overview and Activity show each
+run's recorded stages and repair budget, with an expandable timeline inline.
+[Coding process →](docs/CODING_WORKFLOW.md)
 Connect Slack once for the workspace; every project inherits that channel unless
 you deliberately configure an override.
 

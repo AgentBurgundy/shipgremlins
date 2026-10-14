@@ -12,6 +12,8 @@ import type { Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDashboardServer } from "./dashboard.ts";
 import { initializeSetup } from "../setup/files.ts";
+import { loadProject } from "../config.ts";
+import type { AiRoutingView } from "../ai/routing.ts";
 import { readConnections } from "../setup/connections.ts";
 import type { LocalRunners } from "../localRunners/engine.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
@@ -67,6 +69,20 @@ async function fixture() {
   roots.push(root);
   initializeSetup(root, process.cwd(), { project: "app", repo: "owner/app" });
   const start = vi.fn(),
+    models = {
+      list: vi.fn(async (provider: "claude" | "codex") => ({
+        provider,
+        models: [
+          {
+            id: provider === "claude" ? "sonnet" : "synthetic-coder",
+            label: "Synthetic model",
+          },
+        ],
+        source: "supported" as const,
+        availability: "not-verified" as const,
+        message: "Synthetic supported catalog.",
+      })),
+    },
     login = {
       status: vi.fn(async (): Promise<CodexLoginStatus> => ({
         status: "idle",
@@ -96,6 +112,7 @@ async function fixture() {
   const server = createDashboardServer(root, process.cwd(), session, [], {
     background: false,
     codexLogin: login,
+    aiModels: models,
     runners,
     sourceControl: { status: async () => [] } as unknown as SourceControl,
   });
@@ -117,10 +134,209 @@ async function fixture() {
       ...(input === undefined ? {} : { body: JSON.stringify(input) }),
     });
   const ai = async () => (await (await call()).json()) as AiView;
-  return { root, origin, call, ai, login, start };
+  return { root, origin, call, ai, login, start, models };
 }
 
 describe("dashboard AI provider HTTP contract", () => {
+  it("returns safe model catalog choices only for an authenticated exact provider query", async () => {
+    const f = await fixture();
+    expect(
+      (await f.call("/api/ai/models?provider=codex", undefined, "GET", false))
+        .status,
+    ).toBe(401);
+    const response = await f.call("/api/ai/models?provider=codex");
+    expect(response.status).toBe(200);
+    const value = await response.json();
+    expect(value).toMatchObject({
+      provider: "codex",
+      models: [{ id: "synthetic-coder", label: "Synthetic model" }],
+      source: "supported",
+      availability: "not-verified",
+    });
+    assertPrivate(value);
+    expect(f.models.list).toHaveBeenCalledExactlyOnceWith("codex");
+    for (const path of [
+      "/api/ai/models",
+      "/api/ai/models?provider=other",
+      "/api/ai/models?provider=claude&provider=codex",
+      "/api/ai/models?provider=codex&token=private-access-token",
+    ])
+      expect((await f.call(path)).status).toBe(400);
+    expect(
+      (await f.call("/api/ai/models?provider=codex", {}, "POST")).status,
+    ).toBe(405);
+    expect(f.models.list).toHaveBeenCalledTimes(1);
+  });
+  it("keeps both providers connected and routes project PM and coding work independently", async () => {
+    const f = await fixture();
+    await f.call("/api/connections", {
+      values: { CLAUDE_CODE_OAUTH_TOKEN: claude, CODEX_AUTH_JSON: codex },
+    });
+    await f.call("/api/ai", { provider: "claude" });
+    const before = (await (
+      await f.call("/api/projects/app/ai")
+    ).json()) as AiRoutingView;
+    expect(before.effective.coder).toMatchObject({
+      provider: "claude",
+      source: "workspace",
+      configured: true,
+    });
+    const saved = await f.call(
+      "/api/projects/app/ai",
+      {
+        revision: before.revision,
+        pm: { provider: "claude", model: "sonnet" },
+        coder: { provider: "codex" },
+      },
+      "PUT",
+    );
+    expect(saved.status).toBe(200);
+    const view = (await saved.json()) as AiRoutingView;
+    expect(view.effective.pm).toMatchObject({
+      provider: "claude",
+      model: "sonnet",
+      source: "project-role",
+      configured: true,
+    });
+    expect(view.effective.coder).toMatchObject({
+      provider: "codex",
+      source: "project-role",
+      configured: true,
+    });
+    expect((await f.ai()).provider).toBe("claude");
+    assertPrivate(view);
+    expect(readConnections(f.root)).toMatchObject({
+      CLAUDE_CODE_OAUTH_TOKEN: claude,
+      CODEX_AUTH_JSON: codex,
+    });
+  });
+  it("supports an individual PM and its coder, clears inheritance, and rejects stale parent revisions", async () => {
+    const f = await fixture();
+    const area = loadProject(f.root, "app").areas[0]!.key;
+    const path = `/api/projects/app/pms/${area}/ai`;
+    const first = (await (await f.call(path)).json()) as AiRoutingView;
+    const override = await f.call(
+      path,
+      {
+        revision: first.revision,
+        pm: { provider: "codex" },
+        coder: { provider: "claude", model: "haiku" },
+      },
+      "PUT",
+    );
+    expect(override.status).toBe(200);
+    const view = (await override.json()) as AiRoutingView;
+    expect(view.effective.pm).toMatchObject({
+      provider: "codex",
+      source: "pm-role",
+      configured: false,
+    });
+    expect(view.effective.coder).toMatchObject({
+      provider: "claude",
+      model: "haiku",
+      source: "pm-role",
+    });
+    const project = (await (
+      await f.call("/api/projects/app/ai")
+    ).json()) as AiRoutingView;
+    expect(
+      (
+        await f.call(
+          "/api/projects/app/ai",
+          {
+            revision: project.revision,
+            default: { provider: "claude", model: "sonnet" },
+          },
+          "PUT",
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (await f.call(path, { revision: view.revision, pm: null }, "PUT")).status,
+    ).toBe(409);
+    const fresh = (await (await f.call(path)).json()) as AiRoutingView;
+    const cleared = await f.call(
+      path,
+      { revision: fresh.revision, pm: null },
+      "PUT",
+    );
+    const inherited = (await cleared.json()) as AiRoutingView;
+    expect(inherited.effective.pm).toMatchObject({
+      provider: "claude",
+      model: "sonnet",
+      source: "project-default",
+    });
+    expect(inherited.overrides.coder).toEqual({
+      provider: "claude",
+      model: "haiku",
+    });
+  });
+  it("does not substitute a connected provider for an unconnected project choice", async () => {
+    const f = await fixture();
+    await f.call("/api/connections", {
+      values: { CLAUDE_CODE_OAUTH_TOKEN: claude },
+    });
+    const view = (await (
+      await f.call("/api/projects/app/ai")
+    ).json()) as AiRoutingView;
+    const response = await f.call(
+      "/api/projects/app/ai",
+      { revision: view.revision, coder: { provider: "codex" } },
+      "PUT",
+    );
+    expect(response.status).toBe(200);
+    expect(
+      ((await response.json()) as AiRoutingView).effective.coder,
+    ).toMatchObject({ provider: "codex", configured: false });
+  });
+  it("protects scoped routes and rejects unsupported models, credential material and unknown fields", async () => {
+    const f = await fixture();
+    expect(
+      (await f.call("/api/projects/app/ai", undefined, "GET", false)).status,
+    ).toBe(401);
+    await f.call("/api/connections", { values: { CODEX_AUTH_JSON: codex } });
+    const view = (await (
+      await f.call("/api/projects/app/ai")
+    ).json()) as AiRoutingView;
+    for (const input of [
+      { revision: view.revision, coder: { provider: "other" } },
+      {
+        revision: view.revision,
+        coder: { provider: "codex", model: "private-access-token" },
+      },
+      { revision: view.revision, coder: { provider: "codex", token: codex } },
+      { revision: view.revision, credential: codex },
+    ]) {
+      const response = await f.call("/api/projects/app/ai", input, "PUT");
+      expect(response.status).toBe(400);
+      assertPrivate(await response.json());
+    }
+    expect(
+      ((await (await f.call("/api/projects/app/ai")).json()) as AiRoutingView)
+        .revision,
+    ).toBe(view.revision);
+  });
+  it("rejects missing targets, query parameters, unsupported methods and PM-level project defaults", async () => {
+    const f = await fixture();
+    expect((await f.call("/api/projects/missing/ai")).status).toBe(404);
+    expect((await f.call("/api/projects/app/pms/missing/ai")).status).toBe(404);
+    expect((await f.call("/api/projects/app/ai?model=secret")).status).toBe(
+      400,
+    );
+    expect((await f.call("/api/projects/app/ai", {}, "POST")).status).toBe(405);
+    const area = loadProject(f.root, "app").areas[0]!.key,
+      path = `/api/projects/app/pms/${area}/ai`;
+    const view = (await (await f.call(path)).json()) as AiRoutingView;
+    expect(
+      (
+        await f.call(
+          path,
+          { revision: view.revision, default: { provider: "codex" } },
+          "PUT",
+        )
+      ).status,
+    ).toBe(400);
+  });
   it("requires authentication before reading or mutating provider and device sign-in", async () => {
     const f = await fixture();
     for (const [path, input, method] of [

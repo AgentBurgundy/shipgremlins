@@ -10,6 +10,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { codexWorkerAuth, saveAiSelection } from "../ai/provider.ts";
+import {
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
 import { loadProject } from "../config.ts";
 import { knowledgeRevision } from "../pmKnowledge/index.ts";
 import { initializeSetup } from "../setup/files.ts";
@@ -149,6 +154,71 @@ function fixture(
 }
 
 describe("Codex job admission and private handoff", () => {
+  it("routes PM and coding work to distinct area choices independently of the workspace default", async () => {
+    const f = fixture(),
+      project = loadProject(f.root, "app"),
+      area = project.areas[0]!,
+      scope = projectAiTarget(project, "pm", area);
+    saveAiSelection(f.root, { provider: "claude" });
+    saveAiRouting(f.root, scope, {
+      revision: readAiRouting(f.root, scope).revision,
+      pm: { provider: "codex", model: "pm-model" },
+      coder: { provider: "claude", model: "coder-model" },
+    });
+    const admission = await f.preparation.validate(discovery),
+      pm = await f.preparation.prepareJob(
+        queued({
+          ...discovery,
+          discoveryRevision: admission.discoveryRevision,
+        }),
+      );
+    expect(pm.ai).toEqual({ provider: "codex", model: "pm-model" });
+    expect(pm.credentials!.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    await f.preparation.releaseJobResources("job-codex");
+    const developer = await f.preparation.prepareJob(queued(coding));
+    expect(developer.ai).toEqual({ provider: "claude", model: "coder-model" });
+    expect(developer.credentials!.CODEX_AUTH_JSON).toBeUndefined();
+    expect(developer.credentials!.CLAUDE_CODE_OAUTH_TOKEN).toBe(
+      "available-claude",
+    );
+    expect(f.prepareCodexCredentials).toHaveBeenCalledTimes(1);
+    await f.preparation.releaseJobResources("job-codex");
+  });
+  it("keeps scoped coding available when the PM-selected account is disconnected", async () => {
+    const f = fixture({ CODEX_AUTH_JSON: auth() }),
+      project = loadProject(f.root, "app"),
+      scope = projectAiTarget(project, "pm", project.areas[0]!);
+    saveAiSelection(f.root, { provider: "claude" });
+    saveAiRouting(f.root, scope, {
+      revision: readAiRouting(f.root, scope).revision,
+      pm: { provider: "claude" },
+      coder: { provider: "codex" },
+    });
+    await expect(f.preparation.validate(discovery)).rejects.toThrow(
+      /selected AI provider/,
+    );
+    const payload = await f.preparation.prepareJob(queued(coding));
+    expect(payload.ai!.provider).toBe("codex");
+    expect(payload.credentials!.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    await f.preparation.releaseJobResources("job-codex");
+  });
+  it("defers a scoped route changed during refresh even if the workspace choice is unchanged", async () => {
+    const f = fixture(),
+      project = loadProject(f.root, "app"),
+      scope = projectAiTarget(project, "coder", project.areas[0]!);
+    f.prepareCodexCredentials.mockImplementation(async () => {
+      saveAiRouting(f.root, scope, {
+        revision: readAiRouting(f.root, scope).revision,
+        coder: { provider: "claude" },
+      });
+      return { CODEX_AUTH_JSON: codexWorkerAuth(auth("refreshed")) };
+    });
+    await expect(
+      f.preparation.prepareJob(queued(coding)),
+    ).rejects.toBeInstanceOf(LocalJobDeferredError);
+    expect(f.sourceControl.releaseLease).toHaveBeenCalledWith("job-codex");
+    expect(f.linearConnection.releaseLease).toHaveBeenCalledWith("job-codex");
+  });
   it("prepares repository discovery with selected Codex and source credentials only", async () => {
     const f = fixture(),
       admission = await f.preparation.validate(discovery);

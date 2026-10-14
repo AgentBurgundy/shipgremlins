@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { validateCommitIdentity } from "./runtime.mjs";
 import { verifySyncRepairAncestry } from "./sync-repair.mjs";
 import { verifyPromotionRepairSource } from "./promotion-repair.mjs";
+import { verifiedCodingDeliveryChecks } from "./coding-workflow.mjs";
 
 /** A model-authored report is evidence to review, never an executable action. */
 export function readImplementationReport(directory, redact = (text) => text) {
@@ -146,6 +147,8 @@ export async function runCheckedDelivery({
   writeBody,
   prepareRepository,
   onCheck = () => {},
+  beforePublish = () => {},
+  checksAuthorization,
   report,
   syncRepair,
   promotionRepair,
@@ -179,8 +182,13 @@ export async function runCheckedDelivery({
     throw new Error(
       "The delivery repository does not match the cloned repository.",
     );
-  const checks = [];
-  for (const key of ["install", "test", "lint", "typecheck", "build"])
+  const checks =
+    checksAuthorization === undefined
+      ? []
+      : await verifiedCodingDeliveryChecks(checksAuthorization, commands);
+  for (const key of checksAuthorization === undefined
+    ? ["install", "test", "lint", "typecheck", "build"]
+    : [])
     if (commands[key]) {
       onCheck(key, "running");
       try {
@@ -272,6 +280,11 @@ export async function runCheckedDelivery({
       "The implementation evidence is too large for a reviewable draft. Shorten the report without omitting acceptance criteria or limitations.",
     );
   await writeBody(body);
+  if (checksAuthorization !== undefined)
+    await verifiedCodingDeliveryChecks(checksAuthorization, commands);
+  // A coordinator review applies to an exact tested tree, including any
+  // changes made by final install/build hooks. Recheck it before remote writes.
+  await beforePublish();
   // Do not trust origin or hooks that the application/model could have edited.
   await publish("git", [
     "-c",

@@ -68,6 +68,7 @@ export function jobEnvironments(
     });
   }
   execution.GIT_TERMINAL_PROMPT = "0";
+  execution.GIT_NO_REPLACE_OBJECTS = "1";
   execution.GIT_CONFIG_GLOBAL = "/dev/null";
   execution.GIT_CONFIG_SYSTEM = "/dev/null";
   execution.GIT_CONFIG_NOSYSTEM = "1";

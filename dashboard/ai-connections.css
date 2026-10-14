@@ -103,8 +103,17 @@
 .codex-import .password-wrap button {
   align-self: start;
 }
-.ai-model-settings input {
+.ai-model-settings select {
+  width: 100%;
   max-width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #dce6df;
+  border-radius: 9px;
+  color: #18392b;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
 }
 @media (max-width: 480px) {
   .ai-provider-choice {

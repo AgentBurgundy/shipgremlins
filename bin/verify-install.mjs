@@ -50,17 +50,31 @@ const packed = JSON.parse(
 const packagedPaths = new Set(packed.files.map(({ path }) => path));
 for (const path of [
   "src/ai/provider.ts",
+  "src/ai/models.ts",
+  "src/ai/routing.ts",
+  "src/runFlow/index.ts",
   "src/setup/codexLogin.ts",
   "runner-local/codex.mjs",
   "runner-local/codex-login.mjs",
   "runner-local/codex-planner.mjs",
+  "runner-local/ai-models.mjs",
+  "runner-local/ai-models.d.mts",
   "runner-local/codex-readonly.mjs",
+  "runner-local/coding-workflow.mjs",
+  "runner-local/coding-workflow.d.mts",
+  "runner-local/run-flow.mjs",
+  "runner-local/run-flow.d.mts",
   "dashboard/ai-connections.js",
   "dashboard/ai-connections.css",
+  "dashboard/ai-routing.js",
+  "dashboard/ai-models.js",
+  "dashboard/ai-routing.css",
+  "dashboard/run-flow.js",
+  "dashboard/run-flow.css",
 ])
   assert(
     packagedPaths.has(path),
-    `Required Codex runtime file missing: ${path}`,
+    `Required ShipGremlins runtime file missing: ${path}`,
   );
 for (const { path } of packed.files) {
   assert(

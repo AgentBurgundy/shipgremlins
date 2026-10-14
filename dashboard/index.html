@@ -21,7 +21,9 @@
     <script src="/project-settings.js" defer></script>
     <script src="/pages.js" defer></script>
     <script src="/usage.js" defer></script>
+    <script src="/ai-models.js" defer></script>
     <script src="/ai-connections.js" defer></script>
+    <script src="/ai-routing.js" defer></script>
     <script src="/connections-view.js" defer></script>
     <script src="/update-banner.js" defer></script>
     <script src="/connection-profiles.js" defer></script>
@@ -62,6 +64,7 @@
     <script src="/workspace-tools.js" defer></script>
     <script src="/command-menu.js" defer></script>
     <script src="/run-recovery.js" defer></script>
+    <script src="/run-flow.js" defer></script>
     <script src="/autonomy-policy.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
@@ -69,9 +72,11 @@
     <link rel="stylesheet" href="/coding-launch.css" />
     <link rel="stylesheet" href="/interface.css" />
     <link rel="stylesheet" href="/ai-connections.css" />
+    <link rel="stylesheet" href="/ai-routing.css" />
     <link rel="stylesheet" href="/workspace-tools.css" />
     <link rel="stylesheet" href="/command-menu.css" />
     <link rel="stylesheet" href="/run-recovery.css" />
+    <link rel="stylesheet" href="/run-flow.css" />
     <link rel="stylesheet" href="/autonomy-policy.css" />
     <link rel="stylesheet" href="/pm-charter.css" />
     <link rel="stylesheet" href="/project-settings.css" />
@@ -361,7 +366,13 @@
             >
           </section>
           <section
-            class="workspace-pulse"
+            id="overview-run-flow"
+            data-page="overview"
+            aria-label="Live agent work"
+          ></section>
+          <section
+            hidden
+            class="workspace-pulse run-flow-legacy-pulse"
             data-page="overview"
             aria-label="Current crew activity"
           >
@@ -2366,6 +2377,11 @@
               </div>
               <span class="runtime-badge" id="job-count">0 jobs</span>
             </div>
+            <section
+              id="activity-run-flow"
+              aria-label="Live agent work"
+            ></section>
+            <h2 class="run-section-title">Run history</h2>
             <div class="activity-filters">
               <div
                 class="segmented-control"
@@ -2518,6 +2534,7 @@
                     aria-label="Failure and next step"
                     hidden
                   ></section>
+                  <div id="run-flow-detail" hidden></div>
                   <p class="run-summary-state" id="run-summary-state"></p>
                   <section
                     id="grumblin-report"

@@ -26,7 +26,8 @@ import { createLinearConnection } from "../linearConnection/index.ts";
 import { createVercelConnection } from "../vercelConnection/index.ts";
 import type { OAuthConnection } from "../oauthConnection/types.ts";
 import { readConnections } from "../setup/connections.ts";
-import { selectedAiCredential } from "../ai/provider.ts";
+import { resolveAiSelection, selectedAiCredential } from "../ai/provider.ts";
+import { projectAiTarget } from "../ai/routing.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import { GitHubForge } from "../forge/github.ts";
@@ -288,7 +289,19 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
   async function prepareSyncRepair(job: LocalJob): Promise<DockerJobPayload> {
     const project = projectFor(job.project!);
     const intent = await stagingSync(project).repairIntent(job);
-    const aiCredential = selectedAiCredential(options.root, environment());
+    const aiCredential = selectedAiCredential(
+      options.root,
+      environment(),
+      resolveAiSelection(
+        options.root,
+        environment(),
+        projectAiTarget(
+          project,
+          "coder",
+          project.areas.find((area) => area.key === job.area),
+        ),
+      ),
+    );
     if (!aiCredential)
       throw new Error(
         "Connect the selected AI provider before repairing staging.",
