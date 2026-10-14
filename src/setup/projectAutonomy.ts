@@ -4,6 +4,7 @@ import { jobBelongsToProject } from "../projectIdentity.ts";
 import { createPmKnowledge, knowledgeRevision } from "../pmKnowledge/index.ts";
 import { foundationNeeded } from "../ideaCrew/foundation.ts";
 import type { LocalJob } from "../localRunners/types.ts";
+import type { CodingPickupView } from "../localRunners/codingPickup.ts";
 import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
 import { createScheduleCursor } from "../localRunners/scheduleCursor.ts";
 import {
@@ -20,6 +21,7 @@ export function projectAutonomy(
   jobs: LocalJob[],
   context: ReadinessContext,
   now = new Date(),
+  codingPickup?: CodingPickupView,
 ) {
   const project = loadProject(root, name);
   const readiness = inspectPmReadiness(project, context);
@@ -147,17 +149,28 @@ export function projectAutonomy(
         ? "Your crew is working. The controller continues when you close the browser."
         : state === "queued"
           ? "Work is queued for an eligible worker."
-          : canDiscover
-            ? "Your crew will explore the repository automatically. Linear and staging can be connected afterward."
-            : state === "blocked"
-              ? (blockers[0]?.message ??
-                "Complete project setup to continue automatic work.")
-              : "Your crew is watching for approved tickets and its next scheduled patrol.";
+          : state === "waiting" &&
+              codingEnabled &&
+              codingPickup?.state === "current" &&
+              codingPickup.needsReview.length
+            ? `${codingPickup.needsReview
+                .map((ticket) => ticket.identifier)
+                .slice(0, 3)
+                .join(
+                  ", ",
+                )} ${codingPickup.needsReview.length === 1 ? "is approved but needs" : "are approved but need"} review of a previous coding attempt. Other eligible work can continue.`
+            : canDiscover
+              ? "Your crew will explore the repository automatically. Linear and staging can be connected afterward."
+              : state === "blocked"
+                ? (blockers[0]?.message ??
+                  "Complete project setup to continue automatic work.")
+                : "Your crew is watching for approved tickets and its next scheduled patrol.";
   return {
     state,
     enabled,
     investigationEnabled,
     codingEnabled,
+    codingPickup,
     message,
     nextRunAt,
     blockers,

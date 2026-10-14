@@ -892,6 +892,7 @@ export function createDashboardServer(
     options.jobs ??
     createJobPreparation({
       root,
+      listJobs: () => runners().jobs(),
       prepareCodexCredentials: (ai) => codexLogin.prepare(ai),
       sourceControl,
       linearConnection,
@@ -4009,6 +4010,8 @@ export function createDashboardServer(
                   name,
                   foundationJobs,
                   readiness,
+                  new Date(),
+                  preparation.codingPickup?.(name, foundationJobs),
                 ),
                 linear: linearProvisioning.status(name),
                 ...snapshot,
@@ -5393,7 +5396,14 @@ export function createDashboardServer(
             ]);
             json(res, 200, {
               ok: true,
-              autonomy: projectAutonomy(root, name, jobs, context),
+              autonomy: projectAutonomy(
+                root,
+                name,
+                jobs,
+                context,
+                new Date(),
+                preparation.codingPickup?.(name, jobs),
+              ),
             });
           } catch (error) {
             if (error instanceof RequestError) throw error;

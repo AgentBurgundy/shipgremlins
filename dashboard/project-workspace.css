@@ -1425,6 +1425,11 @@ body:has(.pm-create-dialog[open]) {
   background: color-mix(in srgb, var(--surface-inset) 40%, transparent);
   backdrop-filter: blur(3px);
 }
+.pm-brief-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .pm-brief-dialog-header {
   position: sticky;
   top: 0;
@@ -1436,6 +1441,7 @@ body:has(.pm-create-dialog[open]) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
+  flex-shrink: 0;
 }
 .pm-brief-dialog-header h2 {
   font-size: 21px;
@@ -1456,6 +1462,8 @@ body:has(.pm-create-dialog[open]) {
 }
 .pm-brief-dialog-body {
   padding: 24px 28px;
+  overflow-y: auto;
+  min-height: 0;
 }
 .pm-brief-dialog-body .field {
   margin-bottom: 18px;
@@ -1474,18 +1482,25 @@ body:has(.pm-create-dialog[open]) {
 .pm-brief-dialog-footer {
   position: sticky;
   bottom: 0;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 18px 28px;
   border-top: 1px solid var(--line);
   background: var(--surface);
+  flex-shrink: 0;
 }
 .pm-brief-dialog-footer p {
   font-size: 12px;
   color: var(--muted);
   margin: 0;
+}
+.pm-brief-dialog-footer > .project-workspace-notice {
+  grid-column: 1 / -1;
+  color: var(--ink);
+  padding: 12px;
+  overflow-wrap: anywhere;
 }
 .pm-brief-discard {
   margin: 0 28px 20px;
@@ -1582,7 +1597,7 @@ body:has(.pm-create-dialog[open]) {
   }
   .pm-brief-dialog-footer {
     align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
   }
   .pm-brief-dialog-footer .button-row {
     display: flex;

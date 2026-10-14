@@ -61,6 +61,11 @@ const json = (res, status, value) => {
 const mutation = (path, method) =>
   (path === "/api/updates/check" && method === "POST") ||
   (path === "/api/config" && method === "PUT") ||
+  (path === "/api/projects" && method === "POST") ||
+  (/^\/api\/projects\/[a-z0-9-]+\/onboarding\/(?:discover|confirm|cancel)$/.test(
+    path,
+  ) &&
+    method === "POST") ||
   (path === "/api/jobs" && method === "POST") ||
   (/^\/api\/jobs\/job-[a-f0-9-]+\/cancel$/.test(path) && method === "POST") ||
   (/^\/api\/runners(?:\/worker-[a-z0-9-]+\/[^/]+)?$/.test(path) &&
@@ -170,18 +175,50 @@ const server = createServer(async (req, res) => {
           "This provider, account or machine operation is disabled in the disposable fixture. Configuration, PM controls and simulated runs remain testable.",
       });
   }
+  let forwardBody, releaseCreation;
+  if (url.pathname === "/api/projects" && req.method === "POST") {
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of req) {
+      bytes += chunk.length;
+      if (bytes > 32 * 1024)
+        return json(res, 413, {
+          error: "Fixture project setup is limited to 32 KiB.",
+        });
+      chunks.push(chunk);
+    }
+    forwardBody = Buffer.concat(chunks);
+    let input;
+    try {
+      input = JSON.parse(forwardBody.toString("utf8"));
+    } catch {
+      return json(res, 400, { error: "Use a JSON project setup request." });
+    }
+    try {
+      releaseCreation = fixture.validateProjectCreation(input);
+    } catch (error) {
+      return json(res, 409, { error: error.message });
+    }
+  }
+  const headers = {
+    ...req.headers,
+    host: `127.0.0.1:${internalPort}`,
+    ...(req.headers.origin ? { origin: localOrigin } : {}),
+    "accept-encoding": "identity",
+  };
+  if (forwardBody) {
+    delete headers["transfer-encoding"];
+    headers["content-length"] = String(forwardBody.length);
+  }
   const proxied = request(
     `${localOrigin}${url.pathname}${url.search}`,
     {
       method: req.method,
-      headers: {
-        ...req.headers,
-        host: `127.0.0.1:${internalPort}`,
-        ...(req.headers.origin ? { origin: localOrigin } : {}),
-        "accept-encoding": "identity",
-      },
+      headers,
     },
     (response) => {
+      response.once("end", () => releaseCreation?.());
+      response.once("close", () => releaseCreation?.());
       const type = String(response.headers["content-type"] ?? "");
       if (type.startsWith("text/html")) {
         const parts = [];
@@ -205,10 +242,12 @@ const server = createServer(async (req, res) => {
       }
     },
   );
-  proxied.on("error", () =>
-    json(res, 502, { error: "Disposable fixture backend unavailable." }),
-  );
-  req.pipe(proxied);
+  proxied.on("error", () => {
+    releaseCreation?.();
+    json(res, 502, { error: "Disposable fixture backend unavailable." });
+  });
+  if (forwardBody) proxied.end(forwardBody);
+  else req.pipe(proxied);
 });
 server.requestTimeout = 15000;
 await new Promise((done) => server.listen(port, "0.0.0.0", done));

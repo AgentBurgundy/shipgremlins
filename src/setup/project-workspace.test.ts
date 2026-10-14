@@ -290,6 +290,62 @@ describe("progressive PM product brief", () => {
 });
 
 describe("focused project crew workspace", () => {
+  it("explains approved previous-attempt holds without asking for approval again or launching a retry", () => {
+    const rendered = fixture().renderCodingLauncher(
+      {
+        name: "app",
+        readiness: { canRun: true, blockers: [] },
+        autonomy: {
+          codingPickup: {
+            state: "current",
+            needsReview: [
+              {
+                identifier: "SHI-2",
+                status: "failed",
+                href: "/activity?run=failed-1",
+              },
+            ],
+          },
+        },
+      },
+      { operation: { kind: "empty" } },
+    );
+    expect(text(rendered)).toContain("SHI-2 is approved");
+    expect(text(rendered)).not.toContain("Approve a proposal");
+    expect(
+      all(rendered).find((item) => item.textContent === "Review SHI-2")?.href,
+    ).toBe("/activity?run=failed-1");
+    expect(
+      all(rendered).some(
+        (item) => /retry/i.test(item.textContent) && item.tagName === "BUTTON",
+      ),
+    ).toBe(false);
+    expect(
+      all(rendered).find((item) => item.textContent === "Find another ticket")
+        ?.dataset.launchCrew,
+    ).toBe("developer");
+  });
+  it("does not present stale or unavailable queue observations as an approved coding hold", () => {
+    for (const state of ["checking", "unavailable"]) {
+      const rendered = fixture().renderCodingLauncher(
+        {
+          name: "app",
+          readiness: { canRun: true, blockers: [] },
+          autonomy: {
+            codingPickup: {
+              state,
+              needsReview: [{ identifier: "SHI-2", href: "/activity?run=old" }],
+            },
+          },
+        },
+        { operation: { kind: "empty" } },
+      );
+      expect(text(rendered)).not.toContain("SHI-2");
+      expect(text(rendered)).not.toContain("Approve a proposal");
+      if (state === "unavailable")
+        expect(text(rendered)).toContain("check is unavailable");
+    }
+  });
   it("offers deployment setup instead of coding when repository patrols are ready but promotion is not", () => {
     const rendered = fixture().renderCodingLauncher(
       {
@@ -540,6 +596,58 @@ describe("focused project crew workspace", () => {
       },
     );
     expect(f.project.areas[0]!.enabled).toBe(false);
+  });
+  it("keeps dirty-edit refusals and failed saves in the fixed action area without losing edits", async () => {
+    const brief = {
+      name: "Security gremlin",
+      mandate: "Protect accounts.",
+      paths: [],
+      sharedTouchpoints: [],
+      metric: "",
+      schedule: "0 13 * * *",
+      wipLimit: 2,
+      promotionBatchSize: null,
+      charter: {},
+    };
+    const api = vi.fn(async (_url: string, body?: unknown) => {
+      if (body) throw new Error("Brief could not be saved. Try again.");
+      return { revision: "r1", brief };
+    });
+    const f = workspace(false, api);
+    f.pages.pm = f.project.areas[0]!.key;
+    f.pages.tab = "brief";
+    f.view.render();
+    await all(f.root)
+      .find((item) => item.textContent === "Edit brief")!
+      .fire("click");
+    const dialog = all(f.ui.testDocument.body).find(
+      (item) => item.className === "pm-brief-dialog",
+    )!;
+    const mandate = all(dialog).find(
+      (item) => item.id === "edit-brief-mandate",
+    )!;
+    mandate.value = "My unsaved edits";
+    const notice = all(dialog).find(
+      (item) => item.attributes.get("role") === "status",
+    )!;
+    for (const label of ["Reload saved brief", "Delete PM"]) {
+      await all(dialog)
+        .find((item) => item.textContent === label)!
+        .fire("click");
+      expect(notice.hidden).toBe(false);
+      expect(notice.parentElement?.className).toBe("pm-brief-dialog-footer");
+      expect(notice.textContent).toContain("Save or discard");
+      expect(mandate.value).toBe("My unsaved edits");
+      expect(dialog.open).toBe(true);
+      expect(api).toHaveBeenCalledTimes(1);
+    }
+    await all(dialog)
+      .find((item) => item.textContent === "Save product brief")!
+      .fire("click");
+    expect(notice.textContent).toBe("Brief could not be saved. Try again.");
+    expect(notice.hidden).toBe(false);
+    expect(mandate.value).toBe("My unsaved edits");
+    expect(dialog.open).toBe(true);
   });
   it("puts incomplete setup before PM cards and moves optional growth suggestions below an active crew", () => {
     const f = workspace(true),

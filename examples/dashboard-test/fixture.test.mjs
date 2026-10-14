@@ -2,7 +2,7 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync, rmSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -247,4 +247,281 @@ test("Run coding selects an approved synthetic ticket without an identifier and 
     ).length,
     1,
   );
+});
+
+const newProject = (project = "onboarding-app") => ({
+  project,
+  repo: "fixture/onboarding-app",
+  provider: "github",
+  onboarding: true,
+  linearMode: "later",
+  linear: { connectionId: "default" },
+});
+async function reviewedSetup(project = "onboarding-app") {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const response = await call(`/api/projects/${project}/onboarding`);
+    assert.equal(response.status, 200, await response.clone().text());
+    const data = await response.json();
+    if (data.status !== "analyzing") return data;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(
+    "Synthetic source review did not finish within its bounded fixture poll.",
+  );
+}
+test("completes the real existing-repository wizard and reviews simulated source/AI without executing a worker", async () => {
+  const repositories = await (
+    await call("/api/source-control/github/repositories")
+  ).json();
+  assert.ok(
+    repositories.repositories.some(
+      (repo) => repo.fullName === "fixture/onboarding-app",
+    ),
+  );
+  const before = JSON.parse(
+    readFileSync(resolve(root, "fixture-state.json"), "utf8"),
+  );
+  const created = await call("/api/projects", newProject());
+  assert.equal(created.status, 200, await created.clone().text());
+  const result = await created.json();
+  assert.equal(result.linear.status, "skipped");
+  const projectPath = resolve(root, "projects/onboarding-app/project.json");
+  const initialConfig = JSON.parse(readFileSync(projectPath, "utf8"));
+  assert.equal(initialConfig.repo, "fixture/onboarding-app");
+  const areas = JSON.parse(
+    readFileSync(resolve(root, "projects/onboarding-app/areas.json"), "utf8"),
+  ).areas;
+  assert.deepEqual(areas, {});
+  const setup = await reviewedSetup();
+  assert.equal(setup.status, "analyzed", setup.message);
+  assert.match(setup.message, /SIMULATED SETUP/);
+  assert.deepEqual(setup.fixture, {
+    source: "simulated",
+    ai: "simulated",
+    providerVerified: false,
+    commandsExecuted: false,
+    workerExecuted: false,
+  });
+  assert.match(setup.report.summary, /synthetic/);
+  assert.ok(
+    setup.report.warnings.some((warning) =>
+      warning.includes("not a checked-out Git commit"),
+    ),
+  );
+  assert.equal(
+    setup.report.projectSetup.commands.test.command,
+    "node --test server.test.mjs",
+  );
+  assert.equal(
+    setup.report.projectSetup.suggestedPms[0].draft.key,
+    "welcome-api",
+  );
+  assert.match(
+    setup.report.projectSetup.suggestedPms[0].rationale,
+    /SIMULATED SETUP/,
+  );
+  assert.equal(setup.setupConfirmation.confirmed, false);
+  assert.doesNotMatch(
+    JSON.stringify(setup),
+    /fixture-never-sent|synthetic-onboarding-source|fixture-not-a-real-credential/,
+  );
+  const confirmation = {
+    revision: setup.revision,
+    configurationRevision: setup.configurationRevision,
+    repositorySha: setup.report.repository.sha,
+    commandKeys: ["test"],
+  };
+  const unreviewed = await call(
+    "/api/projects/onboarding-app/onboarding/confirm",
+    { ...confirmation, commandKeys: ["build"] },
+  );
+  assert.equal(unreviewed.status, 400, await unreviewed.clone().text());
+  assert.equal(
+    JSON.parse(readFileSync(projectPath, "utf8")).commands.test,
+    initialConfig.commands.test,
+  );
+  const confirmed = await call(
+    "/api/projects/onboarding-app/onboarding/confirm",
+    confirmation,
+  );
+  assert.equal(confirmed.status, 200, await confirmed.clone().text());
+  assert.equal((await confirmed.json()).setupConfirmation.confirmed, true);
+  const saved = JSON.parse(readFileSync(projectPath, "utf8"));
+  assert.equal(saved.commands.test, "node --test server.test.mjs");
+  assert.equal(saved.verified, null);
+  const resumed = await reviewedSetup();
+  assert.equal(resumed.setupConfirmation.confirmed, true);
+  assert.equal(resumed.fixture.providerVerified, false);
+  const repeat = await call("/api/projects", newProject());
+  assert.equal(repeat.status, 200, await repeat.clone().text());
+  assert.equal(
+    JSON.parse(readFileSync(projectPath, "utf8")).commands.test,
+    saved.commands.test,
+  );
+  const after = JSON.parse(
+    readFileSync(resolve(root, "fixture-state.json"), "utf8"),
+  );
+  assert.deepEqual(after.jobs, before.jobs);
+  assert.deepEqual(after.workers, before.workers);
+  assert.deepEqual(after.providerTickets, before.providerTickets);
+  assert.equal(
+    existsSync(resolve(root, ".run/local-runners/state.json")),
+    false,
+  );
+  const recovery = await call("/api/recovery/reservations");
+  assert.equal(recovery.status, 200, await recovery.clone().text());
+  assert.deepEqual(await recovery.json(), {
+    reservations: [],
+    unavailableProjects: [],
+  });
+});
+
+test("keeps new-project mutations authenticated, bounded, revision guarded and confined to synthetic source", async () => {
+  const malformed = await fetch(base + "/api/projects", {
+    method: "POST",
+    headers: { authorization: `Bearer ${session}` },
+    body: "{not-json",
+  });
+  assert.equal(malformed.status, 400);
+  const oversized = await call("/api/projects", {
+    ...newProject("too-large"),
+    project: "a".repeat(34 * 1024),
+  });
+  assert.equal(oversized.status, 413);
+  const unauthorized = await fetch(base + "/api/projects", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(newProject("unauthorized")),
+  });
+  assert.equal(unauthorized.status, 401);
+  const foreign = await call("/api/projects", {
+    ...newProject("foreign"),
+    repo: "real-owner/real-repository",
+  });
+  assert.equal(foreign.status, 409);
+  assert.match(
+    (await foreign.json()).error,
+    /Only disposable project creation/,
+  );
+  assert.equal(
+    (
+      await call("/api/projects", {
+        ...newProject("gitlab"),
+        provider: "gitlab",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await call("/api/projects", {
+        ...newProject("not-onboarding"),
+        onboarding: false,
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await call("/api/projects", {
+        ...newProject("unsafe-home"),
+        hubRepo: "real-owner/controller",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (await call("/api/projects", newProject("../escape"))).status,
+    400,
+  );
+  const crossOrigin = await fetch(base + "/api/projects", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${session}`,
+      "content-type": "application/json",
+      origin: "https://outside.invalid",
+    },
+    body: JSON.stringify(newProject("cross-origin")),
+  });
+  assert.equal(crossOrigin.status, 403);
+  for (const name of [
+    "unauthorized",
+    "foreign",
+    "gitlab",
+    "not-onboarding",
+    "unsafe-home",
+    "cross-origin",
+  ])
+    assert.equal(existsSync(resolve(root, `projects/${name}`)), false);
+  const setup = await reviewedSetup();
+  const config = await (
+    await call("/api/config?path=projects%2Fonboarding-app%2Fproject.json")
+  ).json();
+  const value = JSON.parse(config.content);
+  value.description = "A newer disposable owner edit";
+  assert.equal(
+    (
+      await call(
+        "/api/config",
+        {
+          path: config.path,
+          revision: config.revision,
+          content: JSON.stringify(value),
+        },
+        "PUT",
+      )
+    ).status,
+    200,
+  );
+  const stale = await call("/api/projects/onboarding-app/onboarding/confirm", {
+    revision: setup.revision,
+    configurationRevision: setup.configurationRevision,
+    repositorySha: setup.report.repository.sha,
+    commandKeys: ["test"],
+  });
+  assert.equal(stale.status, 409, await stale.clone().text());
+  assert.equal(
+    JSON.parse(
+      readFileSync(
+        resolve(root, "projects/onboarding-app/project.json"),
+        "utf8",
+      ),
+    ).description,
+    value.description,
+  );
+  for (const path of [
+    "/api/connections",
+    "/api/source-control/github/connect",
+    "/api/ai/codex/login",
+    "/api/recovery/bind",
+    "/api/projects/onboarding-app/onboarding/prepare-docker",
+    "/api/projects/onboarding-app/onboarding/connect-test-account",
+    "/api/projects/onboarding-app/onboarding/setup-pr",
+    "/api/projects/onboarding-app/onboarding/verify",
+  ])
+    assert.equal((await call(path, {})).status, 409, path);
+  for (const project of ["fixture-second", "fixture-third"])
+    assert.equal(
+      (await call("/api/projects", newProject(project))).status,
+      200,
+    );
+  const concurrent = await Promise.all(
+    ["fixture-fourth", "fixture-fifth", "fixture-sixth"].map((project) =>
+      call("/api/projects", newProject(project)),
+    ),
+  );
+  assert.deepEqual(
+    concurrent.map((response) => response.status).sort(),
+    [200, 409, 409],
+  );
+  assert.equal(
+    ["fixture-fourth", "fixture-fifth", "fixture-sixth"].filter((project) =>
+      existsSync(resolve(root, `projects/${project}`)),
+    ).length,
+    1,
+  );
+  const capped = await call("/api/projects", newProject("fixture-seventh"));
+  assert.equal(capped.status, 409);
+  assert.match((await capped.json()).error, /four added projects/);
+  assert.equal(existsSync(resolve(root, "projects/fixture-seventh")), false);
 });

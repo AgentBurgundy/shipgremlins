@@ -228,6 +228,62 @@ describe("PM prompt policy and knowledge contracts", () => {
     ).toContain("b".repeat(64));
   });
 
+  it("keeps known fixture limits blocked while moving the patrol to reachable evidence and explaining approved holds", () => {
+    const input = fixture();
+    const prompt = buildPmPatrolPrompt({
+      ...input,
+      codingPickup: {
+        state: "current",
+        needsReview: [
+          {
+            identifier: "SHI-2",
+            area: input.area.key,
+            status: "failed",
+            reason: "previous-failed",
+            href: "/activity?run=failed-1",
+          },
+          {
+            identifier: "OTHER-1",
+            area: "other-pm",
+            status: "canceled",
+            reason: "previous-canceled",
+            href: "/activity?run=other",
+          },
+        ],
+      },
+    });
+    expect(prompt).toContain("SHI-2");
+    expect(prompt).not.toContain("OTHER-1");
+    expect(prompt).toContain("already approved");
+    expect(prompt).toContain("do not ask for approval again");
+    expect(prompt).toContain(
+      "An intentionally unsupported fixture operation is a coverage limit",
+    );
+    expect(prompt).toContain("Leave that criterion blocked");
+    expect(prompt).toContain("continue with another reachable");
+    expect(prompt).toContain("Missing telemetry alone does not block");
+    expect(prompt).toContain(
+      "do not imply that saved knowledge implemented work",
+    );
+    expect(prompt).toContain("Do not edit app code");
+    expect(
+      buildPmPatrolPrompt({
+        ...input,
+        codingPickup: {
+          state: "unavailable",
+          needsReview: [
+            {
+              identifier: "STALE-1",
+              area: input.area.key,
+              status: "failed",
+              reason: "previous-failed",
+              href: "/activity?run=old",
+            },
+          ],
+        },
+      }),
+    ).not.toContain("STALE-1");
+  });
   it("supports repository patrols with useful proposals and no invented browser or metric claims", () => {
     const prompt = buildPmPatrolPrompt(fixture());
     expect(prompt).toContain("Verification mode: repository");

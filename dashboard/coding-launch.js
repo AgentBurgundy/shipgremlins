@@ -85,6 +85,8 @@
       );
     const path = `/projects/${encodeURIComponent(project.name)}`;
     const promotion = project.workflow?.kind === "promotion";
+    const pickup = project.autonomy?.codingPickup;
+    const held = pickup?.state === "current" ? pickup.needsReview || [] : [];
     root.dataset.state = "ready";
     title.textContent = "Put your runners to work";
     description.textContent = promotion
@@ -120,6 +122,22 @@
         launchButton(project, "Find another ticket", locked, true),
       );
       progress.textContent = "No duplicate run was started.";
+    } else if (
+      !latest &&
+      held.length &&
+      !["error", "uncertain"].includes(operation?.kind)
+    ) {
+      root.dataset.state = "review";
+      title.textContent = "Approved work needs a run review";
+      description.textContent = `${held[0].identifier} is approved. Its previous coding attempt ${held[0].status === "canceled" ? "was canceled" : "failed"}, so automatic pickup is holding it to avoid duplicate work. Review the run and any existing changes before an explicit retry.`;
+      actions.append(
+        link(`Review ${held[0].identifier}`, held[0].href),
+        launchButton(project, "Find another ticket", locked, true),
+      );
+      progress.textContent =
+        held.length > 1
+          ? `${held.length} approved tickets need a previous attempt reviewed. Other eligible tickets can still start.`
+          : "Approval is already saved. This ticket was not automatically retried.";
     } else if (operation?.kind === "empty") {
       root.dataset.state = "empty";
       title.textContent = active.length
@@ -127,7 +145,9 @@
         : "No approved work is ready";
       description.textContent = active.length
         ? "No additional approved ticket can start yet. Follow the current runs, or review the next proposal."
-        : "Approve a proposal to give your coding agents something to build. Tickets already attempted stay in Activity for review.";
+        : pickup?.state === "unavailable"
+          ? "The latest approved-ticket check is unavailable. Review Activity and the queue before trying again."
+          : "No additional ticket passed the coding checks. Review approvals, acceptance criteria and previous attempts in Activity.";
       actions.append(
         active.length
           ? link(
@@ -278,7 +298,9 @@
         Object.assign(state, {
           kind: uncertain
             ? "uncertain"
-            : /No approved tickets are ready/i.test(message)
+            : /No approved tickets (?:with finite acceptance criteria )?are ready/i.test(
+                  message,
+                )
               ? "empty"
               : "error",
           message: uncertain

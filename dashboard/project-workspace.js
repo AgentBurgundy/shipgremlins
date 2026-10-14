@@ -375,6 +375,7 @@
     );
     footerActions.append(removePm, reload, save);
     footer.append(
+      editorMessage,
       node(
         "p",
         "",
@@ -450,7 +451,7 @@
         (item) => item.name === projectName,
       );
       editorScope.textContent = `${projectName} · ${project?.repo || ""} · ${areaKey}`;
-      body.replaceChildren(editorMessage);
+      body.replaceChildren();
       fields.clear();
       editor.charter = null;
       editor.form = null;
@@ -602,7 +603,7 @@
           },
           true,
         );
-        body.replaceChildren(form, editorMessage);
+        body.replaceChildren(form);
         editor.original = JSON.stringify(readBrief());
       } catch (error) {
         showEditorMessage(error.message, true);
