@@ -1,12 +1,12 @@
 # Mission control design audit
 
-Verified on 2026-10-14 in the `codex/mission-control` worktree for v0.28.0.
+Verified on 2026-10-14 for v0.28.0, with the gremlin-green palette restored in v0.28.1.
 
 ## Design implementation
 
-All 36 existing dashboard stylesheets now use a shared graphite, cyan, and restrained lime system. The new `dashboard/mission-control.css` supplies composition hooks for headings, toolbars, system metrics, panels, setup actions, technical disclosures, and empty states. Component colors, controls, spacing, radii, charts, dialogs, tabs, and responsive rules were updated in their owning stylesheets rather than covered by one generic theme override.
+All 36 existing dashboard stylesheets now use a shared dark forest and gremlin-green system. The new `dashboard/mission-control.css` supplies composition hooks for headings, toolbars, system metrics, panels, setup actions, technical disclosures, and empty states. Component colors, controls, spacing, radii, charts, dialogs, tabs, and responsive rules were updated in their owning stylesheets rather than covered by one generic theme override.
 
-The foundation uses the bundled Manrope font, a system monospace stack, dark native controls, cyan keyboard focus, and semantic success/warning/error colors. Provider marks remain visible on dark backgrounds. Primary actions use cyan with dark text. Run stages use lime for passed checks and cyan for the current recorded phase; unavailable, queued, failed, and stale states retain their actual meanings.
+The foundation uses the bundled Manrope font, a system monospace stack, dark native controls, lime keyboard focus, and semantic success/warning/error colors. Provider marks remain visible on dark backgrounds. Primary actions use the logo's lime green with dark text. Run stages use softer green for passed checks and lime for the current recorded phase; unavailable, queued, failed, and stale states retain their actual meanings.
 
 The overview has a compact heading, one row of workspace metrics, live execution cards, project actions, and collapsed connection diagnostics. PM workspaces have one contextual back link, a full-width status/automation band, role switches, and disclosed testing/scheduling references. Mobile process rails use three columns so stage labels remain intact at 320 pixels. Expanded history does not stretch adjacent cards. Large setup illustrations were removed from the first-investigation and repository-introduction layouts.
 
@@ -43,3 +43,10 @@ The wizard saved only the disposable `ui-polish-test` project pointing at `fixtu
 - Reduced-motion rules were inspected in source: global animation/transition suppression and run-flow-specific rules are retained. An operating-system reduced-motion toggle and screen-reader walkthrough were not exercised.
 - Deletion, real OAuth/device sign-in, real worker execution, populated billing/usage data, and every possible provider-error state were not executed. Their component styles share the same semantic system; this audit does not claim end-to-end certification of those services.
 - Screenshots are local QA artifacts in the ignored `.run` directory, not shipped product assets. Early route screenshots can contain fixture data and the navigation copy present at capture time; the final overview and PM screenshots were refreshed after integration.
+
+The v0.28.1 palette correction was checked on the populated dashboard in the
+browser. The original `#c3f66b` logo green now drives actions, selection, focus and
+the animated live-stage glow; surfaces use dark forest tones. All 37 stylesheets
+parsed successfully, and the five inspected text/background pairs exceeded 4.5:1
+contrast (primary button text: 13.01:1). Proof is saved in
+`.run/green-brand-qa/mission-control-green.jpg`. Layout and behavior were unchanged.
