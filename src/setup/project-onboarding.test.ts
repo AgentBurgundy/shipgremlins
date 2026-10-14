@@ -145,6 +145,128 @@ const state = () => ({
   message: "",
 });
 
+describe("repository Compose import UI", () => {
+  it("imports a selected repository path, reviews diagnostics and saves only the chosen isolated recipe", async () => {
+    const target = {
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "dockerfile", context: ".", dockerfile: "Dockerfile" },
+      port: 3000,
+      services: [{ kind: "postgres", name: "db", env: "DATABASE_URL" }],
+      buildArgs: { NEXT_PUBLIC_API_URL: "https://staging.example.test" },
+      buildSecrets: { npmrc: "TEST_NPMRC" },
+    };
+    const report = {
+      summary: "Imported app",
+      recommendation: "docker",
+      rationale: "Read at a pinned commit",
+      stack: [],
+      warnings: [],
+      missingInputs: [],
+      hosted: { provider: "url", instructions: [] },
+      docker: target,
+      proposedFiles: [],
+      repository: {
+        repo: "owner/shop",
+        branch: "main",
+        sha: "a".repeat(40),
+        filesRead: ["deploy/compose.test.yml"],
+      },
+      composeImports: [
+        {
+          path: "deploy/compose.test.yml",
+          service: "web",
+          status: "ready",
+          diagnostics: [
+            {
+              feature: "isolation",
+              severity: "warning",
+              message: "Uses a disposable network",
+            },
+          ],
+          target,
+        },
+      ],
+    };
+    const api = vi.fn(async (path: string, _body?: unknown) =>
+      path.endsWith("/import-compose")
+        ? { ...state(), revision: "imported-2", status: "analyzed", report }
+        : state(),
+    );
+    const f = fixture(api),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    const path = walk(root).find((item) => item.id === "compose-import-shop")!;
+    path.value = "deploy/compose.test.yml";
+    path.fire("input");
+    await walk(root)
+      .find((item) => item.textContent === "Import Compose from repository")!
+      .fire("click");
+    expect(api).toHaveBeenLastCalledWith(
+      "/api/projects/shop/onboarding/import-compose",
+      { revision: "analysis-1", path: "deploy/compose.test.yml" },
+    );
+    expect(text(root)).toContain("Uses a disposable network");
+    expect(api.mock.calls.some(([path]) => path.endsWith("/configure"))).toBe(
+      false,
+    );
+    await walk(root)
+      .find((item) => item.textContent === "Use this disposable recipe")!
+      .fire("click");
+    expect(f.panel.isDirty()).toBe(true);
+    expect(
+      walk(root).find((item) => item.id === "onboarding-shop-advanced")?.value,
+    ).toContain("TEST_NPMRC");
+    await walk(root)
+      .find((item) => item.textContent === "Save environment")!
+      .fire("click");
+    expect(
+      api.mock.calls.find(([path]) => path.endsWith("/configure"))?.[1],
+    ).toMatchObject({
+      profile: "docker",
+      target: { ...target, access: { kind: "public" }, healthPath: "/" },
+    });
+    f.panel.destroy();
+  });
+  it("shows unsupported feature explanations without offering an applicable recipe", async () => {
+    const f = fixture(
+        vi.fn(async () => ({
+          ...state(),
+          report: {
+            summary: "Needs changes",
+            recommendation: "hosted",
+            rationale: "Unsupported mounts",
+            composeImports: [
+              {
+                path: "compose.yml",
+                service: "web",
+                status: "unsupported",
+                diagnostics: [
+                  {
+                    feature: "volumes",
+                    severity: "error",
+                    message: "Host bind mounts cannot be imported",
+                  },
+                ],
+              },
+            ],
+          },
+        })),
+      ),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(root)).toContain("Host bind mounts cannot be imported");
+    expect(
+      walk(root).some(
+        (item) => item.textContent === "Use this disposable recipe",
+      ),
+    ).toBe(false);
+    f.panel.destroy();
+  });
+});
+
 describe("environment diagnosis and recovery", () => {
   const passwordTarget = {
     access: {
@@ -443,6 +565,64 @@ describe("automatic Vercel environment setup", () => {
     message: "Connecting private preview access.",
     configurationRevision: "config-1",
   };
+
+  it.each([
+    { kind: "url", role: "staging", url: "https://staging.example.test" },
+    {
+      kind: "docker",
+      role: "preview",
+      recipe: { kind: "image", image: "ghcr.io/example/app:1" },
+      port: 3000,
+      healthPath: "/health",
+    },
+    {
+      kind: "railway",
+      role: "staging",
+      projectId: "project",
+      environmentId: "staging",
+      serviceId: "app",
+    },
+    {
+      kind: "cloud-run",
+      role: "staging",
+      projectId: "project",
+      region: "us-central1",
+      service: "staging",
+    },
+  ])(
+    "prepares a saved $kind environment without a Vercel connection",
+    async (target) => {
+      const base = managed();
+      let data = {
+        ...base,
+        environment: {
+          ...base.environment,
+          profile: target.kind === "docker" ? "docker" : "hosted",
+          target,
+        },
+        environmentSetup: undefined as object | undefined,
+      };
+      const api = vi.fn(async (path: string, _body?: unknown) => {
+        if (path.endsWith("/prepare-environment"))
+          data = { ...data, environmentSetup: preparing };
+        return data;
+      });
+      const f = fixture(api, () => ({ serviceConnections: [] }));
+      f.panel.mount(new Element(), { name: "shop", repo: "owner/shop" });
+      await settle();
+      await settle();
+      expect(
+        api.mock.calls.filter(([path]) =>
+          path.endsWith("/prepare-environment"),
+        ),
+      ).toHaveLength(1);
+      expect(api).toHaveBeenCalledWith(
+        "/api/projects/shop/onboarding/prepare-environment",
+        { configurationRevision: "config-1" },
+      );
+      f.panel.destroy();
+    },
+  );
 
   it("prepares a saved Vercel environment once and never retries a blocker on polls or return", async () => {
     let data = managed();
@@ -1931,6 +2111,23 @@ describe("guided environment target review", () => {
     expect(() =>
       window.readOnboardingTarget({ ...docker(), port: "0" }),
     ).toThrow("port");
+  });
+  it("keeps public build arguments separate from BuildKit reference names when editing a recipe", () => {
+    const { window } = fixture();
+    expect(
+      window.readOnboardingTarget({
+        ...docker(),
+        advanced: JSON.stringify({
+          buildArgs: { NEXT_PUBLIC_API_URL: "https://staging.example.test" },
+          buildSecrets: { npmrc: "TEST_NPMRC" },
+        }),
+      }),
+    ).toMatchObject({
+      target: {
+        buildArgs: { NEXT_PUBLIC_API_URL: "https://staging.example.test" },
+        buildSecrets: { npmrc: "TEST_NPMRC" },
+      },
+    });
   });
   it("preserves saved provider resource identities when configuring password access", () => {
     const { window } = fixture();

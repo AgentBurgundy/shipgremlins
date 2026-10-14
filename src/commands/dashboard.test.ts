@@ -225,7 +225,7 @@ describe("local dashboard HTTP boundary", () => {
     expect(
       JSON.parse(readFileSync(join(root, "projects/demo/areas.json"), "utf8"))
         .areas.core.enabled,
-    ).toBe(false);
+    ).toBe(true);
   });
   it("serves live public activity and logs without waiting for PostgreSQL or running-job artifacts", async () => {
     const job = {
@@ -441,6 +441,7 @@ describe("local dashboard HTTP boundary", () => {
     project.verified = "2026-10-05";
     writeFileSync(projectPath, JSON.stringify(project));
     const areas = JSON.parse(readFileSync(areasPath, "utf8"));
+    areas.areas.core.enabled = false;
     areas.areas.core.linearProjectId = randomUUID();
     areas.areas.core.mandate =
       "Review account boundaries using isolated test accounts.";

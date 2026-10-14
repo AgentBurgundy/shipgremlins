@@ -9,6 +9,9 @@ import type {
   PullRequest,
   RevisionTreeEntry,
   WorkflowRun,
+  FailedJobRerunTarget,
+  FailedJobRerunPlan,
+  FailedJobRerunEvidence,
 } from "./types.ts";
 
 type Row = Record<string, unknown>;
@@ -26,6 +29,47 @@ const revision = (v: string) => {
     throw new Error("GitLab provenance requires a full commit SHA.");
   return v;
 };
+function diffLines(diff: string): { additions: number; deletions: number } {
+  let additions = 0,
+    deletions = 0,
+    oldRemaining = 0,
+    newRemaining = 0,
+    hunks = 0;
+  for (const line of diff.split("\n")) {
+    const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+    if (hunk) {
+      if (oldRemaining || newRemaining)
+        throw new Error("Merge request diff is incomplete.");
+      oldRemaining = hunk[1] === undefined ? 1 : Number(hunk[1]);
+      newRemaining = hunk[2] === undefined ? 1 : Number(hunk[2]);
+      hunks++;
+      continue;
+    }
+    if (
+      line.startsWith("\\ No newline at end of file") ||
+      (!line && oldRemaining === 0 && newRemaining === 0)
+    )
+      continue;
+    if (!hunks)
+      throw new Error("Merge request diff has no complete hunk evidence.");
+    if (line.startsWith("+")) {
+      additions++;
+      newRemaining--;
+    } else if (line.startsWith("-")) {
+      deletions++;
+      oldRemaining--;
+    } else if (line.startsWith(" ")) {
+      oldRemaining--;
+      newRemaining--;
+    } else
+      throw new Error("Merge request diff contains incomplete hunk evidence.");
+    if (oldRemaining < 0 || newRemaining < 0)
+      throw new Error("Merge request diff hunk counts do not match.");
+  }
+  if (oldRemaining || newRemaining)
+    throw new Error("Merge request diff is incomplete.");
+  return { additions, deletions };
+}
 class GitLabError extends Error {
   constructor(readonly status: number) {
     super(
@@ -129,6 +173,7 @@ export class GitLabForge implements Forge {
   private async pages(
     path: string,
     params: Record<string, string> = {},
+    maximum = 100_000,
   ): Promise<Row[]> {
     const out: Row[] = [];
     for (let page = 1; page <= 1000; page++) {
@@ -138,6 +183,13 @@ export class GitLabForge implements Forge {
       if (!Array.isArray(value) || !value.every(object))
         throw new Error("GitLab returned an invalid page.");
       out.push(...value);
+      if (
+        out.length > maximum ||
+        (out.length >= maximum && next !== "" && value.length === 100)
+      )
+        throw new Error(
+          "GitLab results exceed this operation's bounded review limit.",
+        );
       if (next === "" || (next === null && value.length < 100)) return out;
       if (next !== null && next !== String(page + 1))
         throw new Error("GitLab pagination is incomplete.");
@@ -503,6 +555,176 @@ export class GitLabForge implements Forge {
         `${this.project(repo)}/pipelines/${id(Number(pipeline.id))}/retry`,
         "POST",
       );
+  }
+  private async rerunPipeline(target: FailedJobRerunTarget) {
+    if (target.provider !== "gitlab" || !target.jobs?.length)
+      throw new Error("Invalid exact-revision GitLab retry target.");
+    const pipeline = await this.one(
+      `${this.project(target.repository)}/pipelines/${id(target.runId)}`,
+    );
+    if (!pipeline || pipeline.sha !== revision(target.sha))
+      throw new Error(
+        "GitLab retry pipeline does not match its reserved revision.",
+      );
+    const jobs = await this.pages(
+      `${this.project(target.repository)}/pipelines/${id(target.runId)}/jobs`,
+      { include_retried: "false" },
+    );
+    return { pipeline, jobs };
+  }
+  async planFailedJobRerun(
+    repo: string,
+    sha: string,
+  ): Promise<FailedJobRerunPlan> {
+    const pipeline = await this.pipeline(repo, sha);
+    if (!pipeline) return { state: "ready", targets: [] };
+    const target: FailedJobRerunTarget = {
+      provider: "gitlab",
+      repository: repo,
+      sha,
+      runId: Number(pipeline.id),
+      attempt: 1,
+      jobs: [{ id: 1, name: "placeholder" }],
+    };
+    const current = await this.rerunPipeline(target);
+    if (
+      [
+        "pending",
+        "running",
+        "created",
+        "waiting_for_resource",
+        "preparing",
+        "scheduled",
+      ].includes(str(current.pipeline.status)) ||
+      current.jobs.some((job) =>
+        [
+          "created",
+          "pending",
+          "running",
+          "waiting_for_resource",
+          "preparing",
+          "scheduled",
+        ].includes(str(job.status)),
+      )
+    )
+      return { state: "pending", targets: [] };
+    if (
+      !["success", "failed", "canceled", "skipped"].includes(
+        str(current.pipeline.status),
+      )
+    )
+      return { state: "pending", targets: [] };
+    target.jobs = current.jobs
+      .filter((job) => ["failed", "canceled"].includes(str(job.status)))
+      .map((job) => ({ id: Number(job.id), name: str(job.name) }));
+    if (
+      target.jobs.some(
+        (job) => !Number.isSafeInteger(job.id) || job.id < 1 || !job.name,
+      )
+    )
+      throw new Error("GitLab retry jobs have no authoritative identifiers.");
+    return { state: "ready", targets: target.jobs.length ? [target] : [] };
+  }
+  async getFailedJobRerunEvidence(
+    target: FailedJobRerunTarget,
+  ): Promise<FailedJobRerunEvidence> {
+    const { pipeline, jobs } = await this.rerunPipeline(target);
+    return {
+      acknowledged: target.jobs!.every(
+        (previous) =>
+          !jobs.some((job) => Number(job.id) === previous.id) &&
+          jobs.some(
+            (job) =>
+              job.name === previous.name &&
+              Number.isSafeInteger(Number(job.id)) &&
+              Number(job.id) > previous.id,
+          ),
+      ),
+      pending:
+        !["success", "failed", "canceled", "skipped"].includes(
+          str(pipeline.status),
+        ) ||
+        jobs.some((job) =>
+          [
+            "created",
+            "pending",
+            "running",
+            "waiting_for_resource",
+            "preparing",
+            "scheduled",
+          ].includes(str(job.status)),
+        ),
+    };
+  }
+  async rerunFailedJobTarget(target: FailedJobRerunTarget): Promise<void> {
+    const evidence = await this.getFailedJobRerunEvidence(target);
+    if (evidence.acknowledged) return;
+    if (evidence.pending)
+      throw new Error(
+        "GitLab CI is still pending; no duplicate retry was requested.",
+      );
+    const { jobs } = await this.rerunPipeline(target);
+    if (
+      !target.jobs!.every((previous) =>
+        jobs.some(
+          (job) =>
+            Number(job.id) === previous.id &&
+            ["failed", "canceled"].includes(str(job.status)),
+        ),
+      )
+    )
+      throw new Error(
+        "GitLab retry jobs changed; inspect the existing retry before proceeding.",
+      );
+    await this.request(
+      `${this.project(target.repository)}/pipelines/${id(target.runId)}/retry`,
+      "POST",
+    );
+  }
+  async getPullDiffStats(repo: string, number: number) {
+    const detail = await this.one(
+      `${this.project(repo)}/merge_requests/${id(number)}`,
+    );
+    if (!detail || !/^[0-9]+$/.test(str(detail.changes_count)))
+      throw new Error("Merge request diff statistics are unavailable.");
+    const before = this.pull(detail);
+    const diffs = await this.pages(
+      `${this.project(repo)}/merge_requests/${id(number)}/diffs`,
+      {},
+      1000,
+    );
+    if (diffs.length > 1000 || Number(detail.changes_count) !== diffs.length)
+      throw new Error(
+        "Merge request diff statistics exceed the bounded review limit.",
+      );
+    let additions = 0,
+      deletions = 0;
+    for (const entry of diffs) {
+      if (
+        entry.too_large === true ||
+        entry.collapsed === true ||
+        typeof entry.diff !== "string" ||
+        entry.diff.length > 2_000_000 ||
+        (!entry.diff && entry.renamed_file !== true)
+      )
+        throw new Error(
+          "Complete merge request diff statistics are unavailable.",
+        );
+      const count = diffLines(entry.diff);
+      additions += count.additions;
+      deletions += count.deletions;
+    }
+    const after = await this.getPull(repo, number);
+    if (!after || after.headSha !== before.headSha)
+      throw new Error(
+        "Merge request head changed while diff statistics were read.",
+      );
+    return {
+      headSha: before.headSha,
+      files: diffs.length,
+      additions,
+      deletions,
+    };
   }
   async dispatchWorkflow(
     _repo: string,

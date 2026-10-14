@@ -1,0 +1,112 @@
+.command-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 24px;
+  margin-left: auto;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid #e1e9e3;
+  border-radius: 8px;
+  color: #667b70;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.command-menu-trigger kbd {
+  font: inherit;
+  font-size: 10px;
+  color: #819087;
+}
+dialog.command-menu {
+  width: min(620px, calc(100vw - 24px));
+  max-height: calc(100dvh - 48px);
+  border: 1px solid #dce6de;
+  border-radius: 16px;
+  padding: 22px;
+  color: #18392b;
+  box-shadow: 0 24px 80px #18392b30;
+}
+.command-menu::backdrop {
+  background: #10271f80;
+  backdrop-filter: blur(3px);
+}
+.command-menu header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.command-menu h2 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+}
+.command-menu input {
+  width: 100%;
+  min-height: 46px;
+  padding: 12px;
+  border: 1px solid #cddbd0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+}
+.command-menu-results {
+  max-height: min(440px, 50dvh);
+  overflow: auto;
+  display: grid;
+  gap: 5px;
+}
+.command-menu-option {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 9px;
+  color: #18392b;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.command-menu-option strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.command-menu-option span {
+  color: #667b70;
+  flex-shrink: 0;
+}
+.command-menu-option[aria-selected="true"],
+.command-menu-option:hover {
+  background: #eef5e9;
+}
+.command-menu-count,
+.command-menu-help {
+  color: #667b70;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.command-menu-help {
+  margin-bottom: 0;
+}
+@media (max-width: 600px) {
+  .command-menu-trigger {
+    font-size: 0;
+    gap: 0;
+  }
+  .command-menu-trigger kbd {
+    font-size: 11px;
+  }
+  .command-menu-option {
+    flex-direction: column;
+    gap: 4px;
+  }
+  dialog.command-menu {
+    padding: 18px;
+  }
+}

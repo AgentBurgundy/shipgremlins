@@ -1,6 +1,6 @@
 # ShipGremlins alpha implementation status
 
-Updated October 5, 2026. The master plan is a product roadmap, not a statement that
+Updated October 6, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
 The primary workflow improves existing applications. Outcome-led missions bind
@@ -15,8 +15,7 @@ per-run product observations supplement latest PM knowledge. See
 
 Promotion reconciliation now queues owning-PM verification when the exact ready
 integration deployment and checks qualify; it does not need to wait for a patrol.
-Candidate hosting and trusted candidate attestation still require configuration.
-A mission or Grumblin report does not bypass those gates. Provider certification
+Verified fixes from every PM now accumulate in one build-checked draft promotion PR into staging. The owner reviews staging and releases it to production with a separate draft PR. Exact-candidate signed browser verification is an optional stricter gate; its hosting and signing authority require separate configuration. A mission or Grumblin report cannot substitute for an owning-PM review. Provider certification
 and measured customer impact require real pilot evidence, not synthetic tests.
 
 Experimental idea onboarding proposes a first milestone and one to four PMs from a product
@@ -27,7 +26,7 @@ paused, dependency order is advisory, and application code still requires
 approved tickets. API/provider tests use simulated responses; live model and
 provider execution remain unverified. See [idea onboarding](IDEA_TO_APP.md).
 
-Project onboarding includes bounded source analysis, hosted-staging or managed-Docker selection, reviewed draft setup PR/MR publication, and real Chromium access/login checks. Vercel setup can discover existing Preview/custom staging deployments and create a reviewed test Preview from the selected repository, with optional branch creation and safe retry reconciliation. A contextual Setup Gremlin conversation explains next steps. Managed Docker supports a pinned repository Dockerfile or existing image, optional disposable PostgreSQL/Redis, migration/seed commands, per-job networks and cleanup. New projects need no initial PM or Linear mapping. This does not provision external databases, arbitrary Compose stacks, new Vercel projects/custom environments, Railway or Cloud Run infrastructure, or trusted promotion verifiers. See [Vercel scope and limits](VERCEL_ENVIRONMENTS.md) and [project onboarding](PROJECT_ONBOARDING.md).
+Project onboarding includes bounded source analysis, hosted-staging or managed-Docker selection, reviewed draft setup PR/MR publication, and real Chromium access/login checks. Vercel setup can discover existing Preview/custom staging deployments and create a reviewed test Preview from the selected repository, with missing staging/pm-staging branch creation and safe retry reconciliation. The same reviewed flow repairs existing Vercel apps, saves the staged workflow, connects access, and checks project readiness while preserving commands and PM schedules. A contextual Setup Gremlin conversation explains next steps. Managed Docker supports a pinned repository Dockerfile or existing image, optional disposable PostgreSQL/Redis, migration/seed commands, per-job networks and cleanup. New projects need no initial PM or Linear mapping. This does not provision external databases, arbitrary Compose stacks, new Vercel projects/custom environments, Railway or Cloud Run infrastructure, or trusted promotion verifiers. See [Vercel scope and limits](VERCEL_ENVIRONMENTS.md) and [project onboarding](PROJECT_ONBOARDING.md).
 
 Project telemetry now includes optional read adapters for Sentry logs/error
 events, Datadog logs, and Mixpanel saved Insights reports. Project configuration,
@@ -45,7 +44,7 @@ still needs verification for each user's repositories.
 Linear and Vercel browser connections now feed local job preparation and provider
 checks. Explicit dashboard app/PM setup provisions one Linear team per app and one
 project per mandate, with persisted creation IDs and retry recovery. Existing
-mappings are preserved. PMs remain disabled until reviewed; connection/provisioning
+mappings are preserved. New PMs default to daily patrols after readiness passes; explicit pauses and restored/deleted-project safeguards are preserved. Connection/provisioning
 tests use fake provider responses. See [connections and mapping](LINEAR_VERCEL.md).
 
 Version 0.6 adds repository-first projects with an explicit pull-request base and
@@ -81,20 +80,20 @@ explicit apply/save; the first patrol does not rewrite ownership. Tests cover
 draft validation and the real Docker isolation path with a synthetic model;
 production model output remains dependent on the connected Claude account.
 
-| Capability       | Current state                                                                                                                                                                                                                                                     |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                             |
-| Recovery         | Durable queue and usage ledger, classified startup retries with backoff, ambiguous-launch holds, record-only reconciliation retries and confirmed cancellation. Failed agent jobs require review.                                                                 |
-| Promotion        | Local promotion projects track approved drafts, exact integration deployment, owning-PM review and selective candidates. Independent checks and browser evidence gate promotion; candidate deployment and trusted signing remain explicit setup requirements.     |
-| Linear Done      | Read-only CLI audit, explicit CLI reconciliation, and dashboard polling after owner confirmation of the complete deliverable scope; actual production merge and Git-tree proof required.                                                                          |
-| Test fixtures    | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                                                                            |
-| Setup            | Global `gremlins` command (`shipgremlins` / `hub` compatibility aliases), compact ASCII greeting, resumable initialization, LAN dashboard, validated config editor, file locations and connection tokens; PMs start disabled                                      |
-| Updates          | CLI and dashboard checks/install/rollback; pinned official commit with successful CI, isolated runtime installation, startup/config validation, atomic selection and supervised dashboard restart                                                                 |
-| Local hosting    | Foreground dashboard/controller or `gremlins start`, `stop`, and `status`; explicit LAN mode; manual service-manager setup for reboot persistence. Runtime upgrades preserve configuration and running Docker jobs.                                               |
-| Runners          | Local or enrolled remote Docker capacity, project-scoped credentials, revocation and expiring execution leases. Real Chromium readiness checks. One job per worker, up to four total slots. No provider CI registration required.                                 |
-| Activity history | Local Docker PostgreSQL store with idempotent run/event persistence, visible tool activity, summaries, checks, redacted logs, and bounded artifact retention. Queue control still uses private local files.                                                       |
-| Slack            | Branded PM and developer lifecycle notifications, instance-wide incoming webhook/OAuth connection and per-project override. Attempts are durably claimed before sending; no repeat after restart, no guaranteed delivery. See [Slack setup and limits](SLACK.md). |
-| Website          | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                                                                           |
+| Capability       | Current state                                                                                                                                                                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scheduled PMs    | Local controller schedules enabled, verified areas in UTC and queues approved Linear tickets; isolated Docker jobs use Claude Code and Playwright. Existing GitHub Actions workflows remain optional.                                                                     |
+| Recovery         | Durable queue and usage ledger, classified startup retries with backoff, ambiguous-launch holds, record-only reconciliation retries and confirmed cancellation. Failed agent jobs require review.                                                                         |
+| Promotion        | Local promotion projects track approved drafts, exact integration deployment, owning-PM review and selective candidates. Independent checks and browser evidence gate promotion; combined drafts require PM review and build checks; exact-candidate signing is optional. |
+| Linear Done      | Read-only CLI audit, explicit CLI reconciliation, and dashboard polling after owner confirmation of the complete deliverable scope; actual production merge and Git-tree proof required.                                                                                  |
+| Test fixtures    | CSV from JSON with quoting and Unicode; reproducible PNG test grids; size limits, SHA-256 manifests, no overwrite; PM instructions for real browser upload and cleanup                                                                                                    |
+| Setup            | Global `gremlins` command (`shipgremlins` / `hub` compatibility aliases), compact ASCII greeting, resumable initialization, LAN dashboard, validated config editor, file locations and connection tokens; new PMs default to daily after readiness passes                 |
+| Updates          | CLI and dashboard checks/install/rollback; pinned official commit with successful CI, isolated runtime installation, startup/config validation, atomic selection and supervised dashboard restart                                                                         |
+| Local hosting    | Foreground dashboard/controller or `gremlins start`, `stop`, and `status`; explicit LAN mode; manual service-manager setup for reboot persistence. Runtime upgrades preserve configuration and running Docker jobs.                                                       |
+| Runners          | Local or enrolled remote Docker capacity, project-scoped credentials, revocation and expiring execution leases. Real Chromium readiness checks. One job per worker, up to four total slots. No provider CI registration required.                                         |
+| Activity history | Local Docker PostgreSQL store with idempotent run/event persistence, visible tool activity, summaries, checks, redacted logs, and bounded artifact retention. Queue control still uses private local files.                                                               |
+| Slack            | Branded PM and developer lifecycle notifications, instance-wide incoming webhook/OAuth connection and per-project override. Attempts are durably claimed before sending; no repeat after restart, no guaranteed delivery. See [Slack setup and limits](SLACK.md).         |
+| Website          | Separate private landing repository, deployed to Vercel; original mascot and responsive static site with real setup guide and labeled example workflows                                                                                                                   |
 
 Version 0.9.2 separates live activity, logs, and artifact loading, keeps unchanged
 timeline entries in place, and bounds slow dashboard reads. Newly created PM
@@ -126,7 +125,7 @@ the [delivery workflow and Railway setup](DELIVERY_WORKFLOW.md).
 
 ## What still needs implementation
 
-The trusted **promotion-candidate** verifier and signer must be provisioned separately.
+The optional trusted **promotion-candidate** verifier and signer must be provisioned separately when that stricter gate is enabled.
 Owning-PM integration reviews do use a separate browser replay container. The candidate
 gate verifies signed receipts; this release does not automatically provision its
 deployment/verifier, manage protected signing keys, or supply authenticated test accounts for arbitrary apps.

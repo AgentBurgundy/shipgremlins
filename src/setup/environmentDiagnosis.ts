@@ -23,6 +23,46 @@ export interface EnvironmentCheck {
 
 // Browser output is untrusted. Only these controller-owned explanations reach the UI.
 const catalog = {
+  app_inputs_missing: [
+    "Application test inputs are missing",
+    "Save every named test-only application input in Connections before starting the Docker app.",
+    "manage_credentials",
+  ],
+  hosting_credentials: [
+    "Hosting access needs attention",
+    "Update the saved hosting connection and check its permission to read the selected staging environment.",
+    "manage_credentials",
+  ],
+  image_unavailable: [
+    "The application image could not be downloaded",
+    "Check the Docker image reference and registry access, then retry.",
+    "edit_environment",
+  ],
+  build_failed: [
+    "The Dockerfile did not build",
+    "Check the repository Dockerfile, build context, dependencies and required build inputs, then retry.",
+    "edit_environment",
+  ],
+  service_unhealthy: [
+    "A disposable database did not become ready",
+    "Check Docker resources and the configured Postgres or Redis service, then retry.",
+    "edit_environment",
+  ],
+  migration_failed: [
+    "The test database migration failed",
+    "Check the migration argument array and schema against the disposable database, then retry.",
+    "edit_environment",
+  ],
+  seed_failed: [
+    "Synthetic test data could not be seeded",
+    "Check the seed argument array and its disposable database dependencies, then retry.",
+    "edit_environment",
+  ],
+  app_unhealthy: [
+    "The Docker app did not become healthy",
+    "Check the start command, internal application port, health path and binding to 0.0.0.0, then retry.",
+    "edit_environment",
+  ],
   preview_credential_missing: [
     "Preview access needs reconnecting",
     "The saved preview-access reference has no credential value. Connect preview access, then test again.",

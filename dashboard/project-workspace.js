@@ -41,7 +41,7 @@
     ["brief", "Product brief"],
     ["discovery", "Learning"],
     ["features", "Features"],
-    ["queue", "Ranked queue"],
+    ["queue", "Opportunities"],
     ["memory", "Memory"],
     ["activity", "Activity"],
   ];
@@ -264,6 +264,7 @@
     });
     const knowledge = new Map(),
       notices = new Map(),
+      knowledgeErrors = new Set(),
       disclosures = new Map();
     function disclosure(key, label, className = "workspace-disclosure") {
       const details = node("details", className);
@@ -603,6 +604,7 @@
       const revision = generation;
       const controller = new AbortController();
       request = controller;
+      render();
       try {
         const value = await api(
           `/api/projects/${encodeURIComponent(project.name)}/pms/${encodeURIComponent(area.key)}/knowledge`,
@@ -621,13 +623,16 @@
         )
           setupSuggestions?.refresh(project.name, area.key);
         notices.delete(key);
+        knowledgeErrors.delete(key);
         render();
       } catch (error) {
         if (activeKey() !== key || revision !== generation) return;
         notices.set(key, error.message);
+        knowledgeErrors.add(key);
         render();
       } finally {
         if (request === controller) request = null;
+        if (activeKey() === key && revision === generation) render();
         if (activeKey() === key && revision === generation) {
           clearTimeout(timer);
           timer = setTimeout(
@@ -676,30 +681,42 @@
       const readiness = project.readiness?.areas?.find(
         (item) => item.key === area.key,
       )?.discovery;
-      const state = (getJobs?.() || []).some(
-        (job) =>
-          job.project === project.name &&
-          (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
-          job.area === area.key &&
-          job.pmMode === "discovery" &&
-          (!area.discoveryRevision ||
-            job.discoveryRevision === area.discoveryRevision) &&
-          ["queued", "running"].includes(job.status),
-      )
-        ? "refreshing"
-        : knowledge.get(`${project.name}/${area.key}`)?.state;
+      const active = (getJobs?.() || [])
+        .filter(
+          (job) =>
+            job.project === project.name &&
+            (job.projectInstanceId ?? null) === (project.instanceId ?? null) &&
+            job.area === area.key &&
+            job.pmMode === "discovery" &&
+            (!area.discoveryRevision ||
+              job.discoveryRevision === area.discoveryRevision) &&
+            ["queued", "running"].includes(job.status),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.status === "running") - Number(a.status === "running"),
+        )[0];
+      const state =
+        active?.status || knowledge.get(`${project.name}/${area.key}`)?.state;
       const result = button(
-        state === "refreshing" ? "Discovery running…" : "Run discovery",
+        launching
+          ? "Starting discovery…"
+          : state === "queued"
+            ? "Discovery queued"
+            : ["running", "refreshing"].includes(state)
+              ? "Discovery running…"
+              : "Run discovery",
         () => discover(project.name, area.key).catch(() => {}),
         "small-button",
       );
       result.disabled =
         locked ||
         launching ||
-        state === "refreshing" ||
+        ["queued", "running", "refreshing"].includes(state) ||
         readiness?.canRun === false;
       result.title =
         "Read-only discovery maps the repository and records product knowledge. It does not create coding tickets.";
+      result.dataset.focusKey = "run-discovery";
       return result;
     }
     function projectActions(project) {
@@ -761,7 +778,9 @@
     }
     function renderSidebar() {
       if (!sidebar) return;
-      const names = (status?.projects || []).map((project) => project.name);
+      const names = [...(status?.projects || [])]
+        .sort((a, b) => window.dashboardProjectPreferences?.compare(a, b) || 0)
+        .map((project) => project.name);
       const next = JSON.stringify([names, pages.project]);
       if (sidebarSignature === next) return;
       sidebarSignature = next;
@@ -786,6 +805,7 @@
         );
     }
     function home(project) {
+      options.operations?.mountAutonomy?.(root, project);
       const step =
         window.projectFirstStep?.(project, getJobs?.() || []) ||
         (project.foundation?.needed ? "foundation" : "mission");
@@ -1171,28 +1191,33 @@
       root.append(context);
     }
     function pmWorkspace(project, area) {
-      const layout = node("div", "pm-workspace-layout"),
-        navigation = node("nav", "pm-workspace-nav");
-      navigation.setAttribute("aria-label", "Project PMs");
-      navigation.append(
-        link("← Project overview", path(project.name), "pm-back"),
+      const layout = node("div", "pm-workspace-layout");
+      const context = node("header", "pm-context-header");
+      const back = link(
+        `← ${project.name}`,
+        path(project.name),
+        "pm-project-link",
       );
-      for (const pm of project.areas?.length > 1 ? project.areas : []) {
-        const item = link(pm.name || pm.key, path(project.name, pm.key));
-        if (pm.key === area.key) item.setAttribute("aria-current", "page");
-        navigation.append(item);
-      }
+      back.setAttribute("aria-label", `Back to ${project.name} project`);
+      const settings = action("Project settings", {
+        editProject: project.name,
+      });
+      settings.setAttribute("aria-label", `Settings for ${project.name}`);
+      context.append(back, settings);
+      layout.append(context);
       const main = node("div", "pm-workspace-body"),
         heading = node("div", "pm-workspace-heading"),
         image = node("img");
       image.src =
         window.gremlinIdentity?.(area)?.image || "/assets/gremlin.webp";
       image.alt = "";
-      const title = node("div");
+      const title = node("div", "pm-workspace-identity");
       title.append(
-        node("span", "eyebrow muted", "PM GREMLIN"),
-        node("h2", "", area.name || area.key),
+        node("span", "eyebrow muted", "YOUR PRODUCT MANAGER"),
+        node("h1", "", area.name || area.key),
       );
+      const purpose = area.charter?.goal || area.mandate;
+      if (purpose) title.append(node("p", "pm-workspace-purpose", purpose));
       heading.append(image, title);
       main.append(heading);
       main.append(
@@ -1203,7 +1228,19 @@
         }),
       );
       const tab = tabs.some(([key]) => key === pages.tab) ? pages.tab : "brief";
-      if (tab === "brief" && !project.foundation?.needed) {
+      if (project.areas?.length > 1) {
+        const navigation = node("nav", "pm-workspace-nav");
+        navigation.setAttribute("aria-label", "Project PMs");
+        navigation.append(node("span", "pm-crew-caption", "Your crew"));
+        for (const pm of project.areas) {
+          const item = link(pm.name || pm.key, path(project.name, pm.key));
+          if (pm.key === area.key) item.setAttribute("aria-current", "page");
+          navigation.append(item);
+        }
+        main.append(navigation);
+      }
+      const exploreIdeas = () => {
+        if (project.foundation?.needed) return;
         const explore = node("section", "product-exploration-card"),
           copy = node("div");
         copy.append(
@@ -1224,8 +1261,8 @@
           locked ||
           Boolean(options.getAreaAction?.(project.name, area.key)?.busy);
         explore.append(copy, launch);
-        main.append(explore);
-      }
+        return explore;
+      };
       const nav = node("nav", "pm-workspace-tabs");
       nav.setAttribute("aria-label", "PM workspace sections");
       for (const [key, label] of tabs) {
@@ -1233,6 +1270,22 @@
         if (key === tab) item.setAttribute("aria-current", "page");
         nav.append(item);
       }
+      nav.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+          return;
+        const links = [...nav.children],
+          index = links.indexOf(document.activeElement);
+        if (index < 0) return;
+        event.preventDefault();
+        const next =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? links.length - 1
+              : (index + (event.key === "ArrowRight" ? 1 : -1) + links.length) %
+                links.length;
+        links[next].focus();
+      });
       main.append(nav);
       const discoveryReadiness = project.readiness?.areas?.find(
         (item) => item.key === area.key,
@@ -1261,7 +1314,23 @@
       }
       const data = knowledge.get(`${project.name}/${area.key}`),
         notice = notices.get(`${project.name}/${area.key}`);
-      if (notice) main.append(node("p", "project-workspace-notice", notice));
+      if (
+        notice &&
+        (data || !knowledgeErrors.has(`${project.name}/${area.key}`))
+      ) {
+        const message = node(
+          "p",
+          `project-workspace-notice${knowledgeErrors.has(`${project.name}/${area.key}`) ? " error" : ""}`,
+          notice,
+        );
+        message.setAttribute(
+          "role",
+          knowledgeErrors.has(`${project.name}/${area.key}`)
+            ? "alert"
+            : "status",
+        );
+        main.append(message);
+      }
       const content = node("section", "pm-workspace-content");
       content.setAttribute("aria-label", tabs.find(([key]) => key === tab)[1]);
       if (tab === "brief") {
@@ -1319,19 +1388,53 @@
           ),
         );
         content.append(advanced);
+        const explore = exploreIdeas();
+        if (explore) content.append(explore);
       } else if (tab === "activity")
         content.append(
           node("h3", "", "This PM’s runs"),
           activityList(project, area),
         );
       else {
-        if (tab === "discovery") {
+        const file = data?.documents?.find((item) => item.name === `${tab}.md`);
+        const sectionHeader = node("div", "pm-content-header"),
+          sectionCopy = node("div");
+        const descriptions = {
+          discovery:
+            "A grounded view of your product, built from the repository.",
+          features:
+            "What exists, what is partial, and what your product brief expects.",
+          queue: "Useful next steps, ranked by evidence and expected impact.",
+          memory:
+            "Observations and lessons your gremlin carries into future work.",
+        };
+        sectionCopy.append(
+          node("h2", "", tabs.find(([key]) => key === tab)[1]),
+          node("p", "pm-section-description", descriptions[tab]),
+        );
+        const refresh = button(
+          request ? "Refreshing…" : "Refresh",
+          refreshKnowledge,
+        );
+        refresh.dataset.focusKey = "refresh-knowledge";
+        refresh.setAttribute(
+          "aria-label",
+          `Refresh ${tabs.find(([key]) => key === tab)[1].toLowerCase()}`,
+        );
+        refresh.setAttribute(
+          "aria-disabled",
+          String(Boolean(request) || locked),
+        );
+        refresh.disabled = locked;
+        sectionHeader.append(sectionCopy, refresh);
+        content.append(sectionHeader);
+        if (tab === "discovery" && file?.content) {
           const learning = node("div", "pm-learning-actions");
           learning.append(
             node(
-              "div",
+              "p",
               "",
-              "Discovery reads code and saves knowledge. It does not open the app or file tickets. Use Run now for a patrol.",
+              "Repository discovery · Reads code and saves findings. Patrols can explore your app and propose tickets.",
             ),
             discoveryButton(project, area),
           );
@@ -1350,15 +1453,19 @@
                 ? "This knowledge predates the current settings. Run discovery to refresh it."
                 : data.provenance
                   ? `Updated ${when(data.provenance.completedAt)} · run ${data.provenance.runId}`
-                  : "No discovery saved yet.";
-        statusRow.append(
-          node("p", "", state),
-          button("Refresh", refreshKnowledge),
-        );
-        content.append(statusRow);
+                  : "Ready for a first look";
+        statusRow.setAttribute("role", "status");
+        statusRow.setAttribute("aria-live", "polite");
+        statusRow.append(node("p", "", state));
+        if (
+          file?.content ||
+          data?.state === "refreshing" ||
+          data?.state === "failed" ||
+          data?.stale
+        )
+          content.append(statusRow);
         if (tab === "discovery")
           setupSuggestions?.mount(content, project.name, area.key);
-        const file = data?.documents?.find((item) => item.name === `${tab}.md`);
         if (file?.content)
           content.append(
             window.renderKnowledgeDocument(file.content, {
@@ -1368,31 +1475,67 @@
                   : undefined,
             }),
           );
-        else {
-          const empty = node("div", "workspace-empty"),
-            art = node("img");
-          art.src = "/assets/gremlin-security.webp";
-          art.alt = "";
-          const descriptions = {
-            discovery:
-              "A grounded map of the product, its users, flows, and gaps.",
-            features:
-              "An inventory of what exists, what is partial, and what the brief expects.",
-            queue:
-              "Ranked opportunities with evidence and rationale. Proposals still need your approval before coding.",
-            memory:
-              "Durable observations and lessons for future investigations.",
-          };
+        else if (!data && knowledgeErrors.has(`${project.name}/${area.key}`)) {
+          const error = node("div", "pm-knowledge-state pm-knowledge-error");
+          error.setAttribute("role", "alert");
+          error.append(
+            node("span", "pm-state-symbol", "!"),
+            node("h3", "", "Couldn’t load this knowledge"),
+            node(
+              "p",
+              "",
+              notice || "Try refreshing. Your saved knowledge is preserved.",
+            ),
+          );
+          content.append(error);
+        } else if (!data) {
+          const loading = node(
+            "div",
+            "pm-knowledge-state pm-knowledge-loading",
+          );
+          loading.setAttribute("role", "status");
+          loading.append(
+            node("span", "pm-state-symbol", "◌"),
+            node("h3", "", "Getting your gremlin’s notes…"),
+            node("p", "", "Loading the latest saved knowledge."),
+          );
+          content.append(loading);
+        } else {
+          const empty = node("div", "workspace-empty pm-knowledge-empty");
+          const waiting = data.state === "refreshing";
           empty.append(
-            art,
+            node("span", "pm-state-symbol", waiting ? "◌" : "✦"),
             node(
               "h3",
               "",
-              `Build this PM’s ${tab === "queue" ? "ranked queue" : tab}`,
+              waiting
+                ? "Your gremlin is taking a first look"
+                : tab === "discovery"
+                  ? "Map your product"
+                  : `Your ${tab === "queue" ? "opportunities" : tab} will take shape here`,
             ),
-            node("p", "", descriptions[tab]),
+            node(
+              "p",
+              "",
+              waiting
+                ? "The repository review is underway. Findings will appear here when the run finishes."
+                : tab === "discovery"
+                  ? "Let your gremlin map the features, key flows, and opportunities in your codebase. No hosting or ticket tracker needed."
+                  : descriptions[tab],
+            ),
           );
-          if (tab !== "discovery")
+          if (tab === "discovery") {
+            const launch = discoveryButton(project, area);
+            launch.className = "button button-dark";
+            empty.append(
+              launch,
+              node(
+                "p",
+                "pm-empty-note",
+                "Read-only repository review · No code changes",
+              ),
+            );
+          } else
             empty.append(
               link(
                 "Open Learning →",
@@ -1436,7 +1579,7 @@
       remove.disabled = locked;
       deletion.append(remove);
       main.append(deletion);
-      layout.append(navigation, main);
+      layout.append(main);
       root.append(layout);
     }
     function render() {
@@ -1454,6 +1597,8 @@
         ),
         locked,
         launching,
+        Boolean(request),
+        knowledgeErrors.has(activeKey()),
         options.getCheck?.(project?.name),
         options.getCodingAction?.(project?.name),
         options.getAreaAction?.(project?.name, area?.key),
@@ -1478,6 +1623,11 @@
           setupSuggestions?.protectFocus())
       )
         return;
+      const focused =
+        renderedRoute === currentRoute &&
+        root.contains?.(document.activeElement)
+          ? focusIdentity(document.activeElement)
+          : null;
       renderedRoute = currentRoute;
       signature = next;
       root.replaceChildren();
@@ -1495,6 +1645,11 @@
           ),
           link("Back to projects", "/projects", "small-button"),
         );
+        return;
+      }
+      if (area) {
+        pmWorkspace(project, area);
+        restoreFocus(focused);
         return;
       }
       const header = node("header", "workspace-project-header"),
@@ -1539,7 +1694,6 @@
           ),
           link("Project overview", path(project.name), "small-button"),
         );
-      else if (area) pmWorkspace(project, area);
       else if (pages.tab === "crew") crewWorkspace(project);
       else if (pages.tab === "settings") settingsWorkspace(project);
       else if (pages.tab === "changes")
@@ -1552,6 +1706,41 @@
       )
         options.operations?.mount(root, project, pages.tab);
       else home(project);
+      restoreFocus(focused);
+    }
+    function focusIdentity(element) {
+      if (!element) return null;
+      const keys = [
+        "focusKey",
+        "launchArea",
+        "launchProject",
+        "launchCrew",
+        "pmMode",
+        "toggleArea",
+        "areaProject",
+        "automationKind",
+        "editProject",
+      ];
+      const data = Object.fromEntries(
+        keys
+          .filter((key) => element.dataset?.[key])
+          .map((key) => [key, element.dataset[key]]),
+      );
+      return JSON.stringify([
+        element.tagName,
+        element.tagName === "A"
+          ? element.href
+          : Object.keys(data).length
+            ? data
+            : element.getAttribute?.("aria-label") || element.textContent,
+      ]);
+    }
+    function restoreFocus(identity) {
+      if (!identity) return;
+      const target = [
+        ...(root.querySelectorAll?.("a, button, summary") || []),
+      ].find((element) => focusIdentity(element) === identity);
+      if (target && !target.disabled) target.focus({ preventScroll: true });
     }
     function routeChanged() {
       setupSuggestions?.setActive(
@@ -1570,6 +1759,10 @@
       if (key) refreshKnowledge();
     }
     window.addEventListener("dashboard:pagechange", routeChanged);
+    window.addEventListener("dashboard:projectpreferences", () => {
+      sidebarSignature = "";
+      renderSidebar();
+    });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) stopKnowledge();
       else routeChanged();
@@ -1606,13 +1799,18 @@
       refresh: refreshKnowledge,
       forget(project, area) {
         stopKnowledge();
-        for (const key of knowledge.keys())
+        for (const key of new Set([
+          ...knowledge.keys(),
+          ...notices.keys(),
+          ...knowledgeErrors,
+        ]))
           if (
             key.startsWith(`${project}/`) &&
             (!area || key === `${project}/${area}`)
           ) {
             knowledge.delete(key);
             notices.delete(key);
+            knowledgeErrors.delete(key);
           }
         setupSuggestions?.forget(project, area);
         if (!area) options.onboarding?.forget(project);

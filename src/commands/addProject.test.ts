@@ -86,7 +86,7 @@ describe("templateVars / fillTemplate", () => {
 });
 
 describe("addProject", () => {
-  it("pauses both automations when importing a template with coding pickup enabled", () => {
+  it("preserves the template's automation defaults behind project readiness", () => {
     const source = join(root, "projects", "_templates", "areas.json");
     const template = JSON.parse(readFileSync(source, "utf8"));
     template.areas["{{area}}"].codingEnabled = true;
@@ -94,8 +94,8 @@ describe("addProject", () => {
     const original = readFileSync(source, "utf8");
     addProject(root, { name: "app", repo: "owner/app" });
     expect(loadProject(root, "app").areas[0]).toMatchObject({
-      enabled: false,
-      codingEnabled: false,
+      enabled: true,
+      codingEnabled: true,
     });
     expect(readFileSync(source, "utf8")).toBe(original);
   });
@@ -119,11 +119,10 @@ describe("addProject", () => {
     expect(p.config.repo).toBe("owner/game");
     expect(p.config.vercel).toBeUndefined();
     expect(p.config.workflow).toEqual({
-      kind: "pull-request",
-      baseBranch: "main",
+      kind: "promotion",
     });
     expect(p.config.verification).toEqual({ mode: "repository" });
-    expect(p.areas[0]!.enabled).toBe(false);
+    expect(p.areas[0]!.enabled).toBe(true);
     expect(p.areas[0]!.codingEnabled).toBeUndefined();
     expect(p.config.slackWebhookSecret).toBe("SLACK_WEBHOOK_GAME");
     expect(p.config.verified).toBeNull();

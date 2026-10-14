@@ -39,6 +39,7 @@ function fixture() {
   project.privateOperatorNote = "keep";
   writeFileSync(projectFile, JSON.stringify(project));
   const areas = JSON.parse(readFileSync(areasFile, "utf8"));
+  areas.areas.core.enabled = false;
   areas.areas.core.linearProjectId = randomUUID();
   areas.areas.core.mandate =
     "Review account security with isolated test accounts.";

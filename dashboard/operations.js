@@ -100,7 +100,8 @@
       globalError = "",
       globalProjects = [],
       filter = "",
-      inboxSignature = "";
+      inboxSignature = "",
+      projectSearch = "";
     function state(name) {
       if (!states.has(name))
         states.set(name, {
@@ -122,6 +123,10 @@
           reviewError: "",
           approving: "",
           confirmApproval: "",
+          autonomyBusy: false,
+          autonomyNotice: "",
+          autonomyError: false,
+          autonomyCard: null,
         });
       return states.get(name);
     }
@@ -149,6 +154,127 @@
       const value = el("div", "operations-heading");
       value.append(el("h2", "", title), el("p", "", description));
       return value;
+    }
+    function buildAutonomy(s) {
+      const root = el("section", "project-autonomy");
+      root.setAttribute("aria-label", "Autonomous project work");
+      const copy = el("div", "project-autonomy-copy");
+      const title = el("div", "project-autonomy-heading");
+      const badge = el("span", "work-state");
+      title.append(el("h2", "", "Autonomous work"), badge);
+      const detail = el("p");
+      const scope = el("p", "autonomy-scope");
+      const next = el("p", "autonomy-next");
+      const repair = anchor(
+        "Resolve blocker →",
+        route(s.name, "environment"),
+        "autonomy-repair-link",
+      );
+      repair.hidden = true;
+      const status = message("");
+      status.hidden = true;
+      const control = btn("Loading…", async () => {
+        const autonomy = s.data?.autonomy || getProject(s.name)?.autonomy;
+        if (!autonomy || s.autonomyBusy || isLocked()) return;
+        s.autonomyBusy = true;
+        s.autonomyNotice = "";
+        update();
+        try {
+          const response = await api(
+            `/api/projects/${encodeURIComponent(s.name)}/autonomy`,
+            {
+              enabled: !autonomy.enabled,
+              revision: autonomy.revision,
+              projectRevision: autonomy.projectRevision,
+            },
+          );
+          if (!s.data) s.data = {};
+          s.data.autonomy = response.autonomy;
+          s.autonomyNotice = response.autonomy.enabled
+            ? "Autonomy enabled. Your crew starts as soon as its requirements are ready."
+            : "Future automatic starts are paused. Current runs can finish.";
+          s.autonomyError = false;
+          try {
+            await onChanged?.();
+            await refresh(s.name, true);
+            if (s.error)
+              s.autonomyNotice +=
+                " The latest operations could not refresh; your setting was saved.";
+          } catch {
+            s.autonomyNotice +=
+              " The workspace could not refresh; your setting was saved.";
+          }
+        } catch (error) {
+          s.autonomyNotice = `${error.message} Refresh this project before trying again.`;
+          s.autonomyError = true;
+        } finally {
+          s.autonomyBusy = false;
+          update();
+        }
+      });
+      const actions = el("div", "project-autonomy-actions");
+      actions.append(
+        control,
+        anchor("Run limits", route(s.name, "limits"), "autonomy-limits-link"),
+      );
+      copy.append(title, detail, scope, next, repair, status);
+      root.append(copy, actions);
+      function update() {
+        const project = getProject(s.name),
+          autonomy = s.data?.autonomy || project?.autonomy;
+        const labels = {
+          paused: "Paused",
+          blocked: "Needs attention",
+          running: "Working",
+          queued: "Queued",
+          waiting: "Autonomy on",
+        };
+        const state = autonomy?.state || "unknown";
+        badge.className = `work-state work-state-${state}`;
+        badge.textContent = labels[state] || "Checking status";
+        detail.textContent =
+          autonomy?.message ||
+          "Checking the saved autonomy settings for this project.";
+        scope.textContent = autonomy
+          ? `Investigations ${autonomy.investigationEnabled ? "on" : "off"} · Approved coding ${autonomy.codingEnabled ? "on" : "off"}`
+          : "Investigations and approved-ticket pickup share this project’s run limits.";
+        const scheduled =
+          autonomy?.nextRunAt &&
+          Number.isFinite(Date.parse(autonomy.nextRunAt));
+        next.textContent = scheduled
+          ? `Next automatic start: ${new Date(autonomy.nextRunAt).toLocaleString()}`
+          : "Pausing stops future starts. Current runs finish normally.";
+        repair.hidden = state !== "blocked";
+        repair.href =
+          window.projectWorkState?.(
+            project || { name: s.name },
+            getJobs?.() || [],
+            { autonomy },
+          )?.href || route(s.name, "environment");
+        control.textContent = s.autonomyBusy
+          ? "Saving…"
+          : !autonomy
+            ? "Checking…"
+            : autonomy.enabled
+              ? "Pause automatic work"
+              : "Enable autonomous work";
+        control.className = autonomy?.enabled
+          ? "small-button"
+          : "button button-dark";
+        control.disabled =
+          s.autonomyBusy || isLocked() || !autonomy || !project?.areas?.length;
+        control.setAttribute(
+          "aria-label",
+          `${control.textContent} for ${s.name}`,
+        );
+        setMessage(
+          status,
+          s.autonomyNotice || s.error,
+          s.autonomyNotice ? s.autonomyError : Boolean(s.error),
+        );
+        root.setAttribute("aria-busy", String(s.autonomyBusy));
+      }
+      return { node: root, update };
     }
     function itemCard(item, project) {
       const card = el("article", "review-item");
@@ -1108,6 +1234,54 @@
       return s.views.get(tab);
     }
     function paint(s) {
+      s.autonomyCard?.update();
+      s.recovery?.resume();
+      if (s.diagnosticsNode) {
+        const diagnostics = Array.isArray(s.data?.diagnostics)
+          ? s.data.diagnostics
+          : [];
+        s.diagnosticsNode.hidden = !diagnostics.length;
+        s.diagnosticsNode.replaceChildren();
+        if (diagnostics.length)
+          s.diagnosticsNode.append(
+            el("h2", "", "Scheduled work needs attention"),
+          );
+        for (const diagnostic of diagnostics) {
+          const row = el("article");
+          row.append(el("p", "", diagnostic.message));
+          const destinations = {
+            source: "/connections#source-control",
+            ai: "/connections#model-connections",
+            worker: "/runners#workers",
+            linear: "/connections#linear-connection",
+            limits: route(s.name, "limits"),
+            configuration: "/settings#advanced-settings",
+          };
+          const supplied =
+            diagnostic.action?.href && safeHref(diagnostic.action.href);
+          row.append(
+            anchor(
+              diagnostic.action?.label || "Review setup",
+              supplied && new URL(supplied).origin === window.location.origin
+                ? supplied
+                : destinations[diagnostic.remedy] ||
+                    route(s.name, "environment"),
+            ),
+          );
+          if (
+            diagnostic.nextRetryAt &&
+            Number.isFinite(Date.parse(diagnostic.nextRetryAt))
+          )
+            row.append(
+              el(
+                "small",
+                "",
+                `Next check ${new Date(diagnostic.nextRetryAt).toLocaleString()}`,
+              ),
+            );
+          s.diagnosticsNode.append(row);
+        }
+      }
       for (const [tab, v] of s.views) {
         setMessage(
           v.alert,
@@ -1184,8 +1358,9 @@
         globalError,
         globalBusy,
         filter,
+        projectSearch,
         globalProjects.map((project) => [
-          getProject(project.project)?.foundation,
+          getProject(project.project),
           getCodingAction?.(project.project),
         ]),
         getJobs?.(),
@@ -1202,19 +1377,103 @@
       if (count) count.textContent = String(items.length);
       const overview = document.getElementById("workspace-projects-list");
       if (overview) {
+        const focused = overview.contains(document.activeElement)
+          ? document.activeElement
+          : null;
+        const focusProject = focused?.dataset.overviewProject;
+        const focusAction = focused?.dataset.overviewAction;
         overview.replaceChildren();
-        for (const project of globalProjects) {
+        const jobs = getJobs?.() || [];
+        const projects = globalProjects.map((project) => {
+          const status = getProject(project.project);
+          const work =
+            status && window.projectWorkState?.(status, jobs, project);
+          return { project, status, work };
+        });
+        const toolbar = el("div", "workspace-project-toolbar");
+        const searchLabel = el("label", "sr-only", "Find a project");
+        const search = el("input", "workspace-project-search");
+        search.id = "overview-project-search";
+        search.type = "search";
+        search.placeholder = "Find a project…";
+        search.value = projectSearch;
+        searchLabel.htmlFor = search.id;
+        search.addEventListener("input", () => {
+          projectSearch = search.value;
+          for (const card of overview.querySelectorAll("[data-project-search]"))
+            card.hidden = !card.dataset.projectSearch.includes(
+              projectSearch.trim().toLowerCase(),
+            );
+          const count = [
+            ...overview.querySelectorAll("[data-project-search]"),
+          ].filter((card) => !card.hidden).length;
+          results.textContent = `${count} ${count === 1 ? "project" : "projects"}`;
+          noMatch.hidden = count > 0;
+        });
+        const results = el("span", "workspace-project-results");
+        results.setAttribute("role", "status");
+        results.setAttribute("aria-live", "polite");
+        toolbar.append(searchLabel, search, results);
+        toolbar.hidden = projects.length < 4;
+        overview.append(toolbar);
+        const rank = {
+          blocked: 0,
+          review: 1,
+          running: 2,
+          queued: 3,
+          setup: 4,
+          unknown: 5,
+          autonomous: 6,
+          scheduled: 7,
+          paused: 8,
+        };
+        projects.sort(
+          (a, b) =>
+            (window.compareWorkspaceProjects &&
+            window.dashboardProjectPreferences
+              ? window.compareWorkspaceProjects(
+                  window.dashboardProjectPreferences,
+                  a,
+                  b,
+                )
+              : 0) ||
+            (a.work?.state === "blocked"
+              ? 0
+              : a.work?.state === "review"
+                ? 1
+                : 2) -
+              (b.work?.state === "blocked"
+                ? 0
+                : b.work?.state === "review"
+                  ? 1
+                  : 2) ||
+            window.dashboardProjectPreferences?.compare(
+              a.status || { name: a.project.project },
+              b.status || { name: b.project.project },
+            ) ||
+            0 ||
+            (rank[a.work?.state] ?? 9) - (rank[b.work?.state] ?? 9) ||
+            a.project.project.localeCompare(b.project.project),
+        );
+        for (const { project, status, work } of projects) {
           const card = el("article", "workspace-project-summary"),
             identity = el("div"),
-            status = getProject(project.project),
             pmCount =
               status?.areas?.length ?? project.knowledge?.areas?.length ?? 0;
+          card.dataset.projectSearch =
+            `${project.project} ${status?.repo || ""}`.toLowerCase();
+          card.hidden = !card.dataset.projectSearch.includes(
+            projectSearch.trim().toLowerCase(),
+          );
+          const projectLink = anchor(
+            project.project,
+            route(project.project),
+            "workspace-project-name",
+          );
+          projectLink.dataset.overviewProject = project.project;
+          projectLink.dataset.overviewAction = "project";
           identity.append(
-            anchor(
-              project.project,
-              route(project.project),
-              "workspace-project-name",
-            ),
+            projectLink,
             el(
               "p",
               "",
@@ -1225,38 +1484,117 @@
           detail.append(
             el(
               "span",
-              project.inbox?.length ? "has-reviews" : "",
-              `${project.inbox?.length || 0} to review`,
+              `work-state work-state-${work?.state || "unknown"}`,
+              work?.label || `${project.inbox?.length || 0} to review`,
             ),
             el("span", "", `${pmCount} ${pmCount === 1 ? "PM" : "PMs"}`),
-            anchor("Open project →", route(project.project)),
           );
-          card.append(identity, detail);
-          if (status && (status.foundation?.needed || status.areas?.length))
-            card.append(
-              status.foundation?.needed
-                ? window.renderFoundationLauncher(status)
-                : window.renderCodingLauncher(status, {
-                    locked: isLocked(),
-                    compact: true,
-                    jobs: getJobs?.() || [],
-                    operation: getCodingAction?.(project.project),
-                  }),
-            );
+          const preferences = window.dashboardProjectPreferences;
+          if (preferences && status) {
+            const controls = el("div", "project-preference-actions");
+            for (const [key, label, value] of [
+              ["favorite", preferences.isFavorite(status) ? "★" : "☆", 0],
+              ["up", "↑", -1],
+              ["down", "↓", 1],
+            ]) {
+              const control = btn(label, () => {
+                if (key === "favorite") preferences.toggle(status);
+                else preferences.move(status, value);
+                window.dispatchEvent(
+                  new CustomEvent("dashboard:projectpreferences"),
+                );
+              });
+              control.dataset.overviewProject = project.project;
+              control.dataset.overviewAction = key;
+              control.setAttribute(
+                "aria-label",
+                `${key === "favorite" ? "Favorite" : key === "up" ? "Move up" : "Move down"} ${project.project}`,
+              );
+              if (key === "favorite")
+                control.setAttribute(
+                  "aria-pressed",
+                  String(preferences.isFavorite(status)),
+                );
+              control.disabled =
+                !preferences.canPersist(status) ||
+                (key === "up" && preferences.position(status) === 0) ||
+                (key === "down" &&
+                  preferences.position(status) ===
+                    preferences.sizeFor(status) - 1);
+              controls.append(control);
+            }
+            detail.append(controls);
+          }
+          const next = anchor(
+            `${work?.action || "Open project"} →`,
+            work?.href || route(project.project),
+          );
+          next.dataset.overviewProject = project.project;
+          next.dataset.overviewAction = "next";
+          const context = el(
+            "p",
+            "workspace-project-context",
+            work?.detail ||
+              "Open this project to see its current requirements and work.",
+          );
+          card.append(identity, detail, context, next);
           overview.append(card);
         }
+        const noMatch = empty(
+          "No matching projects",
+          "Try a different project name or repository.",
+        );
+        noMatch.hidden =
+          !projects.length ||
+          projects.some(({ project, status }) =>
+            `${project.project} ${status?.repo || ""}`
+              .toLowerCase()
+              .includes(projectSearch.trim().toLowerCase()),
+          );
+        overview.append(noMatch);
+        const visibleCount = projects.filter(({ project, status }) =>
+          `${project.project} ${status?.repo || ""}`
+            .toLowerCase()
+            .includes(projectSearch.trim().toLowerCase()),
+        ).length;
+        results.textContent = `${visibleCount} ${visibleCount === 1 ? "project" : "projects"}`;
+        if (globalError)
+          overview.append(
+            message(
+              `Project status could not refresh. ${globalError} Showing the last available information.`,
+              true,
+            ),
+          );
         if (!globalProjects.length)
           overview.append(
             empty(
-              !globalLoadedAt
-                ? "Loading your projects…"
-                : "Start with one product",
-              !globalLoadedAt
-                ? "Checking the workspace and current work."
-                : "Bring an idea or connect an existing app. We’ll help you build the foundation and grow your crew.",
-              anchor("Add a project", "/projects#project-form"),
+              globalError
+                ? "Project status is unavailable"
+                : !globalLoadedAt
+                  ? "Loading your projects…"
+                  : "Start with one product",
+              globalError
+                ? "The workspace could not be checked. Try refreshing before adding or starting work."
+                : !globalLoadedAt
+                  ? "Checking the workspace and current work."
+                  : "Bring an idea or connect an existing app. We’ll help you build the foundation and grow your crew.",
+              globalError
+                ? btn("Try again", refreshInbox)
+                : anchor("Add a project", "/projects#project-form"),
             ),
           );
+        if (focused?.id === "overview-project-search") {
+          search.focus();
+          if (typeof search.setSelectionRange === "function")
+            search.setSelectionRange(search.value.length, search.value.length);
+        } else if (focusProject && focusAction)
+          [...overview.querySelectorAll("[data-overview-project]")]
+            .find(
+              (control) =>
+                control.dataset.overviewProject === focusProject &&
+                control.dataset.overviewAction === focusAction,
+            )
+            ?.focus();
       }
       inbox.replaceChildren();
       const toolbar = el("div", "inbox-toolbar"),
@@ -1283,7 +1621,7 @@
         el(
           "span",
           "",
-          `${items.length} ${items.length === 1 ? "item" : "items"} to review`,
+          `${items.filter((entry) => !filter || entry.project === filter).length} to review${filter ? ` in ${filter}` : " across all projects"}`,
         ),
       );
       inbox.append(toolbar);
@@ -1296,8 +1634,12 @@
           empty(
             globalBusy
               ? "Checking for decisions…"
-              : "Your review queue is clear",
-            "Setup blockers, delivery reviews, and product decisions will appear here. Your crew never treats silence as approval.",
+              : globalError
+                ? "Review status is unavailable"
+                : "Your review queue is clear",
+            globalError
+              ? "The latest review queue could not be loaded. Refresh to check for decisions."
+              : "Setup blockers, delivery reviews, and product decisions appear here when your crew needs you.",
           ),
         );
       else {
@@ -1343,6 +1685,10 @@
       timer = setTimeout(schedule, 15000);
     }
     window.addEventListener("dashboard:pagechange", schedule);
+    window.addEventListener("dashboard:projectpreferences", () => {
+      inboxSignature = "";
+      paintInbox();
+    });
     document.addEventListener("visibilitychange", schedule);
     window.addEventListener("pagehide", () => clearTimeout(timer));
     document
@@ -1360,6 +1706,37 @@
       refresh,
       refreshInbox,
       renderOverview: paintInbox,
+      mountAutonomy(root, project) {
+        const s = state(project.name);
+        if (!s.autonomyCard) s.autonomyCard = buildAutonomy(s);
+        root.append(s.autonomyCard.node);
+        if (!s.policyNode && window.renderAutonomousApprovalPolicy) {
+          s.policyNode = el("div");
+          s.policyControl = window.renderAutonomousApprovalPolicy(
+            s.policyNode,
+            project,
+            {
+              api,
+              message: setMessage,
+            },
+          );
+        }
+        if (s.policyNode) root.append(s.policyNode);
+        if (!s.recovery && window.createOperatorRecovery)
+          s.recovery = window.createOperatorRecovery({
+            api,
+            project: project.name,
+            onChanged,
+            isLocked,
+          });
+        if (s.recovery) root.append(s.recovery.node);
+        if (!s.diagnosticsNode)
+          s.diagnosticsNode = el("section", "operations-diagnostics");
+        root.append(s.diagnosticsNode);
+        paint(s);
+        s.autonomyCard.update();
+        refresh(project.name);
+      },
       forget(name) {
         states.delete(name);
         deliveryWorkflow?.forget(name);
@@ -1373,11 +1750,16 @@
       protectFocus: (root) =>
         Boolean(
           root.contains(document.activeElement) &&
-          document.activeElement?.closest?.(".operations-view"),
+          document.activeElement?.closest?.(
+            ".operations-view, .operator-recovery, .approval-policy",
+          ),
         ),
       resume: schedule,
       isDirty: () =>
         Boolean(deliveryWorkflow?.isDirty()) ||
+        [...states.values()].some(
+          (s) => s.recovery?.isDirty() || s.policyControl?.isDirty(),
+        ) ||
         [...states.values()].some(
           (s) =>
             Boolean(s.note.trim()) ||

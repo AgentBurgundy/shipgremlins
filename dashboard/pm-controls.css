@@ -1,0 +1,219 @@
+/* Independent PM automation settings, shared by project and PM workspaces. */
+.pm-simple-controls,
+.project-pm-row > .pm-simple-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 14px;
+  min-width: 0;
+  margin: 18px 0;
+  padding: 20px;
+  border: 1px solid var(--pm-line, #e1e9e3);
+  border-radius: 14px;
+  background: var(--pm-surface, #fff);
+  color: var(--pm-ink, #18392b);
+}
+.project-pm-row > .pm-simple-controls {
+  margin: 0;
+}
+.pm-simple-controls .pm-controls-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+.pm-simple-controls .pm-controls-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.pm-simple-controls .pm-controls-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.4;
+  letter-spacing: -0.2px;
+}
+.pm-simple-controls .pm-controls-status {
+  color: var(--pm-muted, #667b70);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.pm-simple-controls .pm-simple-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.pm-simple-controls .pm-simple-actions > .button {
+  min-height: 40px;
+  min-width: 92px;
+  margin: 0;
+  padding: 9px 14px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.pm-simple-controls .pm-automation-controls,
+.project-pm-row .pm-simple-controls .pm-automation-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+.pm-simple-controls .pm-automation-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  min-height: 78px;
+  padding: 14px 16px;
+  border: 1px solid var(--pm-line, #e1e9e3);
+  border-radius: 10px;
+  background: #fafcf9;
+  color: var(--pm-ink, #18392b);
+  text-align: left;
+  white-space: normal;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+.pm-simple-controls .pm-automation-item.enabled {
+  border-color: #d2e1d4;
+  background: #f5f9f3;
+}
+.pm-simple-controls .pm-automation-item:hover:not(:disabled) {
+  background: #f0f6ed;
+  border-color: #aec8b2;
+}
+.pm-simple-controls .pm-automation-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.pm-simple-controls .pm-automation-label {
+  color: var(--pm-ink, #18392b);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.pm-simple-controls .pm-automation-description {
+  color: var(--pm-muted, #667b70);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.pm-simple-controls .pm-automation-state-display {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+.pm-simple-controls .pm-automation-value {
+  color: var(--pm-muted, #667b70);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.pm-simple-controls .enabled .pm-automation-value {
+  color: var(--pm-accent, #245b40);
+}
+.pm-simple-controls .pm-switch-track,
+.project-pm-row .pm-simple-controls .pm-switch-track {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 20px;
+  padding: 3px;
+  border-radius: 20px;
+  background: #aab8ad;
+}
+.pm-simple-controls .pm-switch-track::after {
+  width: 14px;
+  height: 14px;
+  box-shadow: 0 1px 3px #17392326;
+  transition: transform 140ms ease;
+}
+.pm-simple-controls .enabled .pm-switch-track {
+  background: var(--pm-accent, #245b40);
+}
+.pm-simple-controls .enabled .pm-switch-track::after {
+  transform: translateX(14px);
+}
+.pm-simple-controls .pm-automation-item:focus-visible {
+  outline: 3px solid #7aab79;
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+.pm-simple-controls .pm-automation-item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.pm-simple-controls .pm-automation-item[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.8;
+}
+.pm-simple-controls .pm-controls-note {
+  margin: 0;
+  color: var(--pm-muted, #667b70);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.pm-simple-controls .pm-controls-feedback,
+.project-pm-row .pm-simple-controls .pm-controls-feedback {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid #d5e4d2;
+  border-radius: 9px;
+  background: #f3f8ef;
+  color: var(--pm-accent, #245b40);
+  overflow-wrap: anywhere;
+}
+.pm-simple-controls .pm-controls-feedback.error {
+  border-color: #e8cfc5;
+  background: #fff4ee;
+  color: #8b4431;
+}
+@media (max-width: 700px) {
+  .pm-simple-controls,
+  .project-pm-row > .pm-simple-controls {
+    padding: 16px;
+    gap: 12px;
+  }
+  .pm-simple-controls .pm-automation-controls,
+  .project-pm-row .pm-simple-controls .pm-automation-controls {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .pm-simple-controls .pm-automation-item {
+    min-height: 70px;
+    padding: 12px 14px;
+  }
+}
+@media (max-width: 360px) {
+  .pm-simple-controls .pm-controls-main {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .pm-simple-controls .pm-simple-actions,
+  .pm-simple-controls .pm-simple-actions > .button {
+    width: 100%;
+  }
+  .pm-simple-controls .pm-automation-state-display {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pm-simple-controls .pm-automation-item,
+  .pm-simple-controls .pm-switch-track::after {
+    transition: none;
+  }
+}

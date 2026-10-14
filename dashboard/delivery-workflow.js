@@ -121,32 +121,29 @@
       );
       const promote = el("section");
       promote.append(
-        el("h3", "Integration → staging"),
+        el("h3", "PM staging → staging"),
         el(
           "p",
-          "The controller tests approved work on the integration environment. Promotion uses isolated cherry-picks and checks; missing evidence keeps it blocked.",
+          "The owning PM tests each fix on pm-staging. Verified changes from every PM are cherry-picked into one project promotion draft, with combined build checks.",
           "runner-guidance",
         ),
       );
-      const areaLabel = el("label", "Owning PM"),
-        area = el("select");
-      area.id = `delivery-pm-${project.name}`;
-      areaLabel.htmlFor = area.id;
-      for (const pm of project.areas || []) {
-        const option = el("option", pm.name || pm.key);
-        option.value = pm.key;
-        area.append(option);
-      }
-      s.area = area;
-      s.promote = button("Prepare staging promotion", () =>
+      s.promote = button("Prepare combined staging promotion", () =>
         confirm(s, "promote"),
       );
       s.advance = button("Advance approved implementation", () =>
         confirm(s, "advance"),
       );
-      promote.append(areaLabel, area, s.promote, s.advance);
+      promote.append(s.promote, s.advance);
       s.actions.append(s.candidate, promote, s.confirmBox);
       s.productionIntro = el("section", undefined, "production-tracking");
+      s.release = button("Prepare staging → production PR", () =>
+        confirm(s, "release"),
+      );
+      s.releaseLink = el("a", "Open production release ↗");
+      s.releaseLink.hidden = true;
+      s.releaseLink.target = "_blank";
+      s.releaseLink.rel = "noopener noreferrer";
       s.openTracking = button("Track a production release", () => {
         s.trackingOpen = true;
         paint(s);
@@ -160,6 +157,8 @@
           "runner-guidance",
         ),
         s.openTracking,
+        s.release,
+        s.releaseLink,
       );
       s.tracking = el(
         "section",
@@ -392,21 +391,29 @@
           "p",
           action === "advance"
             ? "Advance one approved ShipGremlins implementation? This may merge its exact reviewed PR into the integration branch. It does not merge staging or production."
-            : "Prepare a staging promotion for this PM? The controller will isolate reviewed changes, run checks, and require verification of the exact candidate before creating a draft promotion PR.",
+            : action === "release"
+              ? "Check staging and open or reuse its draft release PR to production. You review and merge the release."
+              : "Combine all PM-verified work into one staging promotion draft? The controller cherry-picks the tested changes and checks the assembled candidate.",
         ),
       );
       const accept = button(
-        action === "advance" ? "Advance approved work" : "Prepare promotion",
+        action === "advance"
+          ? "Advance approved work"
+          : action === "release"
+            ? "Prepare release"
+            : "Prepare promotion",
         async () => {
           if (s.busy || isLocked()) return;
           s.busy = true;
           accept.disabled = true;
           paint(s);
           try {
-            s.data = await api(
-              `${endpoint(s)}/${action}`,
-              action === "promote" ? { area: s.area.value } : {},
-            );
+            s.data = await api(`${endpoint(s)}/${action}`, {});
+            if (s.data.release) {
+              s.releaseLink.href = s.data.release.url;
+              s.releaseLink.hidden = false;
+              s.pr.value = String(s.data.release.number);
+            }
             s.confirm = "";
             s.confirmBox.hidden = true;
             await onChanged?.(s.project.name);
@@ -437,11 +444,12 @@
       s.actions.hidden = !available || s.trackingOpen;
       s.productionIntro.hidden = !available || s.trackingOpen;
       s.tracking.hidden = !available || !s.trackingOpen;
-      s.handoffs.hidden = s.trackingOpen;
+      s.handoffs.hidden =
+        s.trackingOpen || s.data?.candidateSetup?.required === false;
       s.declarations.hidden = s.trackingOpen;
       s.openTracking.disabled = disabled;
       const candidate = s.data?.candidateSetup;
-      s.candidate.hidden = !candidate;
+      s.candidate.hidden = !candidate || candidate.required === false;
       const candidateSignature = JSON.stringify(candidate);
       if (
         candidate &&
@@ -499,7 +507,8 @@
           (!s.data ? "Loading delivery controls…" : ""),
         Boolean(s.error || operation?.phase === "error"),
       );
-      s.promote.disabled = disabled || !s.area.value;
+      s.promote.disabled = disabled;
+      s.release.disabled = disabled;
       s.advance.disabled = disabled;
       s.save.disabled = disabled || !s.states?.length;
       const catalog = JSON.stringify([s.data?.revision, s.states]);

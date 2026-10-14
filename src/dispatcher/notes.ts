@@ -29,6 +29,14 @@ export const CONFLICT_DISPATCHED_PREFIX =
 export const CI_FIX_DISPATCHED_PREFIX = "🔁 CI fix dispatched → run";
 export const CI_RETRIED_PREFIX = "🔁 Retried failed jobs";
 export const RETRIGGERED_PREFIX = "♻️ Re-triggered → run";
+/** Durable reservation before a retry request whose response may be lost. */
+export const RETRY_RESERVED_PREFIX = "♻️ Retry reserved after run";
+/** Outstanding reservations block both PR repair lanes after an uncertain launch. */
+export const REPAIR_RESERVED_PREFIX = "🛠 Repair dispatch reserved →";
+export const DISPATCH_RESERVED_PREFIX = "Developer dispatch reserved →";
+export const CI_RERUN_PLAN_PREFIX = "🔁 Failed-job rerun plan: ";
+export const CI_RERUN_RESERVED_PREFIX = "🔁 Failed-job rerun admitted: ";
+export const CI_RERUN_ACK_PREFIX = "🔁 Failed-job rerun acknowledged: ";
 /** On the sync ticket: a developer was sent to resolve a staging → integration conflict. */
 export const SYNC_RESOLVE_DISPATCHED_PREFIX =
   "🔀 Sync resolution dispatched → run";
@@ -79,7 +87,8 @@ export const promotionTitle = (
 export function runIdAfter(prefix: string, body: string): number | null {
   if (!body.startsWith(prefix)) return null;
   const m = body.slice(prefix.length).match(/^\s*(\d+)/);
-  return m ? Number(m[1]) : null;
+  const id = m ? Number(m[1]) : NaN;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 /** "🔀 Conflict resolution dispatched → run 12 (at abc123, pm-staging at def456)" */

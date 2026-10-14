@@ -87,6 +87,8 @@ export interface EnvironmentSetupOptions {
     name: string,
     input: { previousConfigurationRevision: string; profile: "hosted" },
   ): Promise<unknown>;
+  /** Complete connection checks after the real browser probe, then stamp readiness. */
+  verifyReadiness?(name: string): Promise<string>;
 }
 export class EnvironmentSetupError extends Error {
   constructor(
@@ -397,6 +399,34 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
       action: EnvironmentSetupAction,
       choices?: EnvironmentSetupChoice[],
     ) => save({ status: "needs_input", message, action, choices });
+    const finishReady = async () => {
+      current();
+      const readyMessage = await options.verifyReadiness?.(name);
+      if (readyMessage) expected = document(name).revision;
+      current();
+      save({
+        status: "ready",
+        step: "test_access",
+        message: readyMessage ?? "Your test environment is ready.",
+        action: undefined,
+        choices: undefined,
+      });
+    };
+    const needsAccess = (result: EnvironmentVerification) => {
+      const action = result.diagnosis?.action;
+      stop(
+        action === "edit_login"
+          ? "The app opens, but its test login needs attention. Review the access check below."
+          : action === "manage_credentials"
+            ? "Update the saved test or hosting credentials, then continue setup."
+            : "The environment still needs attention. Review the access check below and retry when it is resolved.",
+        action === "edit_login"
+          ? "edit_login"
+          : action === "manage_credentials"
+            ? "manage_credentials"
+            : "retry",
+      );
+    };
     safeOAuthPath(lock);
     mkdirSync(dirname(lock), { recursive: true, mode: 0o700 });
     const previousLock = readPrivate(lock, 1024);
@@ -442,18 +472,24 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
           !input.force &&
           options.environmentAccess.status(name).status === "passed"
         ) {
-          save({
-            status: "ready",
-            step: "test_access",
-            message: "Your test environment is ready.",
-          });
+          await finishReady();
           return;
         }
         if (!explicit && verification.mode === "browser" && !sameSaved) {
-          stop(
-            "This app already uses another test environment. Keep it, or explicitly choose a Vercel preview.",
-            "choose_preview",
-          );
+          save({
+            step: "test_access",
+            message:
+              verification.target.kind === "docker"
+                ? "Starting the disposable Docker app and checking its test login…"
+                : "Opening the saved staging app and checking its test login…",
+          });
+          current();
+          await options.environmentAccess.verify(name);
+          await options.environmentAccess.idle();
+          current();
+          const result = options.environmentAccess.status(name);
+          if (result.status === "passed") await finishReady();
+          else needsAccess(result);
           return;
         }
         let chosen = explicit ?? sameSaved;
@@ -794,12 +830,7 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
           current();
           const result = options.environmentAccess.status(name);
           if (result.status === "passed") {
-            save({
-              status: "ready",
-              message: "Your test environment is ready.",
-              action: undefined,
-              choices: undefined,
-            });
+            await finishReady();
             return;
           }
           const code = result.diagnosis?.code;
@@ -814,21 +845,7 @@ export function createEnvironmentSetup(options: EnvironmentSetupOptions) {
             await connect(true);
             continue;
           }
-          const action = result.diagnosis?.action;
-          stop(
-            action === "edit_login"
-              ? "The preview opens, but the app login needs attention. Review the access check below."
-              : action === "manage_credentials" ||
-                  code === "preview_credential_rejected"
-                ? "Update the saved test or preview credentials, then continue setup."
-                : "The environment still needs attention. Review the access check below and retry when it is resolved.",
-            action === "edit_login"
-              ? "edit_login"
-              : action === "manage_credentials" ||
-                  code === "preview_credential_rejected"
-                ? "manage_credentials"
-                : "retry",
-          );
+          needsAccess(result);
           return;
         }
       })

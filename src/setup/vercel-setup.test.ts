@@ -139,6 +139,7 @@ const settle = async () => {
 function fixture(
   data: object = initial(),
   implementation?: (path: string, body?: unknown) => Promise<object>,
+  onConfigured?: () => Promise<void>,
 ) {
   const api = vi.fn(implementation || (async () => data)),
     selected = vi.fn(),
@@ -166,6 +167,7 @@ function fixture(
       api,
       project: { name: "forevermods" },
       onSelect: selected,
+      onConfigured,
       getStatus: () => ({
         serviceConnections: [
           {
@@ -205,6 +207,66 @@ afterEach(() => {
 });
 
 describe("Vercel setup conversation", () => {
+  it("finishes a reviewed repair by saving its workflow and continuing the access check", async () => {
+    const ready = {
+      ...prepared(),
+      status: "deployed",
+      deployment: preview,
+      plan: {
+        ...prepared().plan,
+        workflowBranches: {
+          production: "main",
+          staging: "staging",
+          integration: "pm-staging",
+        },
+      },
+    };
+    const configured = vi.fn(async () => {});
+    const f = fixture(
+      ready,
+      async (path) =>
+        path.endsWith("/apply-workflow")
+          ? { ...ready, revision: "r2", workflowApplied: true }
+          : ready,
+      configured,
+    );
+    await settle();
+    expect(f.api).toHaveBeenCalledWith(
+      expect.stringContaining("/apply-workflow"),
+      { revision: "r1" },
+    );
+    expect(configured).toHaveBeenCalledOnce();
+    expect(f.selected).not.toHaveBeenCalled();
+  });
+  it("keeps a failed workflow repair visible without selecting a partially configured target", async () => {
+    const ready = {
+      ...prepared(),
+      status: "deployed",
+      deployment: preview,
+      plan: {
+        ...prepared().plan,
+        workflowBranches: {
+          production: "main",
+          staging: "staging",
+          integration: "pm-staging",
+        },
+      },
+    };
+    const configured = vi.fn(async () => {});
+    const f = fixture(
+      ready,
+      async (path) => {
+        if (path.endsWith("/apply-workflow"))
+          throw Error("Project settings changed. Review a fresh repair plan.");
+        return ready;
+      },
+      configured,
+    );
+    await settle();
+    expect(configured).not.toHaveBeenCalled();
+    expect(f.selected).not.toHaveBeenCalled();
+    expect(text(f.root)).toContain("Project settings changed");
+  });
   it("opens team and help dialogs at their heading, preserves edits on close, and closes on navigation", async () => {
     const f = fixture();
     await settle();
@@ -362,7 +424,6 @@ describe("Vercel setup conversation", () => {
       {
         revision: "r1",
         branch: "pm/forevermods",
-        baseBranch: "main",
         customEnvironmentId: "env_staging",
       },
     );
@@ -474,7 +535,7 @@ describe("Vercel setup conversation", () => {
     await f.find("Review preview setup").fire("click");
     expect(f.api).toHaveBeenLastCalledWith(
       "/api/projects/forevermods/onboarding/vercel/prepare",
-      { revision: "r2", branch: "pm-staging", baseBranch: "main" },
+      { revision: "r2", branch: "pm-staging" },
     );
   });
 });

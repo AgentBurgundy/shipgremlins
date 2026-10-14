@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import {
   createTestEnvironments,
   parseDockerTarget,
@@ -19,6 +19,7 @@ function fixture() {
   const containers = new Map<string, Record<string, string>>();
   const builds = new Map<string, Record<string, string>>();
   let failHealth = false;
+  let failPhase: "migrate" | "seed" | undefined;
   const run: DockerRun = async (args, options) => {
     calls.push({ args, options });
     const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" }),
@@ -133,6 +134,8 @@ function fixture() {
       return ok();
     }
     if (args[0] === "run") {
+      if (failPhase && name.endsWith(`-${failPhase}`))
+        return { code: 1, stdout: "", stderr: "private database password" };
       if (name.endsWith("-health"))
         return failHealth
           ? { code: 1, stdout: "", stderr: "SECRET must never escape" }
@@ -162,9 +165,45 @@ function fixture() {
     fail: () => {
       failHealth = true;
     },
+    failPhase: (phase: "migrate" | "seed") => {
+      failPhase = phase;
+    },
   };
 }
 describe("managed application recipes", () => {
+  it.each([
+    { buildArgs: { NPM_TOKEN: "opaque-credential" } },
+    { buildArgs: { PUBLIC_URL: "https://user:password@example.test" } },
+    { buildArgs: { PUBLIC_URL: "https://example.test?token=private" } },
+    { buildArgs: { VERSION: "${GITHUB_TOKEN}" } },
+    { buildSecrets: { npmrc: "GITHUB_TOKEN" } },
+    { buildSecrets: { npmrc: "APP_KEY" } },
+    { buildSecrets: { "invalid,id": "TEST_NPMRC" } },
+  ])("rejects unsafe or controller-bearing build inputs %j", (inputs) => {
+    expect(() =>
+      parseDockerTarget({
+        ...target,
+        recipe: { kind: "dockerfile", context: ".", dockerfile: "Dockerfile" },
+        ...inputs,
+      }),
+    ).toThrow();
+  });
+  it("rejects build inputs on a prebuilt image and accepts public literals separately from BuildKit refs", () => {
+    expect(() =>
+      parseDockerTarget({ ...target, buildArgs: { VERSION: "1" } }),
+    ).toThrow("Dockerfile");
+    expect(
+      parseDockerTarget({
+        ...target,
+        recipe: { kind: "dockerfile", context: ".", dockerfile: "Dockerfile" },
+        buildArgs: {
+          NEXT_PUBLIC_API_URL: "https://staging.example.test",
+          VERSION: "1",
+        },
+        buildSecrets: { npmrc: "TEST_NPMRC" },
+      }).buildSecrets,
+    ).toEqual({ npmrc: "TEST_NPMRC" });
+  });
   it.each([
     { ...target, role: "production" },
     { ...target, port: 0 },
@@ -188,6 +227,10 @@ describe("managed application recipes", () => {
     { ...target, env: { TOKEN: "GITHUB_TOKEN" } },
     { ...target, env: { NODE_OPTIONS: "APP_SECRET" } },
     { ...target, services: [{ kind: "redis", name: "app", env: "REDIS_URL" }] },
+    ...["source", "health", "migrate", "seed", "net"].map((name) => ({
+      ...target,
+      services: [{ kind: "redis", name, env: "REDIS_URL" }],
+    })),
     {
       ...target,
       services: [
@@ -214,6 +257,100 @@ describe("managed application recipes", () => {
   });
 });
 describe("managed application lifecycle", () => {
+  it.each([false, true])(
+    "uses private ephemeral BuildKit files and cleans them after a build (failure=%s)",
+    async (fail) => {
+      const f = fixture();
+      const paths: string[] = [];
+      const secret =
+        "//registry.example.test/:_authToken=private-build-token\n";
+      const run: DockerRun = async (args, options) => {
+        if (args[0] === "build") {
+          expect(args).toContain(
+            "NEXT_PUBLIC_API_URL=https://staging.example.test",
+          );
+          expect(options?.env).toEqual({ DOCKER_BUILDKIT: "1" });
+          const spec = args[args.indexOf("--secret") + 1]!;
+          expect(spec).toMatch(/^type=file,id=npmrc,src=/);
+          const path = spec.slice(spec.indexOf("src=") + 4);
+          paths.push(path);
+          expect(readFileSync(path, "utf8")).toBe(secret);
+          if (process.platform !== "win32")
+            expect(statSync(path).mode & 0o777).toBe(0o600);
+          expect(JSON.stringify({ args, options })).not.toContain(secret);
+          if (fail) return { code: 1, stdout: secret, stderr: secret };
+        }
+        if (args[0] === "run")
+          expect(paths.every((path) => !existsSync(path))).toBe(true);
+        return f.run(args, options);
+      };
+      const api = createTestEnvironments({
+        run,
+        ensureImage: async () => "shipgremlins-local:1234567890abcdef",
+        namespace: "test-workspace",
+      });
+      const input = {
+        jobId: "job-build-secret",
+        target: {
+          ...target,
+          recipe: {
+            kind: "dockerfile" as const,
+            context: ".",
+            dockerfile: "Dockerfile",
+          },
+          buildArgs: { NEXT_PUBLIC_API_URL: "https://staging.example.test" },
+          buildSecrets: { npmrc: "TEST_NPMRC" },
+        },
+        source: {
+          repoUrl: "https://github.com/owner/app.git",
+          provider: "github" as const,
+          commitSha: "a".repeat(40),
+          token: "private-source-token",
+        },
+        buildSecrets: { npmrc: secret },
+      };
+      if (fail)
+        await expect(api.start(input)).rejects.toMatchObject({
+          code: "build_failed",
+          message: expect.not.stringContaining("private-build-token"),
+        });
+      else {
+        await api.start(input);
+        await api.cleanup(input.jobId);
+      }
+      expect(paths).toHaveLength(1);
+      expect(paths.every((path) => !existsSync(path))).toBe(true);
+      expect(f.networks.size).toBe(0);
+      expect(f.containers.size).toBe(0);
+      expect(JSON.stringify(f.calls)).not.toContain("private-build-token");
+    },
+  );
+  it("rejects missing build secrets and private values disguised as public args before Docker", async () => {
+    const f = fixture();
+    const dockerfile = {
+      ...target,
+      recipe: {
+        kind: "dockerfile" as const,
+        context: ".",
+        dockerfile: "Dockerfile",
+      },
+      buildSecrets: { npmrc: "TEST_NPMRC" },
+    };
+    await expect(
+      f.api.start({ jobId: "job-missing", target: dockerfile }),
+    ).rejects.toMatchObject({ code: "missing_inputs" });
+    await expect(
+      f.api.start({
+        jobId: "job-leaking",
+        target: {
+          ...dockerfile,
+          buildArgs: { VERSION: "private-opaque-build-value" },
+        },
+        buildSecrets: { npmrc: "private-opaque-build-value" },
+      }),
+    ).rejects.toThrow("private credential");
+    expect(f.calls).toHaveLength(0);
+  });
   it("does not tear down an app while its retained worker is still running", async () => {
     const f = fixture();
     const run: DockerRun = async (args, options) =>
@@ -368,12 +505,33 @@ describe("managed application lifecycle", () => {
   it("cleans on failed readiness and never exposes provider output", async () => {
     const f = fixture();
     f.fail();
-    await expect(f.api.start({ jobId: "job-test", target })).rejects.toThrow(
-      "could not start",
-    );
+    await expect(
+      f.api.start({ jobId: "job-test", target }),
+    ).rejects.toMatchObject({
+      code: "app_unhealthy",
+      message: expect.stringContaining("0.0.0.0"),
+    });
     expect(f.containers.size).toBe(0);
     expect(f.networks.size).toBe(0);
   });
+  it.each(["migrate", "seed"] as const)(
+    "reports the failed %s phase and cleans its disposable app resources",
+    async (phase) => {
+      const f = fixture();
+      f.failPhase(phase);
+      await expect(
+        f.api.start({
+          jobId: "job-test",
+          target: { ...target, [phase]: ["npm", "run", phase] },
+        }),
+      ).rejects.toMatchObject({
+        code: phase === "migrate" ? "migration_failed" : "seed_failed",
+        message: expect.not.stringContaining("private database password"),
+      });
+      expect(f.containers.size).toBe(0);
+      expect(f.networks.size).toBe(0);
+    },
+  );
   it("cleans on failed browser authentication callback", async () => {
     const f = fixture();
     await expect(

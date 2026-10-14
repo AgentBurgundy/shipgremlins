@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CronExpressionParser } from "cron-parser";
+import { createScheduleCursor } from "../localRunners/scheduleCursor.ts";
 import {
   loadProject,
   codingPickupEnabled,
@@ -430,6 +431,12 @@ export async function setPmAutomation(
           revision: areasDocument.revision,
           content: JSON.stringify(value, null, 2) + "\n",
         });
+  if (area.enabled !== input.enabled)
+    createScheduleCursor(root).reset(
+      loadProject(root, projectName),
+      new Date(),
+      areaKey,
+    );
   return {
     ok: true,
     enabled: input.enabled,

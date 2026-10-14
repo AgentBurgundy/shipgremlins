@@ -931,22 +931,26 @@ describe("workflows", () => {
   });
 
   it("dispatchWorkflow polls with event=workflow_dispatch and a created floor 10s before the dispatch", async () => {
+    const marker = "11111111-2222-4333-8444-555555555555";
     const calls = stubDispatch([
-      [run({ id: 5, created_at: "2026-10-02T12:00:00Z" })],
+      [
+        run({
+          id: 5,
+          created_at: "2026-10-02T12:00:00Z",
+          display_title: marker,
+        }),
+      ],
     ]);
-    const res = await forge().dispatchWorkflow(
-      HUB,
-      "developer.yml",
-      "main",
-      {},
-    );
+    const res = await forge().dispatchWorkflow(HUB, "developer.yml", "main", {
+      marker,
+    });
     expect(res.id).toBe(5);
     const poll = calls.find((c) => c.method === "GET")!.url;
     expect(poll.searchParams.get("event")).toBe("workflow_dispatch");
     expect(poll.searchParams.get("created")).toBe(">=2026-10-02T11:59:50Z");
   });
 
-  it("without a marker echo it takes the newest run for that file created after the dispatch", async () => {
+  it("never guesses the newest run when the provider does not echo the dispatch marker", async () => {
     stubDispatch([
       [
         run({ id: 5, created_at: "2026-10-02T12:00:01Z" }),
@@ -959,13 +963,14 @@ describe("workflows", () => {
         run({ id: 3, created_at: "2026-10-02T11:59:00Z" }),
       ],
     ]);
-    const res = await forge().dispatchWorkflow(
-      HUB,
-      "developer.yml",
-      "main",
-      {},
-    );
-    expect(res.id).toBe(6);
+    await expect(
+      forge({ pollAttempts: 1 }).dispatchWorkflow(
+        HUB,
+        "developer.yml",
+        "main",
+        {},
+      ),
+    ).rejects.toThrow("no run appeared");
   });
 
   it("gives up with a clear error when no run appears", async () => {

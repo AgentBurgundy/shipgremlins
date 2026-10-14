@@ -147,9 +147,10 @@ function parseTarget(value: unknown): EnvironmentTarget {
     case "docker": {
       const parsed = parseDockerTarget(value);
       if (
-        Object.values(parsed.env ?? {}).some(
-          (name) => !validWorkerSecretName(name),
-        )
+        [
+          ...Object.values(parsed.env ?? {}),
+          ...Object.values(parsed.buildSecrets ?? {}),
+        ].some((name) => !validWorkerSecretName(name))
       )
         throw new Error(
           "Docker apps must use dedicated test secrets, never controller credentials.",
@@ -400,7 +401,10 @@ export function validateWorkerSecretReferences(config: ProjectConfig): void {
       target.kind === "vercel"
         ? [target.bypassSecret]
         : target.kind === "docker"
-          ? Object.values(target.env ?? {})
+          ? [
+              ...Object.values(target.env ?? {}),
+              ...Object.values(target.buildSecrets ?? {}),
+            ]
           : [],
     ),
   ].filter((name): name is string => name !== undefined);
@@ -441,9 +445,22 @@ export function baseBranch(config: ProjectConfig): string {
     ? workflow.baseBranch
     : config.branches.integration;
 }
+/** Read-only first investigation works before the delivery branches exist. */
+export function discoveryBranch(config: ProjectConfig): string {
+  return effectiveWorkflow(config).kind === "promotion"
+    ? config.branches.production
+    : baseBranch(config);
+}
 /** PMs inspect the deployed baseline; coding jobs still branch from their PR base. */
 export function inspectionBranch(config: ProjectConfig): string {
   const verification = effectiveVerification(config);
+  // Initial repository discovery must work before setup creates pm-staging.
+  // Coding still targets the isolated integration branch via baseBranch().
+  if (
+    verification.mode === "repository" &&
+    effectiveWorkflow(config).kind === "promotion"
+  )
+    return config.branches.production;
   return verification.mode === "browser" &&
     ["vercel", "railway"].includes(verification.target.kind) &&
     "branch" in verification.target &&
@@ -498,7 +515,11 @@ export function projectSecretNames(config: ProjectConfig): string[] {
             target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON",
           ];
         if (target.kind === "docker")
-          return [...access, ...Object.values(target.env ?? {})];
+          return [
+            ...access,
+            ...Object.values(target.env ?? {}),
+            ...Object.values(target.buildSecrets ?? {}),
+          ];
         return access;
       }),
     ),

@@ -326,21 +326,31 @@ describe("local Docker job runtime", () => {
           target: {
             kind: "docker",
             role: "preview",
-            recipe: { kind: "image", image: "example/app:1" },
+            recipe: {
+              kind: "dockerfile",
+              dockerfile: "Dockerfile",
+              context: ".",
+            },
             port: 3000,
             env: { APP_KEY: "TEST_APP_KEY" },
+            buildSecrets: { npmrc: "TEST_NPMRC" },
           },
           env: { APP_KEY: "private-app-secret" },
+          buildSecrets: { npmrc: "private-build-secret" },
         },
       };
       await f.api.startJob({ id, workerId, payload });
       expect(managed.start).toHaveBeenCalledWith(
-        expect.objectContaining({ env: { APP_KEY: "private-app-secret" } }),
+        expect.objectContaining({
+          env: { APP_KEY: "private-app-secret" },
+          buildSecrets: { npmrc: "private-build-secret" },
+        }),
       );
       const delivered = f.calls.find((c) =>
         c.args.includes("/opt/gremlins/receive-job.mjs"),
       )!.options!.stdin!;
       expect(delivered).not.toContain("private-app-secret");
+      expect(delivered).not.toContain("private-build-secret");
       expect(delivered).not.toContain("testEnvironment");
       expect(JSON.parse(delivered)).toMatchObject({
         expectedCommitSha: "a".repeat(40),
@@ -365,6 +375,34 @@ describe("local Docker job runtime", () => {
     }
   });
   it("allows only bounded test-account credential aliases and requires pinned app jobs", () => {
+    const buildTarget = {
+      kind: "docker" as const,
+      role: "staging" as const,
+      recipe: {
+        kind: "dockerfile" as const,
+        dockerfile: "Dockerfile",
+        context: ".",
+      },
+      port: 3000,
+      buildSecrets: { npmrc: "TEST_NPMRC" },
+    };
+    expect(() =>
+      validatePayload({
+        ...developer,
+        expectedCommitSha: "a".repeat(40),
+        testEnvironment: { target: buildTarget },
+      }),
+    ).toThrow("build-only inputs");
+    expect(() =>
+      validatePayload({
+        ...developer,
+        expectedCommitSha: "a".repeat(40),
+        testEnvironment: {
+          target: buildTarget,
+          buildSecrets: { npmrc: "//registry/:_authToken=private\n" },
+        },
+      }),
+    ).not.toThrow();
     expect(() =>
       validatePayload({
         ...developer,

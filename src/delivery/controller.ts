@@ -13,6 +13,7 @@ import { loadHub, loadProject, type Project } from "../config.ts";
 import {
   effectiveVerification,
   effectiveWorkflow,
+  baseBranch,
 } from "../projectCapabilities.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
@@ -36,10 +37,12 @@ import type {
 import type { LocalJob, LocalJobInput } from "../localRunners/types.ts";
 import { knowledgeRevision } from "../pmKnowledge/index.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
+import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import { runPromote, type PromoteOpts } from "../dispatcher/promote.ts";
 import type { Ctx } from "../dispatcher/context.ts";
 import { createCandidateVerifier } from "../evidence/attestation.ts";
 import { createPromotionExecutor } from "./executor.ts";
+import { prepareProductionRelease } from "./release.ts";
 import {
   createProductionDeclarations,
   type ProductionDeclarationInput,
@@ -93,6 +96,7 @@ export interface CandidateHandoff {
   author: string;
   area: string;
   areaInstanceId?: string;
+  ownershipRevision?: string;
   branch: string;
   releaseBranch: string;
   candidateSha: string;
@@ -138,6 +142,7 @@ export function reviewPrompt(plan: PmReviewPlan): string {
   )}\nUse Playwright to investigate every criterion. Then save /output/pm-review-request.json as {"schema":1,"planId":${JSON.stringify(plan.id)},"deliveries":[{"id":"EXACT delivery id","checks":[{"criterion":"EXACT approved criterion text","path":"/non-production-path","kind":"text-visible","text":"Exact visible text"}]}]}. The trusted worker independently replays checks and captures real screenshots AFTER you finish. Supported kinds: text-visible/text-absent with exact text; selector-visible/selector-absent with selector; url-path with expected pathname. Each check opens a fresh browser context on this deployment only; paths cannot include query/fragment or another origin. Optional steps (maximum 12 per check) replay click/fill/select/check/uncheck with a unique selector; fill/select also use value. To reuse a real login, save Playwright storageState ONLY in /output/.review-sessions/ROLE.json after signing in and set session to ROLE (lowercase letters, digits and hyphens). Cookies and localStorage must belong only to this deployment origin. The worker loads this private role session, replays steps and deletes the session; never save sessions anywhere else under /output; this hidden handoff is excluded from public artifacts and consumed only by the isolated replay phase. Do not choose a trivial check that fails to test the criterion. If authentication, interaction or an API assertion cannot be reproduced by this contract, omit that check and explain the blocker in your summary; it remains blocked for promotion. Your own JSON pass claims never count as evidence. Continue ordinary PM observation without altering the approved delivery scope.\n`;
 }
 export function createDeliveryController(options: DeliveryControllerOptions) {
+  const automaticApprovals = createAutomaticApprovals(options.root);
   const now = () => options.now?.() ?? new Date();
   const environment = () => ({
     ...process.env,
@@ -163,7 +168,10 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     });
   function candidateHandoffs(project: Project): CandidateHandoff[] {
     const values: CandidateHandoff[] = [];
-    for (const area of project.areas) {
+    for (const area of [
+      ...project.areas.filter((a) => a.key !== "combined"),
+      { key: "combined", instanceId: undefined },
+    ]) {
       validateName(area.key, "area");
       const file = join(
         options.root,
@@ -181,6 +189,16 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           "Candidate handoff requires repair; existing evidence was preserved.",
         );
       const value = JSON.parse(readFileSync(file, "utf8")) as CandidateHandoff;
+      if (
+        area.key === "combined" &&
+        value.ownershipRevision !==
+          hash(
+            JSON.stringify(
+              project.areas.map((a) => [a.key, configHash(project, a.key)]),
+            ),
+          )
+      )
+        continue;
       if (value.areaInstanceId !== area.instanceId) continue;
       if (
         value.project !== project.config.name ||
@@ -210,6 +228,9 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         repo: value.repo,
         author: value.author,
         area: value.area,
+        ...(value.ownershipRevision
+          ? { ownershipRevision: value.ownershipRevision }
+          : {}),
         ...(value.areaInstanceId
           ? { areaInstanceId: value.areaInstanceId }
           : {}),
@@ -228,6 +249,12 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     const areaInstanceId = project.areas.find(
       (area) => area.key === value.area,
     )?.instanceId;
+    if (value.area === "combined")
+      value.ownershipRevision = hash(
+        JSON.stringify(
+          project.areas.map((a) => [a.key, configHash(project, a.key)]),
+        ),
+      );
     const directory = join(
         options.root,
         ".run",
@@ -348,12 +375,20 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     ticket: LinearTicket,
   ): Promise<DockerJobPayload> {
     const project = projectFor(job.project!);
-    if (!enabled(project)) return payload;
+    const area = project.areas.find((a) => a.key === job.area);
+    const automaticBlock =
+      area && automaticApprovals.blocker(project, area, ticket);
+    if (automaticBlock) throw new Error(automaticBlock);
+    if (!enabled(project) && !automaticApprovals.isAutomatic(project, ticket))
+      return payload;
     if (
       !job.area ||
       !payload.delivery ||
       payload.delivery.branch !== `gremlins/${job.id}` ||
-      payload.delivery.base !== project.config.branches.integration
+      payload.delivery.base !==
+        (effectiveWorkflow(project.config).kind === "promotion"
+          ? project.config.branches.integration
+          : baseBranch(project.config))
     )
       throw new Error(
         "Promotion coding must target its exact integration branch and owning PM.",
@@ -561,7 +596,16 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     if (!job.project || !["pm", "developer"].includes(job.type) || job.pmMode)
       return;
     const project = projectFor(job.project);
-    if (!enabled(project)) return;
+    const automaticAdmission =
+      job.type === "developer" ? admission(job) : undefined;
+    if (
+      !enabled(project) &&
+      !(
+        automaticAdmission &&
+        automaticApprovals.isAutomatic(project, automaticAdmission.ticket)
+      )
+    )
+      return;
     if (
       result.ok !== true ||
       result.nonce !== job.id ||
@@ -607,12 +651,52 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         throw new Error(
           "The worker did not provide an exact source-provider draft and tested head.",
         );
-      const { forge, ledger } = await clients(project);
+      const { forge, ledger, linear } = await clients(project);
       const pull = await forge.getPull(project.config.repo, number);
       if (!pull || pull.headSha !== result.headSha)
         throw new Error(
           "The published draft moved after its checks. Review its new head before delivery registration.",
         );
+      if (automaticApprovals.isAutomatic(project, captured.ticket)) {
+        const currentTicket = await linear.getTicket(captured.ticket.id);
+        const area = project.areas.find((a) => a.key === captured.area);
+        if (!currentTicket || !area)
+          throw new Error(
+            "Automatic approval's ticket or owner is unavailable. Review the preserved draft.",
+          );
+        const scopeBlock = automaticApprovals.blocker(
+          project,
+          area,
+          currentTicket,
+        );
+        const changes = forge.listPullChanges
+          ? await forge.listPullChanges(project.config.repo, number)
+          : undefined;
+        const stats = forge.getPullDiffStats
+          ? await forge.getPullDiffStats(project.config.repo, number)
+          : undefined;
+        const paths =
+          changes?.flatMap((c) => [
+            c.path,
+            ...(c.previousPath ? [c.previousPath] : []),
+          ]) ?? [];
+        const changeBlock = automaticApprovals.changeBlocker(
+          project,
+          currentTicket,
+          paths,
+          stats?.headSha === pull.headSha ? stats : undefined,
+        );
+        if (scopeBlock || changeBlock)
+          throw new Error(scopeBlock || changeBlock);
+        if (
+          (await forge.getPull(project.config.repo, number))?.headSha !==
+          pull.headSha
+        )
+          throw new Error(
+            "The automatic change moved during scope verification. Review the preserved draft.",
+          );
+      }
+      if (!enabled(project)) return;
       const providerChecks = await forge.getChecks(
         project.config.repo,
         pull.headSha,
@@ -762,6 +846,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       },
     };
     const env = environment();
+    // External candidate attestations are an optional stricter release gate.
+    const verifiedDraft =
+      !opts.verifyCandidate &&
+      !env.SHIPGREMLINS_VERIFICATION_FILE &&
+      !env.SHIPGREMLINS_ATTESTATION_PUBLIC_KEY;
     const verifier =
       opts.verifyCandidate ??
       createCandidateVerifier(ctx, {
@@ -775,9 +864,26 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     const rows = await runPromote(ctx, {
       ...opts,
       ...ledger.promotionOptions(),
+      publishVerifiedDraft: verifiedDraft,
+      onPublished: async (candidate, pull) => {
+        if (!verifiedDraft) return;
+        await ledger.recordPromotion({
+          deliveryIds: ledger
+            .list()
+            .filter((r) => candidate.changes.includes(r.implementation.number))
+            .map((r) => r.id),
+          pullNumber: pull.number,
+          candidate,
+          verifiedDraft: true,
+          trustedAuthor: ctx.botLogin,
+        });
+      },
       verifyCandidate: async (candidate) => {
         const area = candidate.releaseBranch.split("/")[1];
-        if (!area || !project.areas.some((a) => a.key === area))
+        if (
+          !area ||
+          (area !== "combined" && !project.areas.some((a) => a.key === area))
+        )
           throw new Error("Candidate has no configured owning PM.");
         saveCandidate(project, {
           project: project.config.name,
@@ -791,7 +897,12 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           changes: [...candidate.changes],
           preparedAt: now().toISOString(),
         });
-        const evidence = await verifier(candidate);
+        const evidence = verifiedDraft
+          ? {
+              ok: false as const,
+              reason: "Combined draft awaits owner staging review.",
+            }
+          : await verifier(candidate);
         if (evidence.ok) accepted.push({ candidate, evidence });
         return evidence;
       },
@@ -901,7 +1012,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         token: credential.token,
         docker: input.docker,
       });
-      return await promote(name, { ...executor, area: input.area });
+      return await promote(name, executor);
     } finally {
       await access.releaseLease?.(jobId);
     }
@@ -1078,6 +1189,15 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     completeJob,
     promote,
     preparePromotion,
+    prepareRelease: async (name: string) => {
+      const project = projectFor(name);
+      const { forge } = await clients(project, true);
+      return prepareProductionRelease({
+        project,
+        forge,
+        resolveChecks: (sha) => localChecks(project, sha),
+      });
+    },
     advanceIntegration,
     declareProduction: (name: string, input: ProductionDeclarationInput) =>
       declarationsFor(projectFor(name)).declare(input),

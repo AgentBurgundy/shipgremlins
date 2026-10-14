@@ -90,6 +90,11 @@
   ) => {
     const root = el("div", "pm-simple-controls"),
       buttons = el("div", "pm-simple-actions");
+    root.setAttribute(
+      "aria-label",
+      `Work controls for ${area.name || area.key}`,
+    );
+    root.setAttribute("aria-busy", String(Boolean(operation?.busy)));
     if (project.foundation?.needed) {
       const foundation = el("a", "small-button", "Build the foundation first");
       foundation.href = `/projects/${encodeURIComponent(project.name)}?tab=environment`;
@@ -120,69 +125,107 @@
       launchArea: area.key,
     });
     run.disabled = locked || Boolean(operation?.busy);
-    const toggle = el(
-      "button",
-      "pm-automation-switch" + (area.enabled ? " enabled" : ""),
-    );
-    toggle.type = "button";
-    toggle.setAttribute("role", "switch");
-    toggle.setAttribute("aria-checked", String(Boolean(area.enabled)));
-    toggle.setAttribute(
-      "aria-label",
-      `Look for new improvements: ${area.name || area.key}`,
+    const codingEnabled = area.codingEnabled ?? area.enabled;
+    const automationSwitch = (label, description, enabled, mode) => {
+      const pending = operation?.busy && operation.mode === mode;
+      const control = el(
+        "button",
+        "pm-automation-switch pm-automation-item" + (enabled ? " enabled" : ""),
+      );
+      control.type = "button";
+      control.setAttribute("role", "switch");
+      control.setAttribute("aria-checked", String(Boolean(enabled)));
+      control.setAttribute(
+        "aria-label",
+        `${label} for ${area.name || area.key}`,
+      );
+      control.setAttribute("aria-busy", String(Boolean(pending)));
+      control.disabled = locked || Boolean(operation?.busy);
+      const copy = el("span", "pm-automation-copy");
+      copy.append(
+        el("span", "pm-automation-label", label),
+        el("span", "pm-automation-description", description),
+      );
+      const state = el("span", "pm-automation-state-display");
+      const track = el("span", "pm-switch-track");
+      track.setAttribute("aria-hidden", "true");
+      state.append(
+        el(
+          "span",
+          "pm-automation-value",
+          pending ? "Saving…" : enabled ? "On" : "Off",
+        ),
+        track,
+      );
+      control.append(copy, state);
+      return control;
+    };
+    const toggle = automationSwitch(
+      "Investigations",
+      "Look for new improvements",
+      area.enabled,
+      "automation",
     );
     Object.assign(toggle.dataset, {
       toggleArea: area.key,
       areaProject: project.name,
       enableArea: String(!area.enabled),
     });
-    toggle.append(
-      el("span", "pm-switch-track"),
-      el(
-        "span",
-        "",
-        operation?.busy && operation.mode === "automation"
-          ? "Saving…"
-          : "Look for new improvements",
-      ),
-    );
-    toggle.disabled = locked || Boolean(operation?.busy);
-    const codingEnabled = area.codingEnabled ?? area.enabled;
-    const coding = el(
-      "button",
-      "pm-automation-switch" + (codingEnabled ? " enabled" : ""),
-    );
-    coding.type = "button";
-    coding.setAttribute("role", "switch");
-    coding.setAttribute("aria-checked", String(Boolean(codingEnabled)));
-    coding.setAttribute(
-      "aria-label",
-      `Automatically build approved work: ${area.name || area.key}`,
+    const coding = automationSwitch(
+      "Approved coding",
+      "Automatically build approved work",
+      codingEnabled,
+      "coding-automation",
     );
     Object.assign(coding.dataset, {
       toggleArea: area.key,
       areaProject: project.name,
       automationKind: "coding",
     });
-    coding.append(
-      el("span", "pm-switch-track"),
-      el(
-        "span",
-        "",
-        operation?.busy && operation.mode === "coding-automation"
-          ? "Saving…"
-          : "Automatically build approved work",
-      ),
-    );
-    coding.disabled = locked || Boolean(operation?.busy);
     const automation = el("div", "pm-automation-controls");
+    automation.setAttribute("role", "group");
+    automation.setAttribute(
+      "aria-label",
+      `Automatic work for ${area.name || area.key}`,
+    );
     automation.append(toggle, coding);
     buttons.append(run);
-    root.append(buttons, automation);
-    if (operation?.message && operation.error) {
+    const main = el("div", "pm-controls-main");
+    const heading = el("div", "pm-controls-heading");
+    const status = el(
+      "span",
+      "pm-controls-status",
+      operation?.busy
+        ? ["automation", "coding-automation"].includes(operation.mode)
+          ? "Saving changes…"
+          : "Starting a run…"
+        : locked
+          ? "Temporarily unavailable"
+          : area.enabled && codingEnabled
+            ? "Both enabled"
+            : area.enabled
+              ? "Investigations enabled"
+              : codingEnabled
+                ? "Approved coding enabled"
+                : "Paused",
+    );
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    heading.append(el("h3", "", "Automatic work"), status);
+    main.append(heading, buttons);
+    root.append(
+      main,
+      automation,
+      el(
+        "p",
+        "pm-controls-note",
+        "Changes save immediately. Pausing affects future runs.",
+      ),
+    );
+    if (operation?.message) {
       const message = el(
         "p",
-        "form-message" + (operation.error ? " error" : ""),
+        "form-message pm-controls-feedback" + (operation.error ? " error" : ""),
         operation.message,
       );
       message.setAttribute("role", operation.error ? "alert" : "status");

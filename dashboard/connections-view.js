@@ -164,14 +164,24 @@
       const help = node("p", "setup-help");
       const instructions = node("div", "credential-instructions");
       const label = node("label", "credential-input-label");
-      const input = node(connection.format === "json" ? "textarea" : "input");
+      const multiline =
+        connection.format === "json" || connection.purpose === "build-secret";
+      const input = node(multiline ? "textarea" : "input");
       input.id = `telemetry-${connection.name}`;
       input.name = connection.name;
       label.htmlFor = input.id;
-      if (connection.format === "json") {
+      if (multiline) {
         input.className = "secret-json";
         input.rows = 4;
-        input.dataset.secretJson = "true";
+        if (
+          connection.format === "json" &&
+          connection.purpose !== "build-secret"
+        )
+          input.dataset.secretJson = "true";
+        if (connection.purpose === "build-secret") {
+          input.maxLength = 65536;
+          input.dataset.secretText = "true";
+        }
       } else input.type = "password";
       input.autocomplete = "off";
       input.spellcheck = false;
@@ -180,7 +190,7 @@
       const wrap = node("div", "password-wrap");
       const reveal = node(
         "button",
-        connection.format === "json" ? "small-button" : "reveal-button",
+        multiline ? "small-button" : "reveal-button",
         "Show",
       );
       reveal.type = "button";

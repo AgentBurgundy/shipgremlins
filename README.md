@@ -39,7 +39,7 @@ scopes and each PM's Mixpanel report in the dashboard, then save credentials the
 **Keep the crew in your Slack channel.** PMs report their patrols; Coding Gremlins announce drafts ready for review and flag blockers. Updates carry the project, mandate or ticket, and run number. [Connect Slack →](docs/SLACK.md)
 
 > [!NOTE]
-> **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. Start with a GitHub/GitLab repository and configured checks. Browser testing is optional: use a direct URL or Vercel, Railway, or Cloud Run discovery. Full live provider certification remains pending. The opt-in promotion flow can merge eligible approved work into integration; you control staging and production merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
+> **Early alpha.** Local Docker execution is the default: no fork, separate automation repository, GitHub Actions, or GitLab CI setup is required. Start with a GitHub/GitLab repository and configured checks. Browser testing is optional: use a direct URL or Vercel, Railway, or Cloud Run discovery. Full live provider certification remains pending. The default promotion flow can merge eligible approved work into isolated `pm-staging`; you control staging and production merges. See [what is implemented](docs/IMPLEMENTATION_STATUS.md).
 
 ## When to bring in the gremlins
 
@@ -100,18 +100,20 @@ flowchart LR
     A[Explore the app] --> B[Findings + screenshots]
     B --> C[Approve tickets]
     C --> D[Build a fix]
-    D --> E[Verify the candidate]
-    E --> F[Review + merge]
-    F --> G[Production audit]
+    D --> E[Deploy to pm-staging]
+    E --> F[Owning PM tests the fix]
+    F --> G[Combined cherry-picked PR]
+    G --> H[Review and merge to staging]
+    H --> I[Release staging to main]
 ```
 
-| Step        | What actually happens                                                                                                                                                                                                                                                           |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Explore** | Scheduled PMs review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                                                         |
-| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Promotion projects use their integration branch.                                                                                              |
-| **Recover** | Durable queues, bounded startup retries and cancellation preserve existing work. An ambiguous launch or publication is held for review, not blindly repeated.                                                                                                                   |
-| **Verify**  | In promotion projects, the owning PM checks its fixes on the exact integration deployment. Independent browser receipts and screenshots are required; prose alone cannot pass a fix.                                                                                            |
-| **Ship**    | Selective promotion cherry-picks verified work from the staging base and checks the assembled candidate. Candidate deployment/evidence must be configured. You control staging and production merges; production reconciliation requires an explicitly reviewed complete scope. |
+| Step        | What actually happens                                                                                                                                                                                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Explore** | PMs run daily by default and review the repository or use Playwright MCP against the selected test environment. The fixture CLI creates CSVs and reproducible PNGs for upload testing.                                                                                                                                                      |
+| **Approve** | Findings become Linear tickets. Developer agents receive approved work and open draft PRs/MRs against the configured base branch. Promotion projects use their integration branch.                                                                                                                                                          |
+| **Recover** | Durable queues, bounded startup retries and cancellation preserve existing work. An ambiguous launch or publication is held for review, not blindly repeated.                                                                                                                                                                               |
+| **Verify**  | In promotion projects, the owning PM checks its fixes on the exact integration deployment. Independent browser receipts and screenshots are required; prose alone cannot pass a fix.                                                                                                                                                        |
+| **Ship**    | Selective promotion cherry-picks verified work from the staging base and checks the assembled candidate. All PMs contribute to one build-checked draft; exact-candidate signed verification is an optional extra gate. You control staging and production merges; production reconciliation requires an explicitly reviewed complete scope. |
 
 **“Trust me” isn't a test.** Missing or stale evidence blocks promotion. A staging merge does not close a ticket. [Read the verification model →](docs/VERIFICATION.md)
 
@@ -136,7 +138,9 @@ Once the dashboard opens, choose where your gremlin will live:
   Then meet the suggested gremlin, review its brief, and adopt it. Optional
   Sentry, Mixpanel, and Datadog setup opens for this project. Choose **Explore
   the codebase** for the first read-only Discovery; use **What should get better?**
-  afterward to start an outcome-focused mission. Automation stays paused.
+  afterward to start an outcome-focused mission. Enabled crews begin Discovery
+  automatically when source control and Claude Code are connected. The controller
+  creates and verifies a first local worker when needed.
   [Meet your first PM →](docs/SETUP.md#your-first-adoption)
 - **A new idea:** choose **Start from an idea · experimental** and review the
   proposed foundation and crew. The new repository is private by default. A
@@ -193,8 +197,11 @@ required connection verification can be prepared when you start that run.
 The worker runs on the CLI/dashboard server, even when you
 visit from a phone. Ready requires actual Chromium screenshot evidence.
 
-New PMs start with both automation controls paused. Choose **Explore the codebase** on the
-welcome screen for Discovery, or **Prepare first mission** to finish its setup.
+New PMs start with daily investigations and approved-ticket coding enabled.
+Discovery begins automatically when its connections are ready; Linear and hosting
+can be connected afterward. **Autonomous work** on the project home enables or
+pauses the whole crew in one action and shows what is running or blocking progress.
+Choose **Explore the codebase** for an explicit Discovery, or **Prepare first mission** to finish its setup.
 Discovery needs no Linear or browser environment. A fresh idea starts with
 **Build the foundation** instead. For later patrols, choose **Run now** on a PM
 card or its workspace without turning on its schedule. Missing
@@ -246,7 +253,7 @@ Linear team and Vercel installation while another uses a client's workspace and
 Railway. The project editor keeps its name and repository visible and lets you
 repair Linear team/PM mappings without moving or deleting provider resources.
 
-**Any repository first. Hosting when you need it.** New projects use repository checks and draft PRs/MRs to a chosen base branch. Edit the install/test/build commands for your stack. Add a named preview or staging URL for browser work, or select Vercel, Railway, or Cloud Run discovery. Credentials belong in Connections; resource IDs and settings belong to each project. Existing projects have **Edit settings**, with conflict protection and preserved unrelated configuration. [Project and hosting guide →](docs/PROJECTS.md)
+**Isolated PM work by default.** New projects use `pm-staging → staging → main`. PMs run daily once readiness passes. GitHub + Vercel setup creates missing branches, deploys the PM preview, connects browser access, and checks readiness. Existing Vercel projects have **Environment → Repair PM staging setup**. Repository-only draft PRs remain an explicit alternative. Edit the install/test/build commands for your stack. Add a named preview or staging URL for browser work, or select Vercel, Railway, or Cloud Run discovery. Credentials belong in Connections; resource IDs and settings belong to each project. Existing projects have **Edit settings**, with conflict protection and preserved unrelated configuration. [Project and hosting guide →](docs/PROJECTS.md)
 
 The local runtime provisions its PostgreSQL activity store when preparing work. The dashboard retains visible tool activity, summaries, checks, logs, and bounded artifacts. Private model reasoning is not exposed. Slack delivery runs separately from job execution and records each attempt so restarts do not repeat messages.
 
@@ -315,20 +322,20 @@ Read the [manifest format and limitations](docs/LINEAR_LIFECYCLE.md) before enab
 
 ## What works. What's next.
 
-| Available in the alpha                                                   | On the roadmap                                                                  |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| Local Docker jobs with GitHub/GitLab and optional browser targets        | Full live provider certification and broader deployment automation              |
-| Direct URLs; Vercel, Railway and Cloud Run discovery                     | Provider provisioning and broader staged promotion support                      |
-| Claude Code + Playwright MCP                                             | Additional AI providers and connection management                               |
-| Sentry + Datadog project logs; Mixpanel Insights                         | Broader telemetry queries and live certification                                |
-| Branded PM/developer Slack updates and local PostgreSQL activity history | Broader team collaboration and distributed queue coordination                   |
-| Persistent queue, local/remote Docker workers, logs and artifacts        | Automatic OS service installation, native macOS jobs and cloud fleet management |
-| Mandates, memory, CSV/PNG fixtures                                       | Richer generated fixtures and cleanup                                           |
-| Bounded recovery, project limits and PM-reviewed selective promotion     | Automatic candidate environment provisioning and broader recovery coverage      |
-| Production audit and owner-confirmed scope reconciliation                | Production lifecycle webhooks                                                   |
-| Global CLI, LAN dashboard, config editor and background controller       | Richer agent editing and deployment orchestration                               |
+| Available in the alpha                                                    | On the roadmap                                                                  |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Local Docker jobs with GitHub/GitLab and optional browser targets         | Full live provider certification and broader deployment automation              |
+| Vercel preview setup/repair; direct URLs, Railway and Cloud Run discovery | Provider provisioning and broader staged promotion support                      |
+| Claude Code + Playwright MCP                                              | Additional AI providers and connection management                               |
+| Sentry + Datadog project logs; Mixpanel Insights                          | Broader telemetry queries and live certification                                |
+| Branded PM/developer Slack updates and local PostgreSQL activity history  | Broader team collaboration and distributed queue coordination                   |
+| Persistent queue, local/remote Docker workers, logs and artifacts         | Automatic OS service installation, native macOS jobs and cloud fleet management |
+| Mandates, memory, CSV/PNG fixtures                                        | Richer generated fixtures and cleanup                                           |
+| Bounded recovery, project limits and PM-reviewed selective promotion      | Automatic candidate environment provisioning and broader recovery coverage      |
+| Production audit and owner-confirmed scope reconciliation                 | Production lifecycle webhooks                                                   |
+| Global CLI, LAN dashboard, config editor and background controller        | Richer agent editing and deployment orchestration                               |
 
-Repository-only projects open drafts for you to merge. Explicit promotion projects
+Repository-only projects open drafts for you to merge. The default promotion workflow
 can advance eligible approved fixes into the integration branch and have the owning
 PM review them. Staging and production remain owner-controlled. The older GitHub
 Actions workflows and GCE tooling remain advanced options; GCE and the complete

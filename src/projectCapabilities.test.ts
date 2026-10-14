@@ -13,6 +13,46 @@ import {
 } from "./projectCapabilities.ts";
 
 describe("project capabilities", () => {
+  it("classifies build-only references and rejects aliases of controller hosting credentials", () => {
+    const raw = {
+      verification: { mode: "browser", environment: "local" },
+      environments: {
+        local: {
+          kind: "docker",
+          role: "staging",
+          recipe: {
+            kind: "dockerfile",
+            dockerfile: "Dockerfile",
+            context: ".",
+          },
+          port: 3000,
+          buildSecrets: { npmrc: "TEST_NPMRC" },
+        },
+      },
+    };
+    const config = {
+      ...makeProject().config,
+      ...parseProjectCapabilities(raw),
+      vercel: undefined,
+    };
+    expect(projectSecretNames(config)).toContain("TEST_NPMRC");
+    expect(() =>
+      validateWorkerSecretReferences({
+        ...config,
+        environments: {
+          ...config.environments,
+          staging: {
+            kind: "railway",
+            role: "staging",
+            projectId: "project",
+            environmentId: "staging",
+            serviceId: "service",
+            tokenSecret: "TEST_NPMRC",
+          },
+        },
+      }),
+    ).toThrow("dedicated test credentials");
+  });
   it("accepts a named custom Vercel environment and rejects reserved or unsafe identifiers", () => {
     const raw = (customEnvironmentId: string) => ({
       verification: { mode: "browser", environment: "preview" },

@@ -1,17 +1,24 @@
 # Browser evidence and promotion
 
-ShipGremlins fails closed: a passing prose comment is not release authorization.
-There are two independent checks. First a PM verifies each source change on a
-deployment. Then a trusted verifier checks the exact candidate assembled from
-those changes on the current staging base. Missing, expired, or mismatched
-evidence keeps the candidate out of staging.
+The normal local workflow requires independent owning-PM browser evidence for
+every included fix, then checks the combined cherry-picked candidate before
+opening a draft staging PR. The owner reviews and merges staging and production.
+Missing or invalid PM evidence keeps the affected change out of that draft.
+See [the delivery workflow](DELIVERY_WORKFLOW.md).
 
-For local Docker jobs, start with [Project → Changes → Advanced delivery workflow](DELIVERY_WORKFLOW.md).
-Owning-PM review receipts are recorded automatically by an isolated replay phase;
-the candidate handoff is available on the Delivery page. The CLI examples below
-describe the original Vercel release path and the shared signing format. For a
-Railway project, use the dashboard preparation/retry path and an explicitly selected
-candidate environment instead of assuming the legacy `promote` CLI discovers it.
+For local Docker jobs, owning-PM review receipts come from an isolated browser
+replay after the model container stops. A model's prose or JSON pass claim cannot
+authorize promotion. Integration evidence does not claim a separate browser test
+of the assembled candidate; the draft's staging review still belongs to the owner.
+
+The rest of this document describes the legacy CI path and the **optional stricter
+candidate gate**. Enable that gate for the local controller by configuring
+`SHIPGREMLINS_VERIFICATION_FILE` and `SHIPGREMLINS_ATTESTATION_PUBLIC_KEY`.
+It requires signed browser evidence for the exact candidate and staging base
+before opening/updating the staging PR. Missing, expired or mismatched candidate
+evidence holds publication in that mode. Its handoff is available in Delivery.
+For Railway, select a separate candidate environment as described in the delivery
+guide; the legacy `promote` CLI does not discover it automatically.
 
 ## Source change evidence
 

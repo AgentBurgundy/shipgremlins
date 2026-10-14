@@ -22,6 +22,7 @@ import {
 } from "../lifecycle/manifest.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { LABELS } from "../dispatcher/notes.ts";
+import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import {
   effectiveVerification,
   effectiveWorkflow,
@@ -322,6 +323,7 @@ export function createDeliveryService(options: {
     return (
       !!ticket &&
       !!area &&
+      !createAutomaticApprovals(options.root).blocker(project, area, ticket) &&
       ticketScopeHash(ticket) === record.scopeHash &&
       ticket.teamId === record.ticket.teamId &&
       ticket.projectId === area.linearProjectId &&
@@ -756,7 +758,9 @@ export function createDeliveryService(options: {
     deliveryIds: string[];
     pullNumber: number;
     candidate: CandidateVerification;
-    evidence: CandidateVerificationResult;
+    evidence?: CandidateVerificationResult;
+    /** Controller build-checked draft, with every source change independently PM-reviewed. */
+    verifiedDraft?: boolean;
     trustedAuthor: string;
   }) {
     const branches = promotionWorkflow(),
@@ -767,11 +771,15 @@ export function createDeliveryService(options: {
       !pull.headRef.startsWith("pm-release/") ||
       pull.headSha !== input.candidate.sha ||
       pull.headRef !== input.candidate.releaseBranch ||
-      candidateEvidenceError(
-        input.evidence,
-        input.candidate,
-        input.trustedAuthor,
-      )
+      pull.author !== input.trustedAuthor ||
+      (input.verifiedDraft
+        ? !pull.draft
+        : !input.evidence ||
+          candidateEvidenceError(
+            input.evidence,
+            input.candidate,
+            input.trustedAuthor,
+          ))
     )
       throw new Error(
         "Promotion must target staging from a selective release branch.",
@@ -917,6 +925,37 @@ export function createDeliveryService(options: {
         }
         const area = project.areas.find((a) => a.key === record.area)!;
         const files = await forge.listPullFiles(repo, pull.number);
+        const currentTicket = await options.linear?.getTicket(record.ticket.id);
+        if (
+          currentTicket &&
+          createAutomaticApprovals(options.root).isAutomatic(
+            project,
+            currentTicket,
+          )
+        ) {
+          const changes = forge.listPullChanges
+            ? await forge.listPullChanges(repo, pull.number)
+            : undefined;
+          const stats = forge.getPullDiffStats
+            ? await forge.getPullDiffStats(repo, pull.number)
+            : undefined;
+          const paths =
+            changes?.flatMap((c) => [
+              c.path,
+              ...(c.previousPath ? [c.previousPath] : []),
+            ]) ?? [];
+          const reason = createAutomaticApprovals(options.root).changeBlocker(
+            project,
+            currentTicket,
+            paths,
+            stats?.headSha === pull.headSha ? stats : undefined,
+          );
+          if (reason) {
+            record.status = "blocked";
+            record.message = reason;
+            continue;
+          }
+        }
         if (
           !files.length ||
           files.some(

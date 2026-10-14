@@ -60,7 +60,10 @@ export function assertBrowserSecretSafety(
     config.signIn?.databaseUrlSecret,
     ...testAccessSecretNames(verification.target.access),
     ...(verification.target.kind === "docker"
-      ? Object.values(verification.target.env ?? {})
+      ? [
+          ...Object.values(verification.target.env ?? {}),
+          ...Object.values(verification.target.buildSecrets ?? {}),
+        ]
       : []),
   ].filter((name): name is string => !!name);
   if (!names.length) return;

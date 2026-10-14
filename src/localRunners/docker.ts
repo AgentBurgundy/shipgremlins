@@ -42,6 +42,7 @@ export interface DockerJobPayload {
   testEnvironment?: {
     target: DockerEnvironmentTarget;
     env?: Record<string, string>;
+    buildSecrets?: Record<string, string>;
   };
   credentials?: Record<string, string>;
   commands?: Partial<
@@ -282,7 +283,7 @@ export function validatePayload(payload: DockerJobPayload): string {
     if (
       !record(payload.testEnvironment) ||
       Object.keys(payload.testEnvironment).some(
-        (k) => !["target", "env"].includes(k),
+        (k) => !["target", "env", "buildSecrets"].includes(k),
       ) ||
       payload.kind === "verify" ||
       payload.pmMode === "discovery" ||
@@ -307,6 +308,24 @@ export function validatePayload(payload: DockerJobPayload): string {
     )
       throw new Error(
         "Supply the dedicated app inputs declared by its Docker recipe.",
+      );
+    const buildSecrets = payload.testEnvironment.buildSecrets ?? {};
+    if (
+      !record(buildSecrets) ||
+      JSON.stringify(Object.keys(buildSecrets).sort()) !==
+        JSON.stringify(
+          Object.keys(payload.testEnvironment.target.buildSecrets ?? {}).sort(),
+        ) ||
+      Object.values(buildSecrets).some(
+        (value) =>
+          typeof value !== "string" ||
+          !value ||
+          Buffer.byteLength(value) > 65536 ||
+          value.includes("\0"),
+      )
+    )
+      throw new Error(
+        "Supply the dedicated build-only inputs declared by its Docker recipe.",
       );
   }
   if (
@@ -686,6 +705,7 @@ export function createDockerRunners(options: {
             jobId: input.id,
             target: input.payload.testEnvironment.target,
             env: input.payload.testEnvironment.env,
+            buildSecrets: input.payload.testEnvironment.buildSecrets,
             source: {
               repoUrl: input.payload.repoUrl!,
               provider: input.payload.provider!,

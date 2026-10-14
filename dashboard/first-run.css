@@ -1,5 +1,5 @@
 body:not(.is-first-run) .first-run-path,
-body.is-first-run .overview-metrics,
+body.first-run-no-project .overview-metrics,
 body.first-run-no-project .workspace-projects-overview {
   display: none;
 }

@@ -136,6 +136,10 @@ it("saves a separate candidate target with conflict protection and requires expl
     finishAdvance = resolve;
   });
   const advanceIntegration = vi.fn(() => advancing);
+  const prepareRelease = vi.fn(async () => ({
+    number: 7,
+    htmlUrl: "https://github.com/owner/app/pull/7",
+  }));
   const declareProduction = vi.fn(async () => ({})),
     delivery = {
       deliveryStatus: () => ({
@@ -146,6 +150,7 @@ it("saves a separate candidate target with conflict protection and requires expl
       }),
       declareProduction,
       advanceIntegration,
+      prepareRelease,
     } as unknown as ReturnType<typeof createDeliveryController>;
   server = createDashboardServer(root, packageRoot, "a".repeat(64), [], {
     delivery,
@@ -165,7 +170,7 @@ it("saves a separate candidate target with conflict protection and requires expl
   const state = (await (await fetch(url, { headers })).json()) as {
     candidateSetup: { revision: string; needsSelection: boolean };
   };
-  expect(state.candidateSetup.needsSelection).toBe(true);
+  expect(state.candidateSetup.needsSelection).toBe(false);
   const revision = state.candidateSetup.revision;
   expect(
     (await post("environment", { revision, environment: "integration" }))
@@ -203,12 +208,25 @@ it("saves a separate candidate target with conflict protection and requires expl
   // start a duplicate merge attempt while the first still holds its operation.
   expect((await post("advance", {})).status).toBe(202);
   expect((await post("advance", {})).status).toBe(409);
+  expect((await post("release", {})).status).toBe(409);
+  expect(prepareRelease).not.toHaveBeenCalled();
   expect(advanceIntegration).toHaveBeenCalledTimes(1);
   finishAdvance!(null);
   const after = (await (await fetch(url, { headers })).json()) as {
     operation: { phase: string };
   };
   expect(after.operation.phase).toBe("idle");
+  expect((await post("release", { branch: "main" })).status).toBe(400);
+  const release = await post("release", {});
+  expect(release.status).toBe(200);
+  expect(await release.json()).toMatchObject({
+    release: { number: 7, url: "https://github.com/owner/app/pull/7" },
+  });
+  expect(prepareRelease).toHaveBeenCalledExactlyOnceWith("app");
+  prepareRelease.mockRejectedValueOnce(new Error("private-provider-error"));
+  const failure = await post("release", {});
+  expect(failure.status).toBe(409);
+  expect(await failure.text()).not.toContain("private-provider-error");
 });
 
 it("accepts only the configured HTTPS proxy origin and keeps worker credentials separate from dashboard access", async () => {

@@ -538,6 +538,51 @@ describe("project Setup Gremlin", () => {
 });
 
 describe("source and output boundaries", () => {
+  it("keeps dedicated test-input references in the Docker setup proposal without inventing credential values", () => {
+    const value = {
+      ...suggestion(),
+      docker: { ...suggestion().docker, env: { API_KEY: "TEST_APP_API_KEY" } },
+      missingInputs: [
+        {
+          key: "api-key",
+          label: "Test API key",
+          description:
+            "Save TEST_APP_API_KEY in Connections for the app's API_KEY variable.",
+          required: true,
+        },
+      ],
+    };
+    expect(validateSetupAnalysis(value, snapshot(), []).docker?.env).toEqual({
+      API_KEY: "TEST_APP_API_KEY",
+    });
+    for (const env of [
+      { API_KEY: "GITHUB_TOKEN" },
+      { NODE_OPTIONS: "TEST_APP_OPTIONS" },
+      { API_KEY: "literal-private-value" },
+    ]) {
+      expect(() =>
+        validateSetupAnalysis(
+          { ...value, docker: { ...value.docker, env } },
+          snapshot(),
+          [],
+        ),
+      ).toThrow();
+    }
+    expect(() =>
+      validateSetupAnalysis(
+        {
+          ...value,
+          docker: {
+            ...value.docker,
+            env: { DATABASE_URL: "TEST_DATABASE_URL" },
+            services: [{ kind: "postgres", name: "db", env: "DATABASE_URL" }],
+          },
+        },
+        snapshot(),
+        [],
+      ),
+    ).toThrow();
+  });
   it("keeps large trees and quote-heavy files inside the planner's serialized transport bound", async () => {
     const fetcher = vi.fn(async (url: string | URL | Request) => {
       const path = String(url);

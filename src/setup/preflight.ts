@@ -337,10 +337,10 @@ export function inspectSetup(
   if (requiresPromotion)
     add(
       "promotion-evidence",
-      evidenceConfigured ? "pass" : "warn",
+      "pass",
       evidenceConfigured
         ? "Attestation public key and evidence-file path configured; key and evidence validity are checked against the exact candidate at promotion."
-        : "Promotions require trusted verification: configure SHIPGREMLINS_VERIFICATION_FILE and SHIPGREMLINS_ATTESTATION_PUBLIC_KEY (Ed25519 public PEM). Keep the private key only in the trusted signer.",
+        : "PM browser verification and candidate build checks prepare a combined staging draft. Owner review controls staging and production merges. External candidate attestation is optional.",
     );
   return {
     version: 1,

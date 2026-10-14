@@ -15,7 +15,13 @@ import {
   effectiveVerification,
   inspectionBranch,
 } from "../projectCapabilities.ts";
-import { resolveEnvironment, type HostingOptions } from "../hosting/index.ts";
+import {
+  resolveEnvironment,
+  HostingError,
+  type HostingOptions,
+} from "../hosting/index.ts";
+import { TestEnvironmentError } from "../testEnvironments/index.ts";
+import { assertPublicBuildValues } from "../testEnvironments/recipe.ts";
 import {
   createDockerRunners,
   type DockerRunners,
@@ -32,7 +38,11 @@ import { createVercelConnection } from "../vercelConnection/index.ts";
 import { resolveRepositoryHead } from "../projectOnboarding/repository.ts";
 import { safeOAuthPath } from "../oauthConnection/storage.ts";
 import { writePrivate } from "../remoteWorkers/storage.ts";
-import { readConnections } from "./connections.ts";
+import {
+  readConnections,
+  CONNECTIONS,
+  projectConnections,
+} from "./connections.ts";
 import { assertBrowserSecretSafety } from "./credentialScope.ts";
 import { resolveTestAccess, testAccessSecretNames } from "../testAccess.ts";
 import { ENVIRONMENT_PROBE } from "./environmentProbe.ts";
@@ -98,12 +108,23 @@ function fingerprint(
       ? [
           ...testAccessSecretNames(verification.target.access),
           ...(verification.target.kind === "docker"
-            ? Object.values(verification.target.env ?? {})
+            ? [
+                ...Object.values(verification.target.env ?? {}),
+                ...Object.values(verification.target.buildSecrets ?? {}),
+              ]
             : []),
           ...(verification.target.kind === "vercel" &&
           verification.target.bypassSecret
             ? [verification.target.bypassSecret]
             : []),
+          ...(verification.target.kind === "railway"
+            ? [verification.target.tokenSecret ?? "RAILWAY_TOKEN"]
+            : verification.target.kind === "cloud-run"
+              ? [
+                  verification.target.credentialsSecret ??
+                    "GCP_SERVICE_ACCOUNT_JSON",
+                ]
+              : []),
         ]
       : [];
   return createHash("sha256")
@@ -139,17 +160,42 @@ function read(root: string, project: string): Stored | undefined {
       "Environment test state is too large.",
       503,
     );
-  const state = JSON.parse(bytes.toString()) as Stored;
+  let state: Stored;
+  try {
+    state = JSON.parse(bytes.toString()) as Stored;
+  } catch {
+    throw new EnvironmentAccessError(
+      "Environment test state could not be read.",
+      503,
+    );
+  }
   if (
+    !state ||
+    typeof state !== "object" ||
+    Array.isArray(state) ||
     !["testing", "passed", "failed"].includes(state.status) ||
     typeof state.message !== "string" ||
-    typeof state.fingerprint !== "string"
+    state.message.length > 2000 ||
+    /[\p{Cc}\p{Cf}]/u.test(state.message) ||
+    typeof state.fingerprint !== "string" ||
+    !/^[a-f0-9]{64}$/.test(state.fingerprint) ||
+    (state.pid !== undefined &&
+      (!Number.isSafeInteger(state.pid) || state.pid < 1)) ||
+    (state.checkedAt !== undefined &&
+      (typeof state.checkedAt !== "string" ||
+        !Number.isFinite(Date.parse(state.checkedAt)))) ||
+    (state.imageId !== undefined &&
+      !/^sha256:[a-f0-9]{64}$/.test(state.imageId)) ||
+    (state.commitSha !== undefined &&
+      !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(state.commitSha)) ||
+    (state.screenshotUrl !== undefined &&
+      state.screenshotUrl !== `/api/projects/${project}/onboarding/screenshot`)
   )
     throw new EnvironmentAccessError(
       "Environment test state could not be read.",
       503,
     );
-  if (state.diagnosis) {
+  if (state.diagnosis !== undefined) {
     const diagnosis = environmentDiagnosis(state.diagnosis);
     if (!diagnosis)
       throw new EnvironmentAccessError(
@@ -158,7 +204,7 @@ function read(root: string, project: string): Stored | undefined {
       );
     state.diagnosis = diagnosis;
   }
-  if (state.checks) {
+  if (state.checks !== undefined) {
     const checks = environmentChecks(state.checks);
     if (!checks)
       throw new EnvironmentAccessError(
@@ -167,14 +213,45 @@ function read(root: string, project: string): Stored | undefined {
       );
     state.checks = checks;
   }
-  return state;
+  if (
+    state.status === "passed" &&
+    (!state.checkedAt ||
+      !state.screenshotUrl ||
+      !state.checks?.length ||
+      state.checks.some((check) => !check.passed))
+  )
+    throw new EnvironmentAccessError(
+      "Environment test state could not be read.",
+      503,
+    );
+  return {
+    status: state.status,
+    message: state.message,
+    fingerprint: state.fingerprint,
+    ...(state.pid !== undefined ? { pid: state.pid } : {}),
+    ...(state.checkedAt ? { checkedAt: state.checkedAt } : {}),
+    ...(state.checks ? { checks: state.checks } : {}),
+    ...(state.diagnosis ? { diagnosis: state.diagnosis } : {}),
+    ...(state.screenshotUrl ? { screenshotUrl: state.screenshotUrl } : {}),
+    ...(state.imageId ? { imageId: state.imageId } : {}),
+    ...(state.commitSha ? { commitSha: state.commitSha } : {}),
+  };
 }
 export function environmentVerificationStatus(
   root: string,
   project: Project,
   env: NodeJS.ProcessEnv = process.env,
 ): EnvironmentVerification {
-  const state = read(root, project.config.name);
+  let state: Stored | undefined;
+  try {
+    state = read(root, project.config.name);
+  } catch {
+    return {
+      status: "failed",
+      message:
+        "The saved environment check could not be read. Retry to replace it with fresh browser evidence.",
+    };
+  }
   if (
     !state ||
     state.fingerprint !==
@@ -213,6 +290,7 @@ export function createEnvironmentAccess(options: {
       environmentNamespace: root,
     });
   const active = new Map<string, Promise<void>>();
+  let closed = false;
   const unsavedFailures = new Map<string, EnvironmentVerification>();
   const status = (name: string) =>
     unsavedFailures.get(
@@ -237,13 +315,16 @@ export function createEnvironmentAccess(options: {
     },
     job: string,
   ) {
-    const image = await docker.ensureImage();
+    const image = await docker.ensureImage().catch(() => {
+      throw diagnosed("browser_unavailable");
+    });
     if (!/^shipgremlins-local:[a-f0-9]{16}$/.test(image))
       throw diagnosed("browser_unavailable");
     const name = `gremlins-probe-${job}`;
     let checks: EnvironmentCheck[] = [];
+    let created = false;
     try {
-      const created = await run([
+      const creation = await run([
         "create",
         "--name",
         name,
@@ -272,7 +353,8 @@ export function createEnvironmentAccess(options: {
         "-e",
         ENVIRONMENT_PROBE,
       ]);
-      if (created.code !== 0) throw diagnosed("browser_unavailable");
+      if (creation.code !== 0) throw diagnosed("browser_unavailable");
+      created = true;
       const result = await run(["start", "--attach", "--interactive", name], {
         stdin: JSON.stringify(input),
         timeoutMs: 300000,
@@ -350,10 +432,26 @@ export function createEnvironmentAccess(options: {
           // A cleanup failure must not become a successful readiness result.
           // eslint-disable-next-line no-unsafe-finally
           throw diagnosed("cleanup_pending", checks);
+      } else if (
+        created &&
+        !(
+          inspected &&
+          inspected.code !== 0 &&
+          /no such (object|container)/i.test(inspected.stderr)
+        )
+      ) {
+        // A created browser must be proved removed or owned before readiness.
+        // eslint-disable-next-line no-unsafe-finally
+        throw diagnosed("cleanup_pending", checks);
       }
     }
   }
   async function verify(name: string) {
+    if (closed)
+      throw new EnvironmentAccessError(
+        "The controller is stopping. Retry after it restarts.",
+        503,
+      );
     const project = loadProject(root, projectKey(name)),
       verification = effectiveVerification(project.config);
     if (verification.mode !== "browser")
@@ -455,6 +553,23 @@ export function createEnvironmentAccess(options: {
         let leased = false;
         try {
           if (target.kind === "docker") {
+            try {
+              assertPublicBuildValues(
+                target,
+                [
+                  ...new Set([
+                    ...CONNECTIONS.map((connection) => connection.name),
+                    ...projectConnections(root).map(
+                      (connection) => connection.name,
+                    ),
+                  ]),
+                ].map((name) => values[name]),
+              );
+            } catch {
+              throw new EnvironmentAccessError(
+                "A public build argument contains a saved credential. Move it to a BuildKit TEST_* secret reference before retrying.",
+              );
+            }
             if (!docker.smokeEnvironment)
               throw new EnvironmentAccessError(
                 "This controller does not support managed Docker environments.",
@@ -485,11 +600,15 @@ export function createEnvironmentAccess(options: {
             const env = Object.fromEntries(
               Object.entries(target.env ?? {}).map(([key, ref]) => {
                 const value = values[ref];
-                if (!value)
-                  throw new EnvironmentAccessError(
-                    "Save all named test-only application inputs in Connections first.",
-                  );
+                if (!value) throw diagnosed("app_inputs_missing");
                 return [key, value];
+              }),
+            );
+            const buildSecrets = Object.fromEntries(
+              Object.entries(target.buildSecrets ?? {}).map(([id, ref]) => {
+                const value = values[ref];
+                if (!value) throw diagnosed("app_inputs_missing");
+                return [id, value];
               }),
             );
             const environment = await docker.smokeEnvironment(
@@ -498,6 +617,7 @@ export function createEnvironmentAccess(options: {
                 target,
                 ...(pinned ? { source: pinned } : {}),
                 env,
+                buildSecrets,
               },
               async (environment) => {
                 result = await probe(
@@ -569,6 +689,19 @@ export function createEnvironmentAccess(options: {
         });
       })
       .catch((error) => {
+        if (error instanceof TestEnvironmentError) {
+          const code =
+            error.code === "missing_inputs" ? "app_inputs_missing" : error.code;
+          if (environmentDiagnosis({ code }))
+            error = diagnosed(code, completedChecks);
+        } else if (error instanceof HostingError) {
+          error = diagnosed(
+            ["credentials", "forbidden"].includes(error.code)
+              ? "hosting_credentials"
+              : "environment_unreachable",
+            completedChecks,
+          );
+        }
         const failure: EnvironmentVerification = {
           status: "failed",
           checkedAt: new Date().toISOString(),
@@ -627,6 +760,7 @@ export function createEnvironmentAccess(options: {
       await Promise.all(active.values());
     },
     async close() {
+      closed = true;
       await this.idle();
     },
   };

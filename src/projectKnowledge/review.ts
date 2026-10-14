@@ -4,6 +4,11 @@ import { LABELS } from "../dispatcher/notes.ts";
 import type { LinearClient, LinearTicket } from "../services/types.ts";
 import { ProjectKnowledgeError } from "./index.ts";
 import { acceptanceCriteria } from "../delivery/index.ts";
+import {
+  createAutomaticApprovals,
+  AUTO_APPROVED_LABEL,
+  approvalPolicyRevision,
+} from "../autonomy/approval.ts";
 
 const revision = (project: Project, ticket: LinearTicket) =>
   createHash("sha256")
@@ -196,6 +201,29 @@ export function createProjectReview(options: {
           );
       }
       await client.addLabel(ticket.id, LABELS.approved);
+      // Exact-revision owner approval is the sole automatic-origin override.
+      const automaticApprovals = createAutomaticApprovals(options.root);
+      if (automaticApprovals.isAutomatic(project, ticket)) {
+        const current = await client.getTicket(ticket.id);
+        if (
+          !current ||
+          current.title !== ticket.title ||
+          approvalPolicyRevision(loadProject(options.root, name)) !==
+            approvalPolicyRevision(project) ||
+          current.description !== ticket.description ||
+          current.projectId !== ticket.projectId ||
+          current.teamId !== ticket.teamId
+        )
+          throw new ProjectKnowledgeError(
+            "Ticket scope changed during manual approval. Refresh and review it again.",
+            409,
+          );
+        await client.removeLabel(ticket.id, AUTO_APPROVED_LABEL);
+        await automaticApprovals.markManual(
+          loadProject(options.root, name),
+          current,
+        );
+      }
       return {
         ok: true,
         identifier: ticket.identifier,

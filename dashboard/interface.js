@@ -121,9 +121,9 @@
     [
       "linear-connection",
       "Linear",
-      "Ideas become tickets. Gremlins keep them organized.",
+      "Review proposals and track approved coding work. Add when you need tickets.",
       "linear",
-      "essentials",
+      "extras",
     ],
     [
       "slack-connection",
@@ -186,13 +186,29 @@
     ["essentials", "Start here"],
     ["hosting", "Hosting"],
     ["insights", "Product insights"],
-    ["extras", "Notifications & access"],
+    ["extras", "Workflow & access"],
   ];
   const library = node("div", "connection-library");
   const tabs = node("nav", "surface-tabs");
   tabs.setAttribute("aria-label", "Connection categories");
   const grid = node("div", "connection-library-grid");
   const help = node("p", "connection-library-help");
+  const searchRow = node("div", "connection-library-search-row");
+  const searchLabel = node("label", "sr-only", "Find a connection");
+  const search = node("input", "connection-library-search");
+  search.id = "connection-library-search";
+  searchLabel.htmlFor = search.id;
+  search.type = "search";
+  search.placeholder = "Find a connection…";
+  const searchResult = node("span", "connection-library-search-result");
+  searchResult.setAttribute("role", "status");
+  const noMatch = node(
+    "p",
+    "connection-library-empty",
+    "No matching connections. Try a provider name or what you want to connect.",
+  );
+  noMatch.hidden = true;
+  searchRow.append(searchLabel, search, searchResult);
   const dialog = node("dialog", "connection-detail-dialog");
   dialog.setAttribute("aria-labelledby", "connection-detail-title");
   const header = node("header", "surface-dialog-header");
@@ -214,23 +230,46 @@
   dialog.append(header, body, continuation);
   const entries = new Map();
   let trigger = null;
+  let selectedCategory = "essentials";
+  const filterConnections = () => {
+    const query = search.value.trim().toLowerCase();
+    let count = 0;
+    for (const entry of entries.values()) {
+      entry.tile.hidden = query
+        ? !entry.searchText.includes(query)
+        : entry.category !== selectedCategory;
+      if (!entry.tile.hidden) count += 1;
+    }
+    searchResult.textContent = query
+      ? `${count} ${count === 1 ? "match" : "matches"} across all connections`
+      : "";
+    noMatch.hidden = count > 0;
+  };
+  search.addEventListener("input", filterConnections);
+  search.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !search.value) return;
+    event.preventDefault();
+    search.value = "";
+    filterConnections();
+  });
   const select = (category) => {
+    selectedCategory = category;
+    search.value = "";
     for (const tab of tabs.children)
       tab.setAttribute(
         "aria-current",
         tab.dataset.category === category ? "page" : "false",
       );
-    for (const entry of entries.values())
-      entry.tile.hidden = entry.category !== category;
+    filterConnections();
     help.textContent = {
       essentials:
-        "Connect your AI, source control, and Linear. Your gremlins handle routine project setup from there.",
+        "Start with AI and source control. Your crew can investigate the repository before you connect a ticket tracker or hosting.",
       hosting:
-        "No app to run yet? You can come back after the foundation is built.",
+        "Use your existing staging environment, or run your app locally with Docker. Hosted provider connections are optional.",
       insights:
         "Optional context for better product decisions. Add these when you have signals to learn from.",
       extras:
-        "Keep up with your crew, and give browser tests the access they need.",
+        "Add Linear for approved coding work, Slack for updates, or test accounts for browser verification.",
     }[category];
   };
   const finish = () => {
@@ -294,7 +333,14 @@
       }
     }
     body.append(panel);
-    entries.set(id, { tile, panel, button, name, category });
+    entries.set(id, {
+      tile,
+      panel,
+      button,
+      name,
+      category,
+      searchText: `${name} ${description}`.toLowerCase(),
+    });
     const sync = () => {
       const state = panel.querySelector(
         ".runtime-badge, .signal-state, .saved-state, .token-state",
@@ -321,11 +367,27 @@
     });
     sync();
   }
-  for (const [key, label] of categories) {
+  for (const [index, [key, label]] of categories.entries()) {
     const button = node("button", "", label);
     button.type = "button";
     button.dataset.category = key;
     button.addEventListener("click", () => select(key));
+    button.addEventListener("keydown", (event) => {
+      const next =
+        event.key === "ArrowRight"
+          ? (index + 1) % categories.length
+          : event.key === "ArrowLeft"
+            ? (index - 1 + categories.length) % categories.length
+            : event.key === "Home"
+              ? 0
+              : event.key === "End"
+                ? categories.length - 1
+                : null;
+      if (next === null) return;
+      event.preventDefault();
+      select(categories[next][0]);
+      tabs.children[next].focus();
+    });
     tabs.append(button);
   }
   for (const group of connections.querySelectorAll(
@@ -333,7 +395,7 @@
   ))
     group.hidden = true;
   connections.querySelector(".connection-categories")?.remove();
-  library.append(tabs, help, grid);
+  library.append(tabs, help, searchRow, grid, noMatch);
   connections.querySelector(".panel-heading").after(library);
   connections.append(dialog);
   select("essentials");

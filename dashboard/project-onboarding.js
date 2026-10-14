@@ -175,11 +175,20 @@
       Array.isArray(advanced) ||
       typeof advanced !== "object" ||
       Object.keys(advanced).some(
-        (key) => !["start", "env", "services", "migrate", "seed"].includes(key),
+        (key) =>
+          ![
+            "start",
+            "env",
+            "services",
+            "migrate",
+            "seed",
+            "buildArgs",
+            "buildSecrets",
+          ].includes(key),
       )
     )
       throw new Error(
-        "Advanced settings support start, env, services, migrate, and seed only.",
+        "Advanced settings support start, env, services, migrate, seed, public buildArgs and buildSecrets references only.",
       );
     return {
       profile: "docker",
@@ -401,7 +410,15 @@
       const profile =
         environment?.profile || s.data?.report?.recommendation || "hosted";
       const advanced = {};
-      for (const key of ["start", "env", "services", "migrate", "seed"])
+      for (const key of [
+        "start",
+        "env",
+        "services",
+        "migrate",
+        "seed",
+        "buildArgs",
+        "buildSecrets",
+      ])
         if (local?.[key] !== undefined) advanced[key] = local[key];
       return {
         ...protectionDraft(target, s.project),
@@ -588,7 +605,7 @@
       if (s.project.ideaPlanId && s.data.foundation?.stage !== "ready")
         return false;
       if (s.data.environment)
-        return s.data.environment.target.kind === "vercel";
+        return s.data.environment.target.role !== "production";
       return (getStatus()?.serviceConnections || []).some(
         (connection) =>
           connection.provider === "vercel" &&
@@ -1290,6 +1307,16 @@
               project: s.project,
               getStatus,
               isLocked: () => disabled(s),
+              onConfigured: async () => {
+                s.data = await api(endpoint(s));
+                s.draft = initialDraft(s);
+                s.baseline = JSON.stringify(s.draft);
+                s.draftRevision = s.data.configurationRevision;
+                s.showVercel = s.showForm = false;
+                s.formSignature = "";
+                await onSaved(s.project.name);
+                await prepareEnvironment(s, undefined, true);
+              },
               onSelect: ({ target, label, url }) => {
                 const previous =
                   s.draft.providerTarget || s.draft.existingTarget;
@@ -1510,13 +1537,13 @@
         advanced.content.append(
           node(
             "p",
-            "Advanced JSON can set start, migrate, seed (argument arrays), PostgreSQL/Redis services, and env mappings. env values are dedicated secret names from Connections, never token values.",
+            "Advanced JSON can set startup commands, PostgreSQL/Redis services and env mappings. Build inputs are separate: buildArgs contains public literals; buildSecrets maps BuildKit ids to TEST_* names saved privately in Connections. Never paste credentials here. The Dockerfile must consume secrets using RUN --mount=type=secret.",
           ),
           field(
             s,
             "advanced",
             "Runtime settings",
-            'Example: {"env":{"APP_TEST_KEY":"MY_APP_TEST_KEY"}}',
+            'Example: {"env":{"APP_TEST_KEY":"MY_APP_TEST_KEY"},"buildArgs":{"NEXT_PUBLIC_API_URL":"https://staging.example.test"},"buildSecrets":{"npmrc":"TEST_NPMRC"}}',
             "textarea",
           ),
         );
@@ -1852,9 +1879,9 @@
         container.append(details.section);
       }
     }
-    async function choosePreview(s, choice) {
+    async function choosePreview(s, choice, repair = false) {
       if (disabled(s) || dirty(s)) return;
-      if (choice?.target) {
+      if (choice?.target && !repair) {
         try {
           await prepareEnvironment(s, withAccess(choice.target, s.draft));
         } catch (error) {
@@ -1868,12 +1895,19 @@
       s.error = "";
       paint(s);
       try {
-        if (choice?.projectId)
-          await api(endpoint(s, "vercel/discover"), {
+        if (choice?.projectId) {
+          const discovered = await api(endpoint(s, "vercel/discover"), {
             connectionId: choice.connectionId,
             projectId: choice.projectId,
             ...(choice.teamId !== undefined ? { teamId: choice.teamId } : {}),
           });
+          // Repository, branch bases and missing branches are resolved by the
+          // controller; present one concrete plan instead of manual ID forms.
+          await api(endpoint(s, "vercel/prepare"), {
+            revision: discovered.revision,
+            ...(repair ? { repairWorkflow: true } : {}),
+          });
+        }
         if (
           destroyed ||
           entries.get(s.project.name) !== s ||
@@ -2198,6 +2232,27 @@
       );
       analyze.disabled = disabled(s) || !s.data;
       s.analysis.append(analyze);
+      const compose = button("Import Compose from repository", () =>
+        run(s, "import-compose", {
+          revision: s.data.revision,
+          ...(s.composePath?.trim() ? { path: s.composePath.trim() } : {}),
+        }),
+      );
+      compose.disabled = disabled(s) || !s.data || dirty(s);
+      s.analysis.append(compose);
+      const composePath = node("input"),
+        composePathLabel = node("label", "Compose file (optional)"),
+        composePathField = node("div", undefined, "field");
+      composePath.id = `compose-import-${s.project.name}`;
+      composePathLabel.htmlFor = composePath.id;
+      composePath.placeholder = "Auto-detect, or enter deploy/compose.test.yml";
+      composePath.value = s.composePath || "";
+      composePath.disabled = disabled(s);
+      composePath.addEventListener("input", () => {
+        s.composePath = composePath.value;
+      });
+      composePathField.append(composePathLabel, composePath);
+      s.analysis.append(composePathField);
       const manual = button(
         s.data?.report
           ? "Choose a test environment"
@@ -2232,6 +2287,72 @@
           node("p", "Loading environment setup…", "onboarding-help"),
         );
       const report = s.data?.report;
+      if (report?.composeImports?.length) {
+        const imported = node("section", undefined, "onboarding-advanced");
+        imported.append(
+          node("h4", "Repository Compose stacks"),
+          node(
+            "p",
+            "Review the translation below. Importing does not start containers or change project settings.",
+            "onboarding-help",
+          ),
+        );
+        for (const option of report.composeImports) {
+          const card = node("section", undefined, "onboarding-advanced");
+          card.append(
+            node("h4", `${option.path} · ${option.service || "Compose file"}`),
+          );
+          card.append(
+            list(
+              option.diagnostics.map(
+                (item) =>
+                  `${item.severity === "error" ? "Unsupported" : "Note"} · ${item.feature}: ${item.message}`,
+              ),
+              "onboarding-help",
+            ),
+          );
+          if (option.status === "ready" && option.target) {
+            const use = button("Use this disposable recipe", () => {
+              const target = option.target;
+              s.draft = {
+                ...s.draft,
+                profile: "docker",
+                recipeKind: target.recipe.kind,
+                dockerfile: target.recipe.dockerfile || "Dockerfile",
+                context: target.recipe.context || ".",
+                image: target.recipe.image || "",
+                port: String(target.port),
+                healthPath: target.healthPath || "/",
+                advanced: JSON.stringify(
+                  Object.fromEntries(
+                    [
+                      "start",
+                      "env",
+                      "services",
+                      "migrate",
+                      "seed",
+                      "buildArgs",
+                      "buildSecrets",
+                    ]
+                      .filter((key) => target[key] !== undefined)
+                      .map((key) => [key, target[key]]),
+                  ),
+                  null,
+                  2,
+                ),
+              };
+              s.showForm = true;
+              s.showAnalysis = false;
+              s.formSignature = "";
+              paint(s);
+            });
+            use.disabled = disabled(s) || s.data.stale || dirty(s);
+            card.append(use);
+          }
+          imported.append(card);
+        }
+        s.analysis.append(imported);
+      }
       if (report) {
         if (s.data.stale)
           s.analysis.append(
@@ -2544,6 +2665,12 @@
           primaryActions.append(s.recoveryAction);
         }
         primaryActions.append(s.test);
+        if (target.kind === "vercel")
+          primaryActions.append(
+            button("Repair PM staging setup", () =>
+              choosePreview(s, target, true),
+            ),
+          );
         if (
           !ready &&
           !diagnosis &&

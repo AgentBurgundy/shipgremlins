@@ -33,7 +33,7 @@ const USAGE = `ShipGremlins setup
                  [--runner-label pm] [--json]
 
 Status is read-only. --check exits 1 when local preflight fails.
-Init creates missing files, preserves valid existing settings, and starts PMs disabled.
+Init creates missing files and preserves existing settings. New PMs begin automatic discovery once connected.
 Works from any directory after the global install. Use --home PATH to select a configuration.
 --project is a lowercase local ID; --repo is the app. Local Docker workers are the default.
 No fork or automation repository is required. --hub-repo is only for optional CI runners.

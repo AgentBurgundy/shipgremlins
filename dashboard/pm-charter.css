@@ -1,25 +1,26 @@
 .pm-charter-editor {
   min-width: 0;
+  color: var(--pm-ink, #18392b);
 }
 .pm-charter-editor .charter-navigation {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
   gap: 4px;
-  padding: 5px;
-  margin: 0 0 24px;
-  border: 1px solid #e4eae6;
-  border-radius: 11px;
-  background: #f0f4f2;
+  padding: 4px;
+  margin: 0 0 16px;
+  border: 1px solid var(--pm-line, #e1e9e3);
+  border-radius: 12px;
+  background: #f3f6f3;
 }
 .pm-charter-editor .charter-navigation button {
   min-width: 0;
-  min-height: 42px;
+  min-height: 44px;
   padding: 10px 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
-  color: var(--muted, #617169);
+  color: var(--pm-muted, #667b70);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -28,23 +29,27 @@
   cursor: pointer;
 }
 .pm-charter-editor .charter-navigation button[aria-selected="true"] {
-  background: #fff;
-  color: #20452e;
-  box-shadow: 0 1px 4px #18332412;
+  background: var(--pm-surface, #fff);
+  color: var(--pm-accent, #245b40);
+  box-shadow:
+    0 1px 3px #18392b0d,
+    0 0 0 1px #18392b08;
 }
 .pm-charter-editor
   .charter-navigation
   button:hover:not([aria-selected="true"]) {
-  color: #20452e;
-  background: #e6eee8;
+  color: var(--pm-accent, #245b40);
+  background: #eaf0eb;
 }
 .pm-charter-editor .charter-navigation button:focus-visible {
-  outline: 3px solid #72a354;
+  outline: 2px solid var(--pm-accent, #245b40);
   outline-offset: 2px;
 }
 .pm-charter-editor .charter-panel {
-  padding: 0;
-  border: 0;
+  padding: 22px;
+  border: 1px solid var(--pm-line, #e1e9e3);
+  border-radius: 14px;
+  background: var(--pm-surface, #fff);
   margin: 0;
   min-width: 0;
 }
@@ -52,54 +57,99 @@
   display: none;
 }
 .pm-charter-editor .charter-panel > h3 {
-  margin: 0 0 7px;
-  font-size: 16px;
+  margin: 0 0 6px;
+  color: var(--pm-ink, #18392b);
+  font-size: 17px;
   font-weight: 650;
   letter-spacing: -0.025em;
   line-height: 1.4;
 }
 .pm-charter-editor .charter-panel-description {
-  max-width: 64ch;
-  margin: 0 0 22px;
-  color: var(--muted, #617169);
+  max-width: 62ch;
+  margin: 0 0 24px;
+  color: var(--pm-muted, #667b70);
   font-size: 13px;
   line-height: 1.65;
 }
 .pm-charter-editor .charter-panel .field {
-  margin: 0 0 22px;
+  min-width: 0;
+  margin: 0 0 20px;
+  scroll-margin-block: 24px;
 }
 .pm-charter-editor .charter-panel .field:last-child {
   margin-bottom: 0;
 }
+.pm-charter-editor .charter-panel .field > label {
+  display: block;
+  margin: 0 0 8px;
+  color: var(--pm-ink, #18392b);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
 .pm-charter-editor textarea {
+  box-sizing: border-box;
+  display: block;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 94px;
+  min-height: 112px;
   resize: vertical;
-  border: 1px solid #d6dfd8;
-  border-radius: 9px;
-  padding: 11px 13px;
+  border: 1px solid #cddbd0;
+  border-radius: 10px;
+  background: var(--pm-surface, #fff);
+  color: var(--pm-ink, #18392b);
+  padding: 12px 14px;
   font: inherit;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.65;
+  caret-color: var(--pm-accent, #245b40);
+}
+.pm-charter-editor textarea::placeholder {
+  color: #7c8b81;
+  opacity: 1;
+}
+.pm-charter-editor textarea:hover:not(:focus) {
+  border-color: #a9bfb0;
+}
+.pm-charter-editor textarea:focus-visible {
+  border-color: var(--pm-accent, #245b40);
+  outline: 2px solid var(--pm-accent, #245b40);
+  outline-offset: 2px;
+}
+.pm-charter-editor textarea:disabled {
+  background: #f3f6f3;
+  color: var(--pm-muted, #667b70);
+  cursor: not-allowed;
 }
 .pm-charter-editor .setup-help {
-  margin: 7px 0 0;
+  max-width: 72ch;
+  margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--muted, #617169);
+  color: var(--pm-muted, #667b70);
 }
 @media (max-width: 600px) {
   .pm-charter-editor .charter-navigation {
     gap: 2px;
-    margin-bottom: 20px;
+    margin-bottom: 14px;
   }
   .pm-charter-editor .charter-navigation button {
-    padding: 9px 6px;
+    padding: 10px 6px;
     font-size: 12px;
+  }
+  .pm-charter-editor .charter-panel {
+    padding: 17px 15px;
+    border-radius: 12px;
+  }
+  .pm-charter-editor .charter-panel > h3 {
+    font-size: 16px;
+  }
+  .pm-charter-editor .charter-panel-description {
+    margin-bottom: 20px;
   }
   .pm-charter-editor textarea {
     font-size: 16px;
+    padding: 11px 12px;
   }
 }

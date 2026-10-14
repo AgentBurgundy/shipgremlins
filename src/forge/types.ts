@@ -57,6 +57,40 @@ export interface WorkflowRun {
   htmlUrl: string;
 }
 
+/** Provider-authenticated workflow inputs and the immutable project snapshot it used. */
+export interface WorkflowRunEvidence {
+  run: WorkflowRun;
+  repository: string;
+  workflowFile: string;
+  ref: string;
+  event: "workflow_dispatch";
+  inputs: Record<string, string>;
+  projectRepository: string;
+  projectInstanceId?: string;
+  projectIntegrationBranch: string;
+}
+
+export interface FailedJobRerunTarget {
+  provider: "github" | "gitlab" | "fake";
+  repository: string;
+  sha: string;
+  runId: number;
+  /** GitHub run_attempt before admission. */
+  attempt: number;
+  /** GitLab jobs before retry; replacement IDs establish acknowledgment. */
+  jobs?: { id: number; name: string }[];
+}
+
+export interface FailedJobRerunPlan {
+  state: "ready" | "pending";
+  targets: FailedJobRerunTarget[];
+}
+
+export interface FailedJobRerunEvidence {
+  acknowledged: boolean;
+  pending: boolean;
+}
+
 export interface CreatePullInput {
   title: string;
   head: string;
@@ -87,6 +121,15 @@ export interface MergeResult {
 }
 
 export interface Forge {
+  getPullDiffStats?(
+    repo: RepoRef,
+    number: number,
+  ): Promise<{
+    headSha: string;
+    files: number;
+    additions: number;
+    deletions: number;
+  }>;
   /** Complete immutable tree; reject truncated results instead of proving partial inclusion. */
   getRevisionTree?(repo: RepoRef, sha: string): Promise<RevisionTreeEntry[]>;
   /** Complete changed-path set, including old paths of renames. */
@@ -138,6 +181,11 @@ export interface Forge {
   getChecks(repo: RepoRef, sha: string): Promise<CheckSummary>;
   /** re-run every failed job for the sha's check runs (no-op when none) */
   rerunFailedJobs(repo: RepoRef, sha: string): Promise<void>;
+  planFailedJobRerun?(repo: RepoRef, sha: string): Promise<FailedJobRerunPlan>;
+  rerunFailedJobTarget?(target: FailedJobRerunTarget): Promise<void>;
+  getFailedJobRerunEvidence?(
+    target: FailedJobRerunTarget,
+  ): Promise<FailedJobRerunEvidence>;
 
   // ── workflows (always on the HUB repo) ────────────────────────────────────
   /** fire workflow_dispatch; returns the run id once GitHub has created it */
@@ -148,4 +196,8 @@ export interface Forge {
     inputs: Record<string, string>,
   ): Promise<WorkflowRun>;
   getWorkflowRun(hubRepo: RepoRef, runId: number): Promise<WorkflowRun | null>;
+  getWorkflowRunEvidence?(
+    hubRepo: RepoRef,
+    runId: number,
+  ): Promise<WorkflowRunEvidence | null>;
 }

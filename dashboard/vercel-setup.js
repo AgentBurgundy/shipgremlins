@@ -28,6 +28,7 @@
     api,
     project,
     onSelect,
+    onConfigured,
     getStatus = () => null,
     isLocked = () => false,
   }) => {
@@ -186,6 +187,17 @@
         const result = await api(endpoint(actionName), body);
         if (destroyed || request !== generation) return;
         state = result;
+        if (
+          state?.status === "deployed" &&
+          !state.stale &&
+          state.plan?.workflowBranches &&
+          !state.workflowApplied
+        ) {
+          state = await api(endpoint("apply-workflow"), {
+            revision: state.revision,
+          });
+          if (destroyed || request !== generation) return;
+        }
         if (actionName) selected = "";
         loaded = true;
         render();
@@ -217,6 +229,28 @@
           busy = false;
           controlState();
           schedule();
+          // A preview created by this setup is already the reviewed choice.
+          // Continue saving access and testing it without another picker click.
+          if (
+            state?.status === "deployed" &&
+            state.plan &&
+            !state.stale &&
+            (!state.plan.workflowBranches || state.workflowApplied) &&
+            safePreview(state.deployment) &&
+            selected !== state.deployment.id
+          ) {
+            if (state.workflowApplied && onConfigured) {
+              selected = state.deployment.id;
+              try {
+                await onConfigured();
+              } catch (failure) {
+                selected = "";
+                render();
+                error.textContent = `The workflow was saved. ${failure.message || "Retry the environment check to finish setup."}`;
+                error.hidden = false;
+              }
+            } else choose(state.deployment);
+          }
         }
       }
     }
@@ -452,6 +486,19 @@
         controlState();
         return;
       }
+      if (state.status !== "prepared" && !building(state))
+        stage.append(
+          action(
+            "Repair PM staging setup",
+            () =>
+              call(
+                "prepare",
+                { revision: state.revision, repairWorkflow: true },
+                "Checking GitHub/GitLab branches, Vercel preview and the saved delivery workflow…",
+              ),
+            true,
+          ),
+        );
       stage.append(
         node(
           "p",
@@ -537,6 +584,14 @@
         ])
           facts.append(node("dt", label), node("dd", value));
         review.append(facts);
+        if (plan.staging)
+          review.append(
+            node(
+              "p",
+              `${plan.staging.create ? "Create" : "Keep"} ${plan.staging.branch} at ${plan.staging.sha.slice(0, 7)}. PM changes deploy separately on ${plan.branch}.`,
+              "vercel-setup-note",
+            ),
+          );
         for (const warning of plan.warnings)
           review.append(node("p", warning, "vercel-setup-note"));
         const acknowledgment = node("label", undefined, "vercel-data-confirm"),
@@ -579,17 +634,22 @@
             "vercel-setup-note",
           ),
         );
-        let branch = "pm-staging",
-          baseBranch = inventory.selectedProject.productionBranch || "main",
+        let branch = project.branches?.integration || "pm-staging",
+          baseBranch = "",
           customEnvironmentId = "";
         const grid = node("div", undefined, "vercel-setup-pickers");
         grid.append(
           field("Test branch", branch, null, (value) => {
             branch = value;
           }),
-          field("Start from branch", baseBranch, null, (value) => {
-            baseBranch = value;
-          }),
+          field(
+            "Start from branch (automatic when blank)",
+            baseBranch,
+            null,
+            (value) => {
+              baseBranch = value;
+            },
+          ),
         );
         if (inventory.selectedProject.customEnvironments.length)
           grid.append(
@@ -616,7 +676,7 @@
               {
                 revision: state.revision,
                 branch: branch.trim(),
-                baseBranch: baseBranch.trim(),
+                ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}),
                 ...(customEnvironmentId ? { customEnvironmentId } : {}),
               },
               "Checking the source branch and preparing your preview plan…",

@@ -31,7 +31,7 @@ Choose **Adopt a PM Gremlin** and describe what it should take care of. **Meet m
 gremlin** proposes a name, product brief, and settings using your goal and
 repository paths. Review its rationale, scope, and uncertainty before choosing
 **Adopt [name]**. The original goal remains its mandate. Generating a draft does
-not save a PM or provision Linear. Adoption saves it with automation paused; its
+not save a PM or provision Linear. Adoption enables daily patrols and approved-ticket pickup behind project readiness; its
 welcome step offers **Explore the codebase** for Discovery, or **Prepare first
 mission** when source access, Claude Code, or a ready worker is missing. Linear
 and a browser environment are not required for Discovery. Fresh ideas use
@@ -51,8 +51,7 @@ It does not file issues or change your saved ownership or instructions. See the
 
 Use **Run now** for one supervised patrol. It can prepare missing Linear mappings
 and required connection verification using the selected account. Paused automation does
-not prevent an explicit run. Inspect its Activity before selecting **Enable
-automation**. That control enables both the PM's UTC patrol schedule and automatic
+not prevent an explicit run. New PMs run daily once readiness passes; existing paused PMs can use **Enable automation**. That control enables both the PM's UTC patrol schedule and automatic
 pickup of approved Coding tickets for its area. **Pause automation** stops new
 automatic work and keeps the mandate, mapping, and history; existing work is not
 canceled. Manual Coding runs remain available for open, properly approved tickets.
@@ -83,7 +82,9 @@ different account. Verify the project after changing its access or mappings.
 
 ## Start with repository checks
 
-New projects default to repository verification and draft pull or merge requests against `main`. The repository picker suggests its default branch. Change that branch if your review process uses another one.
+New projects default to `pm-staging → staging → main`. Connect a browser environment for owning-PM verification; Vercel setup can create the missing branches and preview. Existing Vercel apps have **Environment → Repair PM staging setup**. You can investigate the production checkout with Discovery before hosting is ready.
+
+For repository-only work, explicitly choose the draft pull-request workflow below. It uses configured source checks without requiring a hosted app.
 
 ```json
 {

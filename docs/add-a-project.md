@@ -10,16 +10,18 @@ or separate automation repository is not required. Terminal initialization is:
 gremlins setup init --project my-app --repo your-org/my-app
 ```
 
+New projects use `pm-staging → staging → main`. For GitHub + Vercel, **Environment → Repair PM staging setup** prepares missing branches and a Preview deployment, saves the workflow, connects private access, and checks readiness. Existing branches, commands and PM schedules are preserved.
+
 The new project's **Environment** page starts a Setup Gremlin to inspect the source and recommend hosted staging or a disposable Docker app. Review and test the selected strategy, then create a PM. You can also keep repository-only verification. Review the PR base branch and test commands under **Edit settings**. See [project onboarding](PROJECT_ONBOARDING.md) for draft setup PRs, test accounts and Docker services.
 Use Configuration to edit advanced JSON and File locations to find the mandate/memory
 files. Create a Docker worker in the dashboard and wait for its browser screenshot
-verification. Choose **Verify connections** or run `gremlins doctor my-app`, then enable reviewed areas. The local
+verification. Choose **Verify connections** or run `gremlins doctor my-app`, then enabled PMs follow their saved schedules (daily by default). The local
 controller reads their schedules in UTC; there is no `crons write` or commit/push
 step for local scheduling. Inspect a supervised PM run before relying on it.
 
 Developer jobs require an open `pm-approved` ticket in the area's Linear project
 with its `pm:AREA` label. Approval is rechecked at launch; the worker publishes a draft
-PR/MR to the configured base branch only after checks pass. Legacy promotion projects use their integration branch. The model does not publish
+PR/MR to the configured base branch only after checks pass. The default promotion workflow uses pm-staging. The model does not publish
 directly, and jobs cannot merge or mark the ticket Done.
 See [the setup guide](SETUP.md) for background operation and current limits.
 

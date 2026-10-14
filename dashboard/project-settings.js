@@ -310,8 +310,8 @@
       "How changes are reviewed",
       "Normal projects open a draft PR or MR to your chosen base branch.",
       [
-        ["pull-request", "Pull request / merge request"],
-        ["promotion", "Advanced: staged promotion workflow"],
+        ["promotion", "PM staging → staging → production (recommended)"],
+        ["pull-request", "Pull request / merge request only"],
       ],
     );
     const baseWrapper = field(
@@ -326,7 +326,7 @@
       node(
         "p",
         "runner-guidance",
-        "Keep staged promotion only when you have configured its separate branch, deployment, and evidence requirements. Selecting it does not enable automatic promotion.",
+        "Coders work in pm-staging. PMs test the deployed work and combine verified changes into a promotion PR to staging. You review staging and release to production.",
       ),
     );
     const branches = node("div", "project-form-grid");

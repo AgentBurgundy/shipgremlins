@@ -1028,11 +1028,14 @@ export function createLinearProvisioning(options: {
       "linearProjectId",
       "mixpanelReportId",
       "codingEnabled",
+      "enabled",
     ];
     if (
       Object.keys(input).some((key) => !allowed.includes(key)) ||
       typeof input.key !== "string" ||
-      (input.codingEnabled !== undefined && input.codingEnabled !== false) ||
+      (input.codingEnabled !== undefined &&
+        typeof input.codingEnabled !== "boolean") ||
+      (input.enabled !== undefined && typeof input.enabled !== "boolean") ||
       typeof input.name !== "string" ||
       !input.name.trim() ||
       input.name.length > 100 ||
@@ -1092,7 +1095,7 @@ export function createLinearProvisioning(options: {
       throw new LinearProvisioningError(
         "Check ownership paths, metric, WIP limit (1–20), and optional Linear project UUID.",
       );
-    const schedule = input.schedule ?? "0 13 * * 1-5";
+    const schedule = input.schedule ?? "0 13 * * *";
     try {
       if (
         typeof schedule !== "string" ||
@@ -1159,8 +1162,8 @@ export function createLinearProvisioning(options: {
           wipLimit: input.wipLimit ?? 3,
           metric: input.metric ?? "/",
           schedule,
-          enabled: false,
-          codingEnabled: false,
+          enabled: instanceId ? false : (input.enabled ?? true),
+          codingEnabled: instanceId ? false : (input.codingEnabled ?? true),
           ...(input.mixpanelReportId === undefined
             ? {}
             : { mixpanelReportId: input.mixpanelReportId }),

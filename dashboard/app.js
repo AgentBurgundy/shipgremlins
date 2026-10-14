@@ -389,6 +389,7 @@
     timeoutMs = 20000,
     signal,
   ) {
+    if (method === "GET") window.dashboardFreshness?.start(path);
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
@@ -435,8 +436,14 @@
         error.status = response.status;
         throw error;
       }
+      if (method === "GET" && !signal?.aborted)
+        window.dashboardFreshness?.success(path, result);
       return result;
     } catch (error) {
+      if (method === "GET") {
+        if (signal?.aborted) window.dashboardFreshness?.cancel(path);
+        else window.dashboardFreshness?.fail(path);
+      }
       if (error.name === "AbortError")
         throw new Error(
           "The server took too long to respond. Check that ShipGremlins is still running and try again.",
@@ -525,7 +532,10 @@
           )
         : "—",
     );
-    text("overview-worker-count", runnerStatus ? String(verified.length) : "—");
+    text(
+      "overview-worker-count",
+      runnerStatus ? String(verified.length - busy) : "—",
+    );
     text(
       "overview-worker-note",
       !runnerStatus
@@ -738,6 +748,7 @@
 
   async function refreshStatus() {
     const status = await api("/api/status");
+    window.dashboardProjectPreferences?.sync(status);
     renderStatus(status);
     return status;
   }
@@ -831,7 +842,7 @@
     event.preventDefault();
     const values = {};
     for (const input of $("connections-form").querySelectorAll(
-      ".password-wrap input, textarea[data-secret-json]",
+      ".password-wrap input, textarea[data-secret-json], textarea[data-secret-text]",
     )) {
       if (input.value !== "") values[input.name] = input.value;
     }
@@ -850,7 +861,7 @@
     try {
       await api("/api/connections", { values });
       for (const input of $("connections-form").querySelectorAll(
-        ".password-wrap input, textarea[data-secret-json]",
+        ".password-wrap input, textarea[data-secret-json], textarea[data-secret-text]",
       ))
         input.value = "";
       for (const button of $("connections-form").querySelectorAll(
@@ -2936,6 +2947,7 @@
     );
     jobOutput.select(id);
     if (changed) {
+      window.dashboardFreshness?.resetRun();
       $("job-action-confirm").hidden = true;
       message($("job-action-message"), "");
       outputErrors.clear();
@@ -2979,6 +2991,9 @@
     if (!selectedJobId) return;
     renderPatrolOutput();
     const job = mergedJobs().find((item) => item.id === selectedJobId);
+    window.renderRunFailure?.($("run-failure"), job, (tab) =>
+      runViewer.selectTab(tab, { focus: true }),
+    );
     grumblinReport?.select(selectedJobId, job);
     const project = currentStatus?.projects?.find(
       (item) =>
@@ -3233,6 +3248,7 @@
     runViewer.selectTab("output", { focus: true });
   });
   function closeJobDetail({ navigate = true, restoreFocus = true } = {}) {
+    window.dashboardFreshness?.resetRun();
     selectedJobId = "";
     grumblinReport?.clear();
     clearTimeout(jobOutputTimer);
@@ -3490,7 +3506,7 @@
     for (const [id, key] of Object.entries(pmInputKeys))
       $(id).value =
         saved?.[key] ??
-        ({ schedule: "0 13 * * 1-5", metric: "/", wipLimit: "3" }[key] || "");
+        ({ schedule: "0 13 * * *", metric: "/", wipLimit: "3" }[key] || "");
     $("pm-mandate").value = saved?.mandate || "";
     $("pm-mixpanel-report").value = saved?.mixpanelReport || "";
     $("pm-linear-project").value = saved?.linearProject || "";
@@ -3607,7 +3623,7 @@
       : "The area label is generated from this ID.";
     $("pm-creation-readiness").textContent = missing.length
       ? `Still needed: ${missing.join(", ")}. AI can help turn your goal into a working brief.`
-      : "Their brief is ready to review. Adoption saves it with automation off.";
+      : "Their brief is ready to review. Daily patrols and approved coding pickup start when project setup is ready.";
     pmAdoption?.refresh();
   }
   const readPmDraft = () => ({
@@ -3922,7 +3938,7 @@
       $("pm-schedule").focus();
       message(
         $("pm-create-message"),
-        "Use a five-field UTC cron schedule, such as 0 13 * * 1-5.",
+        "Use a five-field UTC cron schedule, such as 0 13 * * *.",
         true,
       );
       return;
@@ -4730,7 +4746,7 @@
     clearDiscardPrompt();
     const pendingToken = [
       ...document.querySelectorAll(
-        ".password-wrap input, textarea[data-secret-json], #gcp-credentials, #slack-webhook",
+        ".password-wrap input, textarea[data-secret-json], textarea[data-secret-text], #gcp-credentials, #slack-webhook",
       ),
     ].find((input) => input.value);
     if (projectOnboarding?.isDirty() && !isEditorDirty()) {
@@ -5425,7 +5441,7 @@
       Boolean($("gcp-credentials").value) ||
       [
         ...document.querySelectorAll(
-          ".password-wrap input, textarea[data-secret-json]",
+          ".password-wrap input, textarea[data-secret-json], textarea[data-secret-text]",
         ),
       ].some((input) => input.value) ||
       [
@@ -5545,7 +5561,7 @@
     $("slack-webhook").value = "";
     $("gcp-credentials").value = "";
     for (const input of document.querySelectorAll(
-      ".password-wrap input, textarea[data-secret-json]",
+      ".password-wrap input, textarea[data-secret-json], textarea[data-secret-text]",
     ))
       input.value = "";
   });
@@ -5784,6 +5800,20 @@
       selectJob(job.id);
     },
     onFinished: scheduleRunnerPoll,
+  });
+  window.addEventListener("dashboard:refresh", () => {
+    if (formsLocked || restarting) return;
+    Promise.allSettled([
+      refreshStatus(),
+      refreshRunners(),
+      projectOperations?.refreshInbox(),
+      selectedJobId ? refreshJobOutput() : Promise.resolve(),
+    ]);
+  });
+  window.dashboardCommands = window.createDashboardCommands?.({
+    getStatus: () => currentStatus,
+    getJobs: mergedJobs,
+    navigate: (href) => pages.navigate(href),
   });
   initialize();
 })();

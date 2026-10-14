@@ -1,9 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { loadProject, type Project } from "../config.ts";
-import { readEditableConfig } from "../setup/configEditor.ts";
+import {
+  readEditableConfig,
+  saveEditableConfig,
+} from "../setup/configEditor.ts";
 import {
   inspectionBranch,
+  effectiveWorkflow,
+  effectiveVerification,
   validBranch,
   validConnectionId,
 } from "../projectCapabilities.ts";
@@ -413,13 +418,43 @@ export function createVercelSetup(options: VercelSetupOptions) {
           throw new VercelSetupError(
             "This Vercel project must have a recognized Git link to this repository and a known production branch before previews can be created.",
           );
-        const branch = input.branch ?? "pm-staging",
-          baseBranch = input.baseBranch ?? inspectionBranch(config.config);
+        if (
+          input.repairWorkflow ||
+          effectiveWorkflow(config.config).kind === "promotion"
+        ) {
+          const previous = config.config.branches;
+          const production = fresh.productionBranch;
+          const staging =
+            previous.staging !== previous.production
+              ? previous.staging
+              : "staging";
+          const integration =
+            previous.integration !== previous.production &&
+            previous.integration !== staging
+              ? previous.integration
+              : "pm-staging";
+          if (new Set([production, staging, integration]).size !== 3)
+            throw new VercelSetupError(
+              "The configured branches overlap Vercel production. Choose distinct production, staging and PM branches in Project settings before repair.",
+            );
+          config.config.branches = { production, staging, integration };
+          config.config.workflow = { kind: "promotion" };
+        }
+        const promotion = effectiveWorkflow(config.config).kind === "promotion";
+        const branch =
+          input.branch ??
+          (promotion ? config.config.branches.integration : "pm-staging");
+        const baseBranch =
+          input.baseBranch ??
+          (promotion
+            ? config.config.branches.staging
+            : inspectionBranch(config.config));
         if (
           !validBranch(branch) ||
           !validBranch(baseBranch) ||
           branch === fresh.productionBranch ||
-          branch === config.config.branches.production
+          branch === config.config.branches.production ||
+          (promotion && branch === config.config.branches.staging)
         )
           throw new VercelSetupError(
             "Choose a dedicated nonproduction branch such as pm-staging.",
@@ -438,14 +473,58 @@ export function createVercelSetup(options: VercelSetupOptions) {
           signal,
           false,
           async (token) => {
+            let staging: VercelPlan["staging"];
+            if (promotion) {
+              const stagingBranch = config.config.branches.staging;
+              if (stagingBranch === fresh.productionBranch)
+                throw new VercelSetupError(
+                  "The staging branch is Vercel's production branch. Correct the branch mapping before setup.",
+                );
+              const existingStaging = await branchHead(
+                config,
+                stagingBranch,
+                token,
+                signal,
+              );
+              const stagingSha =
+                existingStaging ??
+                (await branchHead(
+                  config,
+                  config.config.branches.production,
+                  token,
+                  signal,
+                ));
+              if (!stagingSha)
+                throw new VercelSetupError(
+                  "The production base branch does not exist.",
+                );
+              staging = {
+                branch: stagingBranch,
+                baseBranch: config.config.branches.production,
+                sha: stagingSha,
+                create: !existingStaging,
+              };
+            }
             const existing = await branchHead(config, branch, token, signal);
-            if (existing) return { sha: existing, createBranch: false };
-            const base = await branchHead(config, baseBranch, token, signal);
+            if (existing)
+              return {
+                sha: existing,
+                createBranch: false,
+                ...(staging ? { staging } : {}),
+              };
+            const base =
+              staging && baseBranch === staging.branch
+                ? staging.sha
+                : await branchHead(config, baseBranch, token, signal);
             if (!base)
               throw new VercelSetupError(
                 "The base branch does not exist. Choose an existing branch in this repository.",
               );
-            return { sha: base, createBranch: true };
+            return {
+              sha: base,
+              createBranch: true,
+              ...(staging ? { staging } : {}),
+            };
           },
         );
         const target = {
@@ -466,11 +545,24 @@ export function createVercelSetup(options: VercelSetupOptions) {
           branch,
           baseBranch,
           ...source,
+          ...(promotion
+            ? {
+                workflowBranches: {
+                  ...config.config.branches,
+                  integration: branch,
+                },
+              }
+            : {}),
           ...(custom ? { customEnvironmentId: custom } : {}),
           target,
           configurationRevision: configuration(project),
           createdAt: new Date().toISOString(),
           warnings: [
+            ...(promotion
+              ? [
+                  `Set the delivery flow to ${branch} → ${config.config.branches.staging} → ${config.config.branches.production}. Existing branches are never reset. Recheck project readiness after repair; saved PM schedules and commands are preserved.`,
+                ]
+              : []),
             "Vercel uses the selected preview or custom environment's existing variables. Confirm these point to test databases, test accounts and safe external services before creating a preview.",
             "Creating a Git branch may also trigger this repository's existing CI and Vercel Git integration.",
             "No production settings, environment variables, domains or deployment protection will be changed.",
@@ -490,6 +582,7 @@ export function createVercelSetup(options: VercelSetupOptions) {
           delete value.attempt;
           delete value.deployment;
           delete value.target;
+          delete value.workflowApplied;
         });
       },
     );
@@ -647,8 +740,80 @@ export function createVercelSetup(options: VercelSetupOptions) {
           config,
           operation,
           signal,
-          plan.createBranch,
+          plan.createBranch || !!plan.staging?.create,
           async (token) => {
+            if (plan.staging) {
+              const staging = plan.staging;
+              let head = await branchHead(
+                config,
+                staging.branch,
+                token,
+                signal,
+              );
+              if (!head) {
+                if (
+                  !staging.create ||
+                  (await branchHead(
+                    config,
+                    staging.baseBranch,
+                    token,
+                    signal,
+                  )) !== staging.sha
+                )
+                  throw new VercelSetupError(
+                    "The staging base changed. Prepare a new setup plan.",
+                    409,
+                    "stale",
+                  );
+                if (current.attempt?.stagingSent)
+                  throw new VercelSetupError(
+                    "Staging branch creation is unconfirmed. Check the repository before retrying.",
+                    409,
+                    "unconfirmed",
+                  );
+                current = await save(project, operation, (value) => {
+                  value.attempt!.stagingSent = true;
+                });
+                const github =
+                  (config.config.provider ?? "github") === "github";
+                let rejected = false;
+                try {
+                  await sourceRequest(
+                    async (url, init) => {
+                      const response = await fetcher(url, init);
+                      rejected = [400, 401, 403, 404, 422, 429].includes(
+                        response.status,
+                      );
+                      return response;
+                    },
+                    sourceApi(config) +
+                      (github ? "/git/refs" : "/repository/branches"),
+                    token,
+                    signal,
+                    "POST",
+                    github
+                      ? {
+                          ref: `refs/heads/${staging.branch}`,
+                          sha: staging.sha,
+                        }
+                      : { branch: staging.branch, ref: staging.sha },
+                  );
+                } catch (error) {
+                  if (rejected)
+                    current = await save(project, operation, (value) => {
+                      delete value.attempt!.stagingSent;
+                    });
+                  throw error;
+                }
+                head = await branchHead(config, staging.branch, token, signal);
+              }
+              if (head !== staging.sha)
+                throw new VercelSetupError(
+                  "Staging moved after setup was prepared. Review a fresh plan; existing staging was preserved.",
+                  409,
+                  "stale",
+                );
+            }
             let head = await branchHead(config, plan.branch, token, signal);
             if (head && head !== plan.sha)
               throw new VercelSetupError(
@@ -861,5 +1026,148 @@ export function createVercelSetup(options: VercelSetupOptions) {
       if (value.startsWith(`${root}\0`)) task.controller.abort();
     await idle();
   }
-  return { status, discover, prepare, deploy, busy, idle, close };
+  async function applyWorkflow(project: string, expected: string) {
+    return run(
+      project,
+      expected,
+      "deployed",
+      async (state, operation, signal) => {
+        if (state.workflowApplied) return;
+        const plan = state.plan;
+        if (
+          !plan?.workflowBranches ||
+          !state.target ||
+          state.deployment?.state !== "READY"
+        )
+          throw new VercelSetupError(
+            "Wait for the reviewed PM preview to become ready before applying its workflow.",
+            409,
+          );
+        if (state.configurationRevision !== configuration(project))
+          throw new VercelSetupError(
+            "Project settings changed. Review a fresh repair plan.",
+            409,
+            "stale",
+          );
+        const config = loadProject(root, project);
+        await withSource(config, operation, signal, false, async (token) => {
+          if (
+            (await branchHead(config, plan.branch, token, signal)) !==
+              plan.sha ||
+            !(await branchHead(
+              config,
+              plan.workflowBranches!.staging,
+              token,
+              signal,
+            ))
+          )
+            throw new VercelSetupError(
+              "The reviewed branches changed. Prepare a fresh repair plan.",
+              409,
+              "stale",
+            );
+        });
+        const { inventory, project: chosen } = selected(state);
+        const { api } = await apiFor(
+          { ...inventory, projectId: chosen.id },
+          signal,
+        );
+        const freshProject = projectSummary(
+          await api(`/v9/projects/${encodeURIComponent(chosen.id)}`),
+          config.config,
+        );
+        if (
+          !freshProject?.matchesRepository ||
+          freshProject.productionBranch !== plan.workflowBranches.production
+        )
+          throw new VercelSetupError(
+            "Vercel's production or repository mapping changed. Prepare a fresh repair plan.",
+            409,
+          );
+        const detail = await api(
+          `/v13/deployments/${encodeURIComponent(state.deployment.id)}`,
+        );
+        const current = deploymentSummary(detail, {
+          ...inventory,
+          selectedProject: freshProject,
+        });
+        if (
+          detail.projectId !== plan.projectId ||
+          !current?.selectable ||
+          current.state !== "READY" ||
+          current.sha !== plan.sha ||
+          current.branch !== plan.branch ||
+          current.customEnvironmentId !== plan.customEnvironmentId
+        )
+          throw new VercelSetupError(
+            "The PM deployment is no longer ready at the reviewed revision.",
+            409,
+          );
+        const document = readEditableConfig(
+          root,
+          `projects/${project}/project.json`,
+        );
+        const raw = JSON.parse(document.content);
+        const previous = effectiveVerification(config.config);
+        const oldTarget =
+          previous.mode === "browser" ? previous.target : undefined;
+        const same =
+          oldTarget?.kind === "vercel" &&
+          oldTarget.projectId === state.target.projectId &&
+          (oldTarget.teamId ?? null) === (state.target.teamId ?? null) &&
+          (oldTarget.connectionId ?? "default") ===
+            (state.target.connectionId ?? "default");
+        const target = {
+          ...state.target,
+          ...(same && oldTarget.access ? { access: oldTarget.access } : {}),
+          ...(same && oldTarget.bypassSecret
+            ? { bypassSecret: oldTarget.bypassSecret }
+            : {}),
+        };
+        const environments = raw.environments ?? {};
+        let environment =
+          same && previous.mode === "browser"
+            ? previous.environment
+            : "pm-staging";
+        if (!same && Object.hasOwn(environments, environment)) {
+          let n = 2;
+          while (Object.hasOwn(environments, `pm-staging-${n}`)) n++;
+          environment = `pm-staging-${n}`;
+        }
+        raw.branches = plan.workflowBranches;
+        raw.workflow = {
+          kind: "promotion",
+          ...(raw.workflow?.candidateEnvironment
+            ? { candidateEnvironment: raw.workflow.candidateEnvironment }
+            : {}),
+        };
+        raw.environments = { ...environments, [environment]: target };
+        raw.verification = { mode: "browser", environment };
+        raw.verified = null;
+        saveEditableConfig(root, {
+          path: document.path,
+          revision: state.configurationRevision,
+          content: JSON.stringify(raw, null, 2) + "\n",
+        });
+        await save(project, operation, (value) => {
+          value.configurationRevision = configuration(project);
+          value.workflowApplied = true;
+          value.target = target;
+          value.status = "deployed";
+          value.message =
+            "PM staging is configured. Connecting browser access and checking project readiness comes next.";
+        });
+      },
+    );
+  }
+  return {
+    status,
+    discover,
+    prepare,
+    deploy,
+    applyWorkflow,
+    busy,
+    idle,
+    close,
+  };
 }

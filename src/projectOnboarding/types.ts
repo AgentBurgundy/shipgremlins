@@ -27,11 +27,15 @@ export interface SetupDockerDraft {
   port: number;
   healthPath?: string;
   start?: string[];
+  env?: Record<string, string>;
+  buildArgs?: Record<string, string>;
+  buildSecrets?: Record<string, string>;
   services?: { kind: "postgres" | "redis"; name: string; env: string }[];
   migrate?: string[];
   seed?: string[];
 }
 export interface OnboardingReport {
+  composeImports?: import("./compose.ts").ComposeImport[];
   /** Untrusted, source-cited suggestions. Only explicit confirmation may save commands. */
   projectSetup?: ProjectSetupProposal;
   summary: string;

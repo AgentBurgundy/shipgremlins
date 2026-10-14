@@ -251,7 +251,9 @@ export function areaInput(plan: CrewPlan, member: CrewMember) {
         : [`src/${member.key}/`, `tests/${member.key}/`],
     sharedTouchpoints: ["package.json", "src/shared/"],
     metric: "First milestone acceptance criteria",
-    schedule: "0 13 * * 1-5",
+    schedule: "0 13 * * *",
+    enabled: false,
+    codingEnabled: false,
     wipLimit: 1,
   };
 }

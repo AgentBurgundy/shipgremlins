@@ -390,153 +390,185 @@ describe("local delivery controller integration", () => {
       "candidate",
     );
   });
-  it("uses only the separate replay result, never a forged model-container proof", async () => {
-    const w = world();
-    await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);
-    await w.controller.completeJob(w.job, w.result, noArtifacts);
-    w.forge.seedPull(
-      TEST_REPO,
-      {
-        number: 1,
-        headRef: "gremlins/job-one",
-        headSha: HEAD,
-        baseRef: "pm-staging",
-        state: "merged",
-        mergeCommitSha: BASE,
-        mergedAt: "2026-10-05T10:00:00Z",
-      },
-      ["app/name.ts"],
-    );
-    const job = { ...w.job, id: "job-review", type: "pm" as const };
-    const payload = await w.controller.beforePm(job, {
-      kind: "pm",
-      nonce: job.id,
-      branch: "pm-staging",
-      browserVerification: true,
-      prompt: "Review",
-    });
-    const plan = payload.reviewPlan!;
-    expect(plan).toBeDefined();
-    expect(payload.browserTarget).toBe(plan.deployment.url);
-    const original = {
-      ok: true,
-      kind: "pm",
-      nonce: job.id,
-      commitSha: HEAD,
-      reviewProof: { file: "fake.json", sha256: "f".repeat(64) },
-    };
-    await expect(
-      w.controller.completeJob(job, original, noArtifacts),
-    ).rejects.toThrow("isolated delivery review");
-    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]),
-      sha256 = createHash("sha256").update(png).digest("hex");
-    const proof = {
-      manifest: {
-        schema: 1,
-        planId: plan.id,
-        jobId: job.id,
-        project: "game",
-        area: "core",
-        testedSha: BASE,
-        deploymentId: "dep",
-        deliveries: [
-          {
-            id: w.job.id,
-            status: "passed",
-            assertions: [
-              {
-                criterion: plan.deliveries[0]!.criteria[0],
-                status: "passed",
-                receiptId: "receipt",
-              },
-            ],
-            screenshots: [{ name: "review-screenshots/trusted.png", sha256 }],
-          },
-        ],
-      },
-      receipts: {
-        jobId: job.id,
-        planId: plan.id,
-        commitSha: BASE,
-        receipts: [
-          {
-            id: "receipt",
-            jobId: job.id,
-            planId: plan.id,
-            deliveryId: w.job.id,
-            criterion: plan.deliveries[0]!.criteria[0],
-            status: "passed",
-            testedSha: BASE,
-            deploymentId: "dep",
-            url: "https://preview.example",
-            screenshot: { name: "review-screenshots/trusted.png", sha256 },
-          },
-        ],
-      },
-    };
-    const verifyReview = vi.fn(async () => ({
-      proof: Buffer.from(JSON.stringify(proof)),
-      result: {
-        ok: true as const,
-        kind: "pm" as const,
+  it.each([false, true])(
+    "uses independent PM review before promotion (external candidate verifier: %s)",
+    async (strictCandidate) => {
+      const w = world();
+      await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);
+      await w.controller.completeJob(w.job, w.result, noArtifacts);
+      w.forge.seedPull(
+        TEST_REPO,
+        {
+          number: 1,
+          headRef: "gremlins/job-one",
+          headSha: HEAD,
+          baseRef: "pm-staging",
+          state: "merged",
+          mergeCommitSha: BASE,
+          mergedAt: "2026-10-05T10:00:00Z",
+        },
+        ["app/name.ts"],
+      );
+      const job = { ...w.job, id: "job-review", type: "pm" as const };
+      const payload = await w.controller.beforePm(job, {
+        kind: "pm",
         nonce: job.id,
-        commitSha: BASE,
-      },
-      files: [],
-    }));
-    const readArtifact = vi.fn(async () => png);
-    await w.controller.completeJob(job, original, {
-      verifyReview,
-      readArtifact,
-    } as unknown as DockerRunners);
-    expect(verifyReview).toHaveBeenCalledOnce();
-    expect(readArtifact).toHaveBeenCalledWith(
-      job.id,
-      "review-screenshots/trusted.png",
-    );
-    expect(w.controller.deliveryStatus("game").deliveries[0]!.status).toBe(
-      "verified",
-    );
-    const candidateSha = "c".repeat(40),
-      stagingSha = "d".repeat(40);
-    w.forge.seedBranch(TEST_REPO, "staging", stagingSha);
-    const git = new FakeGit()
-      .when("merge-base --is-ancestor", { code: 1 })
-      .when("rev-parse HEAD", candidateSha)
-      .when("rev-parse origin/staging", stagingSha);
-    const verifyCandidate = vi.fn(async () => ({
-      ok: false as const,
-      reason: "Trusted candidate evidence pending",
-    }));
-    await w.controller.promote("game", {
-      git,
-      checkoutDir: w.root,
-      check: async () => ({ ok: true, output: "independent candidate checks" }),
-      verifyCandidate,
-    });
-    expect(verifyCandidate).toHaveBeenCalledOnce();
-    const handoff = w.controller.deliveryStatus("game").candidates[0];
-    expect(handoff).toMatchObject({
-      project: "game",
-      repo: TEST_REPO,
-      area: "core",
-      candidateSha,
-      baseSha: stagingSha,
-      changes: [1],
-    });
-    expect(JSON.stringify(handoff)).not.toContain("secret");
-    const restarted = createDeliveryController({
-      root: w.root,
-      loadProject: () => w.project,
-    });
-    expect(restarted.deliveryStatus("game").candidates).toEqual([handoff]);
-    w.project.areas[0]!.instanceId = "d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea";
-    expect(restarted.deliveryStatus("game").candidates).toEqual([]);
-    expect(restarted.deliveryStatus("game").deliveries).toEqual([]);
-    delete w.project.areas[0]!.instanceId;
-    expect(restarted.deliveryStatus("game").candidates).toEqual([handoff]);
-    expect(await w.forge.listOpenPulls(TEST_REPO, { base: "staging" })).toEqual(
-      [],
-    );
-  });
+        branch: "pm-staging",
+        browserVerification: true,
+        prompt: "Review",
+      });
+      const plan = payload.reviewPlan!;
+      expect(plan).toBeDefined();
+      expect(payload.browserTarget).toBe(plan.deployment.url);
+      const original = {
+        ok: true,
+        kind: "pm",
+        nonce: job.id,
+        commitSha: HEAD,
+        reviewProof: { file: "fake.json", sha256: "f".repeat(64) },
+      };
+      await expect(
+        w.controller.completeJob(job, original, noArtifacts),
+      ).rejects.toThrow("isolated delivery review");
+      const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]),
+        sha256 = createHash("sha256").update(png).digest("hex");
+      const proof = {
+        manifest: {
+          schema: 1,
+          planId: plan.id,
+          jobId: job.id,
+          project: "game",
+          area: "core",
+          testedSha: BASE,
+          deploymentId: "dep",
+          deliveries: [
+            {
+              id: w.job.id,
+              status: "passed",
+              assertions: [
+                {
+                  criterion: plan.deliveries[0]!.criteria[0],
+                  status: "passed",
+                  receiptId: "receipt",
+                },
+              ],
+              screenshots: [{ name: "review-screenshots/trusted.png", sha256 }],
+            },
+          ],
+        },
+        receipts: {
+          jobId: job.id,
+          planId: plan.id,
+          commitSha: BASE,
+          receipts: [
+            {
+              id: "receipt",
+              jobId: job.id,
+              planId: plan.id,
+              deliveryId: w.job.id,
+              criterion: plan.deliveries[0]!.criteria[0],
+              status: "passed",
+              testedSha: BASE,
+              deploymentId: "dep",
+              url: "https://preview.example",
+              screenshot: { name: "review-screenshots/trusted.png", sha256 },
+            },
+          ],
+        },
+      };
+      const verifyReview = vi.fn(async () => ({
+        proof: Buffer.from(JSON.stringify(proof)),
+        result: {
+          ok: true as const,
+          kind: "pm" as const,
+          nonce: job.id,
+          commitSha: BASE,
+        },
+        files: [],
+      }));
+      const readArtifact = vi.fn(async () => png);
+      await w.controller.completeJob(job, original, {
+        verifyReview,
+        readArtifact,
+      } as unknown as DockerRunners);
+      expect(verifyReview).toHaveBeenCalledOnce();
+      expect(readArtifact).toHaveBeenCalledWith(
+        job.id,
+        "review-screenshots/trusted.png",
+      );
+      expect(w.controller.deliveryStatus("game").deliveries[0]!.status).toBe(
+        "verified",
+      );
+      const candidateSha = "c".repeat(40),
+        stagingSha = "d".repeat(40);
+      w.forge.seedBranch(TEST_REPO, "staging", stagingSha);
+      const git = new FakeGit()
+        .when("merge-base --is-ancestor", { code: 1 })
+        .when("rev-parse HEAD", candidateSha)
+        .when("rev-parse origin/staging", stagingSha);
+      if (!strictCandidate) {
+        // The first branch lookup reserves its name; the second confirms the pushed head.
+        git.when("ls-remote --heads origin pm-release/combined/20261005", "", {
+          once: true,
+        });
+        git.when(
+          "ls-remote --heads origin pm-release/combined/20261005",
+          `${candidateSha}\trefs/heads/pm-release/combined/20261005`,
+        );
+        w.forge.seedBranch(
+          TEST_REPO,
+          "pm-release/combined/20261005",
+          candidateSha,
+        );
+      }
+      const verifyCandidate = vi.fn(async () => ({
+        ok: false as const,
+        reason: "Trusted candidate evidence pending",
+      }));
+      await w.controller.promote("game", {
+        git,
+        checkoutDir: w.root,
+        check: async () => ({
+          ok: true,
+          output: "independent candidate checks",
+        }),
+        ...(strictCandidate ? { verifyCandidate } : {}),
+      });
+      expect(verifyCandidate).toHaveBeenCalledTimes(strictCandidate ? 1 : 0);
+      const handoff = w.controller.deliveryStatus("game").candidates[0];
+      expect(handoff).toMatchObject({
+        project: "game",
+        repo: TEST_REPO,
+        area: "combined",
+        candidateSha,
+        baseSha: stagingSha,
+        changes: [1],
+      });
+      expect(JSON.stringify(handoff)).not.toContain("secret");
+      const restarted = createDeliveryController({
+        root: w.root,
+        loadProject: () => w.project,
+      });
+      expect(restarted.deliveryStatus("game").candidates).toEqual([handoff]);
+      w.project.areas[0]!.instanceId = "d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea";
+      expect(restarted.deliveryStatus("game").candidates).toEqual([]);
+      expect(restarted.deliveryStatus("game").deliveries).toEqual([]);
+      delete w.project.areas[0]!.instanceId;
+      expect(restarted.deliveryStatus("game").candidates).toEqual([handoff]);
+      const promotions = await w.forge.listOpenPulls(TEST_REPO, {
+        base: "staging",
+      });
+      if (strictCandidate) expect(promotions).toEqual([]);
+      else {
+        expect(promotions).toHaveLength(1);
+        expect(promotions[0]).toMatchObject({
+          draft: true,
+          headSha: candidateSha,
+        });
+        expect(w.controller.deliveryStatus("game").deliveries[0]!.status).toBe(
+          "promoted",
+        );
+      }
+    },
+  );
 });

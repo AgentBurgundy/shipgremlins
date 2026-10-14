@@ -1,0 +1,124 @@
+.approval-policy {
+  border: 1px solid var(--line, #dce5df);
+  border-radius: 18px;
+  background: var(--surface, #fff);
+  margin-top: 16px;
+  overflow: hidden;
+}
+.approval-policy-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+.approval-policy-summary::before {
+  content: "+";
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--muted, #60736a);
+}
+.approval-policy[open] > .approval-policy-summary::before {
+  content: "−";
+}
+.approval-policy-summary > span:first-child {
+  flex: 1;
+}
+.approval-policy-badge {
+  font-size: 11px;
+  border-radius: 99px;
+  padding: 5px 9px;
+  background: var(--surface-soft, #f0f5f1);
+  color: var(--muted, #60736a);
+}
+.approval-policy-body {
+  padding: 0 20px 20px;
+}
+.approval-policy-form {
+  display: grid;
+  gap: 16px;
+}
+.approval-policy-field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.approval-policy-field small {
+  font-weight: 400;
+  line-height: 1.6;
+}
+.approval-policy-field input,
+.approval-policy-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--line, #dce5df);
+  border-radius: 9px;
+  padding: 10px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+.approval-policy-field textarea {
+  resize: vertical;
+  min-height: 70px;
+}
+.approval-policy-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.approval-policy-toggle input {
+  accent-color: #1e533c;
+  width: 17px;
+  height: 17px;
+}
+.approval-policy-limits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.approval-policy-note {
+  font-size: 12px;
+  line-height: 1.7;
+  background: var(--surface-soft, #f3f6f3);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0;
+}
+.approval-policy-audit {
+  margin-top: 18px;
+  font-size: 12px;
+}
+.approval-policy-audit li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 5px 0;
+}
+.approval-policy :focus-visible {
+  outline: 2px solid #408855;
+  outline-offset: 3px;
+}
+@media (max-width: 520px) {
+  .approval-policy-summary {
+    padding: 16px;
+  }
+  .approval-policy-body {
+    padding: 0 16px 16px;
+  }
+  .approval-policy-limits {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .approval-policy .button-row {
+    flex-wrap: wrap;
+  }
+}

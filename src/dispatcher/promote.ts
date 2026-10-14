@@ -1,4 +1,4 @@
-// Promotion: ONE area's verified work, and nothing else, as one PR into
+// Promotion: the project's verified work, and nothing else, as one PR into
 // staging. A promotion is BUILT with cherry-picks, never pointed at the
 // integration branch — git ships everything behind a commit, and pm-staging
 // carries every area's work including merges that failed their test.
@@ -55,6 +55,13 @@ export interface PromoteOpts {
   ) => Promise<{ area: string; verdict: Verdict } | null>;
   /** Local workers do not dispatch legacy CI port jobs. Conflicts remain held. */
   local?: boolean;
+  /** The local controller can publish PM-verified, build-checked work as a draft
+   * for owner staging review without an external candidate signing service. */
+  publishVerifiedDraft?: boolean;
+  onPublished?: (
+    candidate: CandidateVerification,
+    pull: PullRequest,
+  ) => Promise<void>;
 }
 
 const REMOTE = "origin";
@@ -178,6 +185,7 @@ export function renderBody(input: {
   held: { pr: PullRequest; reason: string }[];
   lookClosely: Map<string, string[]>;
   tests: TestChange[];
+  combined?: boolean;
 }): string {
   const lines = ["## Look closely", ""];
   if (input.lookClosely.size === 0)
@@ -197,7 +205,7 @@ export function renderBody(input: {
     "",
     "## Ships",
     "",
-    `Built from \`${input.staging}\` plus only the ${input.areaName} PM's verified changes, each copied from \`${input.integration}\` with \`git cherry-pick -x\`.`,
+    `Built from \`${input.staging}\` plus only ${input.combined ? "verified changes reviewed by their owning PMs" : `the ${input.areaName} PM's verified changes`}, each copied from \`${input.integration}\` with \`git cherry-pick -x\`.`,
     "",
   );
   for (const pr of input.ships) lines.push(bullet(pr));
@@ -363,8 +371,20 @@ export async function runPromote(
   const candidates = await collectCandidates(ctx, opts);
   const onStaging = await promotedOnStaging(repo, staging, candidates);
   const rows: DigestRow[] = [];
-  for (const area of ctx.project.areas) {
-    if (opts.area && area.key !== opts.area) continue;
+  // Automatic promotion batches all owning PMs into a single project PR.
+  // --area remains an explicit compatibility escape hatch for manual operation.
+  const areas = opts.area
+    ? ctx.project.areas.filter((area) => area.key === opts.area)
+    : opts.local
+      ? [
+          {
+            ...ctx.project.areas[0]!,
+            key: "combined",
+            name: ctx.project.config.name,
+          },
+        ]
+      : ctx.project.areas;
+  for (const area of areas) {
     const check = () => opts.check!(opts.checkoutDir);
     rows.push(
       ...(await promoteArea(
@@ -392,6 +412,7 @@ async function promoteArea(
 ): Promise<DigestRow[]> {
   const forgeRepo = repoOf(ctx);
   const { staging, integration } = branchesOf(ctx);
+  const combined = !!opts.local && !opts.area;
   const say = (m: string) => ctx.log(`promote (${area.name}): ${m}`);
   const isoDate = ctx.now().toISOString().slice(0, 10);
   const nothing = (held: Held[]): DigestRow[] => [
@@ -401,8 +422,37 @@ async function promoteArea(
     },
   ];
 
+  const openPromotions = (
+    await ctx.forge.listOpenPulls(forgeRepo, { base: staging })
+  ).filter(
+    (p) => p.author === ctx.botLogin && p.headRef.startsWith("pm-release/"),
+  );
+  if (
+    combined &&
+    openPromotions.some(
+      (p) => !p.headRef.startsWith(releaseBranch("combined", "")),
+    )
+  )
+    return [
+      {
+        rule: "promote",
+        needsYou: true,
+        text: "Finish or close existing per-PM promotion PRs before starting the combined promotion. Their branches and reviews were preserved.",
+      },
+    ];
+  const matching = openPromotions.filter((p) =>
+    p.headRef.startsWith(releaseBranch(area.key, "")),
+  );
+  if (matching.length > 1)
+    return [
+      {
+        rule: "promote",
+        needsYou: true,
+        text: "More than one promotion is open for this batch. Review the existing PRs before adding work.",
+      },
+    ];
   const openPr =
-    (await ctx.forge.listOpenPulls(forgeRepo, { base: staging })).find(
+    matching.find(
       (p) =>
         p.author === ctx.botLogin &&
         p.headRef.startsWith(releaseBranch(area.key, "")),
@@ -468,6 +518,7 @@ async function promoteArea(
   for (const c of candidates) {
     if (
       !c.area ||
+      combined ||
       c.area.key === area.key ||
       c.verdict !== "verified" ||
       onStaging.has(c.sha)
@@ -476,7 +527,9 @@ async function promoteArea(
     for (const f of c.files) if (!foreign.has(f)) foreign.set(f, c);
   }
 
-  const mine = candidates.filter((c) => c.area?.key === area.key);
+  const mine = candidates.filter(
+    (c) => c.area && (combined || c.area.key === area.key),
+  );
   let carried = mine.filter((c) => onRelease.has(c.sha));
   if (carried.some((c) => c.verdict !== "verified"))
     return [
@@ -741,7 +794,7 @@ async function promoteArea(
         text: `${area.name}: promotion blocked — existing PR has no verified source changes in the current manifest`,
       },
     ];
-  const body = renderBody({
+  let body = renderBody({
     areaName: area.name,
     staging,
     integration,
@@ -749,9 +802,25 @@ async function promoteArea(
     held: held.map((h) => ({ pr: h.c.pr, reason: h.reason })),
     lookClosely: lookCloselyGroups(files, ctx.project.tiers.ownerOnlyPrefixes),
     tests: testChanges(nameStatus, ctx.project.tiers),
+    combined,
   });
   const title = promotionTitle(area.name, isoDate, ships.length);
   const summary = `${picked.length} new, ${ships.length} total, ${held.length} held`;
+  const publishDraft =
+    opts.local === true &&
+    opts.publishVerifiedDraft === true &&
+    !!opts.candidateVerdict;
+  if (publishDraft && openPr && !openPr.draft)
+    return [
+      {
+        rule: "promote",
+        pending: true,
+        text: `Promotion #${openPr.number} is already in owner review. Merge or return it to draft before adding more work.`,
+      },
+    ];
+  let publishedCandidate: CandidateVerification | undefined;
+  if (publishDraft)
+    body += `\n## Staging review\n\nEach included change passed its owning PM's browser review on \`${integration}\`. The assembled candidate passed the configured build and checks. This draft awaits your combined review before merging into \`${staging}\`; release \`${staging}\` to production separately.\n`;
 
   if (ctx.dryRun) {
     ctx.log(
@@ -846,6 +915,7 @@ async function promoteArea(
         changes: candidate.changes,
       })}`,
     );
+    publishedCandidate = candidate;
     const result = opts.verifyCandidate
       ? await opts.verifyCandidate(candidate)
       : {
@@ -853,7 +923,7 @@ async function promoteArea(
           reason: "no authenticated candidate browser evidence supplied",
         };
     const error = candidateEvidenceError(result, candidate, ctx.botLogin);
-    if (error)
+    if (error && !publishDraft)
       return [
         {
           rule: "promote",
@@ -900,6 +970,23 @@ async function promoteArea(
           text: `${area.name}: promotion blocked — candidate branch changed during verification`,
         },
       ];
+    // Building can take minutes; an owner may revoke approval during that time.
+    if (opts.candidateVerdict) {
+      for (const ship of ships) {
+        const fresh = await ctx.forge.getPull(forgeRepo, ship.number);
+        if (
+          !fresh ||
+          (await opts.candidateVerdict(fresh))?.verdict !== "verified"
+        )
+          return [
+            {
+              rule: "promote",
+              pending: true,
+              text: `Promotion held: #${ship.number} changed or lost approval during preparation.`,
+            },
+          ];
+      }
+    }
   }
   if (rebuilt && existingBranch)
     await repo.must([
@@ -926,8 +1013,9 @@ async function promoteArea(
         head: branch,
         base: staging,
         body,
-        draft: false,
+        draft: publishDraft,
       });
+    if (publishedCandidate) await opts.onPublished?.(publishedCandidate, pr);
     say(`${pr.htmlUrl} — ${summary}`);
     rows.push({
       rule: "promote",
