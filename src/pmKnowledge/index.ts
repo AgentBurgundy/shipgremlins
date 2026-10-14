@@ -254,16 +254,6 @@ export function createPmKnowledge(options: {
     const artifacts = await docker.artifacts(job.id),
       result = artifacts.result;
     if (
-      job.pmMode !== "discovery" &&
-      job.pmMode !== "grumblin" &&
-      !artifacts.files.some((file) =>
-        PM_KNOWLEDGE_FILES.includes(
-          file.name as (typeof PM_KNOWLEDGE_FILES)[number],
-        ),
-      )
-    )
-      return;
-    if (
       knowledgeRevision(current.project, current.area) !== job.discoveryRevision
     )
       throw new Error(

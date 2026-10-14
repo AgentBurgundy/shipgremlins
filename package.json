@@ -1,6 +1,6 @@
 {
   "name": "shipgremlins",
-  "version": "0.28.2",
+  "version": "0.28.3",
   "private": true,
   "files": [
     "bin/shipgremlins.mjs",
@@ -42,6 +42,7 @@
     "build:dashboard:check": "node bin/build-dashboard.mjs --check",
     "test": "vitest run",
     "test:package": "node bin/verify-install.mjs",
+    "test:codex-tools": "npm exec --yes --package=@openai/codex@0.162.1 -- node bin/verify-codex-tools.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",

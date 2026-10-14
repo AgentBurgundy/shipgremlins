@@ -12,7 +12,11 @@ import {
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { runInNewContext } from "node:vm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  codexToolHostUnavailable,
+  CodexToolHostError,
+} from "../../runner-local/codex.mjs";
 import {
   createUsageCollector,
   MAX_USAGE_BYTES,
@@ -491,6 +495,7 @@ describe("model subprocess integration", () => {
     const child = Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
+      kill: vi.fn(() => true),
     });
     const collector = createUsageCollector({ now, provider });
     const records: unknown[] = [],
@@ -501,6 +506,8 @@ describe("model subprocess integration", () => {
       spawn: () => child,
       process: { env: {} },
       usage: collector,
+      codexToolHostUnavailable,
+      CodexToolHostError,
       activity: {
         emit() {},
         modelRecord: (value: unknown) => records.push(value),
@@ -535,6 +542,29 @@ describe("model subprocess integration", () => {
       complete: true,
     });
     expect(f.logs).toEqual([]);
+  });
+  it("stops a native Codex startup failure and rejects an exit-zero incomplete run", async () => {
+    const f = runtime("codex");
+    const promise = f.run("codex", [], { model: true });
+    const check = expect(promise).rejects.toBeInstanceOf(CodexToolHostError);
+    f.child.stdout.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "error",
+            message:
+              "Code Mode is unavailable because code-mode host is disabled. Falling back to direct tools.",
+          },
+        }) + "\n",
+      ),
+    );
+    expect(f.child.kill).toHaveBeenCalledWith("SIGTERM");
+    f.child.stdout.emit("end");
+    f.child.emit("close", 0);
+    await check;
+    expect(f.collector.snapshot()).toBeUndefined();
   });
 
   it("retains usage when Claude exits unsuccessfully and ignores non-model command output", async () => {

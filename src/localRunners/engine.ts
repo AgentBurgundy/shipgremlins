@@ -3,6 +3,7 @@ import { createUsage } from "../usage/index.ts";
 import { createRunFlows } from "../runFlow/index.ts";
 import { isDeepStrictEqual } from "node:util";
 import { validateGrumblinProfileSnapshot } from "../../runner-local/grumblin-profile.mjs";
+import { CODEX_TOOL_HOST_MESSAGE } from "../../runner-local/codex.mjs";
 import { loadProject } from "../config.ts";
 import {
   closeSync,
@@ -1388,6 +1389,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           const failure = result.startupFailure;
           if (failure.phase === "test-access")
             accessMessage = managedAccessFailureMessage(failure.code);
+          if (
+            failure.phase === "ai-tools" &&
+            failure.code === "codex-tool-host-unavailable"
+          )
+            accessMessage = CODEX_TOOL_HOST_MESSAGE;
           if (failure.phase === "environment")
             accessMessage =
               failure.code === "app_health_unreachable"

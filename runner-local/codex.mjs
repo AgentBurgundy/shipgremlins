@@ -342,6 +342,28 @@ function restoreOutput(value, original, root = original, depth = 0) {
   }
   return value;
 }
+export const CODEX_TOOL_HOST_MESSAGE =
+  "The Codex tool host could not start. Update ShipGremlins and the runner, verify the runner again, then start a new run. This run did not complete.";
+
+export class CodexToolHostError extends Error {
+  constructor() {
+    super(CODEX_TOOL_HOST_MESSAGE);
+    this.name = "CodexToolHostError";
+  }
+}
+
+/** Only native startup errors qualify; model prose and MCP content are not proof. */
+export function codexToolHostUnavailable(record) {
+  return (
+    record?.type === "item.completed" &&
+    record.item?.type === "error" &&
+    typeof record.item.message === "string" &&
+    /code[- ]mode (?:is unavailable because|host is disabled|host executable (?:was )?not found)/i.test(
+      record.item.message,
+    )
+  );
+}
+
 const disabled = [
   "apps",
   "plugins",
@@ -357,8 +379,6 @@ const disabled = [
   "computer_use",
   "in_app_browser",
   "js_repl",
-  "code_mode",
-  "code_mode_host",
   "memories",
   "memory_tool",
   "skill_mcp_dependency_install",
@@ -420,7 +440,13 @@ export function prepareCodexInvocation({
       };
     }
     const features = Object.fromEntries(disabled.map((name) => [name, false]));
-    Object.assign(features, { skip_host_skill_discovery: true });
+    // Code Mode is a transport for the admitted tools, not an extra source of
+    // capabilities. Keep its native host available for programmatic tool calls.
+    Object.assign(features, {
+      code_mode: true,
+      code_mode_host: true,
+      skip_host_skill_discovery: true,
+    });
     if (restricted)
       Object.assign(features, {
         shell_tool: false,

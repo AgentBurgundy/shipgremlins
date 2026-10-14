@@ -1,4 +1,7 @@
 export type AiSelection = { provider: "claude" | "codex"; model?: string };
+export const CODEX_TOOL_HOST_MESSAGE: string;
+export class CodexToolHostError extends Error {}
+export function codexToolHostUnavailable(record: unknown): boolean;
 export function validateAiSelection(value: unknown): AiSelection;
 export function codexSecretValues(raw: string): string[];
 export function codexWorkerAuth(raw: string, now?: () => Date): string;
