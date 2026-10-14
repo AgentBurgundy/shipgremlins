@@ -1,4 +1,4 @@
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -27,7 +27,9 @@ const settle = async () => {
   for (let count = 0; count < 25; count++) await Promise.resolve();
 };
 function fixture(exported: NodeJS.ProcessEnv = {}) {
-  const root = mkdtempSync(join(tmpdir(), "gremlins-codex-login-"));
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-codex-login-"),
+  );
   roots.push(root);
   let owner = "",
     container = "",

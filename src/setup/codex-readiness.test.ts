@@ -40,8 +40,8 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function fixture(env: NodeJS.ProcessEnv = {}) {
-  const root = realpathSync(
-    mkdtempSync(join(tmpdir(), "gremlins-codex-ready-")),
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-codex-ready-"),
   );
   roots.push(root);
   initializeSetup(root, packageRoot, {

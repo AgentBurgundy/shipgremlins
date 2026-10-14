@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -31,7 +31,9 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "gremlins-codex-lifecycle-"));
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-codex-lifecycle-"),
+  );
   roots.push(root);
   let container = "",
     owner = "",

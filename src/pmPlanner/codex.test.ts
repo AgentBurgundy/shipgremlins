@@ -1,6 +1,12 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -237,7 +243,7 @@ describe("Codex strict output wire schema", () => {
       rmSync(root, { recursive: true, force: true });
   });
   function task(schema: Record<string, unknown>) {
-    const root = mkdtempSync(join(tmpdir(), "codex-schema-"));
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "codex-schema-"));
     roots.push(root);
     return prepareCodexInvocation({
       authJson: credential,

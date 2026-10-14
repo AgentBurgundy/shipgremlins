@@ -78,8 +78,8 @@ function fixture(
     CLAUDE_CODE_OAUTH_TOKEN: "available-claude",
   },
 ) {
-  const root = realpathSync(
-    mkdtempSync(join(tmpdir(), "gremlins-codex-jobs-")),
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-codex-jobs-"),
   );
   roots.push(root);
   initializeSetup(root, packageRoot, {

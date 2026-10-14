@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -33,7 +34,9 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function world() {
-  const root = mkdtempSync(join(tmpdir(), "gremlins-codex-test-"));
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-codex-test-"),
+  );
   roots.push(root);
   const repository = join(root, "repository"),
     memory = join(root, "memory");

@@ -2,6 +2,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -25,7 +26,7 @@ import {
 
 const roots: string[] = [];
 const root = () => {
-  const directory = mkdtempSync(join(tmpdir(), "gremlins-ai-"));
+  const directory = mkdtempSync(join(realpathSync(tmpdir()), "gremlins-ai-"));
   roots.push(directory);
   return directory;
 };
