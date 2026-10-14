@@ -128,6 +128,35 @@ it("keeps a run successful when usage storage is blocked", async () => {
   await f.engine.stop();
   expect((await f.engine.job(job.id))?.status).toBe("succeeded");
 });
+it("reports a Codex host startup failure as actionable configuration trouble without retrying the agent", async () => {
+  const f = fixture();
+  await f.ready();
+  const job = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await f.engine.tick();
+  f.finish(job.id, 1);
+  const artifact = await f.mock.artifacts(job.id);
+  const result = {
+    ...artifact.result,
+    startupFailure: { phase: "ai-tools", code: "codex-tool-host-unavailable" },
+  };
+  f.mock.artifacts.mockResolvedValueOnce({
+    ...artifact,
+    result,
+  });
+  await f.engine.tick();
+  expect(await f.engine.job(job.id)).toMatchObject({
+    status: "failed",
+    message: expect.stringContaining("verify the runner again"),
+    failure: { category: "configuration", retryable: false },
+  });
+  f.advance(600_000);
+  await f.engine.tick();
+  expect(f.calls.filter((call) => call.payload.kind === "pm")).toHaveLength(1);
+});
 it("keeps the app alive through trusted completion and retries terminal cleanup after Docker failure", async () => {
   const f = fixture();
   await f.ready();

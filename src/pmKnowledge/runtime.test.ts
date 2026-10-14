@@ -68,6 +68,8 @@ it("sanitizes direct patrol documents with run-specific literal and encoded cred
     encodeURIComponent(secret),
     JSON.stringify(secret).slice(1, -1),
   ];
+  for (const name of DISCOVERY_FILES)
+    writeFileSync(join(root, name), "# Existing investigation");
   writeFileSync(join(root, "memory.md"), variants.join("\n"));
   sanitizeKnowledge(root, (text: string) =>
     variants.reduce(
@@ -79,6 +81,33 @@ it("sanitizes direct patrol documents with run-specific literal and encoded cred
     "[redacted]\n[redacted]\n[redacted]",
   );
 });
+it.each(DISCOVERY_FILES)("rejects a patrol missing %s", (missing) => {
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), "gremlins-runtime-missing-"),
+  );
+  roots.push(root);
+  for (const name of DISCOVERY_FILES)
+    if (name !== missing)
+      writeFileSync(join(root, name), "# Investigation evidence");
+  expect(() => sanitizeKnowledge(root, (text: string) => text)).toThrow(
+    "all four required knowledge documents",
+  );
+});
+it.each(["", " \n\t", "Invalid\0output"])(
+  "rejects empty or invalid patrol output %j",
+  (content) => {
+    const root = mkdtempSync(
+      join(realpathSync(tmpdir()), "gremlins-runtime-empty-"),
+    );
+    roots.push(root);
+    for (const name of DISCOVERY_FILES)
+      writeFileSync(
+        join(root, name),
+        name === "memory.md" ? content : "# Investigation evidence",
+      );
+    expect(() => sanitizeKnowledge(root, (text: string) => text)).toThrow();
+  },
+);
 it.skipIf(process.platform === "win32")(
   "rejects symlinked patrol artifacts",
   () => {
@@ -86,9 +115,13 @@ it.skipIf(process.platform === "win32")(
       join(realpathSync(tmpdir()), "gremlins-runtime-link-"),
     );
     roots.push(root);
+    for (const name of DISCOVERY_FILES)
+      if (name !== "memory.md") writeFileSync(join(root, name), "# Evidence");
     writeFileSync(join(root, "owner.md"), "preserve");
     symlinkSync(join(root, "owner.md"), join(root, "memory.md"));
-    expect(() => sanitizeKnowledge(root, (text: string) => text)).toThrow();
+    expect(() => sanitizeKnowledge(root, (text: string) => text)).toThrow(
+      "cannot be a symlink",
+    );
     expect(readFileSync(join(root, "owner.md"), "utf8")).toBe("preserve");
   },
 );

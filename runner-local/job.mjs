@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import {
   codexSecretValues,
+  codexToolHostUnavailable,
+  CodexToolHostError,
   prepareCodexInvocation,
   validateAiSelection,
 } from "./codex.mjs";
@@ -164,6 +166,7 @@ async function run(command, args, options = {}) {
       detached: true,
     });
     let modelError = false;
+    let toolHostError = false;
     let captured = "";
     let diagnostic = "";
     let capturedBytes = 0;
@@ -189,6 +192,10 @@ async function run(command, args, options = {}) {
           if (!dropping) {
             try {
               const parsed = JSON.parse(line);
+              if (options.model && codexToolHostUnavailable(parsed)) {
+                toolHostError = true;
+                current?.kill("SIGTERM");
+              }
               if (parsed.type === "result" && parsed.is_error === true)
                 modelError = true;
               if (
@@ -220,6 +227,7 @@ async function run(command, args, options = {}) {
         else if (pending && !dropping && options.model) {
           try {
             const parsed = JSON.parse(pending);
+            if (codexToolHostUnavailable(parsed)) toolHostError = true;
             if (parsed.type === "result" && parsed.is_error === true)
               modelError = true;
             if (["turn.failed", "error"].includes(parsed.type))
@@ -250,6 +258,7 @@ async function run(command, args, options = {}) {
             "A trusted Git result exceeded its output bound. No partial source proof is accepted.",
           ),
         );
+      else if (toolHostError) reject(new CodexToolHostError());
       else if (code === 0 && !modelError && !stopping) done(captured);
       else {
         const error = new Error(
@@ -755,10 +764,6 @@ try {
         },
       );
       finalMessage = codexInvocation?.readResult();
-      if (kind === "pm") {
-        phase("investigate", "passed");
-        phase("record", "running");
-      }
       if (kind === "developer") {
         phase("build", "passed");
         phase("review", "skipped");
@@ -783,8 +788,10 @@ try {
         "succeeded",
       );
     }
-    if (kind === "pm") sanitizeKnowledge("/output", redact);
     if (kind === "pm") {
+      sanitizeKnowledge("/output", redact);
+      phase("investigate", "passed");
+      phase("record", "running");
       phase("record", "passed");
       phase("complete", "running");
     }
@@ -895,6 +902,14 @@ try {
         error: message,
         ...(error instanceof AccessFailure
           ? { accessFailure: accessFailure(error) }
+          : {}),
+        ...(error instanceof CodexToolHostError
+          ? {
+              startupFailure: {
+                phase: "ai-tools",
+                code: "codex-tool-host-unavailable",
+              },
+            }
           : {}),
         completedAt: new Date().toISOString(),
       },

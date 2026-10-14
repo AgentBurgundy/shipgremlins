@@ -49,6 +49,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:package
+      - run: npm run test:codex-tools
       - run: npm test -- src/ai src/runFlow src/setup/codex src/setup/ai-connections-ui.test.ts src/setup/run-flow-ui.test.ts
       - run: npm test -- src/setup/project-wizard.test.ts src/setup/first-run.test.ts src/setup/project-welcome.test.ts src/setup/dashboard-interface.test.ts src/setup/dashboard-crew.test.ts src/setup/usage.test.ts src/setup/activateCrew.test.ts
       - run: node --test examples/dashboard-test/fixture.test.mjs

@@ -16,6 +16,8 @@ import { join } from "node:path";
 import {
   prepareCodexInvocation,
   codexWorkerAuth,
+  codexToolHostUnavailable,
+  CodexToolHostError,
 } from "../../runner-local/codex.mjs";
 import {
   createReadonlyTools,
@@ -65,6 +67,42 @@ const usage = {
 };
 
 describe("isolated subscription Codex runtime", () => {
+  it("recognizes unavailable native tool hosts without treating model or MCP prose as startup proof", () => {
+    for (const message of [
+      "Code Mode is unavailable because code-mode host is disabled. Falling back to direct tools.",
+      "Code Mode is unavailable because host executable was not found.",
+      "code-mode host is disabled",
+    ]) {
+      expect(
+        codexToolHostUnavailable({
+          type: "item.completed",
+          item: { type: "error", message },
+        }),
+      ).toBe(true);
+      expect(
+        codexToolHostUnavailable({
+          type: "item.completed",
+          item: { type: "agent_message", text: message },
+        }),
+      ).toBe(false);
+      expect(
+        codexToolHostUnavailable({
+          type: "item.completed",
+          item: { type: "mcp_tool_call", error: { message } },
+        }),
+      ).toBe(false);
+    }
+    expect(
+      codexToolHostUnavailable({
+        type: "item.completed",
+        item: { type: "error", message: "A feature is deprecated." },
+      }),
+    ).toBe(false);
+    expect(codexToolHostUnavailable(null)).toBe(false);
+    expect(new CodexToolHostError().message).toContain(
+      "verify the runner again",
+    );
+  });
   it("runs a fake executable with exact CLI schema, selected model and access-only private auth", () => {
     const w = world();
     const task = prepareCodexInvocation({
@@ -179,13 +217,14 @@ describe("isolated subscription Codex runtime", () => {
       "shell_tool",
       "unified_exec",
       "js_repl",
-      "code_mode",
       "apply_patch_freeform",
       "multi_agent",
       "plugins",
       "hooks",
     ])
       expect(config).toContain(`${feature} = false`);
+    expect(config).toContain("code_mode = true");
+    expect(config).toContain("code_mode_host = true");
     expect(config).toContain(
       'enabled_tools = ["read_file", "list_files", "search_files"]',
     );

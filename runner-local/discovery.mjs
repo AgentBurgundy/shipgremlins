@@ -88,13 +88,21 @@ export function discoveryResult(output) {
 export function sanitizeKnowledge(directory, redact) {
   for (const name of DISCOVERY_FILES) {
     const path = join(directory, name);
-    if (!existsSync(path)) continue;
+    if (!existsSync(path))
+      throw new Error(
+        "The PM did not write all four required knowledge documents. Its investigation is incomplete; inspect the run's tool errors before trying again.",
+      );
     if (lstatSync(path).isSymbolicLink())
       throw new Error("Knowledge output cannot be a symlink.");
     const fd = openSync(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
     try {
       const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.nlink !== 1 || stat.size > 65536)
+      if (
+        !stat.isFile() ||
+        stat.nlink !== 1 ||
+        stat.size < 1 ||
+        stat.size > 65536
+      )
         throw new Error(
           "Knowledge output must be bounded regular Markdown files.",
         );
@@ -102,8 +110,14 @@ export function sanitizeKnowledge(directory, redact) {
         readFileSync(fd),
       );
       const safe = redact(content);
-      if (Buffer.byteLength(safe) > 65536)
-        throw new Error("Sanitized knowledge output is too large.");
+      if (
+        !safe.trim() ||
+        safe.includes("\0") ||
+        Buffer.byteLength(safe) > 65536
+      )
+        throw new Error(
+          "Sanitized knowledge output is empty, invalid, or too large.",
+        );
       ftruncateSync(fd, 0);
       writeSync(fd, safe, 0, "utf8");
     } finally {

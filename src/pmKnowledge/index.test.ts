@@ -287,7 +287,7 @@ describe("PM knowledge retention", () => {
     expect(f.store.memory(current, current.areas[0]!)).toEqual({});
     expect(f.store.read("app", "core").stale).toBe(true);
   });
-  it("ignores legacy patrol output without knowledge, but accepts a complete new patrol snapshot", async () => {
+  it("keeps legacy patrols without an admitted knowledge revision compatible", async () => {
     const f = fixture();
     await expect(
       f.store.capture(
@@ -295,12 +295,44 @@ describe("PM knowledge retention", () => {
         f.docker,
       ),
     ).resolves.toBeUndefined();
-    f.artifacts.mockResolvedValueOnce({ result: f.result, files: [] });
-    await f.store.capture({ ...f.job, pmMode: undefined }, f.docker);
+    expect(f.artifacts).not.toHaveBeenCalled();
     expect(f.store.read("app", "core").state).toBe("empty");
-    await f.store.capture({ ...f.job, pmMode: undefined }, f.docker);
-    expect(f.store.read("app", "core").state).toBe("ready");
   });
+  it.each([undefined, "exploration"] as const)(
+    "rejects a modern %s PM's empty output despite a successful worker receipt and preserves previous knowledge",
+    async (pmMode) => {
+      const previous = fixture();
+      Object.assign(previous.result, { pmMode });
+      await previous.store.capture(
+        { ...previous.job, pmMode },
+        previous.docker,
+      );
+      const current = fixture(2),
+        job = { ...current.job, pmMode };
+      Object.assign(current.result, { pmMode });
+      current.artifacts.mockResolvedValueOnce({
+        result: current.result,
+        files: [],
+      });
+      await expect(current.store.capture(job, current.docker)).rejects.toThrow(
+        "all four bounded knowledge documents",
+      );
+      const retained = current.store.read("app", "core");
+      expect(retained).toMatchObject({
+        state: "ready",
+        provenance: { runId: 1 },
+      });
+      expect(retained.documents).toEqual(
+        previous.store.read("app", "core").documents,
+      );
+      expect(retained.documents).toHaveLength(4);
+      await current.store.capture(job, current.docker);
+      expect(current.store.read("app", "core")).toMatchObject({
+        state: "ready",
+        provenance: { runId: 2 },
+      });
+    },
+  );
   it("retains product exploration only from matching worker provenance", async () => {
     const f = fixture();
     const exploration = { ...f.job, pmMode: "exploration" as const };
