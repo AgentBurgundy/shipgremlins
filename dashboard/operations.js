@@ -245,13 +245,22 @@
           ? `Next automatic start: ${new Date(autonomy.nextRunAt).toLocaleString()}`
           : "";
         next.hidden = !scheduled;
-        repair.hidden = state !== "blocked";
+        const held =
+          autonomy?.codingPickup?.state === "current"
+            ? autonomy.codingPickup.needsReview?.[0]
+            : null;
+        repair.hidden = state !== "blocked" && !held;
+        repair.textContent = held
+          ? `Review ${held.identifier}’s previous run →`
+          : "Resolve blocker →";
         repair.href =
+          held?.href ||
           window.projectWorkState?.(
             project || { name: s.name },
             getJobs?.() || [],
             { autonomy },
-          )?.href || route(s.name, "environment");
+          )?.href ||
+          route(s.name, "environment");
         control.textContent = s.autonomyBusy
           ? "Saving…"
           : !autonomy

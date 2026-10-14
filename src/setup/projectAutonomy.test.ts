@@ -91,6 +91,35 @@ describe("project autonomous work", () => {
       nextRunAt: "2026-10-14T13:00:00.000Z",
       discoveryPending: [],
     });
+    const codingPickup = {
+      state: "current" as const,
+      needsReview: [
+        {
+          ticketId: "ticket-2",
+          identifier: "SHI-2",
+          area: "core",
+          jobId: "failed-2",
+          runId: 2,
+          status: "failed" as const,
+          reason: "previous-failed" as const,
+          href: "/activity?run=failed-2",
+        },
+      ],
+    };
+    expect(
+      projectAutonomy(root, "app", [], ready, now, codingPickup),
+    ).toMatchObject({
+      state: "waiting",
+      nextRunAt: "2026-10-14T13:00:00.000Z",
+      codingPickup,
+      message: expect.stringContaining("SHI-2 is approved but needs review"),
+    });
+    expect(
+      projectAutonomy(root, "app", [], ready, now, {
+        ...codingPickup,
+        state: "unavailable",
+      }).message,
+    ).not.toContain("SHI-2");
     areas.areas.core.schedule = "99 99 * * *";
     writeFileSync(areasFile, JSON.stringify(areas));
     saveKnowledge();

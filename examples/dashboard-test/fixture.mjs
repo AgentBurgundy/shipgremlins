@@ -2,8 +2,10 @@ import { randomUUID, createHash } from "node:crypto";
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { initializeSetup } from "../../src/setup/files.ts";
-import { loadProject } from "../../src/config.ts";
+import { loadHub, loadProject, listProjectNames } from "../../src/config.ts";
 import { createLinearProvisioning } from "../../src/setup/linearProvisioning.ts";
+import { createProjectOnboarding } from "../../src/projectOnboarding/index.ts";
+import { createDeliveryController } from "../../src/delivery/controller.ts";
 import { summarizeActivity } from "../../src/storage/activity.ts";
 import { JobReadinessError } from "../../src/localRunners/jobs.ts";
 
@@ -22,6 +24,26 @@ const deny = async () => {
   );
 };
 const now = () => new Date().toISOString();
+const onboardingRepo = "fixture/onboarding-app";
+const onboardingNotice =
+  "SIMULATED SETUP: repository contents, source account and AI recommendations are synthetic. No provider, command, worker or browser environment was verified.";
+const onboardingFiles = {
+  "package.json": JSON.stringify({
+    name: "synthetic-onboarding-app",
+    private: true,
+    type: "module",
+    scripts: { start: "node server.mjs", test: "node --test server.test.mjs" },
+  }),
+  "server.mjs":
+    'import { createServer } from "node:http";\nimport { pathToFileURL } from "node:url";\nexport const welcome = () => "Welcome to the synthetic onboarding app";\nif (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) createServer((_req, res) => res.end(welcome())).listen(3000);\n',
+  "server.test.mjs":
+    'import { test } from "node:test";\nimport assert from "node:assert/strict";\nimport { welcome } from "./server.mjs";\ntest("synthetic welcome", () => assert.equal(welcome(), "Welcome to the synthetic onboarding app"));\n',
+  "README.md":
+    "# Synthetic onboarding app\nA bounded source-adapter scenario, not a real connected repository. No source account, AI model, command, worker or deployment is verified.\n",
+};
+const onboardingSha = createHash("sha1")
+  .update(JSON.stringify(onboardingFiles))
+  .digest("hex");
 const clone = (value) => structuredClone(value);
 const json = (file, value) =>
   writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
@@ -457,16 +479,18 @@ export function createFixture(root, packageRoot) {
       },
     ],
     repositories: async () => ({
-      repositories: ["dashboard-demo", "checkout-demo"].map((name) => ({
-        id: name,
-        provider: "github",
-        serverUrl: "https://github.com",
-        fullName: `fixture/${name}`,
-        defaultBranch: "main",
-        private: true,
-        webUrl: `https://example.invalid/${name}`,
-        canPush: true,
-      })),
+      repositories: ["dashboard-demo", "checkout-demo", "onboarding-app"].map(
+        (name) => ({
+          id: name,
+          provider: "github",
+          serverUrl: "https://github.com",
+          fullName: `fixture/${name}`,
+          defaultBranch: "main",
+          private: true,
+          webUrl: `https://example.invalid/${name}`,
+          canPush: true,
+        }),
+      ),
       truncated: false,
     }),
     connect: deny,
@@ -531,6 +555,164 @@ export function createFixture(root, packageRoot) {
     root,
     client: async () => linearClient,
   });
+  const fixtureSource = async (input) => {
+    if (
+      (input.provider ?? "github") !== "github" ||
+      input.repository !== onboardingRepo ||
+      input.write
+    )
+      throw new Error(
+        "Only the synthetic onboarding repository can be inspected; publication is disabled.",
+      );
+    return { token: "synthetic-onboarding-source", method: "oauth" };
+  };
+  const fixtureFetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (init.method && init.method !== "GET")
+      throw new Error("Synthetic source adapters are read-only.");
+    if (
+      url.origin !== "https://api.github.com" ||
+      !url.pathname.startsWith(`/repos/${onboardingRepo}/`)
+    )
+      throw new Error(
+        "Only bounded in-memory fixture source reads are available.",
+      );
+    const path = url.pathname.slice(`/repos/${onboardingRepo}/`.length);
+    if (/^commits\/[^/]+$/.test(path))
+      return Response.json({ sha: onboardingSha });
+    const entries = Object.entries(onboardingFiles).map(([path, content]) => ({
+      path,
+      type: "blob",
+      mode: "100644",
+      sha: createHash("sha1").update(content).digest("hex"),
+      size: Buffer.byteLength(content),
+    }));
+    if (
+      path === `git/trees/${onboardingSha}` &&
+      url.searchParams.get("recursive") === "1"
+    )
+      return Response.json({ tree: entries, truncated: false });
+    const entry = entries.find((entry) => path === `git/blobs/${entry.sha}`);
+    if (entry)
+      return Response.json({
+        encoding: "base64",
+        content: Buffer.from(onboardingFiles[entry.path]).toString("base64"),
+      });
+    throw new Error("Unsupported synthetic source request.");
+  };
+  const simulatedAnalysis = async () => {
+    const evidence = [
+      {
+        path: "server.mjs",
+        quote:
+          'export const welcome = () => "Welcome to the synthetic onboarding app";',
+      },
+    ];
+    const name = "Sprout";
+    const mandate =
+      "Investigate the synthetic welcome API and propose finite improvements. This fixture does not verify real providers, AI workers or deployments.";
+    return {
+      summary: onboardingNotice,
+      recommendation: "hosted",
+      rationale:
+        "A deterministic in-memory source adapter supplies this tiny Node example. This is reviewable setup data, not an AI investigation of a real repository.",
+      stack: ["Synthetic Node.js example"],
+      missingInputs: [],
+      hosted: {
+        provider: "url",
+        instructions: [
+          "Real environment setup and provider verification remain disabled in this fixture.",
+        ],
+      },
+      docker: null,
+      proposedFiles: [],
+      warnings: [
+        onboardingNotice,
+        "The displayed source SHA identifies synthetic fixture data, not a checked-out Git commit. Commands are saved only after review and are never executed here.",
+      ],
+      projectSetup: {
+        commands: {
+          test: {
+            command: "node --test server.test.mjs",
+            rationale:
+              "The synthetic package manifest declares this check. It has not been executed by the fixture.",
+            evidence: [
+              {
+                path: "package.json",
+                quote: '"test":"node --test server.test.mjs"',
+              },
+            ],
+          },
+        },
+        firstPm: { name, mandate, evidence },
+        suggestedPms: [
+          {
+            name,
+            mandate,
+            evidence,
+            rationale:
+              "SIMULATED SETUP: synthetic server.mjs grounds this repository-only API responsibility; no browser, AI or provider was tested.",
+            draft: {
+              name,
+              key: "welcome-api",
+              paths: ["server.mjs"],
+              sharedTouchpoints: ["package.json"],
+              metric: "Reproducible synthetic welcome API checks",
+              schedule: "0 13 * * *",
+              wipLimit: 2,
+              verificationRequirement: "repository",
+              charter: {
+                ambition: "Make the synthetic welcome API understandable.",
+                goal: "Investigate and improve the bounded welcome response.",
+                metricDefinition:
+                  "Record actual checks separately from simulated provider metadata.",
+                users: ["People exploring the disposable setup flow"],
+                expectedToBuild: [
+                  "Finite improvements to the synthetic welcome response",
+                ],
+                nonGoals: ["Real provider or deployment testing"],
+                guardrails: ["Use only disposable fixture data"],
+                standingPriorities: ["Preserve source and review boundaries"],
+              },
+            },
+          },
+        ],
+        appAccess: {
+          kind: "unknown",
+          summary: "This setup adapter performs no browser or login check.",
+          evidence: [],
+        },
+      },
+    };
+  };
+  const onboarding = createProjectOnboarding({
+    root,
+    packageRoot,
+    sourceControl: { resolveCredential: fixtureSource },
+    fetch: fixtureFetch,
+    execute: simulatedAnalysis,
+    env: { CLAUDE_CODE_OAUTH_TOKEN: "fixture-not-a-real-credential" },
+  });
+  const labelledSetup = (value) => ({
+    ...value,
+    message: `${onboardingNotice} ${value.message}`,
+    fixture: {
+      source: "simulated",
+      ai: "simulated",
+      providerVerified: false,
+      commandsExecuted: false,
+      workerExecuted: false,
+    },
+  });
+  const projectOnboarding = {
+    ...onboarding,
+    status: async (...args) => labelledSetup(await onboarding.status(...args)),
+    discover: async (...args) =>
+      labelledSetup(await onboarding.discover(...args)),
+    confirm: async (...args) =>
+      labelledSetup(await onboarding.confirm(...args)),
+    cancel: async (...args) => labelledSetup(await onboarding.cancel(...args)),
+  };
   const jobs = {
     selectDeveloperTicket: async (input, previousJobs) => {
       const project = loadProject(root, input.project);
@@ -641,6 +823,48 @@ export function createFixture(root, packageRoot) {
     disconnect: deny,
     webhook: deny,
   };
+  // Presentation fixtures must not start the production staging reconciler or
+  // hold its provider-operation fence while owners test disposable setup.
+  const deliveryCore = createDeliveryController({
+    root,
+    sourceControl,
+    docker,
+  });
+  const delivery = {
+    ...deliveryCore,
+    deliveryStatus: (name) => ({
+      ...deliveryCore.deliveryStatus(name),
+      enabled: false,
+      message: notice,
+    }),
+    promotionBatch: async () => null,
+    promotionBatches: async () => ({ areas: [], legacy: [] }),
+    reconcileStaging: undefined,
+    pendingReviews: async () => [],
+    preparePromotion: deny,
+    prepareRelease: deny,
+    advanceIntegration: deny,
+    declareProduction: deny,
+    reconcileProduction: deny,
+  };
+  // This workspace has synthetic tickets but no dispatch receipts or provider
+  // pull requests. Reading its empty recovery queue must not build real clients.
+  const recoveryContext = async (project, write) => {
+    if (write) return deny();
+    return {
+      project,
+      hub: loadHub(root),
+      forge: { listOpenPulls: async () => [] },
+      linear: { listTickets: async () => [], listComments: deny },
+      botLogin: "fixture[bot]",
+      now: () => new Date(),
+      dryRun: true,
+      log: () => {},
+      slack: { post: deny },
+      vercel: { latestDeployment: deny, branchUrl: deny },
+    };
+  };
+  const pendingProjects = new Map();
   return {
     options: {
       runners,
@@ -649,13 +873,48 @@ export function createFixture(root, packageRoot) {
       linearConnection: connection("linear"),
       vercelConnection: connection("vercel"),
       linearProvisioning,
+      projectOnboarding,
       jobs,
       docker,
       updater,
       slack,
+      delivery,
+      recoveryContext,
     },
     state,
     save,
     notice,
+    validateProjectCreation(input) {
+      if (
+        !input ||
+        typeof input !== "object" ||
+        Array.isArray(input) ||
+        input.repo !== onboardingRepo ||
+        (input.provider ?? "github") !== "github" ||
+        input.onboarding !== true ||
+        input.hubRepo !== undefined
+      )
+        throw new Error(
+          "Use fixture/onboarding-app with the existing-repository wizard. Only disposable project creation is supported; real repositories and new remote repositories remain disabled.",
+        );
+      const projects = listProjectNames(root);
+      const admitted = new Set([...projects, ...pendingProjects.keys()]);
+      if (!admitted.has(input.project) && admitted.size >= 6)
+        throw new Error(
+          "This disposable fixture supports four added projects. Restart the fixture to reset its setup scenarios.",
+        );
+      pendingProjects.set(
+        input.project,
+        (pendingProjects.get(input.project) ?? 0) + 1,
+      );
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const remaining = (pendingProjects.get(input.project) ?? 1) - 1;
+        if (remaining) pendingProjects.set(input.project, remaining);
+        else pendingProjects.delete(input.project);
+      };
+    },
   };
 }

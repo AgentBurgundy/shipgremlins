@@ -2268,6 +2268,128 @@ describe("local job preparation", () => {
     });
     expect(await scheduler.scheduledJobs()).toEqual([]);
   });
+  it("observes an approved backlog ticket's failed-run hold from scheduler reads and clears it for an explicit retry without another provider read", async () => {
+    chooseBrowserAccess();
+    const approved = {
+      ...ticket,
+      id: "ec208d86-eb6d-48fd-a39b-dbb1c4a6f0e8",
+      identifier: "SHI-2",
+      stateType: "backlog",
+    };
+    const failed: LocalJob = {
+      ...job,
+      runId: 17,
+      area: "core",
+      ticket: approved.identifier,
+      status: "failed",
+      linearBinding: { connectionId: "default", ticketId: approved.id },
+    };
+    let unavailable = false;
+    const listTickets = vi.fn(async () => {
+      if (unavailable)
+        throw new Error("Private provider body must not be exposed");
+      return [approved];
+    });
+    const prepared = createJobPreparation({
+      root,
+      env,
+      linear: () => ({ getTicket: async () => approved, listTickets }),
+      now: () => new Date("2026-10-04T09:00:45Z"),
+    });
+    expect(prepared.codingPickup("app", [failed]).state).toBe("checking");
+    expect(
+      (await prepared.scheduledJobs([failed])).filter(
+        (input) => input.type === "developer",
+      ),
+    ).toEqual([]);
+    expect(prepared.codingPickup("app", [failed])).toMatchObject({
+      state: "current",
+      needsReview: [
+        { identifier: "SHI-2", jobId: failed.id, runId: 17, status: "failed" },
+      ],
+    });
+    const retry = {
+      ...failed,
+      id: "job-explicit-retry",
+      runId: 18,
+      status: "queued" as const,
+    };
+    expect(prepared.codingPickup("app", [failed, retry]).needsReview).toEqual(
+      [],
+    );
+    expect(listTickets).toHaveBeenCalledTimes(1);
+    unavailable = true;
+    await prepared.scheduledJobs([failed]);
+    expect(prepared.codingPickup("app", [failed])).toEqual({
+      state: "unavailable",
+      needsReview: [],
+    });
+    expect(listTickets).toHaveBeenCalledTimes(2);
+  });
+  it("includes controller-confirmed epics and existing coding holds together with Linear auth guidance in the actual PM payload", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "promotion", approvalPolicy: "epic" };
+    });
+    chooseBrowserAccess();
+    const epic = {
+      ...ticket,
+      id: "approved-epic",
+      identifier: "APP-1",
+      title: "The owner's approved direction",
+      labels: ["pm:core", "pm-epic", "pm-approved"],
+    };
+    const unapprovedEpic = {
+      ...epic,
+      id: "unapproved-epic",
+      title: "Unapproved direction must not be confirmed",
+    };
+    const project = loadProject(root, "app");
+    approveEpic(root, project, project.areas[0]!, epic);
+    const child = { ...ticket, parentId: epic.id };
+    const failed: LocalJob = {
+      ...job,
+      runId: 17,
+      area: "core",
+      status: "failed",
+      linearBinding: { connectionId: "default", ticketId: child.id },
+    };
+    const listJobs = vi.fn(async () => [failed]);
+    const prepared = createJobPreparation({
+      root,
+      env,
+      listJobs,
+      linear: () => ({
+        getTicket: async (id) => (id === epic.id ? epic : child),
+        listTickets: async (_project, labels) =>
+          labels.includes("pm-epic") ? [epic, unapprovedEpic] : [child],
+      }),
+      preview: async () => "https://app-preview.vercel.app",
+      now: () => new Date("2026-10-04T09:00:45Z"),
+    });
+    await prepared.scheduledJobs([failed]);
+    const input = {
+      type: "pm" as const,
+      project: "app",
+      area: "core",
+      runOnce: true,
+    };
+    const validated = await prepared.validate(input);
+    const payload = await prepared.prepareJob({
+      ...job,
+      ...input,
+      id: "job-patrol",
+      ticket: undefined,
+      linearBinding: validated.linearBinding,
+      discoveryRevision: validated.discoveryRevision,
+    });
+    expect(payload.prompt).toContain("CONTROLLER-CONFIRMED EPICS");
+    expect(payload.prompt).toContain(epic.title);
+    expect(payload.prompt).not.toContain(unapprovedEpic.title);
+    expect(payload.prompt).toContain("For Linear GraphQL use");
+    expect(payload.prompt).toContain(`/activity?run=${failed.id}`);
+    expect(payload.prompt).not.toContain(env.LINEAR_API_KEY);
+    expect(listJobs).toHaveBeenCalledTimes(1);
+  });
   it("ranks approved urgent tickets before older low-priority tickets without changing WIP or identities", async () => {
     const file = join(root, "projects/app/areas.json"),
       areas = JSON.parse(readFileSync(file, "utf8"));

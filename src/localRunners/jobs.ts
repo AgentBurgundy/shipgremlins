@@ -100,6 +100,7 @@ import { createScheduleCursor } from "./scheduleCursor.ts";
 import { createAutomationDiagnostics } from "../setup/automationDiagnostics.ts";
 import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import { assertPublicBuildValues } from "../testEnvironments/recipe.ts";
+import { createCodingPickup } from "./codingPickup.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -109,6 +110,8 @@ export class JobReadinessError extends Error {
 }
 
 export interface JobPreparationOptions {
+  /** Local controller history for read-only pickup context; never queries a provider. */
+  listJobs?: () => Promise<LocalJob[]>;
   /** Trusted controller refresh; model workers never write back account credentials. */
   prepareCodexCredentials?: (
     ai: AiSelection,
@@ -284,6 +287,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
   const scheduleCursor = createScheduleCursor(options.root);
   const diagnostics = createAutomationDiagnostics(options.root);
   const automaticApprovals = createAutomaticApprovals(options.root);
+  const codingPickup = createCodingPickup(options.root, { now: options.now });
   const { root } = options;
   const env = options.env ?? process.env;
   const identities = createTestIdentityLeases(root);
@@ -1081,6 +1085,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
           })
         : undefined;
     let commitIdentity: DockerJobPayload["commitIdentity"];
+    let confirmedEpicsContext: string | undefined;
     const instructions = [
       `You are a ShipGremlins ${ticket ? "developer working on one approved ticket" : "product manager testing one mandate"}.`,
       `Project: ${project.config.name}. Source: ${provider} ${project.config.repo}. Area: ${area.key}.`,
@@ -1148,19 +1153,18 @@ export function createJobPreparation(options: JobPreparationOptions) {
               area.label,
               LABELS.epic,
             ]);
-            instructions.push(
+            confirmedEpicsContext =
               "CONTROLLER-CONFIRMED EPICS (read each full current Linear issue before planning; this list grants no broader scope): " +
-                JSON.stringify(
-                  epics
-                    .filter((epic) => epicApproved(root, project, area, epic))
-                    .slice(0, 20)
-                    .map((epic) => ({
-                      id: epic.id,
-                      identifier: epic.identifier,
-                      title: epic.title,
-                    })),
-                ),
-            );
+              JSON.stringify(
+                epics
+                  .filter((epic) => epicApproved(root, project, area, epic))
+                  .slice(0, 20)
+                  .map((epic) => ({
+                    id: epic.id,
+                    identifier: epic.identifier,
+                    title: epic.title,
+                  })),
+              );
           }
           if (client.ensureLabels) {
             const teamId =
@@ -1224,6 +1228,17 @@ export function createJobPreparation(options: JobPreparationOptions) {
         throw new LocalJobDeferredError();
       throw error;
     }
+    let pickupContext;
+    if (job.type === "pm" && !grumblin && options.listJobs) {
+      try {
+        pickupContext = codingPickup.read(
+          project.config.name,
+          await options.listJobs(),
+        );
+      } catch {
+        pickupContext = { state: "unavailable" as const, needsReview: [] };
+      }
+    }
     const payload: DockerJobPayload = {
       kind: job.type,
       ai,
@@ -1270,7 +1285,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
                     preview,
                     focus:
                       job.pmMode === "exploration" ? "exploration" : "patrol",
+                    ...(pickupContext ? { codingPickup: pickupContext } : {}),
                   }),
+              ...(confirmedEpicsContext ? [confirmedEpicsContext] : []),
               ...(grumblin ? [] : [instructions.at(-1)]),
               ...(verification.mode === "browser"
                 ? [
@@ -1545,9 +1562,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const jobs: LocalJobInput[] = [];
     for (const name of listProjectNames(root)) {
       let currentProject: Project | undefined;
+      let pickupObservation: ReturnType<typeof codingPickup.begin> | undefined;
       try {
         const project = loadProject(root, name);
         currentProject = project;
+        pickupObservation = codingPickup.begin(project);
         const history = previousJobs.filter(
           (job) =>
             job.type === "developer" &&
@@ -1642,8 +1661,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
             !hasPmMapping(area) ||
             codingEnvironmentBlocker(project) ||
             !diagnostics.ready(project, "tickets", area.key, now)
-          )
+          ) {
+            if (codingPickupEnabled(area))
+              codingPickup.unavailable(pickupObservation, area);
             continue;
+          }
           let tickets: LinearTicket[];
           try {
             const client = linear(linearCredential.authorization);
@@ -1682,8 +1704,20 @@ export function createJobPreparation(options: JobPreparationOptions) {
               area.label,
               LABELS.approved,
             ]);
+            codingPickup.observe(
+              pickupObservation,
+              area,
+              tickets.filter((ticket) => approvedForArea(ticket, area)),
+              {
+                connectionId: project.config.linear?.connectionId ?? "default",
+                workspaceId:
+                  linearCredential.workspaceId ??
+                  project.config.linear?.workspaceId,
+              },
+            );
             diagnostics.resolve(project, "tickets", area.key, now);
           } catch {
+            codingPickup.unavailable(pickupObservation, area);
             diagnostics.fail(project, "tickets", "tickets", area.key, now);
             continue; /* One unavailable PM queue must not stop other areas. */
           }
@@ -1755,6 +1789,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
         }
         diagnostics.resolve(project, "scheduler", undefined, now);
       } catch {
+        if (pickupObservation) codingPickup.unavailable(pickupObservation);
         if (currentProject)
           diagnostics.fail(
             currentProject,
@@ -1774,6 +1809,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     selectDeveloperTicket,
     prepareJob,
     scheduledJobs,
+    codingPickup: codingPickup.read,
     scheduledJobAdmitted: scheduleCursor.admitted,
     releaseJobResources,
     completeJob: knowledge.capture,

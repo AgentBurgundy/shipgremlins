@@ -42,22 +42,33 @@ Local development after `npm ci`: set `SHIPGREMLINS_DASHBOARD_FIXTURE=1` and run
 
 ## What is real, what is simulated
 
-| Boundary          | Behavior                                                                                                                                        |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dashboard         | Real HTML, CSS, JavaScript, routing, dialogs and authenticated HTTP handlers                                                                    |
-| Configuration     | Real revision checks and writes, confined to a fresh temporary fixture directory                                                                |
-| PM edits          | Real brief/configuration validation and enable/pause handlers                                                                                   |
-| Projects          | Two synthetic projects, three PMs, named synthetic test roles                                                                                   |
-| Runs              | Seeded repository, browser-event, discovery, failed, queued and running scenarios; additional Run once requests create simulated queued entries |
-| Evidence          | Explicitly synthetic events, summary files and a sample fixture screenshot; none prove real AI execution or application correctness             |
-| Connections       | Simulated source/Linear metadata; no real tokens, OAuth flow or Slack messages                                                                  |
-| Providers/workers | External fetches and provider/machine mutations are blocked; no Docker daemon, Claude or PostgreSQL runs inside this app                        |
+| Boundary          | Behavior                                                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard         | Real HTML, CSS, JavaScript, routing, dialogs and authenticated HTTP handlers                                                                       |
+| Configuration     | Real revision checks and writes, confined to a fresh temporary fixture directory                                                                   |
+| PM edits          | Real brief/configuration validation and enable/pause handlers                                                                                      |
+| Projects          | Two seeded projects and three PMs, plus up to four disposable projects added through the real repository wizard                                    |
+| Runs              | Seeded repository, browser-event, discovery, failed, queued and running scenarios; additional Run once requests create simulated queued entries    |
+| Evidence          | Explicitly synthetic events, summary files and a sample fixture screenshot; none prove real AI execution or application correctness                |
+| Connections       | Simulated source/Linear metadata; no real tokens, OAuth flow or Slack messages                                                                     |
+| Setup review      | Real onboarding storage, validation and command-confirmation revision checks, with in-memory synthetic source and deterministic AI recommendations |
+| Providers/workers | External fetches, credential changes, real delivery reconciliation and Docker execution are blocked; additional workers/runs are simulated only    |
 
 A persistent banner identifies this boundary on every dashboard page. Recorded Playwright tool names and screenshot files are presentation fixtures, not successful browser-verification assertions. A new simulated run stays queued until canceled; the fixture never silently performs AI work or publishes tickets/PRs. Config and brief changes are backed by disposable files; simulated run changes are saved in `fixture-state.json` in the same private temporary directory.
 
 **Run coding** automatically selects a seeded, approved synthetic ticket belonging to that project's PMs; no ticket identifier is required. Each PM has one sample approved ticket (`FIX-101` through `FIX-103`). `FIX-199` is an unapproved proposal and cannot start coding. Automatic selection skips previous attempts, including canceled ones. These records are local test data, not real Linear issues.
 
 Useful scenarios: inspect Activity and open each run; compare repository-only versus screenshot evidence; edit a PM brief, save it, and reopen; enable/pause automation; queue and cancel a run; open project settings and save a change; cancel seeded queued/running scenarios before exercising deletion/recovery. Saving meaningful configuration changes can correctly clear project verification. Real connection verification, updates, remote enrollment and provider authorization are intentionally unavailable here.
+
+## Complete the project wizard
+
+Open **Projects → Improve my app**, choose GitHub and select **fixture/onboarding-app**. This is a third synthetic source entry that has not already been connected. Review or change the project name and finish **Add my app**. The real project-creation handler saves configuration in the private disposable workspace; no remote repository is created or changed.
+
+The following setup review uses the real onboarding factory with a bounded in-memory source adapter and a deterministic recommendation. Every review is labelled **SIMULATED SETUP**. Its source SHA identifies synthetic sample data, not a real Git commit; source-account access, AI execution, test commands and provider checks remain unverified. The suggested PM brief is reviewable context and does not adopt a PM or start work. Confirming the selected test command saves that exact choice using the normal configuration and report revisions. Reloading preserves the project and confirmed review; a stale confirmation cannot overwrite newer settings.
+
+The dispatch-recovery list is empty because the fixture never dispatches provider work or creates real pull requests. Reading it uses bounded synthetic data; binding a provider run remains disabled.
+
+Only the existing-repository wizard for `fixture/onboarding-app` is enabled. The fixture allows four additional project names, then requires a restart to reset its scenarios. Attempts to connect other repositories, change credentials, publish setup pull requests, prepare Docker or hosting, verify an environment, or create remote repositories remain blocked. These intentional test boundaries are not evidence of product defects or real integration failures. Record a blocked acceptance criterion as unverified and continue with a different supported scenario instead of repeatedly attempting the same denied operation.
 
 The root URL grants a fresh **synthetic-only** session automatically. It is not a production authentication model. The real dashboard still requires that session on its APIs, and the fixture gateway rejects cross-origin mutations. Use the managed private container network or the loopback-only publishing example.
 
