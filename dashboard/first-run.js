@@ -8,6 +8,142 @@
     job.project === project.name &&
     (job.projectInstanceId ?? null) === (project.instanceId ?? null);
   const actualWork = (job) => ["pm", "developer"].includes(job.type);
+  const recentFirst = (a, b) =>
+    (Number(b.runId) || Date.parse(b.createdAt) || 0) -
+    (Number(a.runId) || Date.parse(a.createdAt) || 0);
+
+  // Read actual, identity-scoped work before interpreting saved configuration.
+  // Enabled autonomy means permission to work; it is never proof of a live run.
+  window.projectWorkState = (project, jobs = [], operations = {}) => {
+    const href = projectPath(project);
+    const work = list(jobs)
+      .filter((job) => belongs(job, project) && actualWork(job))
+      .sort(recentFirst);
+    const active =
+      work.find((job) => job.status === "running") ||
+      work.find((job) => job.status === "queued");
+    if (active)
+      return {
+        state: active.status,
+        label: active.status === "running" ? "Working" : "Queued",
+        detail:
+          active.status === "running"
+            ? `${active.type === "developer" ? "Coding" : "Investigation"} run ${active.runId || ""} is in progress.`.trim()
+            : "Work is waiting for a runner to pick it up.",
+        action: "Follow run",
+        href: `/activity?run=${encodeURIComponent(active.id)}`,
+        job: active,
+      };
+    const autonomy = operations.autonomy || project.autonomy;
+    const latest = work[0];
+    if (["running", "queued"].includes(autonomy?.state))
+      return {
+        state: autonomy.state,
+        label: autonomy.state === "running" ? "Working" : "Queued",
+        detail: autonomy.message,
+        action: "Follow project",
+        href,
+      };
+    const blocked = list(autonomy?.blockers)[0];
+    if (autonomy?.state === "blocked")
+      return {
+        state: "blocked",
+        label: "Needs attention",
+        detail:
+          (typeof blocked === "string" ? blocked : blocked?.message) ||
+          autonomy?.message ||
+          "Autonomous work is blocked. Review the project setup.",
+        action: "Resolve blocker",
+        href:
+          {
+            source: "/connections#source-control",
+            ai: "/connections#model-connections",
+            worker: "/runners#workers",
+            linear: "/connections#linear-connection",
+          }[blocked?.action] || `${href}?tab=environment`,
+      };
+    if (project.foundation?.needed)
+      return {
+        state: "setup",
+        label:
+          project.foundation.stage === "review-code"
+            ? "Review foundation"
+            : "Foundation needed",
+        detail:
+          "Finish the first working app before recurring product work begins.",
+        action: "Open foundation",
+        href: `${href}?tab=environment`,
+      };
+    if (operations.inbox?.length)
+      return {
+        state: "review",
+        label: `${operations.inbox.length} to review`,
+        detail: "Your crew has decisions or evidence ready for you.",
+        action: "Review decisions",
+        href: `${href}?tab=review`,
+      };
+    if (autonomy?.enabled === true)
+      return {
+        state: "autonomous",
+        label: "Autonomy on",
+        detail:
+          autonomy.message ||
+          "Automatic work is enabled. No run is currently in flight.",
+        action: "Open project",
+        href,
+      };
+    if (latest?.status === "failed" && autonomy?.enabled !== true)
+      return {
+        state: "blocked",
+        label: "Run stopped",
+        detail:
+          "The latest run failed. Open its evidence to see what needs repair.",
+        action: "Review last run",
+        href: `/activity?run=${encodeURIComponent(latest.id)}`,
+      };
+    if (!Array.isArray(project.areas) || !project.readiness)
+      return {
+        state: "unknown",
+        label: "Status unavailable",
+        detail: "Project configuration or readiness could not be read.",
+        action: "Review settings",
+        href: "/settings#advanced-settings",
+      };
+    if (!project.areas.length)
+      return {
+        state: "setup",
+        label: "Crew needed",
+        detail:
+          "Review the repository setup and give your first gremlin a purpose. Repository discovery needs no ticket tracker.",
+        action: "Meet your first gremlin",
+        href,
+      };
+    const blocker = list(project.readiness.blockers)[0];
+    if (blocker && project.readiness.canRun === false)
+      return {
+        state: "setup",
+        label: "Setup needed",
+        detail: blocker.message || "Finish project setup before starting work.",
+        action: "Finish setup",
+        href: `${href}?tab=environment`,
+      };
+    if (project.areas.some((area) => area.enabled === true))
+      return {
+        state: "scheduled",
+        label: "Patrols scheduled",
+        detail:
+          "Enabled PMs follow their saved schedules. No run is currently in flight.",
+        action: "Open project",
+        href,
+      };
+    return {
+      state: "paused",
+      label: "Automatic work off",
+      detail: "Start work manually or enable autonomy in this project.",
+      action: "Open project",
+      href,
+    };
+  };
 
   // Server summaries come from identity-scoped knowledge and mission journals.
   // A generic successful PM run is not evidence that the first Discovery saved.
@@ -39,9 +175,10 @@
         (job) =>
           actualWork(job) && projects.some((project) => belongs(job, project)),
       )
-      .sort((a, b) => b.runId - a.runId);
+      .sort(recentFirst);
     const currentWork =
-      recentWork.find((job) => ["queued", "running"].includes(job.status)) ||
+      recentWork.find((job) => job.status === "running") ||
+      recentWork.find((job) => job.status === "queued") ||
       recentWork[0];
     const project =
       projects.find(
@@ -49,23 +186,6 @@
       ) ||
       projects.find((project) => project.areas?.length) ||
       projects[0];
-    if (established)
-      return {
-        active: false,
-        title:
-          established.workflow?.kind === "promotion"
-            ? "Follow your first change through PM QA."
-            : "Your first change is ready to review.",
-        description:
-          established.workflow?.kind === "promotion"
-            ? "Your crew checks the code, deploys it to the PM test branch and tests the app. Follow its actual QA result, promotion and any blocker."
-            : "Inspect the draft and its evidence. A finished coding run is a change to review, not a claim that the product is finished.",
-        label:
-          established.workflow?.kind === "promotion"
-            ? "Follow delivery"
-            : "Review your change",
-        href: `${projectPath(established)}${established.workflow?.kind === "promotion" ? "?tab=changes" : ""}`,
-      };
     const sourceStep = list(project?.readiness?.steps).find(
       (item) => item.id === "source_connection",
     );
@@ -121,10 +241,10 @@
       project &&
       jobs
         .filter((job) => belongs(job, project) && actualWork(job))
-        .sort((a, b) => b.runId - a.runId);
-    const active = work?.find((job) =>
-      ["queued", "running"].includes(job.status),
-    );
+        .sort(recentFirst);
+    const active =
+      work?.find((job) => job.status === "running") ||
+      work?.find((job) => job.status === "queued");
     if (active)
       return step(
         4,
@@ -136,11 +256,30 @@
           : "Watch the actions, evidence, and results as your gremlin works. You can safely leave this page.",
         "Follow the mission",
         `/activity?run=${encodeURIComponent(active.id)}`,
+        { active: !established },
       );
+    if (established?.workflow?.kind === "promotion")
+      return {
+        active: false,
+        title: "Follow your first change through PM QA.",
+        description:
+          "Your crew checks the code, deploys it to the PM test branch and tests the app. Follow its actual QA result, promotion and any blocker.",
+        label: "Follow delivery",
+        href: `${projectPath(established)}?tab=changes`,
+      };
+    if (established)
+      return {
+        active: false,
+        title: "Your crew. Your next move.",
+        description:
+          "See what is working, what needs attention, and where your projects go next.",
+        label: "Open your projects",
+        href: "/projects",
+      };
     if (!sourceReady)
       return step(
         0,
-        "Give your gremlin a way in.",
+        "Connect your code.",
         project
           ? `Connect the source account for ${project.name} so your gremlin can explore its code.`
           : "Connect GitHub or GitLab. Your code stays in your account; your gremlins work from your server.",
@@ -150,7 +289,7 @@
     if (!aiReady)
       return step(
         1,
-        "A little brainpower next.",
+        "Connect your AI.",
         "Connect Claude Code to plan a crew and run its missions. You can add Linear and hosting when a task needs them.",
         "Connect Claude Code",
         "/connections#model-connections",
@@ -185,6 +324,18 @@
           : "Review foundation plan",
         `${projectPath(project)}?tab=environment`,
       );
+    if (project.autonomy?.enabled === true) {
+      const automatic = window.projectWorkState(project, jobs);
+      return step(
+        4,
+        automatic.state === "blocked"
+          ? "Your crew needs one thing."
+          : "Your crew is ready to work.",
+        automatic.detail,
+        automatic.action,
+        automatic.href,
+      );
+    }
     const firstStep = window.projectFirstStep(project, jobs);
     if (firstStep === "welcome")
       return step(
@@ -288,6 +439,12 @@
     adopt.disabled = locked;
     adopt.dataset.createPmProject = state.adoptProject || "";
     get("first-run-note").hidden = !state.active;
+    const automatic = list(status.projects).some(
+      (project) => project.autonomy?.enabled,
+    );
+    get("first-run-note").textContent = automatic
+      ? "Autonomous work is enabled for your crew. Requirements and run limits still apply; coding uses approved tickets."
+      : "Connect your project, then enable autonomous work. Your crew investigates and picks up approved tickets within its run limits.";
     const progress = get("first-run-progress");
     const labels = [
       "Connect source",

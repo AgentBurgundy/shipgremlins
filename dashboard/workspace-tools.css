@@ -1,0 +1,58 @@
+.dashboard-freshness {
+  margin: 0 0 18px;
+  color: #667b70;
+  font-size: 11px;
+  border-bottom: 1px solid #e1e9e3;
+  padding-bottom: 12px;
+}
+.dashboard-freshness summary {
+  cursor: pointer;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+.dashboard-freshness.degraded summary {
+  color: #8b5b21;
+}
+.dashboard-freshness ul {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0 0;
+  list-style: none;
+  margin: 0;
+}
+.dashboard-freshness li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  line-height: 1.5;
+}
+.dashboard-freshness li strong {
+  color: #385b42;
+  min-width: 110px;
+}
+.project-preference-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.project-preference-actions button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid #e1e9e3;
+  border-radius: 7px;
+  background: #fff;
+  color: #667b70;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.project-preference-actions button[aria-pressed="true"] {
+  color: #245b40;
+  background: #edf5e7;
+  border-color: #c8dbbc;
+}
+.project-preference-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

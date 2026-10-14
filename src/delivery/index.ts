@@ -22,6 +22,7 @@ import {
 } from "../lifecycle/manifest.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { LABELS } from "../dispatcher/notes.ts";
+import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import {
   effectiveVerification,
   effectiveWorkflow,
@@ -407,6 +408,7 @@ export function createDeliveryService(options: {
         ticket,
         options.linear,
       )) &&
+      !createAutomaticApprovals(options.root).blocker(project, area, ticket) &&
       ticketScopeHash(ticket) === record.scopeHash &&
       ticket.teamId === record.ticket.teamId &&
       ticket.projectId === area.linearProjectId &&
@@ -1563,6 +1565,42 @@ export function createDeliveryService(options: {
           continue;
         }
         const files = await forge.listPullFiles(repo, pull.number);
+        const currentTicket = await options.linear?.getTicket(record.ticket.id);
+        if (!currentTicket) {
+          record.status = "blocked";
+          record.message =
+            "The current approved ticket is unavailable. Review its scope before integration merge.";
+          continue;
+        }
+        if (
+          createAutomaticApprovals(options.root).isAutomatic(
+            project,
+            currentTicket,
+          )
+        ) {
+          const changes = forge.listPullChanges
+            ? await forge.listPullChanges(repo, pull.number)
+            : undefined;
+          const stats = forge.getPullDiffStats
+            ? await forge.getPullDiffStats(repo, pull.number)
+            : undefined;
+          const paths =
+            changes?.flatMap((c) => [
+              c.path,
+              ...(c.previousPath ? [c.previousPath] : []),
+            ]) ?? [];
+          const reason = createAutomaticApprovals(options.root).changeBlocker(
+            project,
+            currentTicket,
+            paths,
+            stats?.headSha === pull.headSha ? stats : undefined,
+          );
+          if (reason) {
+            record.status = "blocked";
+            record.message = reason;
+            continue;
+          }
+        }
         if (
           (!files.length && !record.promotionSource) ||
           files.some((f) => matchesPrefix(f, project.tiers.hubOwnerOnly))

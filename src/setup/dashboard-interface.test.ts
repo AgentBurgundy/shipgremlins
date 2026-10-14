@@ -6,6 +6,7 @@ type UiEvent = {
   target: Element;
   clientX?: number;
   clientY?: number;
+  key?: string;
   detail?: { page: string; path: string };
   preventDefault(): void;
 };
@@ -542,6 +543,43 @@ describe("dashboard interface surfaces", () => {
     expect(draft.value).toBe("keep this draft");
   });
 
+  it("keeps source and AI as essentials and searches optional connections across categories", async () => {
+    const f = fixture(),
+      grid = f.body.querySelector(".connection-library-grid")!,
+      visible = () =>
+        grid.children
+          .filter((tile) => !tile.hidden)
+          .map((tile) => tile.querySelector("h3")!.textContent),
+      search = f.get("connection-library-search");
+    await f.button(f.nav("Connection categories"), "Start here").emit("click");
+    expect(visible()).toEqual(["Claude Code", "GitHub & GitLab"]);
+    search.value = "Sentry";
+    await search.emit("input");
+    expect(visible()).toEqual(["Sentry"]);
+    expect(
+      f.body.querySelector(".connection-library-search-result")!.textContent,
+    ).toBe("1 match across all connections");
+    search.value = "no provider with this name";
+    await search.emit("input");
+    expect(visible()).toEqual([]);
+    expect(f.body.querySelector(".connection-library-empty")!.hidden).toBe(
+      false,
+    );
+    await search.emit("keydown", { key: "Escape" });
+    expect(search.value).toBe("");
+    expect(visible()).toEqual(["Claude Code", "GitHub & GitLab"]);
+  });
+  it("supports arrows, Home and End for connection categories", async () => {
+    const f = fixture(),
+      nav = f.nav("Connection categories");
+    await f.button(nav, "Start here").emit("keydown", { key: "ArrowRight" });
+    expect(f.focused()?.textContent).toBe("Hosting");
+    expect(f.button(nav, "Hosting").getAttribute("aria-current")).toBe("page");
+    await f.button(nav, "Hosting").emit("keydown", { key: "End" });
+    expect(f.focused()?.textContent).toBe("Workflow & access");
+    await f.button(nav, "Workflow & access").emit("keydown", { key: "Home" });
+    expect(f.focused()?.textContent).toBe("All connections");
+  });
   it("takes ownership from legacy category tabs before adopting provider controls", () => {
     const f = fixture();
     expect(f.window.dashboardShell.releaseConnections).toHaveBeenCalledTimes(1);

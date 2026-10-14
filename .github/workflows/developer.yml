@@ -43,6 +43,10 @@ on:
         description: "echoed as run-name so the dispatcher can find this run"
         required: false
         type: string
+      scope:
+        description: "controller recovery scope digest; echoed in authenticated launch metadata"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -60,9 +64,13 @@ jobs:
       zone: ${{ steps.cfg.outputs.zone }}
       gcpProject: ${{ steps.cfg.outputs.gcpProject }}
     steps:
+      # Server-recorded step metadata supplies exact inputs for receipt recovery.
+      # This runs before any repository code or agent and contains no secrets.
+      - name: "ShipGremlins dispatch inputs: ${{ toJSON(inputs) }}"
+        run: echo 'Dispatch inputs recorded by the workflow.'
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -144,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22

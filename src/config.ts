@@ -8,6 +8,10 @@ import { join } from "node:path";
 import { parsePmCharter, type PmCharter } from "./pmCharter.ts";
 import { parseExecutionLimits, type ExecutionLimits } from "./execution.ts";
 import {
+  parseAutonomousApproval,
+  type AutonomousApprovalPolicy,
+} from "./autonomy/policy.ts";
+import {
   ID_RE,
   parseTelemetry,
   type TelemetryConfig,
@@ -40,6 +44,7 @@ export interface ProjectConfig extends ProjectCapabilities {
   /** Reviewed idea plan that created this project, used for resumable onboarding. */
   ideaPlanId?: string;
   execution?: ExecutionLimits;
+  autonomousApproval?: AutonomousApprovalPolicy;
   /** The Linear team for this app; existing area project IDs remain authoritative. */
   linear?: {
     teamId?: string;
@@ -344,9 +349,11 @@ export function loadProject(root: string, name: string): Project {
   const commands = need(pf, raw, "commands", isObj, "an object");
   let telemetry: TelemetryConfig | undefined;
   let execution: ExecutionLimits | undefined;
+  let autonomousApproval: AutonomousApprovalPolicy | undefined;
   try {
     telemetry = parseTelemetry(raw.telemetry);
     execution = parseExecutionLimits(raw.execution);
+    autonomousApproval = parseAutonomousApproval(raw.autonomousApproval);
   } catch (error) {
     throw new ConfigError(pf, (error as Error).message);
   }
@@ -385,6 +392,7 @@ export function loadProject(root: string, name: string): Project {
       : {}),
     ...(telemetry ? { telemetry } : {}),
     ...(execution ? { execution } : {}),
+    ...(autonomousApproval ? { autonomousApproval } : {}),
     name,
     provider:
       raw.provider === undefined

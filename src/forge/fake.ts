@@ -16,6 +16,10 @@ import type {
   RevisionTreeEntry,
   RepoRef,
   WorkflowRun,
+  WorkflowRunEvidence,
+  FailedJobRerunTarget,
+  FailedJobRerunPlan,
+  FailedJobRerunEvidence,
 } from "./types.ts";
 
 let nextId = 1000;
@@ -62,6 +66,8 @@ export class FakeForge implements Forge {
   private pullComments = new Map<string, Comment[]>();
   private checks = new Map<string, CheckSummary>(); // `${repo}#${sha}`
   private runs = new Map<number, WorkflowRun>();
+  private workflowEvidence = new Map<number, WorkflowRunEvidence>();
+  private rerunAttempts = new Map<string, number>();
   private compares = new Map<string, { aheadBy: number; behindBy: number }>();
   private pullNo = 1;
   private commentId = 1;
@@ -178,6 +184,9 @@ export class FakeForge implements Forge {
     this.runs.set(run.id, r);
     if (run.id >= this.runNo) this.runNo = run.id + 1;
     return r;
+  }
+  seedWorkflowEvidence(runId: number, evidence: WorkflowRunEvidence): void {
+    this.workflowEvidence.set(runId, evidence);
   }
   /** mutate a seeded PR (e.g. set mergeableState after a rebase) */
   patchPull(repo: RepoRef, number: number, patch: Partial<PullRequest>): void {
@@ -352,6 +361,54 @@ export class FakeForge implements Forge {
   }
   async rerunFailedJobs(_repo: RepoRef, at: string): Promise<void> {
     this.reruns.push(at);
+  }
+  async planFailedJobRerun(
+    repo: string,
+    at: string,
+  ): Promise<FailedJobRerunPlan> {
+    const check = await this.getChecks(repo, at);
+    return check.status === "pending"
+      ? { state: "pending", targets: [] }
+      : {
+          state: "ready",
+          targets:
+            check.status === "failure"
+              ? [
+                  {
+                    provider: "fake",
+                    repository: repo,
+                    sha: at,
+                    runId: 1,
+                    attempt: this.rerunAttempts.get(`${repo}#${at}`) ?? 1,
+                  },
+                ]
+              : [],
+        };
+  }
+  async rerunFailedJobTarget(target: FailedJobRerunTarget): Promise<void> {
+    this.reruns.push(target.sha);
+    this.rerunAttempts.set(
+      `${target.repository}#${target.sha}`,
+      target.attempt + 1,
+    );
+  }
+  async getFailedJobRerunEvidence(
+    target: FailedJobRerunTarget,
+  ): Promise<FailedJobRerunEvidence> {
+    return {
+      acknowledged:
+        (this.rerunAttempts.get(`${target.repository}#${target.sha}`) ?? 1) >
+        target.attempt,
+      pending:
+        (await this.getChecks(target.repository, target.sha)).status ===
+        "pending",
+    };
+  }
+  async getWorkflowRunEvidence(
+    _repo: string,
+    runId: number,
+  ): Promise<WorkflowRunEvidence | null> {
+    return this.workflowEvidence.get(runId) ?? null;
   }
   async dispatchWorkflow(
     _hubRepo: RepoRef,

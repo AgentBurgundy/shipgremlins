@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadProject } from "../config.ts";
 import { readConnections } from "../setup/connections.ts";
 import { ChildProcess, type spawn } from "node:child_process";
 import {
@@ -795,9 +796,10 @@ describe("local dashboard HTTP boundary", () => {
       key: "security",
       name: "Security",
       mandate: "Test permission boundaries.",
-      enabled: false,
-      codingEnabled: false,
     });
+    expect(
+      loadProject(root, "demo").areas.find((area) => area.key === "security"),
+    ).toMatchObject({ enabled: true, codingEnabled: true });
     expect(linearProvisioning.provision).toHaveBeenLastCalledWith("demo", {
       teamId: undefined,
       areaKey: "security",
@@ -815,8 +817,6 @@ describe("local dashboard HTTP boundary", () => {
     ).toBe(200);
     expect(linearProvisioning.addArea).toHaveBeenLastCalledWith("demo", {
       ...fullBrief,
-      enabled: false,
-      codingEnabled: false,
     });
     expect(
       (

@@ -5,12 +5,18 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
+  unlinkSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve, relative } from "node:path";
 import type { DockerRun } from "../localRunners/docker.ts";
-import { parseDockerTarget, type DockerEnvironmentTarget } from "./recipe.ts";
+import {
+  parseDockerTarget,
+  assertPublicBuildValues,
+  type DockerEnvironmentTarget,
+} from "./recipe.ts";
 export { parseDockerTarget, type DockerEnvironmentTarget } from "./recipe.ts";
 
 export interface TestEnvironmentInput {
@@ -24,6 +30,8 @@ export interface TestEnvironmentInput {
   };
   /** Resolved dedicated application secrets only. Never model/provider credentials. */
   env?: Record<string, string>;
+  /** Resolved build-only test secrets, keyed by declared BuildKit id. */
+  buildSecrets?: Record<string, string>;
 }
 export interface TestEnvironment {
   url: string;
@@ -126,11 +134,14 @@ export function createTestEnvironments(options: {
   async function checked(
     args: string[],
     runOptions?: Parameters<DockerRun>[1],
+    failure?: { message: string; code: string },
   ) {
     const r = await run(args, runOptions);
     if (r.code !== 0)
       throw new TestEnvironmentError(
-        "The Docker test environment could not start. Check the image, Dockerfile, test-only inputs and service health.",
+        failure?.message ??
+          "The Docker test environment could not start. Check the image, Dockerfile, test-only inputs and service health.",
+        failure?.code,
       );
     return r;
   }
@@ -261,6 +272,34 @@ export function createTestEnvironments(options: {
         "Supply every named test-only application input before starting Docker.",
         "missing_inputs",
       );
+    const secretIds = Object.keys(target.buildSecrets ?? {}).sort();
+    if (
+      JSON.stringify(secretIds) !==
+        JSON.stringify(Object.keys(input.buildSecrets ?? {}).sort()) ||
+      Object.values(input.buildSecrets ?? {}).some(
+        (value) =>
+          typeof value !== "string" ||
+          !value ||
+          Buffer.byteLength(value) > 65536 ||
+          value.includes("\0"),
+      )
+    )
+      throw new TestEnvironmentError(
+        "Supply every declared build-only test secret before building Docker.",
+        "missing_inputs",
+      );
+    try {
+      assertPublicBuildValues(target, [
+        ...Object.values(input.env ?? {}),
+        ...Object.values(input.buildSecrets ?? {}),
+        input.source?.token,
+      ]);
+    } catch {
+      throw new TestEnvironmentError(
+        "A public build argument contains a private credential. Use a BuildKit secret reference instead.",
+        "missing_inputs",
+      );
+    }
     if (target.recipe.kind === "dockerfile") {
       const source = input.source;
       let url: URL;
@@ -310,10 +349,18 @@ export function createTestEnvironments(options: {
         image = target.recipe.image;
         const present = await run(["image", "inspect", image]);
         if (present.code !== 0)
-          await checked(["pull", image], {
-            timeoutMs: 5 * 60_000,
-            maxBytes: 4096,
-          });
+          await checked(
+            ["pull", image],
+            {
+              timeoutMs: 5 * 60_000,
+              maxBytes: 4096,
+            },
+            {
+              message:
+                "The application image could not be downloaded. Check its image reference and registry access.",
+              code: "image_unavailable",
+            },
+          );
       } else {
         const checkout = `${prefix(job)}-source`;
         await checked([
@@ -359,18 +406,49 @@ export function createTestEnvironments(options: {
           target.recipe.context === "."
             ? target.recipe.dockerfile
             : target.recipe.dockerfile.slice(target.recipe.context.length + 1);
-        await checked(
-          [
-            "build",
-            "--tag",
-            image,
-            "--file",
-            dockerfile,
-            ...resourceLabels(job),
-            "-",
-          ],
-          { stdinBuffer: tar, timeoutMs: 10 * 60_000, maxBytes: 8192 },
-        );
+        const secretArgs: string[] = [];
+        for (const [index, secretId] of secretIds.entries()) {
+          const secretPath = join(scratch, `build-secret-${index}`);
+          writeFileSync(secretPath, input.buildSecrets![secretId]!, {
+            flag: "wx",
+            mode: 0o600,
+          });
+          secretArgs.push(
+            "--secret",
+            `type=file,id=${secretId},src=${secretPath}`,
+          );
+        }
+        try {
+          await checked(
+            [
+              "build",
+              "--tag",
+              image,
+              "--file",
+              dockerfile,
+              ...Object.entries(target.buildArgs ?? {}).flatMap(
+                ([name, value]) => ["--build-arg", `${name}=${value}`],
+              ),
+              ...secretArgs,
+              ...resourceLabels(job),
+              "-",
+            ],
+            {
+              stdinBuffer: tar,
+              env: { DOCKER_BUILDKIT: "1" },
+              timeoutMs: 10 * 60_000,
+              maxBytes: 8192,
+            },
+            {
+              message:
+                "The application Dockerfile did not build. Check its build context, dependencies and required build inputs.",
+              code: "build_failed",
+            },
+          );
+        } finally {
+          for (const index of secretIds.keys())
+            unlinkSync(join(scratch, `build-secret-${index}`));
+        }
         await checked(["rm", "--force", checkout]);
       }
       const imageInfo = await checked([
@@ -440,6 +518,7 @@ export function createTestEnvironments(options: {
         if (!healthy)
           throw new TestEnvironmentError(
             "A disposable database did not become ready.",
+            "service_unhealthy",
           );
         appEnv[service.env] = postgres
           ? `postgresql://gremlins:${password}@${service.name}:5432/gremlins`
@@ -467,6 +546,13 @@ export function createTestEnvironments(options: {
               ...command.slice(1),
             ],
             { env: appEnv, timeoutMs: 120_000, maxBytes: 4096 },
+            {
+              message:
+                phase === "migrate"
+                  ? "The disposable database migration failed. Check the migration command and test schema."
+                  : "Synthetic test data could not be seeded. Check the seed command and disposable database.",
+              code: phase === "migrate" ? "migration_failed" : "seed_failed",
+            },
           );
         } finally {
           if (await inspect("container", step, job))

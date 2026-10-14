@@ -23,6 +23,7 @@ import { loadProject } from "../config.ts";
 import type { DockerRunners } from "../localRunners/docker.ts";
 import { ManagedAccessError } from "../localRunners/managedAccess.ts";
 import type { PlannerDockerRun } from "../pmPlanner/docker.ts";
+import { TestEnvironmentError } from "../testEnvironments/index.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -447,6 +448,274 @@ describe("project environment onboarding", () => {
     expect(service.status("app").commitSha).toBeUndefined();
     expect(JSON.stringify(run.mock.calls)).not.toContain("private-app-value");
   });
+  it("identifies missing Docker application inputs before building or opening a browser", async () => {
+    config({
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "image", image: "test/app:1" },
+      port: 3000,
+      env: { API_KEY: "TEST_API_KEY" },
+    });
+    const { service, run, docker } = harness();
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "failed",
+      diagnosis: { code: "app_inputs_missing", action: "manage_credentials" },
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(docker.smokeEnvironment).not.toHaveBeenCalled();
+  });
+  it("resolves build-only credentials separately and invalidates browser evidence when they rotate", async () => {
+    config({
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "dockerfile", dockerfile: "Dockerfile", context: "." },
+      port: 3000,
+      buildSecrets: { npmrc: "TEST_NPMRC" },
+    });
+    saveConnections(root, {
+      TEST_NPMRC: "//registry.example.test/:_authToken=private-build-value\n",
+    });
+    const h = harness();
+    h.sourceControl.acquireLease.mockResolvedValue({
+      token: "private-source-token",
+    });
+    const service = createEnvironmentAccess({
+      root,
+      packageRoot,
+      env: {},
+      docker: h.docker,
+      run: h.run,
+      sourceControl: h.sourceControl,
+      fetch: vi.fn(
+        async () => new Response(JSON.stringify({ sha: "a".repeat(40) })),
+      ),
+    });
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app").status).toBe("passed");
+    expect(h.docker.smokeEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: {},
+        buildSecrets: {
+          npmrc: "//registry.example.test/:_authToken=private-build-value\n",
+        },
+      }),
+      expect.any(Function),
+    );
+    expect(JSON.stringify(h.run.mock.calls)).not.toContain(
+      "private-build-value",
+    );
+    expect(
+      projectConnections(root).find((item) => item.name === "TEST_NPMRC"),
+    ).toMatchObject({ purpose: "build-secret", optional: false });
+    saveConnections(root, { TEST_NPMRC: "replacement-build-value" });
+    expect(service.status("app").status).toBe("untested");
+  });
+  it("rejects a saved opaque provider credential hidden in an ordinary public build argument", async () => {
+    config({
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "dockerfile", dockerfile: "Dockerfile", context: "." },
+      port: 3000,
+      buildArgs: { VERSION: "opaque-provider-credential" },
+    });
+    saveConnections(root, { GITHUB_TOKEN: "opaque-provider-credential" });
+    const h = harness();
+    await h.service.verify("app");
+    await h.service.idle();
+    expect(h.service.status("app")).toMatchObject({
+      status: "failed",
+      message: expect.stringContaining(
+        "public build argument contains a saved credential",
+      ),
+    });
+    expect(JSON.stringify(h.service.status("app"))).not.toContain(
+      "opaque-provider-credential",
+    );
+    expect(h.sourceControl.acquireLease).not.toHaveBeenCalled();
+    expect(h.run).not.toHaveBeenCalled();
+  });
+  it.each([
+    "image_unavailable",
+    "build_failed",
+    "service_unhealthy",
+    "migration_failed",
+    "seed_failed",
+    "app_unhealthy",
+  ])("retains a safe actionable %s diagnosis from Docker", async (code) => {
+    config({
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "image", image: "test/app:1" },
+      port: 3000,
+    });
+    const { service, docker } = harness();
+    vi.mocked(docker.smokeEnvironment!).mockRejectedValue(
+      new TestEnvironmentError("private container output", code),
+    );
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "failed",
+      diagnosis: { code, action: "edit_environment" },
+    });
+    expect(JSON.stringify(service.status("app"))).not.toContain(
+      "private container output",
+    );
+  });
+  it("routes missing hosted staging credentials to Connections before the browser starts", async () => {
+    config({
+      kind: "railway",
+      role: "staging",
+      projectId: "project",
+      serviceId: "service",
+      environmentId: "staging",
+    });
+    const { service, run } = harness();
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "failed",
+      diagnosis: { code: "hosting_credentials", action: "manage_credentials" },
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+  it("invalidates successful hosted browser evidence when its selected provider credential rotates", async () => {
+    config({
+      kind: "railway",
+      role: "staging",
+      projectId: "project",
+      serviceId: "service",
+      environmentId: "staging",
+    });
+    saveConnections(root, { RAILWAY_TOKEN: "original-hosting-token" });
+    const h = harness();
+    const service = createEnvironmentAccess({
+      root,
+      packageRoot,
+      env: {},
+      docker: h.docker,
+      run: h.run,
+      fetch: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: {
+                environments: { edges: [{ node: { id: "staging" } }] },
+                service: { id: "service", projectId: "project" },
+                serviceInstance: {
+                  latestDeployment: {
+                    id: "deployment",
+                    status: "SUCCESS",
+                    meta: {},
+                  },
+                },
+                domains: {
+                  serviceDomains: [{ domain: "staging.example.test" }],
+                },
+              },
+            }),
+          ),
+      ),
+    });
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app").status).toBe("passed");
+    saveConnections(root, { RAILWAY_TOKEN: "replacement-hosting-token" });
+    expect(service.status("app").status).toBe("untested");
+  });
+  it("fails readiness if the created browser container's cleanup ownership cannot be verified", async () => {
+    config({ kind: "url", role: "staging", url: "https://app.test" });
+    const { service, run } = harness();
+    const original = run.getMockImplementation()!;
+    run.mockImplementation(async (args, options) =>
+      args[0] === "inspect"
+        ? { code: 1, stdout: "", stderr: "Docker unavailable" }
+        : original(args, options),
+    );
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "failed",
+      diagnosis: { code: "cleanup_pending" },
+    });
+    expect(run.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
+  });
+  it("diagnoses an unavailable browser worker without reflecting Docker output", async () => {
+    config({ kind: "url", role: "staging", url: "https://app.test" });
+    const { service, docker } = harness();
+    vi.mocked(docker.ensureImage).mockRejectedValue(
+      new Error("private registry credential"),
+    );
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "failed",
+      diagnosis: { code: "browser_unavailable" },
+    });
+    expect(JSON.stringify(service.status("app"))).not.toContain(
+      "private registry credential",
+    );
+  });
+  it("can replace malformed saved verification history with a fresh browser check", async () => {
+    config({ kind: "url", role: "staging", url: "https://app.test" });
+    const { service } = harness();
+    await service.verify("app");
+    await service.idle();
+    const statePath = join(root, ".run/environment-access/app/state.json");
+    writeFileSync(statePath, "{invalid");
+    expect(service.status("app")).toMatchObject({
+      status: "failed",
+      message: expect.stringContaining("Retry"),
+    });
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app").status).toBe("passed");
+  });
+  it("does not expose unsupported stored fields or screenshot URLs", async () => {
+    config({ kind: "url", role: "staging", url: "https://app.test" });
+    const { service } = harness();
+    await service.verify("app");
+    await service.idle();
+    const statePath = join(root, ".run/environment-access/app/state.json");
+    const saved = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        ...saved,
+        privateOutput: "private provider credential",
+      }),
+    );
+    expect(service.status("app").status).toBe("passed");
+    expect(JSON.stringify(service.status("app"))).not.toContain(
+      "private provider credential",
+    );
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        ...saved,
+        screenshotUrl: "https://unknown.test/?token=private",
+      }),
+    );
+    expect(service.status("app").status).toBe("failed");
+    expect(JSON.stringify(service.status("app"))).not.toContain("unknown.test");
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        ...saved,
+        checks: [{ name: "Browser opens application", passed: false }],
+      }),
+    );
+    expect(service.status("app").status).toBe("failed");
+  });
+  it("rejects new environment tests after the controller closes", async () => {
+    const { service, run } = harness();
+    await service.close();
+    await expect(service.verify("app")).rejects.toMatchObject({ status: 503 });
+    expect(run).not.toHaveBeenCalled();
+  });
   it("rejects controller credential references and cross-project telemetry aliasing", () => {
     expect(() =>
       parseTestAccess({
@@ -602,6 +871,113 @@ describe("verification on configured agent services", () => {
         GREMLINS_TEST_PASSWORD_1: "private-password",
       },
     });
+  });
+  it("retains BuildKit inputs and runner identity when checking Docker through the managed agent service", async () => {
+    config({
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "dockerfile", context: ".", dockerfile: "Dockerfile" },
+      port: 3000,
+      access: { kind: "public" },
+      env: { APP_KEY: "TEST_APP_KEY" },
+      buildArgs: { NEXT_PUBLIC_API_URL: "https://staging.example.test" },
+      buildSecrets: { npmrc: "TEST_NPMRC" },
+    });
+    const buildSecret =
+      "//registry.example.test/:_authToken=private-managed-build\n";
+    saveConnections(root, {
+      TEST_APP_KEY: "private-managed-app",
+      TEST_NPMRC: buildSecret,
+    });
+    let payload:
+      import("../localRunners/docker.ts").DockerJobPayload | undefined;
+    let id = "";
+    const release = vi.fn(async () => {});
+    const docker = {
+      prepareWorker: vi.fn(async () => {}),
+      startJob: vi.fn(async (input) => {
+        payload = input.payload;
+        id = input.id;
+        return { id, name: id, image: "synthetic" };
+      }),
+      inspectJob: vi.fn(async () => ({
+        exists: true,
+        running: false,
+        status: "exited",
+        exitCode: 0,
+        workerId: "worker-managed",
+      })),
+      artifacts: vi.fn(async () => ({
+        files: [],
+        result: {
+          ok: true,
+          kind: "verify",
+          nonce: id,
+          accessReceipt: {
+            version: 1,
+            ...payload!.testAccess,
+            origin: "http://app.test:3000",
+            proof: { public: true, receivingContext: true },
+          },
+          checks: [{ name: "Browser opens application", passed: true }],
+        },
+      })),
+      readArtifact: vi.fn(async () =>
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]),
+      ),
+      stopJob: vi.fn(async () => {}),
+      cleanupEnvironment: vi.fn(async () => {}),
+      removeJob: vi.fn(async () => {}),
+    } as unknown as DockerRunners;
+    const sourceControl = {
+      acquireLease: vi.fn(async () => ({
+        token: "private-managed-source",
+        method: "token" as const,
+      })),
+      releaseLease: vi.fn(async () => {}),
+    };
+    const service = createEnvironmentAccess({
+      root,
+      packageRoot,
+      docker,
+      sourceControl,
+      env: {},
+      fetch: vi.fn(
+        async () => new Response(JSON.stringify({ sha: "a".repeat(40) })),
+      ),
+      selectRunner: async () => ({
+        id: "worker-managed",
+        name: "Managed Docker runner",
+        release,
+      }),
+    });
+    await service.verify("app");
+    await service.idle();
+    expect(service.status("app")).toMatchObject({
+      status: "passed",
+      runnerId: "worker-managed",
+      runnerName: "Managed Docker runner",
+      commitSha: "a".repeat(40),
+    });
+    expect(payload).toMatchObject({
+      accessProbe: true,
+      testEnvironment: {
+        env: { APP_KEY: "private-managed-app" },
+        buildSecrets: { npmrc: buildSecret },
+        target: {
+          buildArgs: { NEXT_PUBLIC_API_URL: "https://staging.example.test" },
+        },
+      },
+    });
+    expect(JSON.stringify(payload!.credentials)).not.toContain(
+      "private-managed-build",
+    );
+    expect(JSON.stringify(service.status("app"))).not.toMatch(
+      /private-managed-(?:build|app|source)/,
+    );
+    expect(release).toHaveBeenCalledOnce();
+    expect(sourceControl.releaseLease).toHaveBeenCalledWith(id);
+    expect(docker.cleanupEnvironment).toHaveBeenCalledWith(id);
   });
   it("does not silently fall back to controller Docker when no agent service can be chosen", async () => {
     config({

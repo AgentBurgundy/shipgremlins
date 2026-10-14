@@ -13,6 +13,10 @@ export interface DockerEnvironmentTarget {
   healthPath?: string;
   start?: string[];
   env?: Record<string, string>;
+  /** Public literals only; these may be retained in image metadata. */
+  buildArgs?: Record<string, string>;
+  /** BuildKit secret id -> dedicated TEST_* Connection reference. */
+  buildSecrets?: Record<string, string>;
   services?: Array<{ kind: "postgres" | "redis"; name: string; env: string }>;
   migrate?: string[];
   seed?: string[];
@@ -44,6 +48,60 @@ export function appEnvironmentName(v: unknown): v is string {
     )
   );
 }
+export function publicBuildArgument(name: unknown, value: unknown): boolean {
+  if (
+    !appEnvironmentName(name) ||
+    /(?:TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|AUTH|KEY|COOKIE|SESSION|DATABASE|DSN|PROXY)/i.test(
+      String(name),
+    ) ||
+    typeof value !== "string" ||
+    value.length > 2048 ||
+    /[\p{Cc}\p{Cf}$`]/u.test(value)
+  )
+    return false;
+  if (
+    /-----BEGIN|\b(?:sk-ant-|sk-proj-|gh[pousr]_|github_pat_|glpat-)|\bBearer\s|\beyJ[A-Za-z0-9_-]+\./i.test(
+      value,
+    )
+  )
+    return false;
+  try {
+    const url = new URL(value);
+    if (
+      url.username ||
+      url.password ||
+      [...url.searchParams.keys()].some((key) =>
+        /token|secret|password|credential|auth|key/i.test(key),
+      )
+    )
+      return false;
+  } catch {
+    /* Most public arguments are ordinary scalar values, not URLs. */
+  }
+  return true;
+}
+export function assertPublicBuildValues(
+  target: DockerEnvironmentTarget,
+  privateValues: Array<string | undefined>,
+): void {
+  const secrets = privateValues.filter(
+    (value): value is string => typeof value === "string" && value.length >= 8,
+  );
+  if (
+    Object.values(target.buildArgs ?? {}).some((value) =>
+      secrets.some((secret) =>
+        [
+          secret,
+          encodeURIComponent(secret),
+          JSON.stringify(secret).slice(1, -1),
+        ].some((candidate) => value.includes(candidate)),
+      ),
+    )
+  )
+    throw new Error(
+      "A public build argument contains a private credential. Use a BuildKit secret reference instead.",
+    );
+}
 export function parseDockerTarget(input: unknown): DockerEnvironmentTarget {
   if (!object(input)) throw new Error("Docker environment must be an object.");
   only(input, [
@@ -54,6 +112,8 @@ export function parseDockerTarget(input: unknown): DockerEnvironmentTarget {
     "healthPath",
     "start",
     "env",
+    "buildArgs",
+    "buildSecrets",
     "services",
     "migrate",
     "seed",
@@ -95,6 +155,38 @@ export function parseDockerTarget(input: unknown): DockerEnvironmentTarget {
         "Dockerfile and context must be safe repository paths; Dockerfile must be inside its context.",
       );
   } else throw new Error("Choose a Docker image or repository Dockerfile.");
+  if (
+    input.buildArgs !== undefined &&
+    (!object(input.buildArgs) ||
+      Object.keys(input.buildArgs).length > 32 ||
+      Object.entries(input.buildArgs).some(
+        ([name, value]) => !publicBuildArgument(name, value),
+      ))
+  )
+    throw new Error(
+      "Build arguments must be public scalar values. Put credentials in dedicated TEST_* BuildKit secret references.",
+    );
+  if (
+    input.buildSecrets !== undefined &&
+    (!object(input.buildSecrets) ||
+      Object.keys(input.buildSecrets).length > 16 ||
+      Object.entries(input.buildSecrets).some(
+        ([id, ref]) =>
+          !/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(id) ||
+          !validTestSecret(ref) ||
+          !ref.startsWith("TEST_") ||
+          Object.hasOwn(input.buildArgs ?? {}, id),
+      ))
+  )
+    throw new Error(
+      "Build secrets must map unique BuildKit ids to dedicated TEST_* Connection references.",
+    );
+  if (
+    recipe.kind !== "dockerfile" &&
+    (Object.keys(input.buildArgs ?? {}).length ||
+      Object.keys(input.buildSecrets ?? {}).length)
+  )
+    throw new Error("Build inputs require a repository Dockerfile recipe.");
   if (
     !Number.isInteger(input.port) ||
     Number(input.port) < 1 ||
@@ -152,14 +244,22 @@ export function parseDockerTarget(input: unknown): DockerEnvironmentTarget {
         !["postgres", "redis"].includes(String(service.kind)) ||
         typeof service.name !== "string" ||
         !/^[a-z][a-z0-9-]{0,30}$/.test(service.name) ||
-        ["app", "localhost"].includes(service.name) ||
+        [
+          "app",
+          "localhost",
+          "source",
+          "health",
+          "migrate",
+          "seed",
+          "net",
+        ].includes(service.name) ||
         !appEnvironmentName(service.env) ||
         names.has(service.name) ||
         kinds.has(String(service.kind)) ||
         variables.has(service.env)
       )
         throw new Error(
-          "Each local service needs a unique kind, network name and app variable.",
+          "Each local service needs a unique kind, network name and app variable. Names app, localhost, source, health, migrate, seed and net are reserved.",
         );
       names.add(service.name);
       kinds.add(String(service.kind));

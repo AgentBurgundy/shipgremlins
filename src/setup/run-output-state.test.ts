@@ -141,6 +141,7 @@ describe("run output presentation state", () => {
       {
         $: f.$,
         selectedJobId: "job-1",
+        window: {},
         currentStatus: { projects: [] },
         renderPatrolOutput() {},
         grumblinReport: undefined,

@@ -5,14 +5,20 @@
 import type { FailedJob, PullRequest } from "../forge/types.ts";
 import type { Ctx, DigestRow } from "./context.ts";
 import { branchesOf, repoOf } from "./context.ts";
-import { fireDeveloper, isLiveRun } from "./dispatch.ts";
+import { fireDeveloper, isLiveRun, lastIndexWhere } from "./dispatch.ts";
+import {
+  createDispatchReservation,
+  reservationBody,
+  reservationReceipt,
+} from "./reservations.ts";
+import { recoverFailedJobRerun } from "./rerunRecovery.ts";
 import {
   CI_FIX_DISPATCHED_PREFIX,
   CI_NEEDS_OWNER_PREFIX,
-  CI_RETRIED_PREFIX,
   CONFLICT_NEEDS_OWNER_PREFIX,
-  formatConflictDispatch,
+  CONFLICT_DISPATCHED_PREFIX,
   LABELS,
+  REPAIR_RESERVED_PREFIX,
   parseConflictDispatch,
   runIdAfter,
 } from "./notes.ts";
@@ -36,6 +42,24 @@ interface Target {
   comments: string[];
 }
 
+async function repairStillApproved(
+  ctx: Ctx,
+  identifier: string,
+): Promise<boolean> {
+  const ticket = await ctx.linear.getTicket(identifier);
+  return Boolean(
+    ticket &&
+    ctx.project.areas.some(
+      (area) => area.linearProjectId === ticket.projectId,
+    ) &&
+    ticket.labels.includes(LABELS.approved) &&
+    ![LABELS.needsHuman, LABELS.proposal, LABELS.verified].some((label) =>
+      ticket.labels.includes(label),
+    ) &&
+    !["completed", "canceled"].includes(ticket.stateType),
+  );
+}
+
 async function needsHuman(ctx: Ctx, identifier: string): Promise<void> {
   const ticket = await ctx.linear.getTicket(identifier);
   if (!ticket) {
@@ -56,8 +80,11 @@ async function giveUp(
     ctx.log(
       `[dry-run] PR #${pr.number}: comment "${comment}", label ${identifier} ${LABELS.needsHuman}`,
     );
-  } else if (!already) {
-    await ctx.forge.addPullComment(repoOf(ctx), pr.number, comment);
+  } else {
+    if (!already)
+      await ctx.forge.addPullComment(repoOf(ctx), pr.number, comment);
+    // The comment may have succeeded before a previous labeling request failed.
+    // Replaying the idempotent label repairs that partial owner handoff.
     await needsHuman(ctx, identifier);
   }
   ctx.log(`repair #${pr.number}: ${text}`);
@@ -83,6 +110,7 @@ async function repairConflict(
     ctx.log(`repair #${pr.number}: integration branch has no sha — skipping`);
     return null;
   }
+  if (!(await repairStillApproved(ctx, identifier))) return null;
   const dispatches = comments
     .map(parseConflictDispatch)
     .filter((d): d is NonNullable<typeof d> => d !== null);
@@ -91,13 +119,6 @@ async function repairConflict(
   const latest = dispatches.at(-1);
 
   if (latest) {
-    const run = await ctx.forge.getWorkflowRun(ctx.hub.hubRepo, latest.runId);
-    if (isLiveRun(run)) {
-      ctx.log(
-        `repair #${pr.number}: conflict resolution run ${latest.runId} still going`,
-      );
-      return null;
-    }
     if (sameBase(latest.baseSha)) {
       const failed = dispatches.filter((d) => sameBase(d.baseSha)).length;
       if (failed >= CONFLICT_FAILED_MAX) {
@@ -125,18 +146,40 @@ async function repairConflict(
     );
     return null;
   }
-  const run = await fireDeveloper(ctx, {
+  const args = {
     project: ctx.project.config.name,
     ticket: identifier,
     attempt,
-    kind: "rc",
+    kind: "rc" as const,
     branch: pr.headRef,
     pr: pr.number,
+  };
+  const ticket = await ctx.linear.getTicket(identifier);
+  if (!ticket) return null;
+  const reservation = await createDispatchReservation(
+    ctx,
+    ticket,
+    args,
+    "conflict",
+    { integrationSha, headSha: pr.headSha },
+  );
+  await ctx.forge.addPullComment(
+    repo,
+    pr.number,
+    reservationBody(
+      `${REPAIR_RESERVED_PREFIX} rc attempt ${attempt} (at ${short(pr.headSha)}, integration at ${short(integrationSha)})`,
+      reservation,
+    ),
+  );
+  const run = await fireDeveloper(ctx, {
+    ...args,
+    marker: reservation.id,
+    scope: reservation.inputs.scope,
   });
   await ctx.forge.addPullComment(
     repo,
     pr.number,
-    formatConflictDispatch(run.id, pr.headSha, integrationSha),
+    reservationReceipt(reservation, run),
   );
   ctx.log(
     `repair #${pr.number}: conflict resolution attempt ${attempt} → run ${run.id}`,
@@ -159,38 +202,12 @@ async function repairChecks(
   const repo = repoOf(ctx);
   const checks = await ctx.forge.getChecks(repo, pr.headSha);
   if (checks.status !== "failure") return null;
+  if (!(await repairStillApproved(ctx, identifier))) return null;
   const sha12 = short(pr.headSha);
 
   const fixes = comments.filter((b) => b.startsWith(CI_FIX_DISPATCHED_PREFIX));
-  const latestFix = fixes.at(-1);
-  const latestFixRun = latestFix
-    ? runIdAfter(CI_FIX_DISPATCHED_PREFIX, latestFix)
-    : null;
-  if (latestFixRun !== null) {
-    const run = await ctx.forge.getWorkflowRun(ctx.hub.hubRepo, latestFixRun);
-    if (isLiveRun(run)) {
-      ctx.log(`repair #${pr.number}: CI fix run ${latestFixRun} still going`);
-      return null;
-    }
-  }
-
-  const retried = `${CI_RETRIED_PREFIX} at ${sha12}`;
-  if (!comments.some((b) => b.startsWith(retried))) {
-    if (ctx.dryRun) {
-      ctx.log(
-        `[dry-run] PR #${pr.number}: re-run failed jobs at ${sha12} + comment`,
-      );
-      return null;
-    }
-    await ctx.forge.rerunFailedJobs(repo, pr.headSha);
-    await ctx.forge.addPullComment(repo, pr.number, retried);
-    ctx.log(`repair #${pr.number}: re-ran failed jobs at ${sha12}`);
-    return {
-      rule: "repair",
-      text: `#${pr.number} ${pr.title}: checks red — re-ran the failed jobs`,
-      ref: String(pr.number),
-    };
-  }
+  const recovery = await recoverFailedJobRerun(ctx, pr, comments);
+  if (recovery.handled) return recovery.row ?? null;
 
   if (fixes.length >= CI_FIX_MAX) {
     return giveUp(
@@ -207,18 +224,36 @@ async function repairChecks(
     );
     return null;
   }
-  const run = await fireDeveloper(ctx, {
+  const args = {
     project: ctx.project.config.name,
     ticket: identifier,
     attempt,
-    kind: "ci",
+    kind: "ci" as const,
     branch: pr.headRef,
     pr: pr.number,
+  };
+  const ticket = await ctx.linear.getTicket(identifier);
+  if (!ticket) return null;
+  const reservation = await createDispatchReservation(ctx, ticket, args, "ci", {
+    headSha: pr.headSha,
   });
   await ctx.forge.addPullComment(
     repo,
     pr.number,
-    `${CI_FIX_DISPATCHED_PREFIX} ${run.id} (at ${sha12})\n\n${jobLines(checks.failedJobs)}`,
+    reservationBody(
+      `${REPAIR_RESERVED_PREFIX} ci attempt ${attempt} (at ${sha12})`,
+      reservation,
+    ),
+  );
+  const run = await fireDeveloper(ctx, {
+    ...args,
+    marker: reservation.id,
+    scope: reservation.inputs.scope,
+  });
+  await ctx.forge.addPullComment(
+    repo,
+    pr.number,
+    `${reservationReceipt(reservation, run)}\n\n${jobLines(checks.failedJobs)}`,
   );
   ctx.log(`repair #${pr.number}: CI fix attempt ${attempt} → run ${run.id}`);
   return {
@@ -238,10 +273,98 @@ export async function runRepair(ctx: Ctx): Promise<DigestRow[]> {
     if (pr.author !== ctx.botLogin) continue;
     const identifier = ticketFromBranch(pr.headRef);
     if (!identifier) continue;
+    const ticket = await ctx.linear.getTicket(identifier);
+    if (
+      !ticket ||
+      !ctx.project.areas.some(
+        (area) => area.linearProjectId === ticket.projectId,
+      )
+    ) {
+      rows.push({
+        rule: "repair",
+        needsYou: true,
+        ref: String(pr.number),
+        text: `#${pr.number}: its ticket is missing or belongs to another project — review the mapping before repair`,
+      });
+      continue;
+    }
+    if (
+      ["completed", "canceled"].includes(ticket.stateType) ||
+      ticket.labels.includes(LABELS.proposal) ||
+      ticket.labels.includes(LABELS.verified) ||
+      !ticket.labels.includes(LABELS.approved)
+    )
+      continue;
     const comments = (await ctx.forge.listPullComments(repo, pr.number)).map(
-      (c) => c.body,
+      (c) => (c.author === ctx.botLogin ? c.body : ""),
     );
     const target: Target = { pr, identifier, comments };
+    if (ticket.labels.includes(LABELS.needsHuman)) {
+      rows.push({
+        rule: "repair",
+        needsYou: true,
+        ref: String(pr.number),
+        text: `#${pr.number} ${pr.title}: ticket ${identifier} needs owner review before more repair attempts`,
+      });
+      continue;
+    }
+    const reserved = lastIndexWhere(comments, (body) =>
+      body.startsWith(REPAIR_RESERVED_PREFIX),
+    );
+    const recorded = lastIndexWhere(
+      comments,
+      (body) =>
+        body.startsWith(CI_FIX_DISPATCHED_PREFIX) ||
+        body.startsWith(CONFLICT_DISPATCHED_PREFIX),
+    );
+    if (reserved > recorded) {
+      rows.push({
+        rule: "repair",
+        needsYou: true,
+        ref: String(pr.number),
+        text: `#${pr.number}: a repair was reserved without a run receipt — inspect existing provider work before retrying`,
+      });
+      continue;
+    }
+    // A PR can change from conflicting to red checks while its developer is
+    // running. Check both repair lanes before starting either kind of work.
+    let waiting = false;
+    for (const prefix of [
+      CONFLICT_DISPATCHED_PREFIX,
+      CI_FIX_DISPATCHED_PREFIX,
+    ]) {
+      const receipt = comments.filter((body) => body.startsWith(prefix)).at(-1);
+      if (!receipt) continue;
+      const runId = runIdAfter(prefix, receipt);
+      const run =
+        runId === null
+          ? null
+          : await ctx.forge.getWorkflowRun(ctx.hub.hubRepo, runId);
+      if (run === null) {
+        rows.push({
+          rule: "repair",
+          needsYou: true,
+          ref: String(pr.number),
+          text: `#${pr.number}: an existing repair run cannot be confirmed — inspect provider work before retrying`,
+        });
+        waiting = true;
+        break;
+      }
+      if (isLiveRun(run)) {
+        const age = ctx.now().getTime() - Date.parse(run.createdAt);
+        const deadline = (run.status === "queued" ? 1 : 2) * 60 * 60 * 1000;
+        if (!Number.isFinite(age) || age > deadline)
+          rows.push({
+            rule: "repair",
+            needsYou: true,
+            ref: String(pr.number),
+            text: `#${pr.number}: repair run ${runId} is ${run.status} beyond its ${deadline / 3_600_000}h deadline — inspect or cancel it before retrying`,
+          });
+        waiting = true;
+        break;
+      }
+    }
+    if (waiting) continue;
     const row =
       pr.mergeableState === "dirty"
         ? await repairConflict(ctx, target)

@@ -12,6 +12,11 @@ import {
   usesEpicApproval,
 } from "../epics.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
+import {
+  createAutomaticApprovals,
+  AUTO_APPROVED_LABEL,
+  approvalPolicyRevision,
+} from "../autonomy/approval.ts";
 
 const revision = (project: Project, ticket: LinearTicket) =>
   createHash("sha256")
@@ -39,6 +44,15 @@ export function createProjectReview(options: {
   root: string;
   client: (project: Project) => Promise<LinearClient>;
 }) {
+  const automaticApprovals = createAutomaticApprovals(options.root);
+  function auditedAutomaticOrigin(project: Project, ticket: LinearTicket) {
+    // A provider label cannot create this exception to epic-only review. Strip
+    // it so only the controller's durable audit can authorize owner re-review.
+    return automaticApprovals.isAutomatic(project, {
+      ...ticket,
+      labels: ticket.labels.filter((label) => label !== AUTO_APPROVED_LABEL),
+    });
+  }
   function mapped(project: Project, ticket: LinearTicket) {
     const matches = project.areas.filter(
       (a) =>
@@ -60,7 +74,9 @@ export function createProjectReview(options: {
     const epic =
       usesEpicApproval(project) && isEpic(ticket) && !ticket.parentId;
     return (
-      (!usesEpicApproval(project) || epic) &&
+      (!usesEpicApproval(project) ||
+        epic ||
+        auditedAutomaticOrigin(project, ticket)) &&
       ticket.description.length <= 20000 &&
       acceptanceCriteria(ticket.description).length > 0 &&
       !["completed", "canceled"].includes(ticket.stateType) &&
@@ -103,7 +119,9 @@ export function createProjectReview(options: {
           !["completed", "canceled"].includes(ticket.stateType) &&
           (!ticket.labels.includes(LABELS.approved) ||
             (usesEpicApproval(project) && isEpic(ticket) && !approvedEpic)) &&
-          (!usesEpicApproval(project) || isEpic(ticket))
+          (!usesEpicApproval(project) ||
+            isEpic(ticket) ||
+            auditedAutomaticOrigin(project, ticket))
         )
           collected.set(ticket.id, ticket);
       }
@@ -145,13 +163,17 @@ export function createProjectReview(options: {
                 ? "Only the first part of this proposal is shown. Split it into a shorter bounded scope before approving here."
                 : acceptanceCriteria(ticket.description).length === 0
                   ? "Add a finite, observable bullet list under ## Acceptance criteria in Linear before approving coding. Each item should state an outcome that can be verified."
-                  : ticket.labels.includes(LABELS.proposal)
-                    ? usesEpicApproval(project)
-                      ? "Approve this epic's bounded outcome once. Its PM will create and self-approve testable child tickets within that scope."
-                      : "Review this proposal's acceptance criteria. Split broad epics into testable milestones before approving coding."
-                    : ticket.labels.includes(LABELS.needsHuman)
-                      ? "Resolve the owner blocker in Linear first."
-                      : "Review the scope and acceptance criteria before approving.",
+                  : usesEpicApproval(project) &&
+                      !isEpic(ticket) &&
+                      auditedAutomaticOrigin(project, ticket)
+                    ? "Review this ticket's exact scope after automatic approval stopped. Coding still requires its parent epic's current owner approval."
+                    : ticket.labels.includes(LABELS.proposal)
+                      ? usesEpicApproval(project)
+                        ? "Approve this epic's bounded outcome once. Its PM will create and self-approve testable child tickets within that scope."
+                        : "Review this proposal's acceptance criteria. Split broad epics into testable milestones before approving coding."
+                      : ticket.labels.includes(LABELS.needsHuman)
+                        ? "Resolve the owner blocker in Linear first."
+                        : "Review the scope and acceptance criteria before approving.",
             labels: ticket.labels,
           };
         }),
@@ -248,12 +270,32 @@ export function createProjectReview(options: {
         }
         approveEpic(options.root, latest, mapped(latest, current), current);
       }
+      // Exact-revision owner approval is the sole automatic-origin override.
+      const automaticReview = auditedAutomaticOrigin(project, reviewedTicket);
+      if (automaticApprovals.isAutomatic(project, reviewedTicket)) {
+        const current = await client.getTicket(reviewedTicket.id);
+        const latest = loadProject(options.root, name);
+        if (
+          !current ||
+          current.id !== reviewedTicket.id ||
+          ticketScopeHash(current) !== ticketScopeHash(reviewedTicket) ||
+          approvalPolicyRevision(latest) !== approvalPolicyRevision(project)
+        )
+          throw new ProjectKnowledgeError(
+            "Ticket scope changed during manual approval. Refresh and review it again.",
+            409,
+          );
+        await client.removeLabel(current.id, AUTO_APPROVED_LABEL);
+        await automaticApprovals.markManual(latest, current);
+      }
       return {
         ok: true,
         identifier: ticket.identifier,
         message: epic
           ? "Epic approved. Its PM can now break this scope into testable child tickets and run them autonomously. Your next review is the PM's promotion batch."
-          : "Approved for coding. Enabled project automation picks it up; you can also start Coding Gremlins manually. This does not mark the ticket Done.",
+          : automaticReview && usesEpicApproval(project)
+            ? "This ticket's exact scope is approved manually. Coding still requires its parent epic's current owner approval."
+            : "Approved for coding. Enabled project automation picks it up; you can also start Coding Gremlins manually. This does not mark the ticket Done.",
       };
     } finally {
       inFlight.delete(key);

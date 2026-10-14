@@ -15,6 +15,8 @@ import type { ProjectExecutionUsage } from "../localRunners/budgets.ts";
 import { createProjectKnowledge } from "./index.ts";
 import type { DeliveryRecord } from "../delivery/types.ts";
 import { foundationNeeded } from "../ideaCrew/foundation.ts";
+import { projectAutonomy } from "../setup/projectAutonomy.ts";
+import { createAutomationDiagnostics } from "../setup/automationDiagnostics.ts";
 
 export function projectOperations(
   root: string,
@@ -38,6 +40,15 @@ export function projectOperations(
     action: { label: string; href: string } | null;
   };
   const inbox: Item[] = [];
+  const diagnostics = createAutomationDiagnostics(root).list(project);
+  for (const diagnostic of diagnostics)
+    inbox.push({
+      id: diagnostic.id,
+      kind: "setup",
+      title: diagnostic.message,
+      detail: diagnostic.remedy,
+      action: diagnostic.action,
+    });
   const seen = new Set<string>();
   const needsFoundation = foundationNeeded(root, project);
   if (needsFoundation)
@@ -212,6 +223,8 @@ export function projectOperations(
   }
   return {
     project: name,
+    autonomy: projectAutonomy(root, name, jobs, readiness),
+    diagnostics,
     inbox,
     knowledge,
     delivery: {

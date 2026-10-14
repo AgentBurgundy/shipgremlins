@@ -153,6 +153,7 @@ export interface LocalRunnersOptions {
   beforeLaunch?: () => Promise<void>;
   releaseJobResources?: (jobId: string) => Promise<void>;
   scheduledJobs?: (previousJobs: LocalJob[]) => Promise<LocalJobInput[]>;
+  scheduledJobAdmitted?: (input: LocalJobInput, job: LocalJob) => void;
   activityStore?: ActivityStore;
   notify?: (event: JobNotificationEvent) => Promise<NotificationResult>;
   clock?: () => Date;
@@ -1094,6 +1095,25 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     );
   }
 
+  function createLocalWorker(state: State): LocalWorker {
+    if (state.runners.length >= MAX_WORKERS)
+      throw new LocalRunnerError(
+        "This machine already has four local workers. Reuse an existing worker or remove an idle one first.",
+        409,
+      );
+    const worker: LocalWorker = {
+      id: `worker-${randomUUID()}`,
+      name: `Local gremlin ${state.runners.length + 1}`,
+      status: "provisioning",
+      busy: false,
+      paused: false,
+      createdAt: now(),
+    };
+    state.runners.push(worker);
+    verify(state, worker);
+    return worker;
+  }
+
   function idleWorker(worker: LocalWorker): void {
     worker.busy = false;
     worker.status = worker.paused
@@ -1408,6 +1428,21 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           await options.completeJob?.({ ...job, finishedAt: now() }, docker);
         }
         if (options.reconcileCompletedJob) {
+          if ((job.reconciliationAttempts ?? 0) >= 3) {
+            failed(
+              state,
+              job,
+              worker,
+              "Worker finished but delivery reconciliation needs attention. Inspect the existing draft and evidence; the agent and publication were not repeated.",
+              undefined,
+              "completion",
+            );
+            return;
+          }
+          // Persist admission before calling the reconciler. A controller crash
+          // after a remote write must not reset its bounded attempt budget.
+          job.reconciliationAttempts = (job.reconciliationAttempts ?? 0) + 1;
+          save(state);
           try {
             await options.reconcileCompletedJob(
               { ...job, finishedAt: now() },
@@ -1423,7 +1458,6 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
               if (worker) worker.message = message;
               return;
             }
-            job.reconciliationAttempts = (job.reconciliationAttempts ?? 0) + 1;
             if (job.reconciliationAttempts < 3) {
               job.failure = {
                 category: "completion",
@@ -1797,15 +1831,26 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         lastScheduled = clock().getTime();
         try {
           const scheduled = await options.scheduledJobs(state.jobs);
+          let readyScheduledWork = false;
           for (const input of stopping ? [] : scheduled) {
             if (!input.idempotencyKey) throw new Error();
             try {
-              queue(state, input);
+              const job = queue(state, input);
+              // Save admission before advancing the durable scheduling cursor.
+              save(state);
+              options.scheduledJobAdmitted?.(input, job);
+              if (job.status === "queued" && canLaunch(state, job))
+                readyScheduledWork = true;
             } catch (error) {
               if (!(error instanceof LocalRunnerError) || error.status !== 409)
                 throw error;
             }
           }
+          // Connecting a ready project should not require a second worker
+          // creation step. Existing worker choices (including paused or broken
+          // workers) remain authoritative; only a genuinely empty pool boots.
+          if (readyScheduledWork && state.runners.length === 0 && !stopping)
+            createLocalWorker(state);
         } catch {
           state.operation = {
             phase: "error",
@@ -2040,21 +2085,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     },
     create: () =>
       exclusive((state) => {
-        if (state.runners.length >= MAX_WORKERS)
-          throw new LocalRunnerError(
-            "This machine already has four local workers. Reuse an existing worker or remove an idle one first.",
-            409,
-          );
-        const worker: LocalWorker = {
-          id: `worker-${randomUUID()}`,
-          name: `Local gremlin ${state.runners.length + 1}`,
-          status: "provisioning",
-          busy: false,
-          paused: false,
-          createdAt: now(),
-        };
-        state.runners.push(worker);
-        verify(state, worker);
+        const worker = createLocalWorker(state);
         state.operation = {
           phase: "idle",
           message: "Worker created. Its browser check is queued.",

@@ -4,12 +4,19 @@
 // PR — except changes to the hub's own config, which wait for the owner.
 
 import { matchesPrefix } from "../config.ts";
+import { resolve } from "node:path";
+import { createAutomaticApprovals } from "../autonomy/approval.ts";
+import { ticketFromBranch } from "./repair.ts";
+import { developerEpicBlocker } from "./dispatch.ts";
+import { usesEpicApproval } from "../epics.ts";
+import { ticketScopeHash } from "../lifecycle/manifest.ts";
 import type { Comment, PullRequest } from "../forge/types.ts";
 import { branchesOf, repoOf, type Ctx, type DigestRow } from "./context.ts";
 import {
   formatMergeFailed,
   developerBranch,
   HUB_CONFIG_PREFIX,
+  LABELS,
   MERGE_FAILED_PREFIX,
   MERGED_PREFIX,
   parseMergeFailedSha,
@@ -194,8 +201,121 @@ async function mergeOne(
   const freshChecks = await ctx.forge.getChecks(repo, fresh.headSha);
   if (freshChecks.status !== "success")
     return waiting(pr, "checks changed before merge");
+  const ticketIdentifier = ticketFromBranch(pr.headRef);
+  const ticket = ticketIdentifier
+    ? await ctx.linear.getTicket(ticketIdentifier)
+    : null;
+  const epicRequired =
+    usesEpicApproval(ctx.project) &&
+    !recovery &&
+    !pr.headRef.startsWith(SYNC_BRANCH_PREFIX);
+  const epicScope = ticket ? ticketScopeHash(ticket) : undefined;
+  const epicMergeBlocker = async () => {
+    const current = ticket ? await ctx.linear.getTicket(ticket.id) : null;
+    if (
+      !current ||
+      ticketScopeHash(current) !== epicScope ||
+      !current.labels.includes(LABELS.approved) ||
+      [LABELS.proposal, LABELS.needsHuman, LABELS.verified].some((label) =>
+        current.labels.includes(label),
+      ) ||
+      ["completed", "canceled"].includes(current.stateType)
+    )
+      return "The coding ticket's current approved scope is unavailable. Review its scope before integration merge.";
+    return developerEpicBlocker(ctx, current);
+  };
+  if (epicRequired) {
+    const reason = await epicMergeBlocker();
+    if (reason)
+      return {
+        rule: "merge",
+        text: `#${pr.number}: ${reason}`,
+        needsYou: true,
+        ref: String(pr.number),
+      };
+  }
+  const automaticOrigin =
+    ticket &&
+    createAutomaticApprovals(resolve(ctx.project.dir, "../..")).isAutomatic(
+      ctx.project,
+      ticket,
+    );
+  if (
+    ticket &&
+    createAutomaticApprovals(resolve(ctx.project.dir, "../..")).isAutomatic(
+      ctx.project,
+      ticket,
+    )
+  ) {
+    const area = ctx.project.areas.find(
+      (a) =>
+        a.linearProjectId === ticket.projectId &&
+        ticket.labels.includes(a.label),
+    );
+    if (!area)
+      return waiting(pr, "automatic approval no longer has an owning PM");
+    const approvals = createAutomaticApprovals(
+      resolve(ctx.project.dir, "../.."),
+    );
+    const changes = ctx.forge.listPullChanges
+      ? await ctx.forge.listPullChanges(repo, pr.number)
+      : undefined;
+    const stats = ctx.forge.getPullDiffStats
+      ? await ctx.forge.getPullDiffStats(repo, pr.number)
+      : undefined;
+    const paths =
+      changes?.flatMap((c) => [
+        c.path,
+        ...(c.previousPath ? [c.previousPath] : []),
+      ]) ?? [];
+    const reason =
+      approvals.blocker(ctx.project, area, ticket) ||
+      approvals.changeBlocker(
+        ctx.project,
+        ticket,
+        paths,
+        stats?.headSha === fresh.headSha ? stats : undefined,
+      );
+    if (reason)
+      return {
+        rule: "merge",
+        text: `#${pr.number}: ${reason}`,
+        needsYou: true,
+        ref: String(pr.number),
+      };
+  }
 
   if (fresh.draft) await ctx.forge.markReady(repo, pr.number);
+  if (automaticOrigin && ticket) {
+    const current = await ctx.linear.getTicket(ticket.id),
+      area = ctx.project.areas.find(
+        (a) =>
+          a.linearProjectId === current?.projectId &&
+          current.labels.includes(a.label),
+      );
+    if (!current || !area)
+      return waiting(pr, "automatic approval's ticket or owning PM changed");
+    const reason = createAutomaticApprovals(
+      resolve(ctx.project.dir, "../.."),
+    ).blocker(ctx.project, area, current);
+    if (reason)
+      return {
+        rule: "merge",
+        text: `#${pr.number}: ${reason}`,
+        needsYou: true,
+        ref: String(pr.number),
+      };
+  }
+  if (epicRequired) {
+    const reason = await epicMergeBlocker();
+    if (reason)
+      return {
+        rule: "merge",
+        text: `#${pr.number}: ${reason}`,
+        needsYou: true,
+        ref: String(pr.number),
+      };
+  }
   // A sync-resolution PR carries staging's own commits: it must land as a
   // merge commit, or staging would still read as "ahead" and sync forever.
   const method = pr.headRef.startsWith(SYNC_BRANCH_PREFIX)

@@ -58,11 +58,19 @@
     <script src="/auth.js" defer></script>
     <script src="/crew-console.js" defer></script>
     <script src="/motion.js" defer></script>
+    <script src="/workspace-tools.js" defer></script>
+    <script src="/command-menu.js" defer></script>
+    <script src="/run-recovery.js" defer></script>
+    <script src="/autonomy-policy.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/shell.js" defer></script>
     <script src="/interface.js" defer></script>
     <link rel="stylesheet" href="/coding-launch.css" />
     <link rel="stylesheet" href="/interface.css" />
+    <link rel="stylesheet" href="/workspace-tools.css" />
+    <link rel="stylesheet" href="/command-menu.css" />
+    <link rel="stylesheet" href="/run-recovery.css" />
+    <link rel="stylesheet" href="/autonomy-policy.css" />
     <link rel="stylesheet" href="/pm-charter.css" />
     <link rel="stylesheet" href="/project-settings.css" />
     <link rel="stylesheet" href="/signals-settings.css" />
@@ -76,6 +84,8 @@
     <link rel="stylesheet" href="/auth.css" />
     <link rel="stylesheet" href="/crew-console.css" />
     <link rel="stylesheet" href="/crew-recommendations.css" />
+    <link rel="stylesheet" href="/pm-controls.css" />
+    <link rel="stylesheet" href="/pm-workspace.css" />
   </head>
   <body class="auth-pending">
     <div id="dashboard-sign-in" aria-live="polite">
@@ -292,8 +302,9 @@
                 Adopt a PM Gremlin →
               </button>
               <p id="first-run-note" class="first-run-note">
-                Your crew investigates first. Coding begins when you approve a
-                bounded scope. Automatic work starts off.
+                Connect your project, then enable autonomous work. Your crew
+                investigates and picks up approved tickets within its run
+                limits.
               </p>
             </div>
             <div class="hero-art">
@@ -310,7 +321,7 @@
             </div>
             <div class="hero-footnote">
               <span class="tiny-star" aria-hidden="true">✳</span> Real browser
-              evidence. Human-approved work.
+              evidence. Progress you can follow.
             </div>
           </section>
 
@@ -328,22 +339,22 @@
               ></a
             >
             <a class="metric-card" href="/runners"
-              ><span>Product managers</span
-              ><strong id="overview-pm-count">—</strong
+              ><span>Your crew</span><strong id="overview-pm-count">—</strong
               ><small
                 >Your crew’s areas of focus
                 <span aria-hidden="true">↗</span></small
               ></a
             >
             <a class="metric-card" href="/runners#workers"
-              ><span>Verified workers</span
+              ><span>Available runners</span
               ><strong id="overview-worker-count">—</strong
               ><small id="overview-worker-note"
                 >Checking worker status…</small
               ></a
             >
             <a class="metric-card" href="/activity"
-              ><span>Active jobs</span><strong id="overview-job-count">—</strong
+              ><span>Work in progress</span
+              ><strong id="overview-job-count">—</strong
               ><small id="overview-job-note">Checking current work…</small></a
             >
           </section>
@@ -419,7 +430,7 @@
           >
             <div class="project-section-title">
               <div>
-                <span class="eyebrow muted">PICK UP WHERE YOU LEFT OFF</span>
+                <span class="eyebrow muted">PROGRESS AT A GLANCE</span>
                 <h2 id="workspace-projects-title">Your projects</h2>
               </div>
               <a href="/inbox" class="small-button">Open review inbox →</a>
@@ -2496,6 +2507,12 @@
                   aria-labelledby="run-tab-summary"
                   tabindex="0"
                 >
+                  <section
+                    class="run-failure"
+                    id="run-failure"
+                    aria-label="Failure and next step"
+                    hidden
+                  ></section>
                   <p class="run-summary-state" id="run-summary-state"></p>
                   <section
                     id="grumblin-report"

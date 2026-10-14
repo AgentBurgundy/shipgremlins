@@ -492,112 +492,119 @@
       paintRoster();
     }
 
-    const search = el("dialog", "quick-jump");
-    search.id = "quick-jump";
-    search.setAttribute("aria-labelledby", "quick-jump-title");
-    const header = el("div", "quick-jump-header");
-    const title = el("h2", "", "Jump to…");
-    title.id = "quick-jump-title";
-    const close = Object.assign(el("button", "small-button", "Close"), {
-      type: "button",
-    });
-    header.append(title, close);
-    const input = Object.assign(el("input", "quick-jump-input"), {
-      type: "search",
-      placeholder: "Find projects, gremlins, or pages…",
-    });
-    input.setAttribute("aria-label", "Search projects, gremlins, and pages");
-    const results = el("div", "quick-jump-results");
-    results.setAttribute("aria-live", "polite");
-    search.append(
-      header,
-      input,
-      results,
-      el("p", "quick-jump-hint", "↑ ↓ to move · Enter to open · Esc to close"),
-    );
-    document.body.append(search);
-    function searchResults() {
-      const query = input.value.trim().toLowerCase();
-      const matches = destinations(projects, jobs)
-        .filter((item) =>
-          `${item.name} ${item.context}`.toLowerCase().includes(query),
-        )
-        .slice(0, 18);
-      results.replaceChildren(
-        ...matches.map((item) => {
-          const a = link("", item.href, "quick-jump-result");
-          a.append(el("strong", "", item.name), el("span", "", item.context));
-          a.addEventListener("click", () => search.close("navigate"));
-          return a;
-        }),
+    // The shared command menu owns the header trigger and shortcut when present.
+    if (!window.createDashboardCommands) {
+      const search = el("dialog", "quick-jump");
+      search.id = "quick-jump";
+      search.setAttribute("aria-labelledby", "quick-jump-title");
+      const header = el("div", "quick-jump-header");
+      const title = el("h2", "", "Jump to…");
+      title.id = "quick-jump-title";
+      const close = Object.assign(el("button", "small-button", "Close"), {
+        type: "button",
+      });
+      header.append(title, close);
+      const input = Object.assign(el("input", "quick-jump-input"), {
+        type: "search",
+        placeholder: "Find projects, gremlins, or pages…",
+      });
+      input.setAttribute("aria-label", "Search projects, gremlins, and pages");
+      const results = el("div", "quick-jump-results");
+      results.setAttribute("aria-live", "polite");
+      search.append(
+        header,
+        input,
+        results,
+        el(
+          "p",
+          "quick-jump-hint",
+          "↑ ↓ to move · Enter to open · Esc to close",
+        ),
       );
-      if (!matches.length)
-        results.append(
-          el("p", "crew-empty", "No matches. Try a project or gremlin name."),
+      document.body.append(search);
+      function searchResults() {
+        const query = input.value.trim().toLowerCase();
+        const matches = destinations(projects, jobs)
+          .filter((item) =>
+            `${item.name} ${item.context}`.toLowerCase().includes(query),
+          )
+          .slice(0, 18);
+        results.replaceChildren(
+          ...matches.map((item) => {
+            const a = link("", item.href, "quick-jump-result");
+            a.append(el("strong", "", item.name), el("span", "", item.context));
+            a.addEventListener("click", () => search.close("navigate"));
+            return a;
+          }),
         );
-    }
-    function openSearch() {
-      if (
-        document.querySelector("dialog[open]") ||
-        document.body.classList.contains("auth-pending") ||
-        document.body.classList.contains("auth-locked")
-      )
-        return;
-      searchTrigger = document.activeElement;
-      input.value = "";
-      searchResults();
-      search.showModal();
-      input.focus();
-    }
-    close.addEventListener("click", () => search.close());
-    search.addEventListener("click", (event) => {
-      if (event.target === search) {
-        const rect = search.getBoundingClientRect();
+        if (!matches.length)
+          results.append(
+            el("p", "crew-empty", "No matches. Try a project or gremlin name."),
+          );
+      }
+      function openSearch() {
         if (
-          event.clientX < rect.left ||
-          event.clientX > rect.right ||
-          event.clientY < rect.top ||
-          event.clientY > rect.bottom
+          document.querySelector("dialog[open]") ||
+          document.body.classList.contains("auth-pending") ||
+          document.body.classList.contains("auth-locked")
         )
-          search.close();
+          return;
+        searchTrigger = document.activeElement;
+        input.value = "";
+        searchResults();
+        search.showModal();
+        input.focus();
       }
-    });
-    search.addEventListener("close", () => {
-      if (search.returnValue !== "navigate" && searchTrigger?.isConnected)
-        searchTrigger.focus({ preventScroll: true });
-      search.returnValue = "";
-    });
-    search.addEventListener("keydown", (event) => {
-      const links = [...results.querySelectorAll("a")];
-      const index = links.indexOf(document.activeElement);
-      if (["ArrowDown", "ArrowUp"].includes(event.key) && links.length) {
-        event.preventDefault();
-        const next =
-          event.key === "ArrowDown"
-            ? Math.min(index + 1, links.length - 1)
-            : Math.max(index - 1, 0);
-        links[next].focus();
-      } else if (
-        event.key === "Enter" &&
-        event.target === input &&
-        links.length
-      ) {
-        event.preventDefault();
-        links[0].click();
-      }
-    });
-    input.addEventListener("input", searchResults);
-    $("quick-jump-trigger")?.addEventListener("click", openSearch);
-    document.addEventListener("keydown", (event) => {
-      if (
-        (event.ctrlKey || event.metaKey) &&
-        event.key.toLowerCase() === "k" &&
-        !event.altKey
-      ) {
-        event.preventDefault();
-        openSearch();
-      }
-    });
+      close.addEventListener("click", () => search.close());
+      search.addEventListener("click", (event) => {
+        if (event.target === search) {
+          const rect = search.getBoundingClientRect();
+          if (
+            event.clientX < rect.left ||
+            event.clientX > rect.right ||
+            event.clientY < rect.top ||
+            event.clientY > rect.bottom
+          )
+            search.close();
+        }
+      });
+      search.addEventListener("close", () => {
+        if (search.returnValue !== "navigate" && searchTrigger?.isConnected)
+          searchTrigger.focus({ preventScroll: true });
+        search.returnValue = "";
+      });
+      search.addEventListener("keydown", (event) => {
+        const links = [...results.querySelectorAll("a")];
+        const index = links.indexOf(document.activeElement);
+        if (["ArrowDown", "ArrowUp"].includes(event.key) && links.length) {
+          event.preventDefault();
+          const next =
+            event.key === "ArrowDown"
+              ? Math.min(index + 1, links.length - 1)
+              : Math.max(index - 1, 0);
+          links[next].focus();
+        } else if (
+          event.key === "Enter" &&
+          event.target === input &&
+          links.length
+        ) {
+          event.preventDefault();
+          links[0].click();
+        }
+      });
+      input.addEventListener("input", searchResults);
+      $("quick-jump-trigger")?.addEventListener("click", openSearch);
+      document.addEventListener("keydown", (event) => {
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          event.key.toLowerCase() === "k" &&
+          !event.altKey
+        ) {
+          event.preventDefault();
+          openSearch();
+        }
+      });
+    }
     window.addEventListener("dashboard:pagechange", breadcrumbs);
     breadcrumbs();
     return {

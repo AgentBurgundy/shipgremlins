@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { makeCtx, makeProject } from "../services/fakes.ts";
-import { DISPATCHED_PREFIX, LABELS } from "./notes.ts";
+import {
+  DISPATCHED_PREFIX,
+  LABELS,
+  RETRIGGERED_PREFIX,
+  RETRY_RESERVED_PREFIX,
+} from "./notes.ts";
+import { runHeal } from "./heal.ts";
 import { developerInputs, fireDeveloper, runDispatch } from "./dispatch.ts";
 
 const PROJECT = "lin_core";
@@ -70,6 +76,22 @@ describe("fireDeveloper", () => {
 });
 
 describe("runDispatch", () => {
+  it("rechecks approval after reading dispatch history and before starting work", async () => {
+    const ctx = makeCtx();
+    const ticket = ctx.linear.seedTicket({
+      projectId: PROJECT,
+      labels: [LABELS.approved],
+    });
+    const listComments = ctx.linear.listComments.bind(ctx.linear);
+    vi.spyOn(ctx.linear, "listComments").mockImplementationOnce(async (id) => {
+      const comments = await listComments(id);
+      await ctx.linear.removeLabel(ticket.id, LABELS.approved);
+      return comments;
+    });
+    await runDispatch(ctx);
+    expect(ctx.forge.dispatched).toEqual([]);
+    expect(ctx.linear.labelsOf(ticket.id)).not.toContain(LABELS.dispatched);
+  });
   it.each([
     [true, false],
     [false, true],
@@ -101,10 +123,15 @@ describe("runDispatch", () => {
       ticket: "GAME-1",
       attempt: "1",
       kind: "build",
+      marker: expect.any(String),
+      scope: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(ctx.linear.labelsOf(t.id)).toContain(LABELS.dispatched);
     expect(ctx.linear.commentsOf(t.id)).toEqual([
-      `${DISPATCHED_PREFIX} ${d.runId} — https://github.com/owner/pm-hub/actions/runs/${d.runId}`,
+      expect.stringContaining("shipgremlins-reservation: "),
+      expect.stringContaining(
+        `${DISPATCHED_PREFIX} ${d.runId} — https://github.com/owner/pm-hub/actions/runs/${d.runId}`,
+      ),
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.rule).toBe("dispatch");
@@ -217,7 +244,7 @@ describe("runDispatch", () => {
     const t = ctx.linear.seedTicket({
       projectId: PROJECT,
       identifier: "GAME-5",
-      labels: [LABELS.testFailed, LABELS.dispatched],
+      labels: [LABELS.approved, LABELS.testFailed, LABELS.dispatched],
       stateType: "completed",
     });
     ctx.forge.seedRun({ id: 40, status: "completed" });
@@ -229,7 +256,7 @@ describe("runDispatch", () => {
       attempt: "2",
       kind: "build",
     });
-    expect(ctx.linear.commentsOf(t.id)).toHaveLength(2);
+    expect(ctx.linear.commentsOf(t.id)).toHaveLength(3);
   });
 
   it("does not retry a test-failed ticket that was already retried", async () => {
@@ -242,6 +269,114 @@ describe("runDispatch", () => {
     await ctx.linear.addComment(t.id, `${DISPATCHED_PREFIX} 41 — url`);
     await runDispatch(ctx);
     expect(ctx.forge.dispatched).toEqual([]);
+  });
+
+  it("reuses the ticket's WIP slot for a test-failure retry", async () => {
+    const ctx = makeCtx({ project: makeProject({ areas: [{ wipLimit: 1 }] }) });
+    const ticket = ctx.linear.seedTicket({
+      projectId: PROJECT,
+      labels: [LABELS.approved, LABELS.dispatched, LABELS.testFailed],
+    });
+    ctx.forge.seedRun({ id: 40, status: "completed" });
+    await ctx.linear.addComment(ticket.id, `${DISPATCHED_PREFIX} 40`);
+    await runDispatch(ctx);
+    expect(ctx.forge.dispatched).toHaveLength(1);
+    expect(ctx.forge.dispatched[0]?.inputs.attempt).toBe("2");
+  });
+
+  it("never retries test-failed work while its recorded run is still live", async () => {
+    const ctx = makeCtx();
+    const ticket = ctx.linear.seedTicket({
+      projectId: PROJECT,
+      labels: [LABELS.approved, LABELS.dispatched, LABELS.testFailed],
+    });
+    ctx.forge.seedRun({ id: 40, status: "in_progress" });
+    await ctx.linear.addComment(ticket.id, `${DISPATCHED_PREFIX} 40`);
+    await runDispatch(ctx);
+    expect(ctx.forge.dispatched).toEqual([]);
+  });
+
+  it.each(["approval revoked", "canceled", "verified", "healed already"])(
+    "does not retry test-failed work that is %s",
+    async (scenario) => {
+      const ctx = makeCtx();
+      const ticket = ctx.linear.seedTicket({
+        projectId: PROJECT,
+        labels: [LABELS.approved, LABELS.testFailed, LABELS.dispatched],
+      });
+      ctx.forge.seedRun({ id: 40, status: "completed" });
+      await ctx.linear.addComment(ticket.id, `${DISPATCHED_PREFIX} 40`);
+      if (scenario === "approval revoked")
+        await ctx.linear.removeLabel(ticket.id, LABELS.approved);
+      if (scenario === "canceled") ticket.stateType = "canceled";
+      if (scenario === "verified")
+        await ctx.linear.addLabel(ticket.id, LABELS.verified);
+      if (scenario === "healed already")
+        await ctx.linear.addComment(ticket.id, `${RETRIGGERED_PREFIX} 41`);
+      await runDispatch(ctx);
+      expect(ctx.forge.dispatched).toEqual([]);
+    },
+  );
+
+  it.each(["response", "receipt"])(
+    "preserves an ambiguous initial dispatch after losing its %s",
+    async (failure) => {
+      const ctx = makeCtx();
+      const ticket = ctx.linear.seedTicket({
+        projectId: PROJECT,
+        labels: [LABELS.approved],
+      });
+      if (failure === "response") {
+        const dispatch = ctx.forge.dispatchWorkflow.bind(ctx.forge);
+        vi.spyOn(ctx.forge, "dispatchWorkflow").mockImplementationOnce(
+          async (...args) => {
+            await dispatch(...args);
+            throw new Error("lost response");
+          },
+        );
+      } else {
+        const add = ctx.linear.addComment.bind(ctx.linear);
+        vi.spyOn(ctx.linear, "addComment").mockImplementation(
+          async (id, body) => {
+            if (body.startsWith(DISPATCHED_PREFIX))
+              throw new Error("no receipt");
+            return add(id, body);
+          },
+        );
+      }
+      await expect(runDispatch(ctx)).rejects.toThrow();
+      expect(ctx.linear.labelsOf(ticket.id)).toContain(LABELS.dispatched);
+      await runDispatch(ctx);
+      expect(ctx.forge.dispatched).toHaveLength(1);
+      const rows = await runHeal(ctx);
+      expect(rows[0]).toMatchObject({ needsYou: true, ref: ticket.identifier });
+    },
+  );
+
+  it("does not repeat a test-failure retry whose dispatch response was lost", async () => {
+    const ctx = makeCtx();
+    const ticket = ctx.linear.seedTicket({
+      projectId: PROJECT,
+      labels: [LABELS.approved, LABELS.dispatched, LABELS.testFailed],
+    });
+    ctx.forge.seedRun({ id: 40, status: "completed" });
+    await ctx.linear.addComment(ticket.id, `${DISPATCHED_PREFIX} 40`);
+    const dispatch = ctx.forge.dispatchWorkflow.bind(ctx.forge);
+    vi.spyOn(ctx.forge, "dispatchWorkflow").mockImplementationOnce(
+      async (...args) => {
+        await dispatch(...args);
+        throw new Error("lost response");
+      },
+    );
+    await expect(runDispatch(ctx)).rejects.toThrow();
+    expect(
+      ctx.linear
+        .commentsOf(ticket.id)
+        .some((body) => body.startsWith(`${RETRY_RESERVED_PREFIX} 40`)),
+    ).toBe(true);
+    const rows = await runDispatch(ctx);
+    expect(ctx.forge.dispatched).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ needsYou: true });
   });
 
   it("repairs a half-done dispatch (comment present, run live) without re-firing", async () => {
@@ -260,7 +395,7 @@ describe("runDispatch", () => {
     expect(rows).toEqual([]);
   });
 
-  it("fires again when the earlier dispatch comment names a finished run", async () => {
+  it("restores a finished dispatch to the bounded healing lane instead of launching attempt 1 again", async () => {
     const ctx = makeCtx();
     const t = ctx.linear.seedTicket({
       projectId: PROJECT,
@@ -270,7 +405,10 @@ describe("runDispatch", () => {
     ctx.forge.seedRun({ id: 77, status: "completed" });
     await ctx.linear.addComment(t.id, `${DISPATCHED_PREFIX} 77 — url`);
     await runDispatch(ctx);
-    expect(ctx.forge.dispatched).toHaveLength(1);
+    expect(ctx.forge.dispatched).toHaveLength(0);
+    expect(ctx.linear.labelsOf(t.id)).toContain(LABELS.dispatched);
+    await runHeal(ctx);
+    expect(ctx.forge.dispatched[0]?.inputs.attempt).toBe("2");
   });
 
   it("skips disabled areas", async () => {

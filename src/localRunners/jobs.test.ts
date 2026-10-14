@@ -68,6 +68,7 @@ function edit(
   file: string,
   mutate: (raw: {
     verified: string | null;
+    privateOperatorNote?: string;
     instanceId?: string;
     workflow?: unknown;
     verification?: unknown;
@@ -533,6 +534,114 @@ describe("local job preparation", () => {
     expect(payload.prompt).not.toContain("private-database-url");
   });
 
+  it("automatically discovers an enabled new repository without Linear or a browser environment", async () => {
+    edit("project.json", (raw) => {
+      raw.verified = null;
+      Reflect.deleteProperty(raw, "vercel");
+      raw.verification = { mode: "repository" };
+    });
+    edit("areas.json", (raw) => {
+      raw.areas.core.linearProjectId = "PASTE_LINEAR_PROJECT_ID";
+    });
+    const resolveCredential = vi.fn(async () => ({
+      token: "source",
+      method: "token" as const,
+    }));
+    const acquireLease = vi.fn();
+    const prepared = createJobPreparation({
+      root,
+      env: { GITHUB_TOKEN: "source", CLAUDE_CODE_OAUTH_TOKEN: "ai" },
+      sourceControl: { acquireLease, resolveCredential },
+    });
+    const first = await prepared.scheduledJobs();
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({
+      type: "pm",
+      project: "app",
+      area: "core",
+      pmMode: "discovery",
+      runOnce: true,
+      idempotencyKey: expect.stringMatching(/^auto-discovery:[a-f0-9]{64}$/),
+    });
+    expect(await prepared.scheduledJobs()).toEqual(first);
+    expect(acquireLease).not.toHaveBeenCalled();
+    expect((await prepared.validate(first[0]!)).area.key).toBe("core");
+    edit("areas.json", (raw) => {
+      raw.areas.core.enabled = false;
+      raw.areas.core.codingEnabled = false;
+    });
+    expect(await prepared.scheduledJobs()).toEqual([]);
+    await expect(prepared.validate(first[0]!, true)).rejects.toThrow(/paused/);
+  });
+  it("waits for the AI/source connection before automatic discovery rather than creating failed work", async () => {
+    edit("project.json", (raw) => {
+      raw.verified = null;
+    });
+    const resolveCredential = vi
+      .fn()
+      .mockRejectedValue(new Error("source unavailable"));
+    const prepared = createJobPreparation({
+      root,
+      env: { CLAUDE_CODE_OAUTH_TOKEN: "ai" },
+      sourceControl: { acquireLease: vi.fn(), resolveCredential },
+    });
+    expect(await prepared.scheduledJobs()).toEqual([]);
+    expect(resolveCredential).toHaveBeenCalledOnce();
+    expect(
+      await createJobPreparation({ root, env: {} }).scheduledJobs(),
+    ).toEqual([]);
+  });
+  it("keeps healthy projects scheduling when another project's configuration is corrupt", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "repository" };
+    });
+    initializeSetup(root, packageRoot, {
+      project: "broken",
+      repo: "owner/broken",
+    });
+    writeFileSync(join(root, "projects/broken/project.json"), "invalid JSON");
+    const result = await setup().scheduledJobs();
+    expect(result.map((item) => item.type)).toEqual(["pm", "developer"]);
+    expect(result.every((item) => item.project === "app")).toBe(true);
+  });
+  it("keeps a patrol and other PM queues scheduling when one Linear queue is unavailable", async () => {
+    edit("project.json", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+      raw.verification = { mode: "repository" };
+    });
+    const file = join(root, "projects/app/areas.json");
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    raw.areas.other = {
+      ...raw.areas.core,
+      label: "pm:other",
+      linearProjectId: "other-project",
+    };
+    writeFileSync(file, JSON.stringify(raw));
+    const prepared = createJobPreparation({
+      root,
+      env,
+      now: () => new Date("2026-10-04T09:00:45Z"),
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async (id) => {
+          if (id === "linear-project") throw new Error("queue unavailable");
+          return [
+            {
+              ...ticket,
+              projectId: "other-project",
+              labels: ["pm:other", "pm-approved"],
+            },
+          ];
+        },
+      }),
+    });
+    const result = await prepared.scheduledJobs();
+    expect(result.filter((item) => item.type === "pm")).toHaveLength(2);
+    expect(result.filter((item) => item.type === "developer")).toMatchObject([
+      { area: "other", ticket: "APP-12" },
+    ]);
+  });
   it("reconciles managed preview access before handing credentials to the worker", async () => {
     saveConnections(root, { VERCEL_BYPASS_APP: "obsolete-private-bypass" });
     const heal = vi.fn(async () => {
@@ -2139,16 +2248,19 @@ describe("local job preparation", () => {
     const first = await scheduler.scheduledJobs();
     expect(first).toEqual(await scheduler.scheduledJobs());
     expect(first.map((input) => input.idempotencyKey)).toEqual([
-      "pm:app:core:2026-10-04T09:00",
+      expect.stringMatching(/^pm-slot:[a-f0-9]{64}:1791104400000$/),
       "developer:app:ticket-id",
     ]);
     edit("areas.json", (raw) => {
       raw.areas.core.instanceId = "d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea";
     });
     const replaced = await scheduler.scheduledJobs();
-    expect(replaced.find((input) => input.type === "pm")?.idempotencyKey).toBe(
-      "pm:app:core:d6c5fa4b-a631-4c17-9d5e-8b9b8c790eea:2026-10-04T09:00",
-    );
+    expect(
+      replaced.find((input) => input.type === "pm")?.idempotencyKey,
+    ).toMatch(/^pm-slot:[a-f0-9]{64}:1791104400000$/);
+    expect(
+      replaced.find((input) => input.type === "pm")?.idempotencyKey,
+    ).not.toBe(first[0]?.idempotencyKey);
     edit("areas.json", (raw) => {
       raw.areas.core.enabled = false;
     });
