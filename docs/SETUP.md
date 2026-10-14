@@ -25,7 +25,7 @@ project**, then choose the path that fits your app:
    GitLab, and select its repository. The secondary experimental idea path can
    create a new private-by-default repository and a reviewed foundation assignment.
 2. **Find your crew.** Choose **Find my gremlins**. An investigation may already
-   be running when source access and Claude Code are ready. AI reads bounded
+   be running when source access and the selected AI provider are ready. AI reads bounded
    source at an exact commit and suggests one to five PMs with distinct product
    responsibilities, evidence and complete briefs. Review what each would own.
 3. **Review the app's setup.** In project setup, select the suggested install, test, lint,
@@ -53,7 +53,7 @@ project**, then choose the path that fits your app:
    PMs whose briefs require browser walkthroughs stay blocked until browser
    access passes; repository-only verification does not satisfy that requirement.
 7. **Give it a first assignment.** Choose **Explore the codebase** to run
-   **Discovery**, or **Prepare first mission** if source access, Claude Code, or
+   **Discovery**, or **Prepare first mission** if source access, the AI provider, or
    a ready worker is missing. Linear and a browser environment are not required. A new idea instead
    starts with the reviewed **foundation build**: a Coding Gremlin creates the
    initial app and tests. Review and merge that work before asking PMs to explore.
@@ -109,7 +109,7 @@ runtime is ready. Update details and rollback remain in Settings. A visible open
 dashboard checks periodically for new releases; updates are never installed
 automatically.
 
-1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Connect Claude Code in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
+1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Choose an AI provider in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
 2. In **Projects → Add project**, choose **Improve my app**. Follow **Investigate → Choose your crew → Adopt**. Importing can start bounded source analysis, but creates no PM or coding job. Review suggested commands separately in project setup. Manual adoption remains available. The experimental idea path creates a private-by-default repository and starts with the reviewed foundation build before source discovery. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
 3. Adopt one or more suggested PMs with focused **Product briefs**, or choose your own. Their welcome and project setup guide you through connecting Linear, creating missing PM projects and labels, and connecting a test environment. These steps remain available if you close the welcome. New PMs start with both automation controls off.
 4. Choose **Create local worker**, then **Explore the codebase** for Discovery. The worker runs on the CLI/dashboard server; its first image build can take time. Worker readiness requires actual Chromium evidence, but the PM's source-only Discovery needs no app hosting or Linear mapping.
@@ -154,18 +154,18 @@ see which tests actually ran.
 A PM is a saved product mandate. A worker is the Docker capacity that executes
 it. Creating one does not implicitly create or enable the other.
 
-| Action                                | Result                                                                                                                                                                          |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Discovery**                         | Investigates the checkout and saves learned context. Requires source, Claude, and a ready worker; no Linear or hosting setup, ticket creation, or automation change.            |
-| **Run now**                           | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                             |
-| **Start coding**                      | Queues work on one open ticket with `pm-approved`, finite acceptance criteria, the matching area label, and the PM's Linear project. Manual coding does not require automation. |
-| **Look for new improvements**         | Enables that PM's UTC patrol schedule. This is independent of approved-ticket pickup.                                                                                           |
-| **Automatically build approved work** | Enables background pickup of eligible approved tickets while the controller runs. This is independent of patrols.                                                               |
-| **Turn either control off**           | Stops new work for that automation. It does not cancel already-running jobs; use Activity to cancel a run.                                                                      |
-| **Pause worker**                      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                                 |
+| Action                                | Result                                                                                                                                                                                 |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Discovery**                         | Investigates the checkout and saves learned context. Requires source, the selected AI provider, and a ready worker; no Linear or hosting setup, ticket creation, or automation change. |
+| **Run now**                           | Queues one PM investigation using saved settings. A paused PM can run when its project and mapping are ready. Its automation state does not change.                                    |
+| **Start coding**                      | Queues work on one open ticket with `pm-approved`, finite acceptance criteria, the matching area label, and the PM's Linear project. Manual coding does not require automation.        |
+| **Look for new improvements**         | Enables that PM's UTC patrol schedule. This is independent of approved-ticket pickup.                                                                                                  |
+| **Automatically build approved work** | Enables background pickup of eligible approved tickets while the controller runs. This is independent of patrols.                                                                      |
+| **Turn either control off**           | Stops new work for that automation. It does not cancel already-running jobs; use Activity to cancel a run.                                                                             |
+| **Pause worker**                      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                                        |
 
 Use the guided setup actions beside the selected project when something is
-missing. Connect source control and Claude Code in Connections; repair the
+missing. Connect source control and the selected AI provider in Connections; repair the
 project's Linear connection, team, or PM mappings in Edit settings; then verify
 the project and create or resume a verified worker. Hosting setup is required
 only for a selected browser environment. Slack and product signals are optional.
@@ -199,7 +199,7 @@ brief, with ownership and schedule available when you need them. Close
 or Escape keeps the unfinished draft for your next visit during the same dashboard
 session. Saving opens the new PM's workspace; automation starts off.
 
-AI fill uses the saved Claude Code connection and source access, with a disposable
+AI fill uses the selected AI provider and source access, with a disposable
 Docker container on your controller. The first request may need to build the
 worker image. It reads repository paths, not source-file contents. The first PM
 patrol follows the configuration you saved; it does not fill or rewrite ownership.
@@ -211,7 +211,7 @@ your newer edits win. It does not save configuration, create Linear resources,
 enable automation, or start work. Review the filled form and adopt the named
 gremlin separately. The welcome screen offers **Explore the codebase** for
 Discovery, or **Prepare first mission** when its setup is incomplete. Discovery
-needs source access, Claude Code, and a ready worker; no Linear or browser
+needs source access, the selected AI provider, and a ready worker; no Linear or browser
 environment is required. Fresh ideas offer **Build the foundation** first. Provider selections, credentials, and optional Mixpanel report IDs
 remain yours to configure; AI never invents them. You can always fill in the form
 manually.
@@ -236,6 +236,39 @@ observations are not proof of a deployed behavior: browser evidence and actual
 test results remain explicit. See [the full PM workflow](PM_WORKFLOW.md).
 
 ## Connections and configuration
+
+### Choose your AI provider
+
+Open **Connections → AI provider** and choose **Claude Code** or **Codex**.
+The choice applies to new setup suggestions, PM planning, discovery, patrols,
+coding and repairs on the controller's local or enrolled workers. Existing runs
+keep their original provider. Selecting a disconnected provider leaves new work
+waiting for that connection; usage limits never trigger a provider or billing fallback.
+
+For Codex, choose **Sign in to Codex**. The controller prepares its Docker image
+and displays a one-time code and the official ChatGPT sign-in link. Complete
+sign-in yourself and keep the dashboard open until it confirms the connection.
+Your ChatGPT account must have Codex access and permit device-code login in its
+security/workspace settings. See [OpenAI's authentication guide](https://learn.chatgpt.com/docs/auth).
+
+Alternatively, expand **Import existing Codex sign-in instead** and select or
+paste a managed ChatGPT `auth.json` from an existing Codex login, usually under
+`~/.codex/`. Use file-based Codex credential storage if your login currently uses
+the operating system's credential manager. API-key auth files are rejected.
+The import is private account access: keep the configuration directory out of Git.
+
+Before a Codex run, the trusted controller refreshes the account and gives the
+worker only a current access snapshot. Refresh credentials stay on the controller.
+An optional **Advanced model setting** overrides the selected provider's model;
+leave it blank for its default. Switching providers resets that override.
+Codex reports cached input as part of total input, so usage separates fresh and
+cached input without counting it twice. Cache-creation counts are unavailable
+from this runtime and remain unknown; these reports are marked partial.
+
+This provider selection is for controller-managed workers. Existing standalone
+GitHub Actions workflows retain their Claude configuration.
+
+### Claude Code access
 
 Claude Code accepts the token from `claude setup-token`, including copied terminal
 line wrapping or a quoted `CLAUDE_CODE_OAUTH_TOKEN` assignment. It never executes

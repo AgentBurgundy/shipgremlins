@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { loadProject } from "../config.ts";
 import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 import { publicActivityLogs } from "../storage/activity.ts";
+import { aiSecretValues } from "../ai/provider.ts";
 import { safeOAuthPath } from "../oauthConnection/storage.ts";
 import {
   validatePayload,
@@ -426,6 +427,7 @@ export function createRemoteWorkers(options: {
         );
         worker.lastSeenAt = clock();
         const secrets = [
+          ...aiSecretValues(job.payload.credentials ?? {}),
           ...Object.values(job.payload.credentials ?? {}),
           ...Object.values(job.payload.testEnvironment?.env ?? {}),
         ];
@@ -528,6 +530,7 @@ export function createRemoteWorkers(options: {
         if (!/\.(png|jpe?g|webp)$/i.test(name))
           content = Buffer.from(
             sanitize(content.toString("utf8"), [
+              ...aiSecretValues(job.payload.credentials ?? {}),
               ...Object.values(job.payload.credentials ?? {}),
               ...Object.values(job.payload.testEnvironment?.env ?? {}),
             ]),

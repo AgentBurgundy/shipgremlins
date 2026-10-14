@@ -444,7 +444,7 @@ describe("worker artifact transfer", () => {
   });
 });
 
-describe("Claude subprocess integration", () => {
+describe("model subprocess integration", () => {
   it("still sanitizes successful output when token reporting cannot be saved", () => {
     const source = readFileSync(
       new URL("../../runner-local/job.mjs", import.meta.url),
@@ -479,7 +479,7 @@ describe("Claude subprocess integration", () => {
     expect(output.get("/output/.sanitized")).toBe("complete\n");
   });
 
-  function runtime() {
+  function runtime(provider: "claude" | "codex" = "claude") {
     const source = readFileSync(
       new URL("../../runner-local/job.mjs", import.meta.url),
       "utf8",
@@ -492,7 +492,7 @@ describe("Claude subprocess integration", () => {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
     });
-    const collector = createUsageCollector({ now });
+    const collector = createUsageCollector({ now, provider });
     const records: unknown[] = [],
       logs: string[] = [];
     const run = runInNewContext(source.slice(start, end) + "\nrun", {
@@ -559,5 +559,47 @@ describe("Claude subprocess integration", () => {
     ordinary.child.emit("close", 0);
     await finished;
     expect(ordinary.collector.snapshot()).toBeUndefined();
+  });
+
+  it("retains partial Codex counters and rejects a provider-declared failure even with exit zero", async () => {
+    const f = runtime("codex");
+    const promise = f.run("codex", [], { model: true });
+    const check = expect(promise).rejects.toThrow("A job command failed");
+    f.child.stdout.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 80,
+            output_tokens: 15,
+            reasoning_output_tokens: 10,
+          },
+        }) + "\n",
+      ),
+    );
+    f.child.stdout.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          type: "turn.failed",
+          error: { message: "Selected provider unavailable" },
+        }),
+      ),
+    );
+    f.child.stdout.emit("end");
+    f.child.emit("close", 0);
+    await check;
+    expect(f.collector.snapshot()).toMatchObject({
+      source: "codex",
+      inputTokens: 20,
+      cacheReadInputTokens: 80,
+      outputTokens: 15,
+      cacheCreationInputTokens: null,
+      totalTokens: 115,
+      complete: false,
+    });
+    expect(f.logs).toEqual([]);
   });
 });

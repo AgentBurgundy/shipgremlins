@@ -26,6 +26,7 @@ import { createLinearConnection } from "../linearConnection/index.ts";
 import { createVercelConnection } from "../vercelConnection/index.ts";
 import type { OAuthConnection } from "../oauthConnection/types.ts";
 import { readConnections } from "../setup/connections.ts";
+import { selectedAiCredential } from "../ai/provider.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import { GitHubForge } from "../forge/github.ts";
@@ -287,9 +288,11 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
   async function prepareSyncRepair(job: LocalJob): Promise<DockerJobPayload> {
     const project = projectFor(job.project!);
     const intent = await stagingSync(project).repairIntent(job);
-    const claudeToken = environment().CLAUDE_CODE_OAUTH_TOKEN;
-    if (!claudeToken)
-      throw new Error("Save a Claude connection before repairing staging.");
+    const aiCredential = selectedAiCredential(options.root, environment());
+    if (!aiCredential)
+      throw new Error(
+        "Connect the selected AI provider before repairing staging.",
+      );
     const access = source();
     if (!access.acquireLease)
       throw new Error("Sync repair requires managed source credentials.");
@@ -309,7 +312,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       stagingSha: intent.stagingSha,
       integrationSha: intent.integrationSha,
       credential,
-      claudeToken,
+      aiCredential,
     });
   }
   const localLedger = (project: Project) =>

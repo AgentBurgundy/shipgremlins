@@ -26,6 +26,7 @@ import {
 } from "../projectCapabilities.ts";
 import { parseGoogleServiceAccount } from "../hosting/credentials.ts";
 import { ClaudeTokenError, normalizeClaudeToken } from "./claudeToken.ts";
+import { normalizeCodexAuth } from "../ai/provider.ts";
 
 export const CONNECTIONS = [
   {
@@ -67,6 +68,13 @@ export const CONNECTIONS = [
     label: "Claude Code",
     description:
       "Claude agent credentials, passed privately to each local job.",
+  },
+  {
+    name: "CODEX_AUTH_JSON",
+    label: "Codex · ChatGPT account",
+    description:
+      "Connect your ChatGPT account with device sign-in, or import a managed Codex auth.json. Kept privately; API keys are not used.",
+    format: "json",
   },
 ] as const;
 
@@ -770,6 +778,17 @@ export function saveConnections(root: string, input: unknown): void {
           throw new ConnectionSaveError("invalid_claude_token", error.message);
         throw error;
       }
+    }
+    if (name === "CODEX_AUTH_JSON") {
+      try {
+        updates[name] = normalizeCodexAuth(value);
+      } catch {
+        throw new ConnectionSaveError(
+          "invalid_codex_auth",
+          "Connect Codex with your ChatGPT account, or import a valid managed auth.json file under 64 KiB. API-key logins are not accepted.",
+        );
+      }
+      continue;
     }
     const google =
       name === "GCP_SERVICE_ACCOUNT_JSON" ||

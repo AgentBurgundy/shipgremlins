@@ -127,8 +127,8 @@
   const definitions = [
     [
       "model-connections",
-      "Claude Code",
-      "The intelligence behind your gremlins.",
+      "AI provider",
+      "Claude Code or Codex. Choose the intelligence behind your gremlins.",
       "claude",
       "essentials",
     ],

@@ -35,6 +35,9 @@ const sourceKeys = new Set([
   "CI_JOB_TOKEN",
   "GLAB_TOKEN",
   "GREMLINS_GIT_TOKEN",
+  "CODEX_AUTH_JSON",
+  "CODEX_API_KEY",
+  "OPENAI_API_KEY",
 ]);
 
 export function jobEnvironments(

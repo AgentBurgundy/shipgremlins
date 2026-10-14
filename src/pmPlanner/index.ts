@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { aiSecretValues, selectedAiCredential } from "../ai/provider.ts";
 import { CronExpressionParser } from "cron-parser";
 import {
   loadProject,
@@ -554,16 +555,20 @@ export function createPmPlanner(options: PmPlannerOptions) {
             Object.entries(env).filter(([, value]) => value !== undefined),
           ),
         };
-        const credential = saved.CLAUDE_CODE_OAUTH_TOKEN;
-        if (!credential)
+        const aiCredential = selectedAiCredential(options.root, saved);
+        if (!aiCredential)
           throw new PmPlannerError(
-            "Connect Claude Code in Connections before using Fill with AI.",
+            "Connect your selected AI provider in Connections before using Fill with AI.",
             "ai_not_connected",
           );
-        const secrets = Object.entries(saved)
-          .filter(([key]) => /TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL/.test(key))
-          .map(([, value]) => value!)
-          .filter(Boolean);
+        const secrets = [
+          ...aiSecretValues(readConnections(options.root)),
+          ...aiSecretValues(saved),
+          ...Object.entries(saved)
+            .filter(([key]) => /TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL/.test(key))
+            .map(([, value]) => value!)
+            .filter(Boolean),
+        ];
         if (includesSecret(input.mandate, secrets))
           throw new PmPlannerError(
             "Remove credentials from the mandate before sending it to AI.",
@@ -646,7 +651,7 @@ export function createPmPlanner(options: PmPlannerOptions) {
               project: project.config.name,
               projectInstanceId: project.config.instanceId,
             },
-            credential,
+            ...aiCredential,
             prompt,
             system:
               SYSTEM +
@@ -697,7 +702,7 @@ export function createPmPlanner(options: PmPlannerOptions) {
             error.code === "timeout" ? 408 : 503,
           );
         throw new PmPlannerError(
-          "AI planning could not finish. Check Docker, Claude Code, and source connections, then retry. Nothing was saved.",
+          "AI planning could not finish. Check Docker, your AI connection, and source connections, then retry. Nothing was saved.",
           "planner_unavailable",
           503,
         );

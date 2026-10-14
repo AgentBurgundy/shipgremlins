@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { hasAiCredentials, resolveAiSelection } from "../ai/provider.ts";
 import { CronExpressionParser } from "cron-parser";
 import { createScheduleCursor } from "../localRunners/scheduleCursor.ts";
 import {
@@ -207,10 +208,10 @@ export function inspectPmReadiness(
   add(
     "ai_connection",
     "AI connection",
-    Boolean(context.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()),
+    hasAiCredentials(resolve(project.dir, "../.."), context.env),
     "ai",
-    "Save a Claude Code connection in Connections before running a gremlin.",
-    "Claude Code connection is saved.",
+    "Connect the selected AI provider in Connections before running a gremlin.",
+    `${resolveAiSelection(resolve(project.dir, "../.."), context.env).provider === "codex" ? "Codex" : "Claude Code"} connection is saved.`,
   );
   add(
     "linear_connection",

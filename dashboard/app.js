@@ -360,6 +360,15 @@
       });
     },
   });
+  const aiConnections = window.createAiConnections?.({
+    root: $("ai-provider-root"),
+    claudeAccess: $("claude-access"),
+    api,
+    onSaved: async () => {
+      await refreshStatus();
+      await refreshRunners();
+    },
+  });
   const updateBanner = window.createUpdateBanner($("global-update-banner"), {
     onApply: () => runUpdateAction("apply"),
     onRestart: () => restartDashboard(),
@@ -391,6 +400,7 @@
     deletedResources?.sync();
     $("connections-fields").disabled = locked;
     connectionsView.setLocked(locked);
+    aiConnections?.setLocked(locked);
     $("source-token-fields").disabled = locked;
     $("railway-token-fields").disabled = locked;
     $("cloud-run-token-fields").disabled = locked;
@@ -493,6 +503,7 @@
       LINEAR_API_KEY: "linear",
       VERCEL_TOKEN: "vercel",
       CLAUDE_CODE_OAUTH_TOKEN: "claude",
+      CODEX_AUTH_JSON: "codex",
       RAILWAY_TOKEN: "railway",
       GCP_SERVICE_ACCOUNT_JSON: "cloud-run",
     };
@@ -612,12 +623,7 @@
       : "No projects yet";
     $("connection-step").classList.toggle(
       "complete",
-      sourceSaved &&
-        connections.some(
-          (connection) =>
-            connection.name === "CLAUDE_CODE_OAUTH_TOKEN" &&
-            connection.configured,
-        ),
+      sourceSaved && window.aiConnectionState(status).configured,
     );
     $("project-step").classList.toggle("complete", projects.length > 0);
     renderOverview();
@@ -633,6 +639,7 @@
         ? `Some settings need attention. You can repair them in the editor below. ${warnings.join(" ")}`
         : "",
     );
+    aiConnections?.render(status);
     connectionsView.render(connections, projects, {
       locked: formsLocked,
       slackConnected: Boolean(
@@ -5684,6 +5691,8 @@
       projectWorkspace?.isBusy() ||
       workspaceDeletion?.isBusy() ||
       connectionsView?.isBusy() ||
+      aiConnections?.isBusy() ||
+      aiConnections?.isDirty() ||
       [...profileControls.values()].some((control) => control.isBusy?.()) ||
       projectOperations?.isDirty() ||
       projectOperations?.isBusy() ||
@@ -5797,6 +5806,8 @@
         workspaceDeletion?.isBusy() ||
         pmActions?.isBusy() ||
         connectionsView?.isBusy() ||
+        aiConnections?.isBusy() ||
+        aiConnections?.isDirty() ||
         [...profileControls.values()].some((control) => control.isBusy?.()) ||
         Boolean(mixpanelReports?.isDirty()) ||
         newProjectSettings.isDirty() ||

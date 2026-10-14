@@ -16,6 +16,7 @@ import { loadProject, type AreaConfig, type Project } from "../config.ts";
 import { createPmKnowledge } from "../pmKnowledge/index.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { readConnections } from "../setup/connections.ts";
+import { aiSecretValues } from "../ai/provider.ts";
 import { redactHistory } from "../storage/activity.ts";
 import type { LocalJob } from "../localRunners/types.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
@@ -251,8 +252,10 @@ export function createProjectKnowledge(options: {
       throw new ProjectKnowledgeError(
         "Write a project decision of 1–4,000 characters.",
       );
-    const secrets =
-      options.secrets?.() ?? Object.values(readConnections(options.root));
+    const secrets = options.secrets?.() ?? [
+      ...Object.values(readConnections(options.root)),
+      ...aiSecretValues(readConnections(options.root)),
+    ];
     const text = redactHistory(input.text.trim(), secrets);
     if (text !== input.text.trim())
       throw new ProjectKnowledgeError(

@@ -9,12 +9,17 @@ export type ClaudeUsage = {
 };
 export type UsageArtifact = ClaudeUsage & {
   schemaVersion: 1;
-  source: "claude-code";
+  source: "claude-code" | "codex";
   reportedAt: string;
 };
 export const MAX_USAGE_BYTES: number;
 export function parseClaudeUsage(record: unknown): ClaudeUsage | undefined;
-export function createUsageCollector(options?: { now?: () => Date }): {
+export function parseCodexUsage(record: unknown): ClaudeUsage | undefined;
+export function createUsageCollector(options?: {
+  now?: () => Date;
+  provider?: "claude" | "codex";
+  model?: string;
+}): {
   modelRecord(record: unknown): void;
   snapshot(): UsageArtifact | undefined;
 };

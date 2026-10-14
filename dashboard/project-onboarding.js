@@ -387,9 +387,21 @@
           connection.name ===
           (provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"),
       );
-      const claude = credentials.find(
-        (connection) => connection.name === "CLAUDE_CODE_OAUTH_TOKEN",
-      );
+      const ai = window.aiConnectionState?.(status) || {
+        label: status?.ai?.provider === "codex" ? "Codex" : "Claude Code",
+        configured: status?.ai
+          ? status.ai.configured === true
+          : Boolean(
+              credentials.find(
+                (connection) => connection.name === "CLAUDE_CODE_OAUTH_TOKEN",
+              )?.configured,
+            ),
+      };
+      const aiKnown =
+        Boolean(status?.ai) ||
+        credentials.some(
+          (connection) => connection.name === "CLAUDE_CODE_OAUTH_TOKEN",
+        );
       const sourceReady =
         Boolean(source?.connected && !source.needsReconnect) ||
         (!source?.needsReconnect &&
@@ -412,11 +424,10 @@
           href: "/connections#source-control",
         },
         {
-          ready: Boolean(claude?.configured),
-          missing: claude?.configured === false,
-          label: "Claude configured",
-          action:
-            claude?.configured === false ? "Connect Claude" : "Manage Claude",
+          ready: ai.configured,
+          missing: aiKnown && !ai.configured,
+          label: `${ai.label} configured`,
+          action: `${!aiKnown || ai.configured ? "Manage" : "Connect"} ${ai.label}`,
           href: "/connections#model-connections",
         },
       ];
@@ -427,7 +438,7 @@
         ? "Uses your saved connections and Docker on this server."
         : rows.some((row) => row.missing)
           ? "Connect the missing service below to analyze this repository. Docker is also required on this server."
-          : "Analysis uses source access, Claude Code and Docker on this server.";
+          : "Analysis uses source access, your selected AI provider and Docker on this server.";
       s.connectionLinks.replaceChildren();
       for (const row of rows) {
         const item = node(

@@ -3,8 +3,12 @@ import { randomUUID } from "node:crypto";
 import { parseClaudeUsage } from "../../runner-local/usage.mjs";
 import { createUsage, type UsageContext } from "../usage/index.ts";
 import { createDockerRunners, type DockerRun } from "../localRunners/docker.ts";
+import { createCodexLogin } from "../setup/codexLogin.ts";
+import { readAiSelection, type AiSelection } from "../ai/provider.ts";
+import { validateAiSelection } from "../../runner-local/codex.mjs";
 
 export interface PlannerExecution {
+  ai?: AiSelection;
   /** Controller metadata only; never included in the prompt or container input. */
   usageContext?: UsageContext;
   credential: string;
@@ -53,8 +57,17 @@ const FAILURE_MESSAGES = {
 } as const;
 export type PlannerFailureCode = keyof typeof FAILURE_MESSAGES;
 export class PlannerExecutionError extends Error {
-  constructor(public readonly code: PlannerFailureCode) {
-    super(FAILURE_MESSAGES[code]);
+  constructor(
+    public readonly code: PlannerFailureCode,
+    provider: AiSelection["provider"] = "claude",
+  ) {
+    super(
+      provider === "codex"
+        ? FAILURE_MESSAGES[code]
+            .replaceAll("Claude Code", "Codex")
+            .replaceAll("Claude", "Codex")
+        : FAILURE_MESSAGES[code],
+    );
     this.name = "PlannerExecutionError";
   }
 }
@@ -95,7 +108,7 @@ process.stdin.on('end', () => {
   const env = { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/work/home', TMPDIR: '/tmp',
     CLAUDE_CODE_OAUTH_TOKEN: input.credential, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1' };
-  const args = ['--print', '--model', 'sonnet', '--tools', '', '--disable-slash-commands',
+  const args = ['--print', '--model', input.ai?.model ?? 'sonnet', '--tools', '', '--disable-slash-commands',
     '--safe-mode', '--restricted', '--setting-sources', '', '--strict-mcp-config',
     '--mcp-config', '{"mcpServers":{}}', '--no-chrome', '--permission-mode', 'dontAsk',
     '--permission-prompts', 'none', '--no-session-persistence', '--max-turns', '3',
@@ -127,6 +140,9 @@ process.stdin.on('end', () => {
   child.stdin.on('error', () => {});
   child.stdin.end(input.prompt);
 });`;
+
+export const CODEX_PLANNER_PROGRAM =
+  'import("/opt/gremlins/codex-planner.mjs").then(module => module.runCodexPlanner());';
 
 export const runPlannerDocker: PlannerDockerRun = (args, options = {}) =>
   new Promise((resolve, reject) => {
@@ -188,22 +204,71 @@ export function createDockerPlanner(options: {
   ensureImage?: () => Promise<string>;
   /** Setup investigation can opt into larger bounded source context; PM drafts retain 512 KiB. */
   maxInputBytes?: number;
+  prepareCodexCredentials?: () => Promise<Record<string, string>>;
 }): PlannerExecutor {
   const run = options.run ?? runPlannerDocker;
   const usage = options.root ? createUsage({ root: options.root }) : undefined;
   return async (input) => {
-    const payload = JSON.stringify({
-      credential: input.credential,
-      prompt: input.prompt,
-      system: input.system,
-      schema: input.schema,
-    });
+    let ai: AiSelection;
+    try {
+      ai = validateAiSelection(input.ai ?? { provider: "claude" });
+    } catch {
+      throw new PlannerExecutionError("input_limit");
+    }
+    const provider = ai.provider;
+    if (input.signal.aborted)
+      throw new PlannerExecutionError("canceled", provider);
     const maximum = Math.max(
       512 * 1024,
       Math.min(options.maxInputBytes ?? 512 * 1024, 2 * 1024 * 1024),
     );
+    const serialize = (credential: string) =>
+      JSON.stringify({
+        ...(input.ai ? { ai } : {}),
+        credential,
+        prompt: input.prompt,
+        system: input.system,
+        schema: input.schema,
+      });
+    if (
+      !Number.isFinite(maximum) ||
+      Buffer.byteLength(serialize(input.credential)) > maximum
+    )
+      throw new PlannerExecutionError("input_limit", provider);
+    const before = options.root
+      ? JSON.stringify(readAiSelection(options.root))
+      : undefined;
+    let credential = input.credential;
+    if (provider === "codex") {
+      if (!options.root && !options.prepareCodexCredentials)
+        throw new PlannerExecutionError("authentication", provider);
+      let refreshed: Record<string, string>;
+      try {
+        refreshed = await (options.prepareCodexCredentials?.() ??
+          createCodexLogin({
+            root: options.root!,
+            packageRoot: options.packageRoot,
+          }).prepare());
+      } catch {
+        throw new PlannerExecutionError(
+          input.signal.aborted ? "canceled" : "authentication",
+          provider,
+        );
+      }
+      if (!refreshed.CODEX_AUTH_JSON)
+        throw new PlannerExecutionError("authentication", provider);
+      credential = refreshed.CODEX_AUTH_JSON;
+      if (
+        options.root &&
+        JSON.stringify(readAiSelection(options.root)) !== before
+      )
+        throw new PlannerExecutionError("canceled", provider);
+    }
+    if (input.signal.aborted)
+      throw new PlannerExecutionError("canceled", provider);
+    const payload = serialize(credential);
     if (!Number.isFinite(maximum) || Buffer.byteLength(payload) > maximum)
-      throw new PlannerExecutionError("input_limit");
+      throw new PlannerExecutionError("input_limit", provider);
     const id = randomUUID();
     let attempted = false,
       measured: unknown;
@@ -223,14 +288,16 @@ export function createDockerPlanner(options: {
         }).ensureImage());
     } catch (error) {
       throw error instanceof PlannerExecutionError
-        ? error
+        ? new PlannerExecutionError(error.code, provider)
         : new PlannerExecutionError(
             input.signal.aborted ? "canceled" : "runtime_unavailable",
+            provider,
           );
     }
-    if (input.signal.aborted) throw new PlannerExecutionError("canceled");
+    if (input.signal.aborted)
+      throw new PlannerExecutionError("canceled", provider);
     if (!/^shipgremlins-local:[a-f0-9]{16}$/.test(image))
-      throw new PlannerExecutionError("runtime_unavailable");
+      throw new PlannerExecutionError("runtime_unavailable", provider);
     try {
       const created = await run(
         [
@@ -263,7 +330,7 @@ export function createDockerPlanner(options: {
           "node",
           image,
           "-e",
-          PLANNER_PROGRAM,
+          provider === "codex" ? CODEX_PLANNER_PROGRAM : PLANNER_PROGRAM,
         ],
         { signal: input.signal },
       );
@@ -318,9 +385,10 @@ export function createDockerPlanner(options: {
       }
     } catch (error) {
       throw error instanceof PlannerExecutionError
-        ? error
+        ? new PlannerExecutionError(error.code, provider)
         : new PlannerExecutionError(
             input.signal.aborted ? "canceled" : "runtime_unavailable",
+            provider,
           );
     } finally {
       if (attempted && input.usageContext)

@@ -452,9 +452,9 @@ describe("project Setup Gremlin", () => {
   it("requires Claude and reports safe provider errors without saving credentials", async () => {
     expect(
       (await fixture({ env: {} }).service.status("app")).message,
-    ).toContain("Connect Claude Code");
+    ).toContain("Connect your selected AI provider");
     await expect(fixture({ env: {} }).service.discover("app")).rejects.toThrow(
-      "Connect Claude",
+      "Connect your selected AI provider",
     );
     const f = fixture({
       sourceControl: {

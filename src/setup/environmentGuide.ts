@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { loadProject } from "../config.ts";
+import { aiSecretValues, selectedAiCredential } from "../ai/provider.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
 import { readEditableConfig } from "./configEditor.ts";
 import {
@@ -125,6 +126,8 @@ export function createEnvironmentGuide(options: {
       ({ name }) => name,
     );
     const secrets = [
+      ...aiSecretValues(saved),
+      ...aiSecretValues(stored),
       ...Object.values(stored),
       ...secretNames.map((name) => saved[name]),
     ].filter(
@@ -135,10 +138,10 @@ export function createEnvironmentGuide(options: {
       throw new ProjectOnboardingError(
         "Keep credentials out of chat. Save tokens and test passwords in Connections.",
       );
-    const credential = saved.CLAUDE_CODE_OAUTH_TOKEN;
-    if (!credential?.trim() || /[\r\n\0]/.test(credential))
+    const aiCredential = selectedAiCredential(root, saved);
+    if (!aiCredential)
       throw new ProjectOnboardingError(
-        "Connect Claude in Connections to ask a setup question. Finding and creating Vercel previews works without AI.",
+        "Connect your selected AI provider in Connections to ask a setup question. Finding and creating Vercel previews works without AI.",
         400,
         "claude_missing",
       );
@@ -171,7 +174,7 @@ export function createEnvironmentGuide(options: {
           project,
           projectInstanceId: projectConfig.instanceId,
         },
-        credential,
+        ...aiCredential,
         system: SYSTEM,
         prompt,
         signal,
@@ -247,7 +250,7 @@ export function createEnvironmentGuide(options: {
         if (error instanceof PlannerExecutionError)
           throw new ProjectOnboardingError(error.message, 502, error.code);
         throw new ProjectOnboardingError(
-          "The Setup Gremlin could not answer. Check Claude and Docker, then retry. No settings changed.",
+          "The Setup Gremlin could not answer. Check your AI connection and Docker, then retry. No settings changed.",
           502,
         );
       })

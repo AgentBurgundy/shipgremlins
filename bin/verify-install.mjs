@@ -47,6 +47,21 @@ const packed = JSON.parse(
     { cwd: source },
   ),
 )[0];
+const packagedPaths = new Set(packed.files.map(({ path }) => path));
+for (const path of [
+  "src/ai/provider.ts",
+  "src/setup/codexLogin.ts",
+  "runner-local/codex.mjs",
+  "runner-local/codex-login.mjs",
+  "runner-local/codex-planner.mjs",
+  "runner-local/codex-readonly.mjs",
+  "dashboard/ai-connections.js",
+  "dashboard/ai-connections.css",
+])
+  assert(
+    packagedPaths.has(path),
+    `Required Codex runtime file missing: ${path}`,
+  );
 for (const { path } of packed.files) {
   assert(
     !/(^|\/)(hub\.json|\.env(?:\..*)?|node_modules|\.git|\.run)(\/|$)/.test(

@@ -1,6 +1,7 @@
 import type { Project } from "../config.ts";
 import type { SourceCredential } from "../sourceControl/types.ts";
 import type { LocalJob } from "../localRunners/types.ts";
+import type { AiSelection } from "../ai/provider.ts";
 import {
   validatePayload,
   type DockerJobPayload,
@@ -13,7 +14,8 @@ export function createSyncRepairPayload(input: {
   stagingSha: string;
   integrationSha: string;
   credential: SourceCredential;
-  claudeToken: string;
+  claudeToken?: string;
+  aiCredential?: { ai: AiSelection; credential: string };
 }): DockerJobPayload {
   const { project, job, stagingSha, integrationSha, credential, claudeToken } =
     input;
@@ -27,9 +29,14 @@ export function createSyncRepairPayload(input: {
     throw new Error(
       "This job is not the admitted staging sync repair for this project.",
     );
-  if (!credential.token || !claudeToken)
+  const model =
+    input.aiCredential ??
+    (claudeToken
+      ? { ai: { provider: "claude" as const }, credential: claudeToken }
+      : undefined);
+  if (!credential.token || !model?.credential)
     throw new Error(
-      "Connect source control and Claude before repairing staging conflicts.",
+      "Connect source control and the selected AI provider before repairing staging conflicts.",
     );
   const provider = project.config.provider ?? "github";
   const { staging, integration } = project.config.branches;
@@ -40,6 +47,7 @@ export function createSyncRepairPayload(input: {
   ];
   const payload: DockerJobPayload = {
     kind: "developer",
+    ai: model.ai,
     nonce: job.id,
     project: project.config.name,
     provider,
@@ -54,7 +62,9 @@ export function createSyncRepairPayload(input: {
     credentials: {
       [provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"]:
         credential.token,
-      CLAUDE_CODE_OAUTH_TOKEN: claudeToken,
+      [model.ai.provider === "codex"
+        ? "CODEX_AUTH_JSON"
+        : "CLAUDE_CODE_OAUTH_TOKEN"]: model.credential,
     },
     commands: { ...project.config.commands },
     delivery: {

@@ -533,7 +533,7 @@ describe("local dashboard HTTP boundary", () => {
       area: "core",
     });
     expect(blocked.status).toBe(409);
-    expect(await blocked.text()).toContain("Claude Code");
+    expect(await blocked.text()).toContain("selected AI provider");
   });
   it("protects mandate planning and returns only a draft without creating PM files", async () => {
     const plan = {
@@ -2420,7 +2420,7 @@ describe("local dashboard HTTP boundary", () => {
     expect(
       (
         await post(`${url}/api/connections`, {
-          values: { GITHUB_TOKEN: "a".repeat(40_000) },
+          values: { GITHUB_TOKEN: "a".repeat(140_000) },
         })
       ).status,
     ).toBe(413);
@@ -2442,7 +2442,7 @@ describe("local dashboard HTTP boundary", () => {
       );
       req.on("error", reject);
       req.write('{"values":{"GITHUB_TOKEN":"');
-      req.write("a".repeat(40_000));
+      req.write("a".repeat(140_000));
       req.end('"}}');
     });
     expect(chunked).toBe(413);

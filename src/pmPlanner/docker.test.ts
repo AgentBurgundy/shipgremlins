@@ -7,6 +7,7 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import {
   createDockerPlanner,
+  CODEX_PLANNER_PROGRAM,
   PLANNER_PROGRAM,
   type PlannerDockerRun,
 } from "./docker.ts";
@@ -18,6 +19,191 @@ const input = () => ({
   system: "Fixed rules",
   schema: {},
   signal: new AbortController().signal,
+});
+
+describe("Codex planner Docker boundary", () => {
+  const codexAuth = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      id_token: "private-id",
+      access_token: "private-access",
+      refresh_token: "",
+      account_id: "account-1",
+    },
+  });
+  function fixture(
+    options: {
+      stdout?: string;
+      code?: number;
+      credentials?: Record<string, string>;
+      refreshError?: boolean;
+    } = {},
+  ) {
+    let owner = "";
+    const run = vi.fn<PlannerDockerRun>(async (args) => {
+      if (args[0] === "create")
+        owner = args[args.indexOf("--label") + 1]!.split("=")[1]!;
+      return {
+        code: args[0] === "start" ? (options.code ?? 0) : 0,
+        stdout:
+          args[0] === "start"
+            ? (options.stdout ??
+              '{"plannerEnvelope":1,"plannerOutput":{"answer":"Codex plan"},"plannerUsage":null}')
+            : args[0] === "inspect"
+              ? owner
+              : "",
+        stderr: credential,
+      };
+    });
+    const prepareCodexCredentials = vi.fn(async () => {
+      if (options.refreshError) throw new Error(credential);
+      return options.credentials ?? { CODEX_AUTH_JSON: codexAuth };
+    });
+    const ensureImage = vi.fn(
+      async () => "shipgremlins-local:0123456789abcdef",
+    );
+    const execute = createDockerPlanner({
+      packageRoot: ".",
+      run,
+      ensureImage,
+      prepareCodexCredentials,
+    });
+    return { execute, run, ensureImage, prepareCodexCredentials };
+  }
+  const codexInput = () => ({
+    ...input(),
+    ai: { provider: "codex" as const, model: "chosen-model" },
+  });
+  it("refreshes only selected Codex auth and transports it with model selection through private stdin", async () => {
+    const f = fixture();
+    await expect(
+      f.execute({
+        ...codexInput(),
+        usageContext: { kind: "idea-planning", project: "private-metadata" },
+      }),
+    ).resolves.toEqual({ answer: "Codex plan" });
+    expect(f.prepareCodexCredentials).toHaveBeenCalledTimes(1);
+    const create = f.run.mock.calls.find(([args]) => args[0] === "create")!;
+    expect(create[0].at(-1)).toBe(CODEX_PLANNER_PROGRAM);
+    expect(create[0]).not.toContain("--env");
+    expect(create[0]).not.toContain("--mount");
+    expect(JSON.stringify(create)).not.toContain(codexAuth);
+    const start = f.run.mock.calls.find(([args]) => args[0] === "start")!;
+    expect(JSON.parse(start[1]!.stdin!)).toEqual({
+      ai: { provider: "codex", model: "chosen-model" },
+      credential: codexAuth,
+      prompt: input().prompt,
+      system: input().system,
+      schema: input().schema,
+    });
+    expect(start[1]!.stdin).not.toContain("usageContext");
+    expect(start[1]!.stdin).not.toContain("private-metadata");
+    expect(f.run.mock.calls.at(-1)![0].slice(0, 2)).toEqual(["rm", "--force"]);
+  });
+  it("preserves Claude execution and its optional model without touching Codex auth", async () => {
+    const f = fixture();
+    await f.execute({
+      ...input(),
+      ai: { provider: "claude", model: "chosen-claude" },
+    });
+    expect(f.prepareCodexCredentials).not.toHaveBeenCalled();
+    expect(
+      f.run.mock.calls.find(([args]) => args[0] === "create")![0].at(-1),
+    ).toBe(PLANNER_PROGRAM);
+    const payload = JSON.parse(
+      f.run.mock.calls.find(([args]) => args[0] === "start")![1]!.stdin!,
+    );
+    expect(payload).toMatchObject({
+      credential,
+      ai: { provider: "claude", model: "chosen-claude" },
+    });
+  });
+  it.each<{ refreshError?: boolean; credentials?: Record<string, string> }>([
+    { refreshError: true },
+    { credentials: {} },
+    { credentials: { CLAUDE_CODE_OAUTH_TOKEN: "wrong-provider" } },
+  ])(
+    "normalizes trusted refresh failures without launching a container %j",
+    async (options) => {
+      const f = fixture(options);
+      await expect(f.execute(codexInput())).rejects.toMatchObject({
+        code: "authentication",
+        message: expect.stringContaining("Codex"),
+      });
+      try {
+        await f.execute(codexInput());
+      } catch (error) {
+        expect(String(error)).not.toContain(credential);
+      }
+      expect(f.run).not.toHaveBeenCalled();
+      expect(f.ensureImage).not.toHaveBeenCalled();
+    },
+  );
+  it("rejects cancellation, invalid selection and oversized context before refreshing", async () => {
+    const f = fixture(),
+      aborted = new AbortController();
+    aborted.abort();
+    await expect(
+      f.execute({ ...codexInput(), signal: aborted.signal }),
+    ).rejects.toMatchObject({ code: "canceled" });
+    await expect(
+      f.execute({ ...codexInput(), prompt: "x".repeat(512 * 1024) }),
+    ).rejects.toMatchObject({ code: "input_limit" });
+    await expect(
+      f.execute({
+        ...codexInput(),
+        ai: { provider: "unsupported" as "codex" },
+      }),
+    ).rejects.toMatchObject({ code: "input_limit" });
+    expect(f.prepareCodexCredentials).not.toHaveBeenCalled();
+    expect(f.run).not.toHaveBeenCalled();
+  });
+  it("keeps safe Codex failure categories and removes the owned container", async () => {
+    const f = fixture({
+      code: 2,
+      stdout:
+        '{"plannerError":"rate_limit","plannerUsage":{"source":"codex","complete":false,"inputTokens":200,"outputTokens":90,"cacheReadInputTokens":800,"cacheCreationInputTokens":null}}',
+    });
+    await expect(f.execute(codexInput())).rejects.toMatchObject({
+      code: "rate_limit",
+      message: expect.stringContaining("Codex"),
+    });
+    expect(f.run.mock.calls.at(-1)![0].slice(0, 2)).toEqual(["rm", "--force"]);
+  });
+  it("records measured Codex failures as partial usage without inventing cache creation", async () => {
+    const root = mkdtempSync(
+      join(realpathSync(tmpdir()), "codex-planner-usage-"),
+    );
+    try {
+      const f = fixture({
+        code: 2,
+        stdout:
+          '{"plannerError":"rate_limit","plannerUsage":{"source":"codex","complete":false,"inputTokens":200,"outputTokens":90,"cacheReadInputTokens":800,"cacheCreationInputTokens":null,"totalTokens":1090,"model":"chosen-model"}}',
+      });
+      const execute = createDockerPlanner({
+        root,
+        packageRoot: root,
+        run: f.run,
+        ensureImage: f.ensureImage,
+        prepareCodexCredentials: f.prepareCodexCredentials,
+      });
+      await expect(
+        execute({
+          ...codexInput(),
+          usageContext: { kind: "setup-guidance", project: "app" },
+        }),
+      ).rejects.toMatchObject({ code: "rate_limit" });
+      expect(createUsage({ root }).summary()).toMatchObject({
+        totals: { totalTokens: 1090 },
+        coverage: {
+          partialRecords: 1,
+          fields: { cacheCreationInputTokens: 0 },
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function wrapper(options: {

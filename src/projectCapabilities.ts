@@ -127,6 +127,10 @@ const CONTROLLER_SECRETS = new Set([
   "RAILWAY_TOKEN",
   "GCP_SERVICE_ACCOUNT_JSON",
   "CLAUDE_CODE_OAUTH_TOKEN",
+  "CODEX_AUTH_JSON",
+  "CODEX_ACCESS_TOKEN",
+  "CODEX_API_KEY",
+  "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
 ]);
 export function validWorkerSecretName(value: unknown): value is string {

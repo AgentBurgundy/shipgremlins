@@ -112,6 +112,7 @@ export const COMMON_SECRETS = [
   "LINEAR_API_KEY",
   "VERCEL_TOKEN",
   "CLAUDE_CODE_OAUTH_TOKEN",
+  "CODEX_AUTH_JSON",
   "SHIPGREMLINS_ATTESTATION_KEY",
   "SHIPGREMLINS_ATTESTATION_PUBLIC_KEY",
   "SHIPGREMLINS_VERIFICATION_FILE",
@@ -534,7 +535,7 @@ function initializeLocked(
       `Use gremlins setup to save connections and create a Docker worker on this machine. Use gremlins setup --lan for a server accessed from other devices.`,
       `Run gremlins setup --check --project ${input.project}. If using a local .env, create/fill it first, then use gremlins --env-file .env setup --check --project ${input.project}.`,
       `For live provider checks run gremlins --env-file .env doctor ${input.project} (or gremlins doctor ${input.project} when credentials are already exported).`,
-      "Enabled crews begin repository Discovery when source control and Claude Code are connected. The controller prepares a first local worker automatically. Use Autonomous work on the project home to pause or resume the crew; existing CI installations still use gremlins crons write.",
+      "Enabled crews begin repository Discovery when source control and the selected AI provider are connected. The controller prepares a first local worker automatically. Use Autonomous work on the project home to pause or resume the crew; existing CI installations still use gremlins crons write.",
       "The default local Docker mode needs no fork, automation repository, GitHub Actions, or GitLab CI. Existing CI runner settings are preserved.",
     ],
   };

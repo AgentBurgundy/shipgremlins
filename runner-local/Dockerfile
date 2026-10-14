@@ -21,6 +21,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund \
     && npx --no-install playwright install --with-deps chromium \
     && ln -s /opt/gremlins/node_modules/.bin/claude /usr/local/bin/claude \
+    && ln -s /opt/gremlins/node_modules/.bin/codex /usr/local/bin/codex \
     && chmod -R a+rX /opt/gremlins \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 COPY *.mjs ./

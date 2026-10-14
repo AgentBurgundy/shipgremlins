@@ -790,7 +790,7 @@ describe("authenticated project onboarding", () => {
     const response = await f.call("/api/projects/app/onboarding/discover", {});
     expect(response.status).toBe(400);
     expect(((await response.json()) as { error: string }).error).toMatch(
-      /Connect Claude/,
+      /Connect your selected AI provider/,
     );
     expect(
       (await f.call("/api/projects/app/onboarding/setup-pr", {})).status,

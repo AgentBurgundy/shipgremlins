@@ -64,6 +64,41 @@ function fixture() {
 }
 
 describe("durable token usage", () => {
+  it("records Codex usage without counting cached input twice or claiming unknown cache creation", async () => {
+    const f = fixture();
+    const report = artifact({
+      source: "codex",
+      model: "gpt-5.4",
+      inputTokens: 5,
+      outputTokens: 3,
+      cacheReadInputTokens: 10,
+      cacheCreationInputTokens: null,
+      complete: false,
+    });
+    const reader = vi.fn(async () => report);
+    await f.usage.captureJob(job(), reader);
+    const restarted = createUsage(f.options);
+    await restarted.captureJob(job(), reader);
+    expect(reader).toHaveBeenCalledOnce();
+    expect(restarted.summary()).toMatchObject({
+      totals: {
+        totalTokens: 18,
+        inputTokens: 5,
+        outputTokens: 3,
+        cacheReadInputTokens: 10,
+      },
+      coverage: {
+        measuredRuns: 1,
+        unavailableRuns: 0,
+        partialRecords: 1,
+        fields: { cacheCreationInputTokens: 0 },
+      },
+    });
+    expect(parseUsageArtifact(report)).toMatchObject({
+      model: "gpt-5.4",
+      cacheCreationInputTokens: null,
+    });
+  });
   it("expires the read cache even with frequent polling and warns instead of rounding overflowing totals", () => {
     const f = fixture();
     f.usage.operation({ kind: "idea-planning" }, measurement, "cache");

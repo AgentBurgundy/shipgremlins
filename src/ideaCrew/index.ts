@@ -37,6 +37,7 @@ import { createSourceControl } from "../sourceControl/index.ts";
 import { createLinearProvisioning } from "../setup/linearProvisioning.ts";
 import { createProjectKnowledge } from "../projectKnowledge/index.ts";
 import { redactHistory } from "../storage/activity.ts";
+import { aiSecretValues, selectedAiCredential } from "../ai/provider.ts";
 import { sourceRequest } from "../projectOnboarding/repository.ts";
 import {
   areaInput,
@@ -159,13 +160,16 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
     ...readConnections(root),
     ...(options.env ?? process.env),
   });
-  const secrets = () =>
-    Object.entries(credentials())
+  const secrets = () => [
+    ...aiSecretValues(readConnections(root)),
+    ...aiSecretValues(credentials()),
+    ...Object.entries(credentials())
       .filter(
         ([key, value]) =>
           value && /TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL/.test(key),
       )
-      .map(([, value]) => value!);
+      .map(([, value]) => value!),
+  ];
   function checkSecrets(text: string) {
     if (redactHistory(text, secrets()) !== text)
       throw new IdeaCrewError(
@@ -395,10 +399,10 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
           "Describe your app in 25–12000 characters: who it is for and what its first version should do.",
         );
       checkSecrets(idea);
-      const credential = credentials().CLAUDE_CODE_OAUTH_TOKEN;
-      if (!credential)
+      const aiCredential = selectedAiCredential(root, credentials());
+      if (!aiCredential)
         throw new IdeaCrewError(
-          "Connect Claude Code in Connections before planning your crew.",
+          "Connect your selected AI provider in Connections before planning your crew.",
         );
       const key = `${resolve(root)}:plan`;
       if (busy.has(key))
@@ -414,7 +418,7 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
       try {
         const output = await execute({
           usageContext: { kind: "idea-planning" },
-          credential,
+          ...aiCredential,
           prompt: JSON.stringify({ idea }),
           system: SYSTEM,
           schema: CREW_SCHEMA,
@@ -439,7 +443,7 @@ export function createIdeaCrew(options: IdeaCrewOptions) {
         throw new IdeaCrewError(
           bounded.aborted
             ? "Crew planning stopped. Your idea was kept; no project was created."
-            : "Crew planning could not finish. Check Claude Code and Docker, then retry.",
+            : "Crew planning could not finish. Check your AI connection and Docker, then retry.",
           bounded.aborted ? 408 : 503,
         );
       } finally {

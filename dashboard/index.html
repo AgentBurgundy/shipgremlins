@@ -21,6 +21,7 @@
     <script src="/project-settings.js" defer></script>
     <script src="/pages.js" defer></script>
     <script src="/usage.js" defer></script>
+    <script src="/ai-connections.js" defer></script>
     <script src="/connections-view.js" defer></script>
     <script src="/update-banner.js" defer></script>
     <script src="/connection-profiles.js" defer></script>
@@ -67,6 +68,7 @@
     <script src="/interface.js" defer></script>
     <link rel="stylesheet" href="/coding-launch.css" />
     <link rel="stylesheet" href="/interface.css" />
+    <link rel="stylesheet" href="/ai-connections.css" />
     <link rel="stylesheet" href="/workspace-tools.css" />
     <link rel="stylesheet" href="/command-menu.css" />
     <link rel="stylesheet" href="/run-recovery.css" />
@@ -478,113 +480,115 @@
                   aria-labelledby="claude-title"
                 >
                   <div class="service-heading">
-                    <span class="service-mark" aria-hidden="true"
-                      ><img
-                        src="/assets/brands/claude.svg"
-                        width="26"
-                        height="26"
-                        alt=""
-                    /></span>
+                    <span
+                      class="service-mark ai-service-mark"
+                      aria-hidden="true"
+                      >AI</span
+                    >
                     <div>
                       <span class="eyebrow muted">THE BRAINS</span>
-                      <h3 id="claude-title">Claude Code</h3>
-                      <p>The AI behind your PM and Coding Gremlins.</p>
+                      <h3 id="claude-title">AI provider</h3>
+                      <p>Choose the AI behind your PM and Coding Gremlins.</p>
                     </div>
                   </div>
-                  <div class="service-status-row">
-                    <span
-                      class="saved-state"
-                      data-connection="CLAUDE_CODE_OAUTH_TOKEN"
-                      >Checking…</span
-                    ><span class="manual-connection-label"
-                      >Claude subscription</span
-                    >
-                  </div>
-                  <details class="service-advanced">
-                    <summary>Set up Claude Code</summary>
-                    <ol class="setup-steps">
-                      <li>In a terminal with Claude Code installed, run:</li>
-                    </ol>
-                    <div class="command-line setup-command">
-                      <code>claude setup-token</code
-                      ><button
-                        type="button"
-                        class="copy-button"
-                        id="copy-claude-command"
-                        aria-label="Copy Claude setup command"
+                  <div id="ai-provider-root"></div>
+                  <div id="claude-access">
+                    <div class="service-status-row">
+                      <span
+                        class="saved-state"
+                        data-connection="CLAUDE_CODE_OAUTH_TOKEN"
+                        >Checking…</span
+                      ><span class="manual-connection-label"
+                        >Claude subscription</span
                       >
-                        Copy
-                      </button>
                     </div>
-                    <p
-                      id="claude-copy-status"
-                      class="sr-only"
-                      role="status"
-                    ></p>
-                    <ol class="setup-steps" start="2">
-                      <li>
-                        Sign in with your Claude subscription when the browser
-                        opens.
-                      </li>
-                      <li>
-                        Copy the long-lived token from your terminal and paste
-                        it below.
-                      </li>
-                    </ol>
-                    <a
-                      class="setup-doc-link"
-                      href="https://code.claude.com/docs/en/env-vars"
-                      target="_blank"
-                      rel="noreferrer"
-                      >Claude Code authentication guide ↗</a
-                    >
-                    <form id="connections-form">
-                      <fieldset id="connections-fields" disabled>
-                        <legend class="sr-only">Claude Code access</legend>
-                        <div class="field">
-                          <label for="claude-token">Claude Code token</label>
-                          <p id="claude-help">
-                            Used for AI setup suggestions, PMs, and coding jobs.
-                            Paste the token or its quoted variable assignment;
-                            copied terminal line wrapping is handled for you.
-                          </p>
-                          <div class="password-wrap">
-                            <input
-                              id="claude-token"
-                              name="CLAUDE_CODE_OAUTH_TOKEN"
-                              type="password"
-                              autocomplete="off"
-                              spellcheck="false"
-                              autocapitalize="none"
-                              placeholder="Paste the token from your terminal"
-                              aria-describedby="claude-help"
-                            /><button
-                              class="reveal-button"
-                              type="button"
-                              data-reveal="claude-token"
-                              aria-label="Show Claude Code token"
-                              aria-pressed="false"
-                            >
-                              Show
-                            </button>
-                          </div>
-                        </div>
-                        <button
-                          type="submit"
-                          class="small-button"
-                          id="save-connections"
+                    <details class="service-advanced">
+                      <summary>Set up Claude Code</summary>
+                      <ol class="setup-steps">
+                        <li>In a terminal with Claude Code installed, run:</li>
+                      </ol>
+                      <div class="command-line setup-command">
+                        <code>claude setup-token</code
+                        ><button
+                          type="button"
+                          class="copy-button"
+                          id="copy-claude-command"
+                          aria-label="Copy Claude setup command"
                         >
-                          Save Claude token
+                          Copy
                         </button>
-                      </fieldset>
-                      <div
-                        class="form-message"
-                        id="connections-message"
+                      </div>
+                      <p
+                        id="claude-copy-status"
+                        class="sr-only"
                         role="status"
-                        hidden
-                      ></div>
-                    </form>
-                  </details>
+                      ></p>
+                      <ol class="setup-steps" start="2">
+                        <li>
+                          Sign in with your Claude subscription when the browser
+                          opens.
+                        </li>
+                        <li>
+                          Copy the long-lived token from your terminal and paste
+                          it below.
+                        </li>
+                      </ol>
+                      <a
+                        class="setup-doc-link"
+                        href="https://code.claude.com/docs/en/env-vars"
+                        target="_blank"
+                        rel="noreferrer"
+                        >Claude Code authentication guide ↗</a
+                      >
+                      <form id="connections-form">
+                        <fieldset id="connections-fields" disabled>
+                          <legend class="sr-only">Claude Code access</legend>
+                          <div class="field">
+                            <label for="claude-token">Claude Code token</label>
+                            <p id="claude-help">
+                              Used for AI setup suggestions, PMs, and coding
+                              jobs. Paste the token or its quoted variable
+                              assignment; copied terminal line wrapping is
+                              handled for you.
+                            </p>
+                            <div class="password-wrap">
+                              <input
+                                id="claude-token"
+                                name="CLAUDE_CODE_OAUTH_TOKEN"
+                                type="password"
+                                autocomplete="off"
+                                spellcheck="false"
+                                autocapitalize="none"
+                                placeholder="Paste the token from your terminal"
+                                aria-describedby="claude-help"
+                              /><button
+                                class="reveal-button"
+                                type="button"
+                                data-reveal="claude-token"
+                                aria-label="Show Claude Code token"
+                                aria-pressed="false"
+                              >
+                                Show
+                              </button>
+                            </div>
+                          </div>
+                          <button
+                            type="submit"
+                            class="small-button"
+                            id="save-connections"
+                          >
+                            Save Claude token
+                          </button>
+                        </fieldset>
+                        <div
+                          class="form-message"
+                          id="connections-message"
+                          role="status"
+                          hidden
+                        ></div>
+                      </form>
+                    </details>
+                  </div>
                 </section>
                 <section
                   class="service-card linear-card"
@@ -1845,8 +1849,8 @@
                   <div class="form-bottom">
                     <p id="project-create-explanation">
                       Adds your repository and starts a Setup Gremlin when
-                      source and Claude access are ready. No PM is created and
-                      no app changes are published.
+                      source and AI access are ready. No PM is created and no
+                      app changes are published.
                     </p>
                     <button
                       class="button button-dark"
@@ -2081,7 +2085,8 @@
                     ><input type="checkbox" id="pm-discover-after-create" />
                     <span
                       >Explore the codebase after saving. Runs discovery with
-                      Claude and a ready worker; keeps automation off.</span
+                      your selected AI provider and a ready worker; uses your
+                      saved automation settings.</span
                     >
                   </label>
                   <div class="form-bottom">

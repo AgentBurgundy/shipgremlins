@@ -4070,7 +4070,7 @@ describe("guided environment target review", () => {
     f.panel.mount(root, { name: "shop", repo: "owner/shop" });
     await settle();
     expect(text(root)).toContain("✓ GitHub connected");
-    expect(text(root)).toContain("✓ Claude configured");
+    expect(text(root)).toContain("✓ Claude Code configured");
     expect(text(root)).toContain("Manage connections");
     expect(text(root)).not.toContain("Connect Claude");
     expect(text(root)).not.toContain("Connect GitHub");
@@ -4134,7 +4134,36 @@ describe("guided environment target review", () => {
     expect(text(root)).toContain("Connect GitLab");
     expect(text(root)).not.toContain("GitLab connected");
     expect(text(root)).not.toContain("GitHub connected");
-    expect(text(root)).toContain("✓ Claude configured");
+    expect(text(root)).toContain("✓ Claude Code configured");
+    f.panel.destroy();
+  });
+  it("uses the selected Codex connection without requiring Claude, and preserves environment drafts", async () => {
+    let ai = { provider: "codex", configured: true };
+    const f = fixture(undefined, () => ({
+        ai,
+        connections: [{ name: "CLAUDE_CODE_OAUTH_TOKEN", configured: false }],
+        sourceConnections: [
+          {
+            provider: "github",
+            serverUrl: "https://github.com",
+            method: "oauth",
+            connected: true,
+          },
+        ],
+      })),
+      root = new Element();
+    f.panel.mount(root, { name: "shop", repo: "owner/shop" });
+    await settle();
+    expect(text(root)).toContain("✓ Codex configured");
+    expect(text(root)).not.toContain("Connect Claude");
+    const field = walk(root)
+      .find((item) => item.className === "onboarding-choice")!
+      .querySelectorAll("input")[0]!;
+    field.value = "https://unsaved.example.test";
+    ai = { provider: "codex", configured: false };
+    f.panel.syncConnections();
+    expect(text(root)).toContain("Connect Codex");
+    expect(field.value).toBe("https://unsaved.example.test");
     f.panel.destroy();
   });
   it("keeps unknown connection status neutral instead of claiming a missing connection", async () => {
@@ -4143,7 +4172,7 @@ describe("guided environment target review", () => {
     f.panel.mount(root, { name: "shop", repo: "owner/shop" });
     await settle();
     expect(text(root)).toContain("Manage GitHub");
-    expect(text(root)).toContain("Manage Claude");
+    expect(text(root)).toContain("Manage Claude Code");
     expect(text(root)).not.toContain("Connect Claude");
     expect(text(root)).not.toContain("connected");
     f.panel.destroy();
