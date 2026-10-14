@@ -11,6 +11,7 @@ import {
 } from "../setup/pmReadiness.ts";
 import { parseExecutionLimits } from "../execution.ts";
 import type { LocalJob } from "../localRunners/types.ts";
+import type { CodingPickupView } from "../localRunners/codingPickup.ts";
 import type { ProjectExecutionUsage } from "../localRunners/budgets.ts";
 import { createProjectKnowledge } from "./index.ts";
 import type { DeliveryRecord } from "../delivery/types.ts";
@@ -25,6 +26,7 @@ export function projectOperations(
   readiness: ReadinessContext,
   execution: ProjectExecutionUsage[] = [],
   deliveries: DeliveryRecord[] = [],
+  codingPickup?: CodingPickupView,
 ) {
   const project = loadProject(root, name),
     config = project.config;
@@ -223,7 +225,14 @@ export function projectOperations(
   }
   return {
     project: name,
-    autonomy: projectAutonomy(root, name, jobs, readiness),
+    autonomy: projectAutonomy(
+      root,
+      name,
+      jobs,
+      readiness,
+      new Date(),
+      codingPickup,
+    ),
     diagnostics,
     inbox,
     knowledge,

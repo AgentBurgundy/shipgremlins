@@ -148,6 +148,75 @@ function post(
 }
 
 describe("local dashboard HTTP boundary", () => {
+  it("keeps observed coding holds consistent across status and project/workspace operations refreshes", async () => {
+    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const history = [
+      {
+        id: "job-failed",
+        runId: 2,
+        type: "developer",
+        project: "demo",
+        area: "core",
+        ticket: "SHI-2",
+        status: "failed",
+        createdAt: "2026-10-14T00:00:00Z",
+      },
+    ];
+    const runners = {
+      jobs: vi.fn(async () => history),
+      status: vi.fn(async () => ({
+        runners: [],
+        jobs: history,
+        execution: [],
+      })),
+      start: vi.fn(),
+      stop: vi.fn(async () => {}),
+    } as unknown as LocalRunners;
+    const observation = {
+      state: "current",
+      needsReview: [
+        {
+          ticketId: "ticket-2",
+          identifier: "SHI-2",
+          area: "core",
+          jobId: "job-failed",
+          runId: 2,
+          status: "failed",
+          reason: "previous-failed",
+          href: "/activity?run=job-failed",
+        },
+      ],
+    };
+    const codingPickup = vi.fn(() => observation);
+    const { root, url } = await start(packageRoot, [], {
+      background: false,
+      runners,
+      sourceControl: sourceFixture(),
+      jobs: { codingPickup } as unknown as ReturnType<
+        typeof createJobPreparation
+      >,
+    });
+    initializeSetup(root, packageRoot, { project: "demo", repo: "owner/app" });
+    for (const path of [
+      "/api/status",
+      "/api/operations",
+      "/api/projects/demo/operations",
+      "/api/projects/demo/autonomy",
+    ]) {
+      const response = await fetch(url + path, { headers: auth });
+      expect(response.status).toBe(200);
+      const result = (await response.json()) as {
+        projects?: { autonomy: { codingPickup: unknown } }[];
+        autonomy: { codingPickup: unknown };
+      };
+      expect((result.projects?.[0] ?? result).autonomy.codingPickup).toEqual(
+        observation,
+      );
+    }
+    expect(codingPickup).toHaveBeenCalledTimes(4);
+    for (const args of codingPickup.mock.calls)
+      expect(args).toEqual(["demo", history]);
+  });
   it("protects PM briefs and knowledge and admits discovery without Linear or hosting readiness", async () => {
     const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
     const enqueue = vi.fn(async (input) => ({ id: "job-discovery", ...input }));
