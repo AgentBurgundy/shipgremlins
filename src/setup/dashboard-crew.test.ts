@@ -77,6 +77,21 @@ const job = (overrides: Partial<Job> = {}): Job => ({
 });
 
 describe("dashboard crew model", () => {
+  it("keeps the latest failed run actionable instead of masking it as scheduled work", () => {
+    const f = model();
+    expect(f.crew([project()], [job({ status: "failed" })])[0]?.state).toBe(
+      "Needs attention",
+    );
+    expect(
+      f.crew(
+        [project()],
+        [
+          job({ id: "new-work", status: "queued" }),
+          job({ status: "failed", runId: 99 }),
+        ],
+      )[0]?.job?.id,
+    ).toBe("new-work");
+  });
   it("isolates a recreated project from old, legacy, and other project jobs", () => {
     const input = [
       job(),
@@ -188,7 +203,7 @@ describe("dashboard crew model", () => {
     expect(
       destinations.filter((item) => item.context === "store / demo"),
     ).toHaveLength(1);
-    expect(destinations.find((item) => item.name === "Activity")?.href).toBe(
+    expect(destinations.find((item) => item.name === "Runs")?.href).toBe(
       "/activity",
     );
     expect(destinations.some((item) => item.name === "removed-pm")).toBe(false);

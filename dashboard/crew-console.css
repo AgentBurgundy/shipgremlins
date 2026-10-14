@@ -1,10 +1,10 @@
 /* Workspace console: shared navigation, live work and the crew directory. */
 :root {
-  --ink: #18342a;
-  --muted: #65756c;
-  --paper: #f4f6f3;
-  --line: #dce5dd;
-  --radius: 14px;
+  --ink: var(--text-primary);
+  --muted: var(--text-secondary);
+  --paper: var(--bg);
+  --line: var(--border-default);
+  --radius: 8px;
 }
 body {
   background: var(--paper);
@@ -48,7 +48,7 @@ main {
   text-decoration: underline;
 }
 .breadcrumbs .breadcrumb-separator {
-  color: #97a69c;
+  color: var(--muted);
   margin-inline: 12px;
   flex-shrink: 0;
 }
@@ -64,26 +64,26 @@ main {
   align-items: center;
   min-height: 34px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--muted);
-  background: #fff;
+  background: var(--surface);
   padding: 6px 10px;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .quick-jump-trigger kbd {
-  color: #829087;
+  color: var(--muted);
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
 }
 .topbar .local-pill {
-  font-size: 10px;
+  font-size: 11px;
 }
 .sidebar .nav-item {
   padding-block: 10px;
   font-size: 13px;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 .sidebar .brand {
   margin-bottom: 6px;
@@ -95,10 +95,10 @@ main {
   margin-top: 24px;
 }
 .sidebar .project-nav-item {
-  border-radius: 8px;
+  border-radius: 6px;
 }
 .panel {
-  border-radius: 14px;
+  border-radius: 8px;
 }
 .panel-heading {
   gap: 16px;
@@ -115,11 +115,15 @@ main {
   letter-spacing: -0.045em;
 }
 .button-dark {
-  background: #286448;
-  border-color: #286448;
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: none;
 }
 .button-dark:hover {
-  background: #1d5138;
+  background: var(--focus);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  box-shadow: none;
 }
 .form-message {
   padding: 12px 14px;
@@ -147,7 +151,7 @@ body.has-projects #overview-eyebrow {
   min-height: 0;
   padding: 0;
   grid-column: 1;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
 }
 body.has-projects #overview h1 {
@@ -183,9 +187,9 @@ body.has-projects .overview-metrics:not([hidden]) {
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 6px 10px;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 17px 18px;
-  background: #fff;
+  background: var(--surface);
   min-height: 96px;
 }
 .overview-metrics .metric-card > span {
@@ -219,9 +223,9 @@ body:not(.has-projects) .workspace-pulse {
 .crew-working,
 .crew-recent {
   min-width: 0;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 8px;
   overflow: hidden;
 }
 .crew-section-heading {
@@ -232,7 +236,7 @@ body:not(.has-projects) .workspace-pulse {
   justify-content: space-between;
   gap: 8px;
   padding: 16px 18px;
-  border-bottom: 1px solid #edf0eb;
+  border-bottom: 1px solid var(--line);
 }
 .crew-section-heading h2 {
   display: flex;
@@ -249,8 +253,8 @@ body:not(.has-projects) .workspace-pulse {
 .crew-count {
   border-radius: 5px;
   padding: 2px 6px;
-  color: #3c684e;
-  background: #edf4e8;
+  color: var(--muted);
+  background: var(--surface-raised);
   font-size: 11px;
 }
 .crew-freshness {
@@ -258,20 +262,20 @@ body:not(.has-projects) .workspace-pulse {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .crew-freshness::before {
   content: "";
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #3c8a56;
+  background: var(--accent-soft);
 }
 .crew-freshness.is-stale {
-  color: #965b1b;
+  color: var(--warning);
 }
 .crew-freshness.is-stale::before {
-  background: #bd8439;
+  background: var(--warning-soft);
 }
 .crew-run {
   display: grid;
@@ -281,14 +285,14 @@ body:not(.has-projects) .workspace-pulse {
   align-items: start;
 }
 .crew-run + .crew-run {
-  border-top: 1px solid #edf0eb;
+  border-top: 1px solid var(--line);
 }
 .crew-avatar {
   width: 40px;
   height: 44px;
   object-fit: contain;
-  background: #f1f6eb;
-  border-radius: 10px;
+  background: var(--surface-raised);
+  border-radius: 8px;
   flex-shrink: 0;
 }
 .crew-run-name {
@@ -308,7 +312,7 @@ body:not(.has-projects) .workspace-pulse {
 }
 .crew-run-message {
   margin: 8px 0 0;
-  color: #56665c;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.55;
   display: -webkit-box;
@@ -324,7 +328,7 @@ body:not(.has-projects) .workspace-pulse {
   gap: 6px;
 }
 .crew-run-status time {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -334,36 +338,36 @@ body:not(.has-projects) .workspace-pulse {
   gap: 5px;
   white-space: nowrap;
   padding: 3px 7px;
-  color: #617268;
-  background: #f1f4f0;
-  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface-raised);
+  font-size: 11px;
   font-weight: 650;
   border-radius: 5px;
   line-height: 1.5;
 }
 .crew-state.state-running {
-  background: #e8f3dc;
-  color: #315f2d;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .crew-state.state-running::before {
   content: "";
   height: 5px;
   width: 5px;
-  background: #4e8a31;
+  background: var(--accent);
   border-radius: 50%;
 }
 .crew-state.state-queued {
-  background: #f8f1df;
-  color: #8a641f;
+  background: var(--warning-soft);
+  color: var(--warning);
   white-space: normal;
 }
 .crew-state.state-failed {
-  background: #fbeee8;
-  color: #a45035;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .crew-state.state-succeeded {
-  background: #f1f4f0;
-  color: #617268;
+  background: var(--surface-raised);
+  color: var(--lime);
 }
 .crew-run.is-compact {
   grid-template-columns: minmax(0, 1fr) auto;
@@ -410,7 +414,7 @@ body.has-projects .first-run-path {
 }
 .workspace-project-summary {
   padding: 18px 20px;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 .workspace-project-summary .workspace-project-name {
   font-size: 15px;
@@ -430,7 +434,7 @@ body.has-projects .first-run-path {
 #project-list .project-card {
   padding: 20px;
   margin: 0;
-  border-radius: 14px;
+  border-radius: 8px;
   overflow: hidden;
 }
 #project-list .project-row {
@@ -463,7 +467,7 @@ body.has-projects .first-run-path {
   gap: 6px;
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid #edf0eb;
+  border-top: 1px solid var(--line);
 }
 .project-crew-strip:empty {
   display: none;
@@ -500,7 +504,7 @@ body.has-projects .first-run-path {
   width: 100%;
   min-height: 40px;
   margin: 0;
-  background: #fff;
+  background: var(--surface);
 }
 .crew-toolbar > .button {
   flex-shrink: 0;
@@ -511,9 +515,9 @@ body.has-projects .first-run-path {
   gap: 16px;
 }
 .crew-person {
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 8px;
   padding: 20px;
   min-width: 0;
 }
@@ -555,7 +559,7 @@ body.has-projects .first-run-path {
   overflow: hidden;
 }
 .crew-person-latest {
-  border-top: 1px solid #edf0eb;
+  border-top: 1px solid var(--line);
   padding-top: 12px;
   display: flex;
   flex-wrap: wrap;
@@ -567,7 +571,7 @@ body.has-projects .first-run-path {
   color: var(--muted);
 }
 .crew-person-latest a {
-  color: #386349;
+  color: var(--muted);
 }
 .crew-person-latest p {
   flex-basis: 100%;
@@ -581,8 +585,8 @@ body.has-projects .first-run-path {
   line-height: 1.6;
 }
 .job-row {
-  background: #fff;
-  border-radius: 12px;
+  background: var(--surface);
+  border-radius: 8px;
   padding: 16px;
   gap: 16px;
 }
@@ -609,17 +613,17 @@ body.has-projects .first-run-path {
   gap: 8px;
 }
 .job-row .runtime-badge.state-running {
-  background: #e8f3dc;
-  border-color: #d5e6c9;
-  color: #315f2d;
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
 }
 .job-row .runtime-badge.state-succeeded {
-  background: #f1f4f0;
-  border-color: #e0e6df;
-  color: #617268;
+  background: var(--surface-raised);
+  border-color: var(--line);
+  color: var(--muted);
 }
 .run-viewer {
-  border-radius: 16px;
+  border-radius: 10px;
 }
 .run-viewer .run-viewer-header {
   padding: 20px 24px;
@@ -629,17 +633,17 @@ body.has-projects .first-run-path {
   max-height: min(640px, calc(100dvh - 48px));
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 16px;
-  background: #fff;
+  border-radius: 10px;
+  background: var(--surface);
   color: var(--ink);
-  box-shadow: 0 24px 90px #122c2933;
+  box-shadow: 0 24px 90px rgb(0 0 0 / 24%);
 }
 .quick-jump[open] {
   display: flex;
   flex-direction: column;
 }
 .quick-jump::backdrop {
-  background: #10251c66;
+  background: color-mix(in srgb, var(--surface-inset) 40%, transparent);
   backdrop-filter: blur(3px);
 }
 .quick-jump-header {
@@ -672,11 +676,11 @@ body.has-projects .first-run-path {
   color: var(--ink);
   text-decoration: none;
   padding: 12px;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 .quick-jump-result:hover,
 .quick-jump-result:focus-visible {
-  background: #f0f5eb;
+  background: var(--surface-raised);
 }
 .quick-jump-result strong {
   font-size: 13px;
@@ -706,7 +710,7 @@ body.has-projects .first-run-path {
     border-top: 0;
   }
   .crew-run.is-compact:nth-child(even) {
-    border-left: 1px solid #edf0eb;
+    border-left: 1px solid var(--line);
   }
   .topbar .local-pill {
     display: none;
@@ -783,7 +787,7 @@ body.has-projects .first-run-path {
   .crew-avatar {
     width: 32px;
     height: 38px;
-    border-radius: 8px;
+    border-radius: 6px;
   }
   .crew-run-status {
     grid-column: 2;
@@ -804,7 +808,7 @@ body.has-projects .first-run-path {
     border-left: 0;
   }
   .crew-run.is-compact + .crew-run {
-    border-top: 1px solid #edf0eb;
+    border-top: 1px solid var(--line);
   }
   .crew-toolbar {
     gap: 10px;

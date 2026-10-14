@@ -501,10 +501,14 @@ function settingsLifecycleFixture(
 }
 
 describe("dashboard interface surfaces", () => {
-  it("shows every connection initially and filters without replacing saved drafts", async () => {
+  it("starts with essentials and finds every connection without replacing saved drafts", async () => {
     const f = fixture("/connections");
     const tiles = f.body.querySelectorAll(".connection-tile");
     expect(tiles).toHaveLength(11);
+    expect(tiles.filter((tile) => !tile.hidden)).toHaveLength(2);
+    await f
+      .button(f.nav("Connection categories"), "All connections")
+      .emit("click");
     expect(tiles.every((tile) => !tile.hidden)).toBe(true);
     const search = f.nav("Find a connection");
     const draft = f.get("vercel-connection-draft");
@@ -576,12 +580,14 @@ describe("dashboard interface surfaces", () => {
     const f = fixture(),
       nav = f.nav("Connection categories");
     await f.button(nav, "Start here").emit("keydown", { key: "ArrowRight" });
-    expect(f.focused()?.textContent).toBe("Hosting");
-    expect(f.button(nav, "Hosting").getAttribute("aria-current")).toBe("page");
+    expect(f.focused()?.textContent).toBe("All connections");
+    expect(f.button(nav, "All connections").getAttribute("aria-current")).toBe(
+      "page",
+    );
     await f.button(nav, "Hosting").emit("keydown", { key: "End" });
     expect(f.focused()?.textContent).toBe("Workflow & access");
     await f.button(nav, "Workflow & access").emit("keydown", { key: "Home" });
-    expect(f.focused()?.textContent).toBe("All connections");
+    expect(f.focused()?.textContent).toBe("Start here");
   });
   it("takes ownership from legacy category tabs before adopting provider controls", () => {
     const f = fixture();

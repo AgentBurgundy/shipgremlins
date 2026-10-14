@@ -243,7 +243,8 @@
           Number.isFinite(Date.parse(autonomy.nextRunAt));
         next.textContent = scheduled
           ? `Next automatic start: ${new Date(autonomy.nextRunAt).toLocaleString()}`
-          : "Pausing stops future starts. Current runs finish normally.";
+          : "";
+        next.hidden = !scheduled;
         repair.hidden = state !== "blocked";
         repair.href =
           window.projectWorkState?.(
@@ -573,7 +574,7 @@
         detail =
           "Review the evidence and decide what moves forward. Your crew keeps its approval boundaries.";
         action = anchor(
-          "Open review inbox →",
+          "Open approvals →",
           route(s.name, "review"),
           "button button-dark",
         );
@@ -931,9 +932,14 @@
         );
         pipeline.append(step);
       });
-      root.append(pipeline);
+      const explanation = el("details", "delivery-explanation mission-detail");
+      explanation.open = Boolean(s.deliveryExplanationOpen);
+      explanation.append(el("summary", "", "How delivery works"), pipeline);
+      explanation.addEventListener("toggle", () => {
+        s.deliveryExplanationOpen = explanation.open;
+      });
       if (!promotion)
-        root.append(
+        explanation.append(
           message(
             "This project uses pull requests. Staged promotion is an explicit project workflow; a draft PR is not a production release.",
           ),
@@ -1075,6 +1081,7 @@
             );
           root.append(card);
         }
+      root.append(explanation);
       return root;
     }
     function buildLimits(s) {

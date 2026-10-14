@@ -5,30 +5,31 @@
   margin-left: auto;
   min-height: 36px;
   padding: 7px 11px;
-  border: 1px solid #e1e9e3;
-  border-radius: 8px;
-  color: #667b70;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--surface);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .command-menu-trigger kbd {
   font: inherit;
-  font-size: 10px;
-  color: #819087;
+  font-size: 11px;
+  color: var(--muted);
 }
 dialog.command-menu {
   width: min(620px, calc(100vw - 24px));
   max-height: calc(100dvh - 48px);
-  border: 1px solid #dce6de;
-  border-radius: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   padding: 22px;
-  color: #18392b;
-  box-shadow: 0 24px 80px #18392b30;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow-dialog);
 }
 .command-menu::backdrop {
-  background: #10271f80;
+  background: color-mix(in srgb, var(--surface-inset) 50%, transparent);
   backdrop-filter: blur(3px);
 }
 .command-menu header {
@@ -47,8 +48,8 @@ dialog.command-menu {
   width: 100%;
   min-height: 46px;
   padding: 12px;
-  border: 1px solid #cddbd0;
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   font: inherit;
   font-size: 14px;
 }
@@ -65,9 +66,9 @@ dialog.command-menu {
   width: 100%;
   padding: 12px;
   border: 0;
-  border-radius: 9px;
-  color: #18392b;
-  background: #fff;
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -78,16 +79,17 @@ dialog.command-menu {
   overflow-wrap: anywhere;
 }
 .command-menu-option span {
-  color: #667b70;
+  color: var(--muted);
   flex-shrink: 0;
 }
 .command-menu-option[aria-selected="true"],
 .command-menu-option:hover {
-  background: #eef5e9;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .command-menu-count,
 .command-menu-help {
-  color: #667b70;
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.6;
 }

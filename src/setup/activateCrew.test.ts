@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { initializeSetup } from "./files.ts";
 import { readEditableConfig } from "./configEditor.ts";
 import { activateProjectCrew } from "./activateCrew.ts";
+import { projectAutonomy } from "./projectAutonomy.ts";
 import type { ReadinessContext } from "./pmReadiness.ts";
 const roots: string[] = [];
 afterEach(() => {
@@ -131,6 +132,7 @@ describe("crew activation", () => {
   it("activates all ready areas atomically and preserves their configuration without approving work", async () => {
     const f = fixture(),
       projectBefore = readFileSync(f.projectFile, "utf8");
+    expect(projectAutonomy(f.root, "app", [], f.context).enabled).toBe(false);
     const result = await f.run();
     expect(f.validate.mock.calls).toEqual([["core"], ["billing"]]);
     expect(result.ok).toBe(true);
@@ -148,6 +150,13 @@ describe("crew activation", () => {
         (area) => area.enabled && area.codingEnabled,
       ),
     ).toBe(true);
+    expect(projectAutonomy(f.root, "app", [], f.context)).toMatchObject({
+      enabled: true,
+      investigationEnabled: true,
+      codingEnabled: true,
+      state: "waiting",
+      discoveryPending: [{ key: "core" }, { key: "billing" }],
+    });
   });
   it.each(["worker", "linear", "mapping", "mandate"])(
     "keeps every area paused when %s is missing",

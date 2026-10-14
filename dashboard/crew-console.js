@@ -68,20 +68,22 @@
               ? statusLabel(job)
               : readiness?.canRun === false
                 ? "Needs setup"
-                : area.enabled && area.schedule
-                  ? "Scheduled"
-                  : "On demand",
+                : job?.status === "failed"
+                  ? "Needs attention"
+                  : area.enabled && area.schedule
+                    ? "Scheduled"
+                    : "On demand",
         };
       }),
     );
   const routes = [
-    ["Overview", "/overview", "Workspace"],
+    ["Mission control", "/overview", "Workspace"],
     ["Projects", "/projects", "Workspace"],
-    ["Your gremlins", "/runners", "Crew"],
-    ["Activity", "/activity", "Runs & evidence"],
-    ["Review inbox", "/inbox", "Decisions"],
+    ["Agents", "/runners", "Crew"],
+    ["Runs", "/activity", "Runs & evidence"],
+    ["Approvals", "/inbox", "Decisions"],
     ["Connections", "/connections", "Tools & accounts"],
-    ["Usage", "/usage", "Tokens & costs"],
+    ["Usage", "/usage", "Recorded tokens"],
     ["Settings", "/settings", "Workspace"],
   ];
   function destinations(projects, jobs) {
@@ -208,7 +210,7 @@
       } else
         parts.push([
           routes.find((entry) => entry[1] === `/${pages.current}`)?.[0] ||
-            "Overview",
+            "Mission control",
           "",
         ]);
       const signature = JSON.stringify(parts);
@@ -313,7 +315,9 @@
           identity,
           chip(
             item.state,
-            item.job && active(item.job) ? `state-${item.job.status}` : "",
+            item.job && (active(item.job) || item.job.status === "failed")
+              ? `state-${item.job.status}`
+              : "",
           ),
         );
         card.append(
@@ -321,8 +325,8 @@
           el(
             "p",
             "crew-person-purpose",
-            item.area.mandate ||
-              item.area.charter?.goal ||
+            item.area.charter?.goal ||
+              item.area.mandate ||
               `Looks after ${item.area.key}.`,
           ),
         );
@@ -331,7 +335,9 @@
           latest.append(
             el("span", "", active(item.job) ? "Current run" : "Last run"),
             link(
-              `${statusLabel(item.job)} · ${date(item.job.startedAt || item.job.createdAt)}`,
+              active(item.job)
+                ? `Follow run${item.job.runId ? ` ${item.job.runId}` : ""} →`
+                : `${statusLabel(item.job)} · ${date(item.job.startedAt || item.job.createdAt)}`,
               `/activity?run=${encodeURIComponent(item.job.id)}`,
             ),
           );
@@ -339,7 +345,9 @@
             el(
               "p",
               "",
-              item.job.message || "Open the run for its evidence and output.",
+              window.normalizedRunFailure?.(item.job)?.detail ||
+                item.job.message ||
+                "Open the run for its evidence and output.",
             ),
           );
         } else
@@ -361,7 +369,7 @@
       if (!entries.length)
         empty(
           rosterList,
-          projects.length ? "No matching gremlins" : "Your crew starts here",
+          projects.length ? "No matching agents" : "Your crew starts here",
           projects.length
             ? "Try another name or project, or adopt a gremlin with a new area to look after."
             : "Connect a project, then adopt a PM to investigate and improve it.",
@@ -461,7 +469,7 @@
             runners
               ? "Start an investigation or let your next scheduled patrol pick things up."
               : "Checking runner status and the job queue.",
-            link("Open your crew", "/runners", "small-button"),
+            link("Open agents", "/runners", "small-button"),
           );
         if (working.length > 6)
           live.append(

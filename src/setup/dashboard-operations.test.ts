@@ -212,6 +212,42 @@ function fixture(api: (path: string, body?: unknown) => Promise<unknown>) {
 }
 
 describe("project operations edit safety", () => {
+  it("keeps blocked delivery actionable before optional workflow mechanics and preserves its disclosure on refresh", async () => {
+    const current = {
+      ...data(),
+      delivery: {
+        mode: "pull-request",
+        branches: { base: "main" },
+        items: [
+          {
+            status: "blocked",
+            title: "Checkout fix",
+            message: "Required checks need attention.",
+          },
+        ],
+      },
+    };
+    const api = vi.fn(async () => structuredClone(current));
+    const { control } = fixture(api),
+      root = new Element("section");
+    control.mount(root, { name: "alpha" }, "delivery");
+    await flush();
+    const details = root.querySelector(".delivery-explanation")!,
+      item = root.querySelector(".delivery-item")!;
+    expect(details.tagName).toBe("DETAILS");
+    expect(details.open).toBe(false);
+    expect(walk(details)).not.toContain(item);
+    expect(text(item)).toContain("Needs attention");
+    expect(text(item)).toContain("Required checks need attention.");
+    details.open = true;
+    await details.fire("toggle");
+    current.delivery.items[0]!.message = "Fresh check evidence is available.";
+    await control.refresh("alpha", true);
+    expect(root.querySelector(".delivery-explanation")!.open).toBe(true);
+    expect(text(root.querySelector(".delivery-item")!)).toContain(
+      "Fresh check evidence is available.",
+    );
+  });
   it("shows PM QA follow-up status and keeps the concrete failure visible in promotion delivery", async () => {
     const current = {
       ...data(),

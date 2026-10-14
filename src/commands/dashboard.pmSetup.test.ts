@@ -14,6 +14,7 @@ import type { Server } from "node:http";
 import { createDashboardServer } from "./dashboard.ts";
 import { initializeSetup } from "../setup/files.ts";
 import { loadProject } from "../config.ts";
+import { readEditableConfig } from "../setup/configEditor.ts";
 import {
   createLinearProvisioning,
   type LinearProvisioningClient,
@@ -220,6 +221,7 @@ async function fixture(
     });
   return {
     root,
+    runners,
     client,
     provisioning,
     enqueue,
@@ -240,6 +242,49 @@ async function fixture(
 }
 
 describe("PM prepare and verify admission", () => {
+  it("starts the controller after revision-guarded crew activation and leaves it stopped after a rejected stale write", async () => {
+    const f = await fixture();
+    await f.provisioning.provision("demo");
+    const projectFile = join(f.root, "projects/demo/project.json"),
+      areasFile = join(f.root, "projects/demo/areas.json"),
+      project = JSON.parse(readFileSync(projectFile, "utf8")),
+      areas = JSON.parse(readFileSync(areasFile, "utf8"));
+    project.verified = new Date().toISOString().slice(0, 10);
+    project.workflow = { kind: "pull-request", baseBranch: "main" };
+    writeFileSync(projectFile, JSON.stringify(project));
+    for (const area of Object.values(areas.areas) as Record<
+      string,
+      unknown
+    >[]) {
+      area.mandate = "Improve the app with reproducible evidence.";
+      area.enabled = false;
+      area.codingEnabled = false;
+    }
+    writeFileSync(areasFile, JSON.stringify(areas));
+    const input = {
+      projectRevision: readEditableConfig(f.root, "projects/demo/project.json")
+        .revision,
+      areasRevision: readEditableConfig(f.root, "projects/demo/areas.json")
+        .revision,
+    };
+    vi.mocked(f.runners.start).mockClear();
+    const stale = await f.post("/api/projects/demo/crew/activate", {
+      ...input,
+      areasRevision: "0".repeat(64),
+    });
+    expect(stale.status).toBe(409);
+    expect(f.runners.start).not.toHaveBeenCalled();
+    const activated = await f.post("/api/projects/demo/crew/activate", input);
+    expect(await activated.json()).toMatchObject({ ok: true });
+    expect(activated.status).toBe(200);
+    expect(f.runners.start).toHaveBeenCalledOnce();
+    expect(
+      loadProject(f.root, "demo").areas.every(
+        (area) => area.enabled && area.codingEnabled,
+      ),
+    ).toBe(true);
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
   it("creates Linear projects and labels from the guided setup without queuing a PM", async () => {
     const f = await fixture();
     const current = loadProject(f.root, "demo");

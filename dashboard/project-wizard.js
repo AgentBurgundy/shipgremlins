@@ -75,8 +75,8 @@
           "We’ll create a fresh repository here when you finish setup.",
         ],
         repository: [
-          "Which app are we joining?",
-          "Choose the app’s repository. Next, AI can inspect the code and suggest your crew.",
+          "Connect your app.",
+          "Choose its repository, then review the project name. AI can suggest a crew after connection.",
         ],
         visibility: [
           "Who can see your code?",
@@ -120,7 +120,10 @@
       button.addEventListener("click", () => {
         $("project-start").value = value;
         $("project-start").dispatchEvent(new Event("change"));
-        go(value === "idea" ? (crew().ready() ? "crew" : "idea") : "provider");
+        go(
+          value === "idea" ? (crew().ready() ? "crew" : "idea") : "repository",
+        );
+        if (value === "existing") onProviderChange();
       });
       cards.append(button);
     }
@@ -141,6 +144,8 @@
       $("repository-search").closest(".repository-tools"),
       $("manual-repository-field"),
     );
+    const providerField = $("project-provider").closest(".field");
+    const projectNameField = $("project-name").closest(".field");
     const ownerLabel = node("label", "Repository owner");
     ownerLabel.htmlFor = "new-repository-owner";
     const ownerSelect = node("select");
@@ -204,7 +209,7 @@
             "visibility",
             "review",
           ]
-        : ["start", "provider", "repository", "name", "review"];
+        : ["start", "repository", "review"];
     function visibilityValue() {
       return (
         form.querySelector('[name="repository-visibility"]:checked')?.value ||
@@ -318,7 +323,24 @@
         ? "We’ll create your repository, add the product brief, and save the crew. Next, review and start the foundation build. We'll set up Linear and check your connections when you do. PM schedules stay paused."
         : "Next, AI will inspect this app and suggest your crew. We’ll connect its test environment and any test account before browser patrols. You choose when the crew starts.";
     }
+    $("project-name").addEventListener("input", () => {
+      if (step === "review") renderSummary();
+    });
     function update() {
+      // Reuse controls so source connections, settings adapters and drafts
+      // survive switching between an existing app and a new idea.
+      const providerSection = isIdea()
+        ? sections.provider
+        : sections.repository;
+      if (!providerSection.contains(providerField))
+        providerSection.prepend(
+          providerField,
+          $("gitlab-options"),
+          connections,
+        );
+      const nameSection = isIdea() ? sections.name : sections.review;
+      if (!nameSection.contains(projectNameField))
+        nameSection.prepend(projectNameField);
       const ready = crew()?.ready();
       if (ready && !previousReady && step === "idea") {
         previousReady = ready;
@@ -370,25 +392,22 @@
     form.addEventListener(
       "submit",
       (event) => {
-        if (step === "review") return;
+        if (step === "review") {
+          if (!validName()) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+          return;
+        }
         event.preventDefault();
         event.stopImmediatePropagation();
         if (crew()?.busy) return;
         if (step === "start" || step === "idea") return;
+        if (step === "name" && !validName()) return;
         if (
-          step === "name" &&
-          (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(
-            $("project-name").value.trim(),
-          ) ||
-            $("project-name").value.trim().length > 63)
+          ["provider", "repository"].includes(step) &&
+          $("project-provider").value === "gitlab"
         ) {
-          showError(
-            "Use a name beginning with a letter, with lowercase letters, numbers, and hyphens.",
-          );
-          $("project-name").focus();
-          return;
-        }
-        if (step === "provider" && $("project-provider").value === "gitlab") {
           try {
             const url = new URL(
               $("gitlab-server").value.trim() || "https://gitlab.com",
@@ -427,6 +446,16 @@
       },
       true,
     );
+    function validName() {
+      const value = $("project-name").value.trim();
+      if (/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(value) && value.length <= 63)
+        return true;
+      showError(
+        "Use a name beginning with a letter, with lowercase letters, numbers, and hyphens.",
+      );
+      $("project-name").focus();
+      return false;
+    }
     function reset() {
       form.reset();
       bound = null;

@@ -25,6 +25,7 @@ const text = (root: Element) =>
     .map((item) => item.textContent)
     .join(" ");
 const window = {} as {
+  renderCrewSetup: (project: object, options?: object) => Element;
   renderPmControls: (
     project: object,
     area: object,
@@ -53,6 +54,51 @@ const run = (root: Element) =>
   all(root).find((item) => item.dataset.launchCrew === "pm")!;
 
 describe("compact PM work controls", () => {
+  it("keeps one immediate setup action while retaining every scoped check in the expandable checklist", () => {
+    const root = window.renderCrewSetup({
+      ...project,
+      readiness: {
+        blockers: [
+          {
+            id: "worker",
+            action: "worker",
+            message: "A verified runner is needed.",
+          },
+          {
+            id: "linear_connection",
+            action: "linear",
+            message: "Connect Linear.",
+          },
+        ],
+        steps: [
+          { id: "worker", action: "worker", label: "Runner", ready: false },
+          {
+            id: "linear_connection",
+            action: "linear",
+            label: "Linear",
+            ready: false,
+          },
+        ],
+      },
+    });
+    const checklist = all(root).find((node) => node.tagName === "DETAILS")!;
+    expect(text(checklist)).toContain("View setup checks");
+    const immediate = all(root).filter(
+      (node) => node.tagName === "BUTTON" && !all(checklist).includes(node),
+    );
+    expect(immediate).toHaveLength(1);
+    expect(immediate[0]!.textContent).toBe("Set up a runner");
+    expect(immediate[0]!.dataset).toEqual({
+      setupAction: "worker",
+      setupProject: "alpha",
+      setupStep: "worker",
+    });
+    expect(
+      all(checklist)
+        .filter((node) => node.tagName === "BUTTON")
+        .map((node) => node.dataset.setupStep),
+    ).toEqual(["worker", "linear_connection"]);
+  });
   it("keeps investigation and approved coding states distinct, labeled and scoped", () => {
     const root = render(),
       [investigate, coding] = switches(root);

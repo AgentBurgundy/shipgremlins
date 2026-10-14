@@ -2,9 +2,9 @@
   min-width: 0;
   padding: clamp(18px, 2.5vw, 28px);
   margin-bottom: 22px;
-  border: 1px solid #dce5dd;
-  border-radius: 14px;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
 }
 .crew-recommendations-summary {
   display: flex;
@@ -12,7 +12,7 @@
   align-items: center;
   gap: 14px 24px;
   padding: 18px 22px;
-  background: #f8fbf4;
+  background: var(--surface);
 }
 .crew-recommendations-summary-copy {
   flex: 1 1 230px;
@@ -20,14 +20,14 @@
 }
 .crew-recommendations-summary h2 {
   margin: 5px 0 6px;
-  color: #18342a;
+  color: var(--ink);
   font-size: 17px;
   line-height: 1.3;
   letter-spacing: -0.3px;
 }
 .crew-recommendations-summary p {
   margin: 0;
-  color: #65756c;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -50,7 +50,7 @@
 }
 .crew-recommendations-heading p {
   margin: 0;
-  color: #65756c;
+  color: var(--muted);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -65,9 +65,9 @@
   flex-direction: column;
   align-items: stretch;
   padding: 19px;
-  border: 1px solid #dce5dd;
-  border-radius: 12px;
-  background: linear-gradient(155deg, #f8fbf4, #fff 40%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(155deg, var(--surface), var(--surface) 40%);
 }
 .crew-recommendation-heading {
   display: flex;
@@ -79,7 +79,7 @@
   min-width: 0;
 }
 .crew-recommendation-heading .eyebrow {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 1.2px;
 }
 .crew-recommendation-heading h3 {
@@ -99,7 +99,7 @@
   margin: 17px 0 12px;
   font-size: 13px;
   line-height: 1.6;
-  color: #425d4e;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .crew-recommendation-responsibilities {
@@ -107,16 +107,16 @@
   margin: 0 0 18px;
   font-size: 12px;
   line-height: 1.65;
-  color: #65756c;
+  color: var(--muted);
 }
 .crew-recommendation-evidence {
-  border-top: 1px solid #e6ece5;
+  border-top: 1px solid var(--line);
   padding-top: 13px;
   margin-top: auto;
   margin-bottom: 17px;
 }
 .crew-recommendation-evidence .eyebrow {
-  font-size: 9px;
+  font-size: 11px;
 }
 .crew-recommendation-evidence p {
   display: grid;
@@ -124,11 +124,11 @@
   margin: 9px 0 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #718076;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .crew-recommendation-evidence code {
-  color: #376147;
+  color: var(--muted);
   font-size: 11px;
 }
 .crew-recommendation > button {
@@ -139,10 +139,10 @@
 .crew-recommendation-adopted {
   padding: 10px;
   margin: 0;
-  border-radius: 8px;
-  background: #eaf3e2;
+  border-radius: 6px;
+  background: var(--surface-raised);
   text-align: center;
-  color: #286448;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
 }
@@ -155,7 +155,7 @@
 }
 .crew-recommendations-note,
 .crew-recommendations-provenance {
-  color: #718076;
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.65;
   margin: 15px 0 0;
@@ -168,9 +168,9 @@
   flex-wrap: wrap;
   gap: 12px;
   padding: 15px;
-  border: 1px solid #dce8d5;
-  border-radius: 10px;
-  background: #f5f9ef;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
   margin-bottom: 14px;
 }
 .crew-recommendations-progress p {
@@ -181,7 +181,7 @@
   line-height: 1.5;
 }
 .crew-recommendations-stage {
-  color: #65756c;
+  color: var(--muted);
   font-size: 11px;
 }
 .crew-recommendations-pulse {
@@ -189,16 +189,16 @@
   height: 9px;
   flex: none;
   border-radius: 50%;
-  background: #669548;
-  box-shadow: 0 0 0 5px #e4efda;
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 5px rgb(0 0 0 / 24%);
 }
 .crew-recommendations-error {
   margin: 14px 0;
   padding: 14px;
-  border: 1px solid #f1d3bd;
-  border-radius: 9px;
-  background: #fff8f0;
-  color: #965725;
+  border: 1px solid var(--warning-line);
+  border-radius: 6px;
+  background: var(--warning-soft);
+  color: var(--warning);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -209,14 +209,14 @@
   max-width: min(440px, calc(100vw - 32px));
   margin: auto;
   padding: 24px;
-  border: 1px solid #dce5dd;
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 22px 80px #18342a33;
-  color: #18342a;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 22px 80px rgb(0 0 0 / 24%);
+  color: var(--ink);
 }
 .pm-recommendation-confirm::backdrop {
-  background: #10271b66;
+  background: color-mix(in srgb, var(--surface-inset) 40%, transparent);
   backdrop-filter: blur(3px);
 }
 .pm-recommendation-confirm h2 {
@@ -241,7 +241,7 @@
 }
 .pm-recommendation-confirm p {
   margin: 0 0 20px;
-  color: #65756c;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
 }

@@ -161,7 +161,7 @@
         );
         body.append(
           action(
-            "Continue to test environment",
+            "Continue setup",
             () => {
               if (!current(s)) {
                 render();

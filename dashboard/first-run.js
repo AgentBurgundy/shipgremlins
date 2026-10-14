@@ -12,6 +12,32 @@
     (Number(b.runId) || Date.parse(b.createdAt) || 0) -
     (Number(a.runId) || Date.parse(a.createdAt) || 0);
 
+  window.projectSetupDestination = (project) => {
+    const readiness = project.readiness;
+    const environmentIds = new Set([
+      "environment",
+      "browser_connections",
+      "test_access",
+      "browser_verification",
+    ]);
+    const blockers = [
+      ...list(readiness?.blockers),
+      ...list(readiness?.areas).flatMap((area) => [
+        ...list(area.blockers),
+        ...list(area.enableBlockers),
+        ...list(area.coding?.enableBlockers),
+      ]),
+    ];
+    const needsEnvironment =
+      !readiness ||
+      (project.verification?.mode === "browser" &&
+        (blockers.some((blocker) => environmentIds.has(blocker.id)) ||
+          list(readiness.steps).some(
+            (step) => environmentIds.has(step.id) && step.ready !== true,
+          )));
+    return `${projectPath(project)}?tab=${needsEnvironment ? "environment" : "crew"}`;
+  };
+
   // Read actual, identity-scoped work before interpreting saved configuration.
   // Enabled autonomy means permission to work; it is never proof of a live run.
   window.projectWorkState = (project, jobs = [], operations = {}) => {
@@ -222,7 +248,22 @@
               item.name === "CLAUDE_CODE_OAUTH_TOKEN" && item.configured,
           ),
     };
-    const aiReady = ai.configured;
+    const aiStep = list(project?.readiness?.steps).find(
+      (item) => item.id === "ai_connection",
+    );
+    const setupAi = !project?.areas?.length && project?.setupAi;
+    const aiReady = setupAi
+      ? setupAi.configured === true
+      : aiStep
+        ? aiStep.ready === true
+        : ai.configured;
+    const aiLabel = setupAi
+      ? setupAi.provider === "codex"
+        ? "Codex"
+        : "Claude Code"
+      : aiStep
+        ? "project AI"
+        : ai.label;
     const base = {
       active: true,
       noProject: !project,
@@ -263,7 +304,10 @@
           : "Watch the actions, evidence, and results as your gremlin works. You can safely leave this page.",
         "Follow the mission",
         `/activity?run=${encodeURIComponent(active.id)}`,
-        { active: !established },
+        {
+          active: !established,
+          eyebrow: active.status === "queued" ? "WORK QUEUED" : "LIVE ACTIVITY",
+        },
       );
     if (established?.workflow?.kind === "promotion")
       return {
@@ -277,10 +321,10 @@
     if (established)
       return {
         active: false,
-        title: "Your crew. Your next move.",
+        title: "Mission control.",
         description:
-          "See what is working, what needs attention, and where your projects go next.",
-        label: "Open your projects",
+          "Follow active work, clear blockers, and review what ships next.",
+        label: "Open projects",
         href: "/projects",
       };
     if (!sourceReady)
@@ -297,8 +341,9 @@
       return step(
         1,
         "Connect your AI.",
-        `Connect ${ai.label} to plan a crew and run its missions. You can add Linear and hosting when a task needs them.`,
-        `Connect ${ai.label}`,
+        (!setupAi && aiStep?.message) ||
+          `Connect ${aiLabel} to plan a crew and run its missions. You can add Linear and hosting when a task needs them.`,
+        `Connect ${aiLabel}`,
         "/connections#model-connections",
       );
     if (!project)
@@ -331,7 +376,12 @@
           : "Review foundation plan",
         `${projectPath(project)}?tab=environment`,
       );
-    if (project.autonomy?.enabled === true) {
+    const activeCrew =
+      project.areas.length > 0 &&
+      project.areas.every(
+        (area) => area.enabled && (area.codingEnabled ?? area.enabled),
+      );
+    if (project.autonomy?.enabled === true || activeCrew) {
       const automatic = window.projectWorkState(project, jobs);
       return step(
         4,
@@ -343,6 +393,21 @@
         automatic.href,
       );
     }
+    if (
+      project.areas.length &&
+      !activeCrew &&
+      project.readiness.areas?.length === project.areas.length &&
+      project.readiness.areas.every(
+        (area) => area.canRun && area.canEnable && area.coding?.canEnable,
+      )
+    )
+      return step(
+        4,
+        "Ready for autopilot.",
+        "Your PMs and coders passed setup. Start scheduled investigations and automatic pickup of eligible work under your saved approval policy.",
+        "Start autopilot",
+        `${projectPath(project)}?tab=crew`,
+      );
     const firstStep = window.projectFirstStep(project, jobs);
     if (firstStep === "welcome")
       return step(
@@ -380,7 +445,7 @@
     if (blocker) {
       const links = {
         source: ["Connect source control", "/connections#source-control"],
-        ai: [`Connect ${ai.label}`, "/connections#model-connections"],
+        ai: ["Connect project AI", "/connections#model-connections"],
         worker: ["Set up a runner", "/runners#workers"],
         mandate: [
           "Finish its purpose",
@@ -434,9 +499,8 @@
     );
     get("welcome-title").textContent = state.title;
     get("welcome-description").textContent = state.description;
-    get("overview-eyebrow").textContent = state.active
-      ? "YOUR FIRST USEFUL CHANGE"
-      : "YOUR WORKSPACE";
+    get("overview-eyebrow").textContent =
+      state.eyebrow || (state.active ? "SETUP NEXT STEP" : "WORKSPACE ACTIVE");
     const link = get("overview-primary-action"),
       adopt = get("overview-adopt-action");
     link.textContent = `${state.label} →`;

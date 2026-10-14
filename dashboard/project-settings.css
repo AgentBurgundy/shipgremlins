@@ -4,18 +4,18 @@
   gap: 4px;
   padding: 5px;
   margin: 0 0 20px;
-  border: 1px solid #e4eae6;
-  border-radius: 11px;
-  background: #f4f6f3;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
 }
 .project-settings .project-settings-tabs button {
   min-width: 0;
   min-height: 36px;
   padding: 8px 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--muted, #617169);
+  color: var(--muted, var(--muted));
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -24,18 +24,18 @@
   cursor: pointer;
 }
 .project-settings .project-settings-tabs button[aria-selected="true"] {
-  background: #fff;
-  color: #20452e;
-  box-shadow: 0 1px 4px #18332412;
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 10%);
 }
 .project-settings
   .project-settings-tabs
   button:hover:not([aria-selected="true"]) {
-  background: #e6eee8;
-  color: #20452e;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .project-settings .project-settings-tabs button:focus-visible {
-  outline: 3px solid #72a354;
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .project-settings .settings-tab-panel {
@@ -61,7 +61,7 @@
   max-width: 64ch;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--muted, #617169);
+  color: var(--muted, var(--muted));
 }
 .project-settings .command-settings {
   margin: 0;
@@ -76,13 +76,13 @@
 }
 .project-settings .environment-fields {
   padding: 16px;
-  background: #f8faf7;
-  border: 1px solid var(--line, #dce5dd);
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line, var(--line));
+  border-radius: 8px;
 }
 .project-settings .settings-advanced-note {
   font-size: 12px;
-  color: var(--muted, #617169);
+  color: var(--muted, var(--muted));
   margin: 16px 0 0;
 }
 .project-settings .promotion-settings {
@@ -94,9 +94,9 @@
 .project-settings .promotion-settings > .runner-guidance {
   padding: 12px 14px;
   margin: 0 0 18px;
-  border-left: 3px solid #b9d98f;
-  border-radius: 0 8px 8px 0;
-  background: #f4f8ee;
+  border-left: 3px solid var(--line);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface-raised);
   font-size: 12px;
   line-height: 1.55;
 }

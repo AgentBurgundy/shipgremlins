@@ -2,12 +2,12 @@
 
 (() => {
   const labels = Object.freeze({
-    overview: "Overview",
-    inbox: "Review inbox",
+    overview: "Mission control",
+    inbox: "Approvals",
     connections: "Connections",
     projects: "Projects",
-    runners: "Your gremlins",
-    activity: "Activity",
+    runners: "Agents",
+    activity: "Runs",
     usage: "Usage",
     settings: "Settings",
     project: "Project",

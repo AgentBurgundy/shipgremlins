@@ -12,7 +12,7 @@
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.14em;
-  color: #58645a;
+  color: var(--muted);
 }
 .wizard-topline {
   display: flex;
@@ -28,15 +28,15 @@
 }
 .wizard-track {
   height: 4px;
-  background: #e5e9e0;
-  border-radius: 8px;
+  background: var(--accent-soft);
+  border-radius: 6px;
   margin: 12px 0 24px;
   overflow: hidden;
 }
 .wizard-track span {
   display: block;
   height: 100%;
-  background: #286448;
+  background: var(--surface-inset);
   transition: width 0.2s;
 }
 .project-wizard h2 {
@@ -51,7 +51,7 @@
 .wizard-description {
   font-size: 14px;
   line-height: 1.6;
-  color: var(--muted, #65756c);
+  color: var(--muted, var(--muted));
   margin: 0 0 24px;
 }
 .wizard-body {
@@ -67,9 +67,9 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  border: 1px solid var(--line, #dce5dd);
-  border-radius: 12px;
-  background: #fff;
+  border: 1px solid var(--line, var(--line));
+  border-radius: 8px;
+  background: var(--surface);
   color: var(--ink);
   padding: 20px;
   text-align: left;
@@ -80,12 +80,12 @@
 }
 .wizard-choice:hover,
 .wizard-choice:has(input:checked) {
-  border-color: #286448;
-  background: #f5f9ef;
-  box-shadow: 0 0 0 1px #286448;
+  border-color: var(--accent-line);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 24%);
 }
 .wizard-choice:focus-visible {
-  outline: 3px solid #56843e;
+  outline: 3px solid var(--focus);
   outline-offset: 4px;
 }
 .wizard-choice strong {
@@ -94,17 +94,17 @@
 }
 .wizard-choice > span:last-child {
   line-height: 1.6;
-  color: var(--muted, #65756c);
+  color: var(--muted, var(--muted));
   font-size: 13px;
 }
 .wizard-choice-icon {
-  color: #286448;
+  color: var(--ink);
   font-size: 26px;
 }
 .wizard-radio input {
   width: 18px;
   height: 18px;
-  accent-color: #4c7830;
+  accent-color: var(--accent);
   margin: 0;
 }
 .project-wizard .field > label {
@@ -146,13 +146,13 @@
   display: grid;
   grid-template-columns: 130px minmax(0, 1fr);
   gap: 12px 20px;
-  border: 1px solid var(--line, #dce5dd);
-  border-radius: 12px;
+  border: 1px solid var(--line, var(--line));
+  border-radius: 8px;
   padding: 18px;
-  background: #f8faf7;
+  background: var(--surface);
 }
 .wizard-summary dt {
-  color: #63705c;
+  color: var(--muted);
   font-size: 13px;
 }
 .wizard-summary dd {
@@ -162,7 +162,7 @@
   line-height: 1.5;
 }
 .wizard-expectation {
-  color: #596358;
+  color: var(--muted);
   font-size: 14px;
   line-height: 1.7;
 }

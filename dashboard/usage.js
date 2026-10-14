@@ -226,6 +226,16 @@
     let filters = filtersFrom(window.location.href),
       serial = 0,
       controller;
+    const expanded = { tokens: false, reporting: false };
+    function disclosure(key, label) {
+      const details = node("details", "usage-details mission-detail");
+      details.open = expanded[key];
+      details.append(node("summary", "", label));
+      details.addEventListener("toggle", () => {
+        expanded[key] = details.open;
+      });
+      return details;
+    }
     let catalog = [],
       catalogReady = false,
       catalogRequest;
@@ -233,11 +243,7 @@
     const copy = node("div");
     const h1 = node("h1", "", "Usage");
     h1.id = "usage-title";
-    copy.append(
-      node("span", "eyebrow muted", "A CLEARER PICTURE"),
-      h1,
-      node("p", "", "See the tokens your crew uses, across every project."),
-    );
+    copy.append(h1, node("p", "", "Recorded AI usage across your projects."));
     const refresh = button("Refresh", () => load(true));
     title.append(copy, refresh);
     const controls = node("div", "usage-controls");
@@ -358,12 +364,14 @@
         );
         breakdown.append(card);
       }
-      metrics.append(breakdown);
+      const tokenDetails = disclosure("tokens", "Token breakdown");
+      tokenDetails.append(breakdown);
       const measurement = node(
         "p",
         "usage-muted usage-definition",
         "Token totals include input, output, cache reads, and cache creation. They are not a cost estimate or your provider’s account balance. Usage updates after runs and AI setup actions finish; refresh for the latest reports.",
       );
+      tokenDetails.append(measurement);
       const reporting = node("section", "usage-card usage-coverage");
       const reported = measured(data.coverage),
         missing = unavailable(data.coverage),
@@ -399,8 +407,32 @@
             `${number(partial)} partial ${partial === 1 ? "report is" : "reports are"} included. ≥ marks a lower bound; more tokens may have been used.`,
           ),
         );
+      const coverageNotice = node("div", "usage-coverage-notice");
+      coverageNotice.setAttribute("role", "status");
+      if (missing || partial)
+        coverageNotice.append(
+          node(
+            "p",
+            "usage-warning",
+            `${missing ? `${number(missing)} reports unavailable. ` : ""}${partial ? `${number(partial)} partial ${partial === 1 ? "report" : "reports"}. ` : ""}Totals include only recorded tokens; missing usage is unknown.`,
+          ),
+        );
       for (const warning of data.warnings || [])
-        reporting.append(node("p", "usage-warning", warning));
+        coverageNotice.append(node("p", "usage-warning", warning));
+      const reportingDetails = disclosure(
+        "reporting",
+        `Reporting details · ${coverage(data)}`,
+      );
+      reportingDetails.append(reporting);
+      if (!reported && !missing && !partial) {
+        const action = node(
+          "a",
+          "small-button usage-empty-action",
+          "Open projects",
+        );
+        action.href = "/projects";
+        total.append(action);
+      }
       const tableCard = node("section", "usage-card usage-projects");
       const tableHeading = node("div", "usage-section-heading");
       const projectCount = data.projects.filter((row) => row.project).length;
@@ -500,10 +532,16 @@
       }
       content.replaceChildren(
         metrics,
-        measurement,
+        node(
+          "p",
+          "usage-muted usage-definition",
+          "Recorded tokens, not a cost estimate or provider balance.",
+        ),
+        coverageNotice,
         chart(data.daily, data.from, data.to),
         tableCard,
-        reporting,
+        tokenDetails,
+        reportingDetails,
       );
     }
     async function catalogFor() {

@@ -14,6 +14,7 @@ class Element {
   scope = "";
   htmlFor = "";
   disabled = false;
+  open = false;
   classList = {
     add: (value: string) => {
       this.className += ` ${value}`;
@@ -175,6 +176,32 @@ function fixture(
 }
 
 describe("workspace token usage", () => {
+  it("keeps incomplete reporting visible while preserving optional breakdown expansion on refresh", async () => {
+    let current = report(25, 1, 2, 1);
+    const f = fixture("/usage", async () => current);
+    await settle();
+    const details = walk(f.root).filter((item) => item.tagName === "DETAILS");
+    expect(details).toHaveLength(2);
+    expect(details.every((item) => !item.open)).toBe(true);
+    const warning = css(f.root, "usage-coverage-notice");
+    expect(text(warning)).toContain("2 reports unavailable");
+    expect(text(warning)).toContain("1 partial report");
+    expect(details.every((item) => !walk(item).includes(warning))).toBe(true);
+    expect(details[0]!.children[0]!.tagName).toBe("SUMMARY");
+    details[0]!.open = true;
+    details[0]!.fire("toggle");
+    current = report(35, 2, 2, 1);
+    await f.controller.refresh();
+    await settle();
+    const updated = walk(f.root).filter((item) => item.tagName === "DETAILS");
+    expect(updated[0]!.open).toBe(true);
+    expect(updated[1]!.open).toBe(false);
+    expect(text(f.root)).toContain("35 tokens reported");
+    const content = css(f.root, "usage-content");
+    expect(
+      content.children.indexOf(css(f.root, "usage-projects")),
+    ).toBeLessThan(content.children.indexOf(updated[0]!));
+  });
   it("loads lazily, exposes loading state, and requires the dashboard session", async () => {
     const pending = deferred<Report>();
     const view = fixture("/overview", () => pending.promise);

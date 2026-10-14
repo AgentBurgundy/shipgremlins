@@ -204,8 +204,8 @@
     ],
   ];
   const categories = [
-    ["all", "All connections"],
     ["essentials", "Start here"],
+    ["all", "All connections"],
     ["hosting", "Hosting"],
     ["insights", "Product insights"],
     ["extras", "Workflow & access"],
@@ -261,7 +261,7 @@
   dialog.append(header, body, continuation);
   const entries = new Map();
   let trigger = null;
-  let selectedCategory = "all";
+  let selectedCategory = "essentials";
   const filterConnections = () => {
     const query = search.value.trim().toLowerCase();
     let count = 0;
@@ -329,7 +329,7 @@
     if (!entry) return;
     if (!source && search.value) {
       search.value = "";
-      filter();
+      filterConnections();
     }
     trigger = source || entry.button;
     title.textContent = entry.name;
@@ -455,7 +455,7 @@
   library.append(toolbar, help, grid, empty);
   connections.querySelector(".panel-heading").after(library);
   connections.append(dialog);
-  select("all");
+  select("essentials");
   const followRoute = (event) => {
     if (event.detail?.page !== "connections") {
       if (dialog.open) dialog.close();

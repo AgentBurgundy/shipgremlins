@@ -387,18 +387,25 @@
           connection.name ===
           (provider === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"),
       );
-      const ai = window.aiConnectionState?.(status) || {
-        label: status?.ai?.provider === "codex" ? "Codex" : "Claude Code",
-        configured: status?.ai
-          ? status.ai.configured === true
-          : Boolean(
-              credentials.find(
-                (connection) => connection.name === "CLAUDE_CODE_OAUTH_TOKEN",
-              )?.configured,
-            ),
-      };
+      const setupAi = s.project.setupAi;
+      const ai = setupAi
+        ? {
+            label: setupAi.provider === "codex" ? "Codex" : "Claude Code",
+            configured: setupAi.configured === true,
+          }
+        : window.aiConnectionState?.(status) || {
+            label: status?.ai?.provider === "codex" ? "Codex" : "Claude Code",
+            configured: status?.ai
+              ? status.ai.configured === true
+              : Boolean(
+                  credentials.find(
+                    (connection) =>
+                      connection.name === "CLAUDE_CODE_OAUTH_TOKEN",
+                  )?.configured,
+                ),
+          };
       const aiKnown =
-        Boolean(status?.ai) ||
+        Boolean(setupAi || status?.ai) ||
         credentials.some(
           (connection) => connection.name === "CLAUDE_CODE_OAUTH_TOKEN",
         );
@@ -3444,6 +3451,7 @@
               ? "Analyze again"
               : "Analyze repository",
         () => run(s, "discover", { revision: s.data.revision }),
+        true,
       );
       analyze.disabled = disabled(s) || !s.data;
       s.analysis.append(analyze);
@@ -3454,7 +3462,14 @@
         }),
       );
       compose.disabled = disabled(s) || !s.data || dirty(s);
-      s.analysis.append(compose);
+      const alternatives = node("details", undefined, "setup-advanced");
+      alternatives.open = Boolean(s.showAdvancedSetup);
+      alternatives.addEventListener("toggle", () => {
+        s.showAdvancedSetup = alternatives.open;
+      });
+      alternatives.append(
+        node("summary", "Use an existing test app or Docker recipe"),
+      );
       const composePath = node("input"),
         composePathLabel = node("label", "Compose file (optional)"),
         composePathField = node("div", undefined, "field");
@@ -3467,7 +3482,6 @@
         s.composePath = composePath.value;
       });
       composePathField.append(composePathLabel, composePath);
-      s.analysis.append(composePathField);
       const manual = button(
         s.data?.report
           ? "Choose a test environment"
@@ -3479,7 +3493,17 @@
         },
       );
       manual.disabled = disabled(s) || !s.data;
-      s.analysis.append(manual);
+      alternatives.append(
+        manual,
+        node(
+          "p",
+          "Already have staging? Enter its test URL. For a local app, review an image, Dockerfile or repository Compose stack. Nothing is saved until you review the settings.",
+          "onboarding-help",
+        ),
+        composePathField,
+        compose,
+      );
+      s.analysis.append(alternatives);
       if (s.data?.status === "analyzing") {
         const cancel = button("Stop analysis", () =>
           run(s, "cancel", { revision: s.data.revision }),

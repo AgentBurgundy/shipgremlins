@@ -34,7 +34,7 @@ project**, then choose the path that fits your app:
    the app runs. If the source changed, inspect it again before confirming.
 4. **Adopt the gremlins you want.** Choose **Adopt** on a recommendation, review
    its filled-in brief, and confirm. Remaining recommendations stay available
-   after adoption and reload. **Continue choosing your crew** on Overview returns
+   after adoption and reload. **Continue choosing your crew** on Mission control returns
    to the saved suggestions in **Your crew**. You can also choose a gremlin yourself and write
    its brief. No generic Product Understanding PM is created automatically.
 5. **Give the crew a place to work.** The welcome screen offers **Connect Linear**
@@ -52,13 +52,20 @@ project**, then choose the path that fits your app:
    context. Read-only Discovery does not receive telemetry credentials.
    PMs whose briefs require browser walkthroughs stay blocked until browser
    access passes; repository-only verification does not satisfy that requirement.
+   Projects configured for repository checks return directly to their crew.
+   Expand advanced environment options to configure Compose or a staging URL manually.
 7. **Give it a first assignment.** Choose **Explore the codebase** to run
    **Discovery**, or **Prepare first mission** if source access, the AI provider, or
    a ready worker is missing. Linear and a browser environment are not required. A new idea instead
    starts with the reviewed **foundation build**: a Coding Gremlin creates the
    initial app and tests. Review and merge that work before asking PMs to explore.
+8. **Start autonomous work.** Open **Your crew** and use **Start autopilot** when
+   setup is ready. The action validates every adopted PM and coder and saves their
+   automation flags together. The controller keeps working after you close the
+   browser, using your saved schedules, approval policy and run limits.
 
-Adoption saves the PM and its brief. It does not start a job or turn on automation.
+Adoption saves the PM and its brief. Crew controls show its saved automation state;
+starting autopilot does not approve a ticket or an epic.
 When ready, use **What should get better?** on the project home to start an
 [improvement mission](IMPROVEMENT_MISSIONS.md). This explicitly starts investigation
 and asks you to review a bounded proposal before coding begins.
@@ -73,8 +80,9 @@ Slack and product signals can wait.
 
 ## Your setup dashboard
 
-The sidebar opens separate **Overview**, **Connections**, **Projects**, **Your gremlins**,
-**Activity**, **Usage**, and **Settings** pages. Each page has its own address and supports
+The sidebar opens **Mission control**, **Approvals**, **Projects**, **Agents**,
+**Runs** and **Usage**, with **Connections** and **Settings** under Workspace.
+Each page has its own address and supports
 browser Back/Forward and reload. Moving between pages keeps unfinished forms in
 memory; save them before closing or restarting the dashboard.
 
@@ -83,16 +91,16 @@ by period or project, and read reporting coverage alongside the totals: missing
 reports are unknown, not zero. Counts update after runs and AI setup actions finish.
 [Understand token usage →](TOKEN_USAGE.md)
 
-Projects appear individually in the sidebar. **Overview** leads with current
+Projects appear individually in the sidebar. **Mission control** leads with current
 work and the next setup or product decision. Projects without PMs offer crew discovery.
 **Proposals** holds owner decisions; **Changes** collects coding results and links to advanced staged delivery; **Your
 crew** keeps PMs, Grumblins, and shared knowledge; **Settings** includes environment
 and run-limit setup. Existing direct links remain available. Open a PM for its
 brief, Learning, Features, Queue, Memory, and run history.
 
-Overview shows your projects, live and recent work, verified workers, and active jobs.
+Mission control shows your projects, live and recent work, verified workers, and active jobs.
 Connections has a searchable provider directory; mobile navigation opens from the menu button.
-Your gremlins starts with a searchable PM directory, with separate tabs to start
+Agents starts with a searchable PM directory, with separate tabs to start
 a run or manage runners. Use **Ctrl/Cmd K** to jump to a project, PM or page. Settings
 puts software updates first and keeps files and JSON under advanced configuration.
 
@@ -139,12 +147,12 @@ Connect an optional [Slack channel](SLACK.md) once for PM patrol results, coding
 
 The local runtime prepares a PostgreSQL activity store before launching work. This adds a local Docker service and persistent volume; it is managed on the CLI/dashboard server. Visible tool activity, result summaries, checks, redacted logs, and bounded artifacts appear in the dashboard. Private model reasoning is not stored or displayed. Activity storage failures are separate from the recorded outcome of an already-running job; Docker output remains available.
 
-Open a recent run or **Activity → View activity** for a focused run viewer with
+Open a recent run or **Runs → View activity** for a focused run viewer with
 **Summary**, **Activity**, **Output**, and **Artifacts** tabs. The selected tab and
 reading position survive live refreshes. Live output and saved history load
 independently, so a slow history service does not hide available worker events.
 Artifacts become available after the job finishes and their contents are
-sanitized. **Back to activity**, Escape, or leaving Activity closes the viewer and
+sanitized. **Back to activity**, Escape, or leaving Runs closes the viewer and
 stops detail polling without stopping the job. Run links can be bookmarked. A
 finished PM run means its process completed; check the summary and evidence to
 see which tests actually ran.
@@ -161,7 +169,7 @@ it. Creating one does not implicitly create or enable the other.
 | **Start coding**                      | Queues work on one open ticket with `pm-approved`, finite acceptance criteria, the matching area label, and the PM's Linear project. Manual coding does not require automation.        |
 | **Look for new improvements**         | Enables that PM's UTC patrol schedule. This is independent of approved-ticket pickup.                                                                                                  |
 | **Automatically build approved work** | Enables background pickup of eligible approved tickets while the controller runs. This is independent of patrols.                                                                      |
-| **Turn either control off**           | Stops new work for that automation. It does not cancel already-running jobs; use Activity to cancel a run.                                                                             |
+| **Turn either control off**           | Stops new work for that automation. It does not cancel already-running jobs; use Runs to cancel a run.                                                                                 |
 | **Pause worker**                      | Stops that execution slot accepting more work. It does not change any PM's automation settings.                                                                                        |
 
 Use the guided setup actions beside the selected project when something is
@@ -171,7 +179,7 @@ the project and create or resume a verified worker. Hosting setup is required
 only for a selected browser environment. Slack and product signals are optional.
 A saved credential, an enabled schedule, and a ready worker are different states.
 
-**Run now** opens existing Activity when that PM already has a queued or running
+**Run now** opens existing Runs when that PM already has a queued or running
 job. Otherwise it queues one job after checking that PM's prerequisites. Discovery
 uses its smaller source-only checklist; missing Linear or hosting setup in this
 or another project does not block discovery. A remote worker must be online and
@@ -283,7 +291,7 @@ from this runtime and remain unknown; these reports are marked partial.
 This provider selection is for controller-managed workers. Existing standalone
 GitHub Actions workflows retain their Claude configuration.
 
-Overview and Activity show the recorded stage of each active run. Expand a card's
+Mission control and Runs show the recorded stage of each active run. Expand a card's
 timeline to inspect its phase history without opening the run dialog. A stale
 worker shows its last observed stage; older runs without phase records say so.
 See the [coding process and evidence gates](CODING_WORKFLOW.md).

@@ -3896,9 +3896,12 @@ describe("guided environment target review", () => {
       walk(root).find((element) => element.className === "onboarding-analysis")!
         .hidden,
     ).toBe(true);
-    expect(
-      walk(root).filter((element) => element.tagName === "DETAILS"),
-    ).toHaveLength(0);
+    const advanced = walk(root).filter(
+      (element) => element.tagName === "DETAILS",
+    );
+    expect(advanced).toHaveLength(1);
+    expect(advanced[0]!.className).toBe("setup-advanced");
+    expect(advanced[0]!.open).toBe(false);
     await walk(root)
       .find(
         (element) =>
@@ -4164,6 +4167,36 @@ describe("guided environment target review", () => {
     f.panel.syncConnections();
     expect(text(root)).toContain("Connect Codex");
     expect(field.value).toBe("https://unsaved.example.test");
+    f.panel.destroy();
+  });
+  it("uses the project's setup AI account and preserves a local draft when its connection changes", async () => {
+    const f = fixture(undefined, () => ({
+        ai: { provider: "claude", configured: false },
+        connections: [{ name: "CLAUDE_CODE_OAUTH_TOKEN", configured: false }],
+      })),
+      root = new Element();
+    const project = {
+      name: "shop",
+      repo: "owner/shop",
+      setupAi: { provider: "codex", configured: true },
+    };
+    f.panel.mount(root, project);
+    await settle();
+    expect(text(root)).toContain("✓ Codex configured");
+    expect(text(root)).not.toContain("Connect Claude Code");
+    const field = walk(root)
+      .find((item) => item.className === "onboarding-choice")!
+      .querySelectorAll("input")[0]!;
+    field.value = "https://unsaved.example.test";
+    field.fire("input");
+    f.panel.mount(root, {
+      ...project,
+      setupAi: { provider: "codex", configured: false },
+    });
+    expect(text(root)).toContain("Connect Codex");
+    expect(text(root)).not.toContain("Claude Code configured");
+    expect(field.value).toBe("https://unsaved.example.test");
+    expect(walk(root)).toContain(field);
     f.panel.destroy();
   });
   it("keeps unknown connection status neutral instead of claiming a missing connection", async () => {

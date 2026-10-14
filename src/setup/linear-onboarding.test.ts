@@ -398,7 +398,7 @@ describe("focused Linear onboarding", () => {
     );
     expect(f.onSaved).toHaveBeenCalledExactlyOnceWith("forevermods");
     expect(f.text()).toContain("Your crew has a place to work.");
-    await f.button("Continue to test environment").fire("click");
+    await f.button("Continue setup").fire("click");
     expect(f.dialog.open).toBe(false);
     expect(f.onReady).toHaveBeenCalledExactlyOnceWith("forevermods");
   });

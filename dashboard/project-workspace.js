@@ -43,7 +43,7 @@
     ["features", "Features"],
     ["queue", "Opportunities"],
     ["memory", "Memory"],
-    ["activity", "Activity"],
+    ["activity", "Runs"],
   ];
   // The knowledge files are data, never executable HTML or instructions to this UI.
   function appendInline(root, value) {
@@ -1081,12 +1081,8 @@
       const step =
         window.projectFirstStep?.(project, getJobs?.() || []) ||
         (project.foundation?.needed ? "foundation" : "mission");
-      if (project.areas?.length) root.append(crewPulse(project));
-      if (project.areas?.length)
-        crewRecommendations?.mount(root, project, {
-          compact: true,
-          hideWhenEmpty: true,
-        });
+      if (project.areas?.length && projectJobs(project).some(activeJob))
+        root.append(crewPulse(project));
       if (step === "foundation")
         root.append(window.renderFoundationLauncher(project));
       else if (step === "welcome" && crewRecommendations) {
@@ -1104,6 +1100,11 @@
           }),
         );
       if (step === "mission" && nextSetup(project)) hostingInvitation(project);
+      if (project.areas?.length)
+        crewRecommendations?.mount(root, project, {
+          compact: true,
+          hideWhenEmpty: true,
+        });
       const recent = node("section", "project-recent-activity");
       recent.append(
         node("h2", "", "Recent work"),
@@ -1436,8 +1437,13 @@
       }
       root.append(tools);
       const context = node("section", "project-details project-reference");
-      context.append(node("h2", "", "Project details"));
+      context.append(node("h2", "", "Project connections"));
       const contextBody = node("div", "project-details-body");
+      const reference = disclosure(
+        "project-reference",
+        "Repository & delivery details",
+        "project-reference-details mission-detail",
+      );
       const facts = [
         ["Repository", project.repo],
         [
@@ -1461,7 +1467,7 @@
       for (const [label, value] of facts) {
         const item = node("dl", "project-fact");
         item.append(node("dt", "", label), node("dd", "", value));
-        contextBody.append(item);
+        reference.append(item);
       }
       const setup = node("div", "project-pm-actions");
       const check = options.getCheck?.(project.name);
@@ -1513,6 +1519,7 @@
             }),
           );
       }
+      contextBody.append(reference);
       context.append(contextBody);
       root.append(context);
     }
@@ -1542,7 +1549,7 @@
         node("span", "eyebrow muted", "YOUR PRODUCT MANAGER"),
         node("h1", "", area.name || area.key),
       );
-      const purpose = area.charter?.goal || area.mandate;
+      const purpose = area.charter?.goal;
       if (purpose) title.append(node("p", "pm-workspace-purpose", purpose));
       heading.append(image, title);
       main.append(heading);
@@ -1556,16 +1563,34 @@
         }
         main.append(navigation);
       }
-      main.append(pmLiveState(project, area));
-      if (window.renderPatrolPlan)
-        main.append(window.renderPatrolPlan(project, { compact: true }));
-      main.append(
+      const commandBand = node("section", "pm-command-band mission-toolbar");
+      commandBand.setAttribute("aria-label", "Current work and automation");
+      commandBand.append(
+        pmLiveState(project, area, { compact: true }),
         window.renderPmControls(project, area, {
+          compact: true,
           locked,
           jobs: getJobs?.() || [],
           operation: options.getAreaAction?.(project.name, area.key),
         }),
       );
+      main.append(commandBand);
+      if (window.renderPatrolPlan) {
+        const plan = window.renderPatrolPlan(project, { compact: true });
+        if (
+          project.verification?.mode === "repository" &&
+          project.readiness?.areas?.find((item) => item.key === area.key)
+            ?.canRun === true
+        ) {
+          const testing = disclosure(
+            "testing-plan",
+            "Testing plan · repository checks",
+            "pm-testing-details mission-detail",
+          );
+          testing.append(plan);
+          main.append(testing);
+        } else main.append(plan);
+      }
       const tab = tabs.some(([key]) => key === pages.tab) ? pages.tab : "brief";
       const exploreIdeas = () => {
         if (project.foundation?.needed) return;
@@ -1678,7 +1703,7 @@
           ),
         );
         const advanced = node("section", "pm-brief-details");
-        advanced.append(node("h3", "", "Product brief & schedule"));
+        advanced.append(node("h3", "", "Product brief"));
         const charter = node("div", "pm-charter-grid");
         for (const [key, label] of Object.entries(briefLabels)) {
           const value = area.charter?.[key];
@@ -1701,14 +1726,19 @@
             ),
           );
         else advanced.append(charter);
-        advanced.append(
-          node("h4", "", "Work rhythm"),
+        const rhythm = disclosure(
+          "work-rhythm",
+          "Schedule & work limits",
+          "pm-rhythm-details mission-detail",
+        );
+        rhythm.append(
           node(
             "p",
             "",
             `${area.schedule || "No schedule"} UTC · Up to ${area.wipLimit || 1} open work items`,
           ),
         );
+        advanced.append(rhythm);
         advanced.append(
           node(
             "p",
@@ -1874,14 +1904,21 @@
             );
           content.append(empty);
         }
-        if (data?.provenance)
-          content.append(
+        if (data?.provenance) {
+          const source = disclosure(
+            "knowledge-source",
+            "Source details",
+            "pm-source-details mission-detail",
+          );
+          source.append(
             node(
               "p",
               "runner-guidance",
               `${data.provenance.repository || project.repo} · ${data.provenance.branch || "repository"}${data.provenance.commitSha ? ` · ${data.provenance.commitSha.slice(0, 12)}` : ""}`,
             ),
           );
+          content.append(source);
+        }
         if (data?.latestRun?.id)
           content.append(
             button("View discovery activity →", () =>
@@ -2012,9 +2049,9 @@
         navigation.setAttribute("aria-label", "Project sections");
         for (const [key, label] of [
           ["overview", "Overview"],
-          ["review", "Proposals"],
+          ["review", "Approvals"],
           ["changes", "Changes"],
-          ["crew", "Your crew"],
+          ["crew", "Agents"],
           ["settings", "Settings"],
         ]) {
           const item = link(label, path(project.name, "", key));

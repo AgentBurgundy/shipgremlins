@@ -440,6 +440,40 @@ describe("focused project crew workspace", () => {
     view.setStatus(state, false);
     return { root, pages, project, state, view, jobs, ui };
   }
+  it("keeps live work and both automations together while retaining optional reference expansion across polls", async () => {
+    const f = workspace();
+    Object.assign(f.project, { verification: { mode: "repository" } });
+    Object.assign(f.project.readiness, {
+      areas: [{ key: f.project.areas[0]!.key, canRun: true }],
+    });
+    f.pages.pm = f.project.areas[0]!.key;
+    f.pages.tab = "brief";
+    f.view.render();
+    const command = all(f.root).find((item) =>
+      item.className.includes("pm-command-band"),
+    )!;
+    expect(
+      all(command).filter((item) => item.attributes.get("role") === "switch"),
+    ).toHaveLength(2);
+    expect(
+      all(command).some((item) => item.dataset.launchArea === f.pages.pm),
+    ).toBe(true);
+    const testing = all(f.root).find((item) =>
+      item.className.includes("pm-testing-details"),
+    )!;
+    expect(testing.tagName).toBe("DETAILS");
+    expect(testing.open).toBe(false);
+    testing.open = true;
+    await testing.fire("toggle");
+    f.project.areas[0]!.charter.goal = "A refreshed goal";
+    f.view.setStatus(f.state, false);
+    expect(
+      all(f.root).find((item) => item.className.includes("pm-testing-details"))!
+        .open,
+    ).toBe(true);
+    expect(all(f.root).filter((item) => item.tagName === "H1")).toHaveLength(1);
+    expect(text(f.root).split(f.project.areas[0]!.mandate).length - 1).toBe(1);
+  });
   it("loads and edits a PM's browser requirement, and clears it to the project default without changing automation", async () => {
     const brief = {
       name: "Security gremlin v2",
@@ -628,7 +662,7 @@ describe("focused project crew workspace", () => {
     )!;
     expect(tabs.attributes.get("aria-label")).toBe("PM workspace sections");
     expect(
-      tabs.children.find((item) => item.textContent === "Activity")?.href,
+      tabs.children.find((item) => item.textContent === "Runs")?.href,
     ).toBe("/projects/shipgremlins?pm=security-gremlin-v2&tab=activity");
     expect(
       tabs.children.filter(
@@ -707,13 +741,13 @@ describe("focused project crew workspace", () => {
     f.pages.tab = "brief";
     f.view.render();
     expect(
-      all(f.root).find((item) => item.className === "pm-current-run")?.dataset
+      all(f.root).find((item) => item.className === "pm-run-snapshot")?.dataset
         .state,
     ).toBe("running");
     Object.assign(f.jobs[2]!, { status: "succeeded" });
     f.view.setStatus(f.state, false);
     const completed = all(f.root).find(
-      (item) => item.className === "pm-current-run",
+      (item) => item.className === "pm-run-snapshot",
     )!;
     expect(completed.dataset.state).toBe("succeeded");
     expect(text(completed)).toContain("Run 9");

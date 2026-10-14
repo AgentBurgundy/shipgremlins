@@ -12,7 +12,7 @@
     linear: "Connect Linear",
     mapping: "Prepare Linear",
     verify: "Verify connections",
-    worker: "Set up a worker",
+    worker: "Set up a runner",
     mandate: "Review PM settings",
     config: "Edit project settings",
     environment: "Set up app sign-in",
@@ -58,6 +58,8 @@
       heading.append(action(project, first.action, undefined, first.id));
     root.append(heading);
     if (!compact && readiness.steps?.length) {
+      const checklist = el("details", "setup-checklist");
+      checklist.append(el("summary", "", "View setup checks"));
       const steps = el("div", "crew-setup-steps");
       for (const step of readiness.steps) {
         const item = el(
@@ -72,7 +74,8 @@
         item.title = step.message;
         steps.append(item);
       }
-      root.append(steps);
+      checklist.append(steps);
+      root.append(checklist);
     }
     if (pending.length > 1)
       root.append(
@@ -87,7 +90,7 @@
   window.renderPmControls = (
     project,
     area,
-    { locked = false, operation, jobs = [] } = {},
+    { locked = false, operation, jobs = [], compact = false } = {},
   ) => {
     const root = el("div", "pm-simple-controls"),
       buttons = el("div", "pm-simple-actions");
@@ -212,7 +215,14 @@
     );
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
-    heading.append(el("h3", "", "Automatic work"), status);
+    heading.append(
+      el(
+        compact ? "span" : "h3",
+        "pm-controls-title",
+        compact ? "Automation" : "Automatic work",
+      ),
+      status,
+    );
     main.append(heading, buttons);
     root.append(
       main,

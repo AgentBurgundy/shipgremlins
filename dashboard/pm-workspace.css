@@ -1,10 +1,10 @@
 /* The focused PM page: one return path, one content column, one primary task. */
 :root {
-  --pm-surface: #fff;
-  --pm-ink: #18392b;
-  --pm-muted: #667b70;
-  --pm-line: #e1e9e3;
-  --pm-accent: #245b40;
+  --pm-surface: var(--surface);
+  --pm-ink: var(--ink);
+  --pm-muted: var(--muted);
+  --pm-line: var(--line);
+  --pm-accent: var(--accent);
 }
 .project-workspace .pm-workspace-layout {
   display: block;
@@ -40,7 +40,7 @@
   min-height: 40px;
 }
 .pm-context-header > button:hover {
-  background: #edf3ee;
+  background: var(--surface-raised);
   color: var(--pm-ink);
 }
 .project-workspace .pm-workspace-body {
@@ -59,17 +59,21 @@
   padding: 28px;
   margin: 0;
   border: 1px solid var(--pm-line);
-  border-radius: 18px;
-  background: linear-gradient(120deg, #fff 45%, #f4f8ef);
+  border-radius: 10px;
+  background: linear-gradient(
+    120deg,
+    var(--surface) 45%,
+    var(--surface-raised)
+  );
 }
 .project-workspace .pm-workspace-heading img {
   width: 76px;
   height: 84px;
   flex: 0 0 76px;
   padding: 7px;
-  border: 1px solid #dfe9d6;
-  border-radius: 18px;
-  background: #edf4e4;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-raised);
   object-fit: contain;
 }
 .pm-workspace-identity {
@@ -79,7 +83,7 @@
   display: block;
   margin-bottom: 8px;
   color: var(--pm-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 1.5px;
 }
@@ -121,16 +125,16 @@
   min-height: 36px;
   padding: 8px 12px;
   border: 1px solid var(--pm-line);
-  border-radius: 20px;
+  border-radius: 10px;
   background: var(--pm-surface);
   color: var(--pm-muted);
   font-size: 12px;
   white-space: nowrap;
 }
 .project-workspace .pm-workspace-nav a[aria-current="page"] {
-  background: #edf4e9;
-  color: var(--pm-accent);
-  border-color: #cfdcc7;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .project-workspace .pm-workspace-tabs {
   display: flex;
@@ -141,8 +145,8 @@
   margin: 0;
   overflow-x: auto;
   border: 1px solid var(--pm-line);
-  border-radius: 12px;
-  background: #eef3ef;
+  border-radius: 8px;
+  background: var(--surface-raised);
   scrollbar-width: thin;
   scroll-padding-inline: 8px;
 }
@@ -154,7 +158,7 @@
   min-height: 42px;
   padding: 10px 15px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 13px;
   line-height: 1.4;
   font-weight: 550;
@@ -163,20 +167,20 @@
   text-decoration: none;
 }
 .project-workspace .pm-workspace-tabs a:hover {
-  background: #e4ece5;
+  background: var(--surface-raised);
 }
 .project-workspace .pm-workspace-tabs a[aria-current="page"] {
-  background: var(--pm-surface);
-  color: var(--pm-ink);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 700;
-  box-shadow: 0 1px 4px #18392b12;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 10%);
 }
 .project-workspace .pm-workspace-content {
   min-width: 0;
   min-height: 0;
   padding: 28px;
   border: 1px solid var(--pm-line);
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--pm-surface);
 }
 .pm-content-header {
@@ -205,7 +209,7 @@
   min-height: 38px;
   padding: 8px 12px;
   color: var(--pm-muted);
-  background: #fafcf9;
+  background: var(--surface);
 }
 .project-workspace .pm-learning-actions {
   display: flex;
@@ -215,8 +219,8 @@
   margin: 0 0 20px;
   padding: 14px 16px;
   border: 1px solid var(--pm-line);
-  border-radius: 10px;
-  background: #f8faf6;
+  border-radius: 8px;
+  background: var(--surface);
 }
 .project-workspace .pm-learning-actions p {
   margin: 0;
@@ -250,9 +254,9 @@
   min-height: 240px;
   margin: 0;
   padding: 32px 24px;
-  border: 1px dashed #dce6dc;
-  border-radius: 12px;
-  background: #fafcf8;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
   text-align: center;
 }
 .pm-state-symbol {
@@ -262,9 +266,9 @@
   width: 44px;
   height: 44px;
   margin-bottom: 16px;
-  border: 1px solid #dce7d3;
-  border-radius: 13px;
-  background: #edf5e5;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
   color: var(--pm-accent);
   font-size: 23px;
   line-height: 1;
@@ -286,19 +290,19 @@
   margin-top: 22px;
   min-height: 42px;
   padding: 11px 18px;
-  border-radius: 9px;
+  border-radius: 6px;
   font-size: 13px;
   font-weight: 650;
 }
 .project-workspace .pm-knowledge-empty .pm-empty-note {
   margin-top: 12px;
-  color: #7b8c80;
+  color: var(--muted);
   font-size: 11px;
 }
 .pm-knowledge-error .pm-state-symbol {
-  color: #9c4937;
-  background: #fbefea;
-  border-color: #efd9cf;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
 }
 .project-workspace .knowledge-document {
   color: var(--pm-ink);
@@ -309,11 +313,11 @@
 }
 .project-workspace .knowledge-table-wrap {
   border: 1px solid var(--pm-line);
-  border-radius: 10px;
+  border-radius: 8px;
   margin: 18px 0 24px;
 }
 .project-workspace .knowledge-table th {
-  background: #f5f8f3;
+  background: var(--surface-raised);
   color: var(--pm-muted);
   font-size: 11px;
   letter-spacing: 0.3px;
@@ -321,8 +325,8 @@
 .project-workspace .knowledge-document pre {
   padding: 18px;
   border: 1px solid var(--pm-line);
-  border-radius: 10px;
-  background: #f7f9f6;
+  border-radius: 8px;
+  background: var(--surface);
 }
 .project-workspace .pm-delete-action {
   margin: 0;
@@ -330,17 +334,17 @@
   border: 0;
 }
 .pm-delete-action > summary {
-  color: #829084;
+  color: var(--muted);
   font-size: 12px;
 }
 .pm-workspace-layout :is(a, button, summary):focus-visible {
-  outline: 3px solid #7ea86b;
+  outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
 .pm-workspace-layout .product-exploration-card {
   margin: 24px 0 0;
   border-color: var(--pm-line);
-  background: #f8faf5;
+  background: var(--surface);
 }
 @media (max-width: 760px) {
   .project-workspace .pm-workspace-body {
@@ -363,7 +367,7 @@
     width: 60px;
     height: 68px;
     flex-basis: 60px;
-    border-radius: 14px;
+    border-radius: 8px;
   }
   .project-workspace .pm-workspace-identity h1 {
     font-size: 25px;
@@ -422,7 +426,7 @@
     font-size: 23px;
   }
   .pm-workspace-identity .eyebrow {
-    font-size: 8px;
+    font-size: 11px;
     letter-spacing: 1px;
   }
   .project-workspace .pm-workspace-content {
