@@ -181,3 +181,7 @@ database leases, required-check publisher enforcement, and automated candidate
 deployment/signing remain roadmap work. Protect staging/production in your provider and keep human
 merge approval enabled. “Done” is separately governed by
 [production reconciliation](LINEAR_LIFECYCLE.md).
+
+## Follow-up verification evidence
+
+Compose import, BuildKit inputs, durable rerun/dispatch recovery, approval scope and catch-up scheduling have source and automated scenario coverage. Browser checks exercised the real dashboard/API using disposable synthetic providers at desktop and 390px mobile sizes. They do not certify live customer Docker/staging execution. [Implementation evidence →](IMPROVEMENTS_100.md)

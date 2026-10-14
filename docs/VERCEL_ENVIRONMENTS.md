@@ -50,12 +50,44 @@ deploys its test app as Vercel's **Production** target, create a Preview there o
 use the explicit test-URL option after confirming that it is your nonproduction
 app. A production label is never silently reinterpreted by the provider picker.
 
+## Repair an existing Vercel project
+
+Open the project's **Environment** card and choose **Repair PM staging setup**.
+The same action is available in the Vercel setup panel after selecting the app.
+It works for older ShipGremlins projects that still open PRs directly to main.
+
+1. ShipGremlins checks the saved GitHub/GitLab connection, linked Vercel project,
+   production branch and existing source branches, then shows the repair plan.
+2. Review test-data access and choose **Create preview**. Missing staging is
+   seeded from production; missing pm-staging is seeded from staging. Existing
+   branches keep their commits. A changed branch causes a fresh-plan request.
+3. Once the exact preview is ready, setup saves the promotion workflow and its
+   browser target, connects private preview access, and tests the app login.
+4. Project readiness is checked automatically. Any remaining connection, command
+   or login problem is shown. Enabled PMs can then follow their saved schedules;
+   new PMs default to daily at 13:00 UTC. Existing schedules and pauses are kept.
+
+Repair preserves commands, Linear mappings, other environments, and test-access
+settings for the same Vercel project/account. It clears stale readiness evidence.
+It never resets staging, overwrites Git refs, or changes Vercel production routing.
+Retries reuse recorded provider writes, including after a controller restart.
+
+Branch/deployment separation does not create a separate database. Preview
+variables must already use test databases and safe external services; setup asks
+for that confirmation before creating the deployment. Production secrets are
+never copied. A custom Vercel environment is optional: ordinary branch Preview
+deployments provide the default PM environment.
+
+After repair the normal flow is **coder → pm-staging → combined verified
+promotion PR → staging → release PR to main**. The owner reviews and merges
+staging and production PRs. See [delivery](DELIVERY_WORKFLOW.md).
+
 ## Create a preview when there is none
 
 Choose **Create a test preview**, review the branch (normally `pm-staging`), its
-source branch and exact commit, and the selected Vercel project. If the branch
+source branch and exact commit, any missing staging branch, and the selected Vercel project. If the branch
 does not exist, the reviewed action can create it through your saved source
-connection. Existing branches are not reset or overwritten.
+connection. Existing branches are not reset or overwritten. The workflow defaults to pm-staging → staging → the detected production branch.
 
 Review the Preview environment in Vercel before creating the deployment. A
 Preview build can still use a production database, storage bucket, payment key,

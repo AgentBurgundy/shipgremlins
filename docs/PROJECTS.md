@@ -225,3 +225,7 @@ URLs and Cloud Run discovery alone cannot establish the deployment identity need
 never auto-merges production or marks Done merely because a job succeeded.
 Follow [the delivery setup](DELIVERY_WORKFLOW.md), [candidate gate](VERIFICATION.md),
 and [production completion](LINEAR_LIFECYCLE.md).
+
+## Automatic approval policy
+
+Project home exposes a default-off low-risk approval policy with explicit owned paths, candidate label and daily/open/file/line ceilings. A dedicated label is a request for controller review, not authorization. Approval origin and scope remain in the controller audit even if a label is removed; reopened or edited automatic tickets require owner review. Configured epic and production gates remain in force. [Implementation evidence →](audits/backlog-autonomy.md)

@@ -765,6 +765,48 @@ it("retains completed work and usage when independent review hits a storage admi
   expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
 });
 
+it("persists completion attempt admission before external reconciliation and honors it after restart", async () => {
+  const f = fixture();
+  await f.ready();
+  const observedAttempts: number[] = [];
+  const reconcileCompletedJob = vi.fn(async (job: { id: string }) => {
+    const durable = JSON.parse(readFileSync(f.stateFile, "utf8"));
+    observedAttempts.push(
+      durable.jobs.find((item: { id: string }) => item.id === job.id)
+        .reconciliationAttempts,
+    );
+    throw new Error("response lost after provider write");
+  });
+  const engine = createLocalRunners({ ...f.options, reconcileCompletedJob });
+  const job = await engine.enqueue({
+    type: "developer",
+    project: "demo",
+    ticket: "APP-21",
+  });
+  await engine.tick();
+  f.finish(job.id);
+  await engine.tick();
+  expect(observedAttempts).toEqual([1]);
+  const starts = f.mock.startJob.mock.calls.length;
+
+  // Simulate the state left by a process exiting after admission of its final
+  // reconciliation attempt, before it can record the callback's outcome.
+  const state = JSON.parse(readFileSync(f.stateFile, "utf8"));
+  const saved = state.jobs.find((item: { id: string }) => item.id === job.id);
+  saved.reconciliationAttempts = 3;
+  delete saved.nextAttemptAt;
+  writeFileSync(f.stateFile, JSON.stringify(state));
+  const restarted = createLocalRunners({ ...f.options, reconcileCompletedJob });
+  await restarted.tick();
+  expect(reconcileCompletedJob).toHaveBeenCalledTimes(1);
+  expect(f.mock.startJob).toHaveBeenCalledTimes(starts);
+  expect(await restarted.job(job.id)).toMatchObject({
+    status: "failed",
+    reconciliationAttempts: 3,
+    failure: { category: "completion", retryable: false },
+  });
+});
+
 it("preserves the selected Grumblin across queued restart and requires matching worker persona provenance", async () => {
   const f = fixture();
   await f.ready();
@@ -1958,7 +2000,10 @@ describe("durable local worker engine", () => {
     await engine.tick();
     expect(scheduledJobs).toHaveBeenCalledTimes(2);
     await createLocalRunners({ ...f.options, scheduledJobs }).tick();
-    expect(await engine.jobs()).toHaveLength(1);
+    expect(
+      (await engine.jobs()).filter((job) => job.type === "pm"),
+    ).toHaveLength(1);
+    expect((await engine.status()).runners).toHaveLength(1);
   });
 
   it("holds a cross-process lock so a second controller cannot start the same work", async () => {
@@ -2263,7 +2308,146 @@ describe("durable local worker engine", () => {
     ];
     const engine = createLocalRunners({ ...f.options, scheduledJobs });
     await engine.tick();
-    expect(await engine.jobs()).toHaveLength(2);
+    expect(
+      (await engine.jobs()).filter((job) => job.type === "pm"),
+    ).toHaveLength(2);
     expect((await engine.status()).operation.phase).toBe("idle");
+  });
+
+  it("starts one default worker for scheduled work and verifies it before running the project", async () => {
+    const f = fixture();
+    const input: LocalJobInput = {
+      type: "pm",
+      project: "demo",
+      area: "core",
+      idempotencyKey: "auto:demo:core",
+    };
+    const scheduledJobs = vi.fn(async () => [input]);
+    const engine = createLocalRunners({ ...f.options, scheduledJobs });
+    await engine.tick();
+    const status = await engine.status();
+    expect(status.runners).toHaveLength(1);
+    const verification = status.jobs.find((job) => job.type === "verify")!;
+    expect(verification.status).toBe("running");
+    expect(status.jobs.find((job) => job.type === "pm")?.status).toBe("queued");
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0]?.payload.kind).toBe("verify");
+    const restarted = createLocalRunners({ ...f.options, scheduledJobs });
+    f.advance(60_000);
+    await restarted.tick();
+    expect((await restarted.status()).runners).toHaveLength(1);
+    expect(f.calls).toHaveLength(1);
+    f.finish(verification.id);
+    await restarted.tick();
+    expect(
+      (await restarted.jobs()).find((job) => job.type === "pm")?.status,
+    ).toBe("running");
+    expect(f.calls[1]?.payload.kind).toBe("pm");
+  });
+
+  it("keeps an empty worker pool when automatic scheduling yields no work", async () => {
+    const f = fixture();
+    const engine = createLocalRunners({
+      ...f.options,
+      scheduledJobs: async () => [],
+    });
+    await engine.tick();
+    f.advance(60_000);
+    await engine.tick();
+    expect((await engine.status()).runners).toEqual([]);
+    expect(f.calls).toEqual([]);
+  });
+
+  it("does not create an automatic worker after stop begins while scheduling is pending", async () => {
+    const f = fixture();
+    let release!: (inputs: LocalJobInput[]) => void;
+    let entered!: () => void;
+    const scheduling = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const scheduledJobs = async () => {
+      entered();
+      return new Promise<LocalJobInput[]>((resolve) => {
+        release = resolve;
+      });
+    };
+    const engine = createLocalRunners({ ...f.options, scheduledJobs });
+    const tick = engine.tick();
+    await scheduling;
+    const stop = engine.stop();
+    release([
+      {
+        type: "pm",
+        project: "demo",
+        area: "core",
+        idempotencyKey: "auto:demo:core",
+      },
+    ]);
+    await Promise.all([tick, stop]);
+    expect((await engine.status()).runners).toEqual([]);
+    expect(await engine.jobs()).toEqual([]);
+    expect(f.calls).toEqual([]);
+  });
+
+  it.each(["paused", "error"])(
+    "does not bypass an existing %s worker with an automatic replacement",
+    async (condition) => {
+      const f = fixture();
+      const worker = await f.engine.create();
+      if (condition === "paused") await f.engine.action(worker.id, "pause");
+      else {
+        await f.engine.tick();
+        const verification = (await f.engine.jobs()).find(
+          (job) => job.type === "verify",
+        )!;
+        f.finish(verification.id, 1);
+        await f.engine.tick();
+      }
+      const scheduledJobs = async (): Promise<LocalJobInput[]> => [
+        {
+          type: "pm",
+          project: "demo",
+          area: "core",
+          idempotencyKey: "auto:demo:core",
+        },
+      ];
+      const engine = createLocalRunners({ ...f.options, scheduledJobs });
+      const starts = f.calls.length;
+      await engine.tick();
+      f.advance(60_000);
+      await engine.tick();
+      expect((await engine.status()).runners).toHaveLength(1);
+      expect(f.calls).toHaveLength(starts);
+      expect(
+        (await engine.jobs()).find((job) => job.type === "pm")?.status,
+      ).toBe("queued");
+    },
+  );
+
+  it("bounds default-worker infrastructure recovery without making replacement workers", async () => {
+    const f = fixture();
+    f.mock.ensureImage.mockRejectedValue(new Error("Docker unavailable"));
+    const engine = createLocalRunners({
+      ...f.options,
+      scheduledJobs: async () => [
+        {
+          type: "pm",
+          project: "demo",
+          area: "core",
+          idempotencyKey: "auto:demo:core",
+        },
+      ],
+    });
+    await engine.tick();
+    f.advance(15_000);
+    await engine.tick();
+    f.advance(60_000);
+    await engine.tick();
+    expect((await engine.status()).runners).toHaveLength(1);
+    expect(
+      (await engine.jobs()).find((job) => job.type === "verify"),
+    ).toMatchObject({ status: "failed", retries: 2 });
+    expect(f.mock.ensureImage).toHaveBeenCalledTimes(3);
+    expect(f.mock.startJob).not.toHaveBeenCalled();
   });
 });

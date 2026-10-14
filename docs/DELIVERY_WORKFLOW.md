@@ -120,3 +120,7 @@ The authenticated dashboard uses `GET /api/projects/NAME/delivery`, `POST .../de
 - [Railway service management API](https://docs.railway.com/integrations/api/manage-services): deployment by connected GitHub SHA and existing-source redeployment.
 - [Railway CLI deployment](https://docs.railway.com/cli/deploying): source upload and environment-scoped project tokens.
 - [Playwright route API](https://playwright.dev/docs/api/class-route): redirected header behavior and explicit single-hop fetch handling.
+
+## Recovery and bounded automatic approval
+
+Uncertain dispatches can bind to one existing provider run after authenticated workflow-input and exact revision checks. CI reruns have durable per-target admission and acknowledgment. Automatically approved changes additionally require exact scoped files and bounded provider diff evidence; per-PM batching, rework, staging synchronization and production release retain their current gates. [Implementation evidence →](audits/backlog-recovery.md)

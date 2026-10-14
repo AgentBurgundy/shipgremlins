@@ -117,6 +117,19 @@ import {
   type ReadinessContext,
 } from "../setup/pmReadiness.ts";
 import {
+  projectAutonomy,
+  setProjectAutonomy,
+} from "../setup/projectAutonomy.ts";
+import { createAutomaticPreparation } from "../setup/automaticPreparation.ts";
+import { createAutomaticApprovals } from "../autonomy/approval.ts";
+import { projectPreferenceId } from "../setup/projectPreferences.ts";
+import {
+  bindRecoveryRun,
+  listRecoveryReservations,
+  RecoveryActionError,
+} from "../setup/recoveryActions.ts";
+import type { Ctx } from "../dispatcher/context.ts";
+import {
   createPmPlanner,
   PmPlannerError,
   type PmPlanner,
@@ -374,6 +387,7 @@ export interface DashboardOptions {
   environmentGuide?: ReturnType<typeof createEnvironmentGuide>;
   delivery?: ReturnType<typeof createDeliveryController>;
   remote?: ReturnType<typeof createRemoteWorkers>;
+  recoveryContext?: (project: Project, write: boolean) => Promise<Ctx>;
 }
 
 export function createDashboardServer(
@@ -828,22 +842,79 @@ export function createDashboardServer(
   const outputRead = createDashboardOutputReader();
   const knowledge = createPmKnowledge({ root });
   const projectKnowledge = createProjectKnowledge({ root });
+  const projectLinear = async (project: Project) =>
+    new LinearApi({
+      apiKey: (
+        await linearConnectionFor(
+          project.config.linear?.connectionId,
+        ).resolveCredential({
+          minValidityMs: 5 * 60_000,
+          ...(project.config.linear?.workspaceId
+            ? { workspaceId: project.config.linear.workspaceId }
+            : {}),
+        })
+      ).authorization,
+    });
   const projectReview = createProjectReview({
     root,
-    client: async (project) =>
-      new LinearApi({
-        apiKey: (
-          await linearConnectionFor(
-            project.config.linear?.connectionId,
-          ).resolveCredential({
-            minValidityMs: 5 * 60_000,
-            ...(project.config.linear?.workspaceId
-              ? { workspaceId: project.config.linear.workspaceId }
-              : {}),
-          })
-        ).authorization,
-      }),
+    client: projectLinear,
   });
+  const automaticApprovals = createAutomaticApprovals(root);
+  async function recoveryContext(
+    project: Project,
+    write = false,
+  ): Promise<Ctx> {
+    if (options.recoveryContext) return options.recoveryContext(project, write);
+    const hub = loadHub(root);
+    const credential = await sourceControl.resolveCredential({
+      provider: project.config.provider ?? "github",
+      serverUrl: project.config.serverUrl,
+      repository: project.config.repo,
+      write,
+      minValidityMs: 60_000,
+    });
+    const linearCredential = await linearConnectionFor(
+      project.config.linear?.connectionId,
+    ).resolveCredential({
+      workspaceId: project.config.linear?.workspaceId,
+      minValidityMs: 60_000,
+    });
+    const forge: Forge =
+      project.config.provider === "gitlab"
+        ? new GitLabForge({
+            token: credential.token,
+            serverUrl: project.config.serverUrl,
+          })
+        : new GitHubForge({ token: credential.token });
+    const hubCredential = await sourceControl
+      .resolveCredential({
+        provider: "github",
+        repository: hub.hubRepo,
+        write: false,
+        minValidityMs: 60_000,
+      })
+      .catch(() => null);
+    const hubForge = hubCredential
+      ? new GitHubForge({ token: hubCredential.token })
+      : undefined;
+    forge.getWorkflowRunEvidence =
+      hubForge?.getWorkflowRunEvidence.bind(hubForge);
+    return {
+      project,
+      hub,
+      forge,
+      linear: new LinearApi({ apiKey: linearCredential.authorization }),
+      botLogin: process.env.BOT_LOGIN || "pm-hub[bot]",
+      now: () => new Date(),
+      dryRun: false,
+      log: () => {},
+      slack: { post: async () => {} },
+      vercel: {
+        latestDeployment: async () => null,
+        branchUrl: async () => null,
+      },
+    };
+  }
   const pullReads = new Map<
     string,
     {
@@ -1298,6 +1369,33 @@ export function createDashboardServer(
       1500,
     );
   let manager: LocalRunners | undefined = options.runners;
+  const prepareAutomaticProjects = createAutomaticPreparation({
+    root,
+    context: readinessContext,
+    jobs: () => runners().jobs(),
+    provision: async (name, area) =>
+      (await provisionLinear(name, undefined, area)).status === "ready",
+    verify: async (project) => {
+      const snapshot = verificationSnapshot(project.dir);
+      const checks = await doctorChecks(project, {
+        root,
+        env: { ...readConnections(root), ...process.env },
+        fetch,
+        today: () => new Date().toISOString().slice(0, 10),
+        sourceControl,
+        linearConnection,
+        vercelConnection,
+        linearConnectionFor,
+        vercelConnectionFor,
+      });
+      if (checks.every((check) => check.ok))
+        stampVerified(
+          project.dir,
+          new Date().toISOString().slice(0, 10),
+          snapshot,
+        );
+    },
+  });
   const runners = (): LocalRunners =>
     (manager ??= createLocalRunners({
       root,
@@ -1305,6 +1403,11 @@ export function createDashboardServer(
       docker,
       activityStore,
       ...preparation,
+      scheduledJobs: async (previousJobs) => {
+        if (!configurationMutation && !activeMutationRequests && !setupBusy())
+          await prepareAutomaticProjects();
+        return preparation.scheduledJobs(previousJobs);
+      },
       admissionBlocker: (job, active) =>
         preparation.admissionBlocker(job, active) ??
         projectKnowledge.admissionBlocker(job, active),
@@ -2011,6 +2114,94 @@ export function createDashboardServer(
               405,
               "Use GET to review recovery and POST to restore it.",
             );
+          return;
+        }
+        if (
+          url.pathname === "/api/recovery/reservations" ||
+          url.pathname === "/api/recovery/bind"
+        ) {
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Recovery requests do not accept query parameters.",
+            );
+          if (
+            (url.pathname.endsWith("/reservations") && req.method !== "GET") ||
+            (url.pathname.endsWith("/bind") && req.method !== "POST")
+          )
+            throw new RequestError(
+              405,
+              "Use GET for reservations and POST to bind an existing provider run.",
+            );
+          const names = listProjectNames(root);
+          const results = await Promise.allSettled(
+            names.map(async (name) => {
+              const context = await recoveryContext(
+                loadProject(root, name),
+                req.method === "POST",
+              );
+              return {
+                context,
+                reservations: await listRecoveryReservations(context, {
+                  includeBound: req.method === "POST",
+                }),
+              };
+            }),
+          );
+          const available = results.flatMap((r) =>
+            r.status === "fulfilled" ? [r.value] : [],
+          );
+          if (req.method === "GET")
+            json(res, 200, {
+              reservations: available.flatMap((r) => r.reservations),
+              unavailableProjects: names.filter(
+                (_, i) => results[i]?.status === "rejected",
+              ),
+            });
+          else {
+            const input = await body(req, 4096);
+            if (
+              Object.keys(input).some(
+                (k) => !["reservationId", "runId"].includes(k),
+              ) ||
+              typeof input.reservationId !== "string" ||
+              !Number.isSafeInteger(input.runId) ||
+              Number(input.runId) < 1
+            )
+              throw new RequestError(
+                400,
+                "Choose an existing reservation and positive provider run ID.",
+              );
+            const matches = available.filter((r) =>
+              r.reservations.some((item) => item.id === input.reservationId),
+            );
+            if (matches.length !== 1)
+              throw new RequestError(
+                409,
+                "This reservation is unavailable or already reconciled. Refresh its project recovery list.",
+              );
+            const context = matches[0]!.context,
+              finish = trackProject(context.project.config.name);
+            try {
+              json(
+                res,
+                200,
+                await bindRecoveryRun(
+                  context,
+                  input as unknown as Parameters<typeof bindRecoveryRun>[1],
+                ),
+              );
+            } catch (error) {
+              if (error instanceof RecoveryActionError)
+                throw new RequestError(error.status, error.message);
+              throw new RequestError(
+                503,
+                "Provider recovery could not be confirmed. Existing work was preserved; refresh before trying again.",
+              );
+            } finally {
+              finish();
+            }
+          }
           return;
         }
         if (
@@ -3464,6 +3655,7 @@ export function createDashboardServer(
                 name,
                 repo: project.config.repo,
                 instanceId: project.config.instanceId,
+                preferenceId: projectPreferenceId(root, project.config),
                 ideaPlanId: project.config.ideaPlanId,
                 foundation: foundationSummary(root, project, foundationJobs),
                 firstReviewableChange:
@@ -3488,6 +3680,12 @@ export function createDashboardServer(
                 telemetry: project.config.telemetry ?? {},
                 branches: project.config.branches,
                 verified: project.config.verified,
+                autonomy: projectAutonomy(
+                  root,
+                  name,
+                  foundationJobs,
+                  readiness,
+                ),
                 linear: linearProvisioning.status(name),
                 ...snapshot,
                 areas: project.areas.map(
@@ -3928,7 +4126,7 @@ export function createDashboardServer(
           return;
         }
         const onboardingRoute =
-          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|confirm|configure|verify|prepare-environment|prepare-docker|connect-test-account|setup-pr|cancel|screenshot))?$/.exec(
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/onboarding(?:\/(discover|import-compose|confirm|configure|verify|prepare-environment|prepare-docker|connect-test-account|setup-pr|cancel|screenshot))?$/.exec(
             url.pathname,
           );
         if (onboardingRoute) {
@@ -3966,7 +4164,23 @@ export function createDashboardServer(
                 "Wait for the controller update before starting setup work.",
               );
             const input = await body(req);
-            if (action === "prepare-environment") {
+            if (action === "import-compose") {
+              if (setupBusy(name))
+                throw new RequestError(
+                  409,
+                  "Wait for current setup work before importing Compose.",
+                );
+              json(
+                res,
+                200,
+                await projectOnboarding.importCompose(
+                  name,
+                  input as unknown as Parameters<
+                    ProjectOnboarding["importCompose"]
+                  >[1],
+                ),
+              );
+            } else if (action === "prepare-environment") {
               if (
                 Object.keys(input).some(
                   (key) =>
@@ -4134,6 +4348,8 @@ export function createDashboardServer(
                     );
                   if (target.kind === "vercel" && target.connectionId)
                     await requireProfile("vercel", target.connectionId);
+                  if (target.kind === "docker")
+                    await projectOnboarding.assertComposeCurrent(name);
                   // No analyzed values or provider credentials are silently copied into configuration.
                   raw.environments = capabilities.environments;
                   raw.verification = { mode: "browser", environment };
@@ -4782,6 +4998,87 @@ export function createDashboardServer(
           }
           return;
         }
+        const policyRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/approval-policy(?:\/(review))?$/.exec(
+            url.pathname,
+          );
+        if (policyRoute) {
+          try {
+            if (url.search)
+              throw new RequestError(
+                400,
+                "Policy requests do not accept query parameters.",
+              );
+            if (req.method === "GET" && !policyRoute[2])
+              json(res, 200, automaticApprovals.view(policyRoute[1]!));
+            else if (req.method === "POST") {
+              const input = await body(req, 16384);
+              const result = await runners().withConfigurationMutation(
+                { project: policyRoute[1]! },
+                async () =>
+                  policyRoute[2]
+                    ? automaticApprovals.returnToReview(
+                        policyRoute[1]!,
+                        input,
+                        await projectLinear(loadProject(root, policyRoute[1]!)),
+                      )
+                    : automaticApprovals.save(policyRoute[1]!, input),
+              );
+              runners().start();
+              json(res, 200, result);
+            } else
+              throw new RequestError(
+                405,
+                "Use GET or POST for the approval policy.",
+              );
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            if (error instanceof ConfigEditorError)
+              throw new RequestError(error.status, error.message);
+            throw new RequestError(
+              400,
+              "Choose bounded paths, a dedicated candidate label and finite approval limits. Refresh if project settings changed.",
+            );
+          }
+          return;
+        }
+        const autonomyRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/autonomy$/.exec(
+            url.pathname,
+          );
+        if (autonomyRoute) {
+          const name = autonomyRoute[1]!;
+          try {
+            if (req.method === "POST") {
+              setProjectAutonomy(root, name, await body(req));
+              runners().start();
+            } else if (req.method !== "GET")
+              throw new RequestError(
+                405,
+                "Use GET or POST for automatic work.",
+              );
+            const [jobs, context] = await Promise.all([
+              runners().jobs(),
+              readinessContext(),
+            ]);
+            json(res, 200, {
+              ok: true,
+              autonomy: projectAutonomy(root, name, jobs, context),
+            });
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            if (
+              error instanceof PmControlError ||
+              error instanceof ConfigEditorError
+            )
+              throw new RequestError(error.status, error.message);
+            throw new RequestError(
+              400,
+              "Automatic work could not be changed. Refresh project settings and try again.",
+            );
+          }
+          return;
+        }
         const pmReadiness =
           /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/readiness$/.exec(
             url.pathname,
@@ -5261,11 +5558,7 @@ export function createDashboardServer(
               adopted = await runners().withConfigurationMutation(
                 { project, area: input.key },
                 async () => {
-                  await linearProvisioning.addArea(project, {
-                    ...input,
-                    enabled: false,
-                    codingEnabled: false,
-                  });
+                  await linearProvisioning.addArea(project, input);
                   const saved = loadProject(root, project),
                     area = saved.areas.find((item) => item.key === input.key);
                   if (!area)
@@ -5425,10 +5718,37 @@ export function createDashboardServer(
       finishProjectRequest?.();
       if (countedMutation) activeMutationRequests--;
       if (ownsVercelCredentialMutation) vercelCredentialMutation = false;
+      if (countedMutation) startAutomaticWork();
     }
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
+  function startAutomaticWork() {
+    try {
+      if (
+        loadHub(root).runners.mode !== "local" ||
+        !{
+          ...readConnections(root),
+          ...process.env,
+        }.CLAUDE_CODE_OAUTH_TOKEN?.trim()
+      )
+        return;
+      if (
+        listProjectNames(root).some((name) => {
+          try {
+            return loadProject(root, name).areas.some(
+              (area) => area.enabled || (area.codingEnabled ?? area.enabled),
+            );
+          } catch {
+            return false;
+          }
+        })
+      )
+        runners().start();
+    } catch {
+      /* Setup can continue while configuration or connections are incomplete. */
+    }
+  }
   server.once("listening", () => {
     void syncRemoteWorkers();
     for (const name of listProjectNames(root)) continuePromotions(name);
@@ -5438,6 +5758,7 @@ export function createDashboardServer(
       existsSync(join(root, ".run", "local-runners", "state.json"))
     )
       runners().start();
+    startAutomaticWork();
   });
   const deliveryTimer = setInterval(() => void reconcileDeliveries(), 60_000);
   deliveryTimer.unref();

@@ -152,9 +152,10 @@ function parseTarget(value: unknown): EnvironmentTarget {
     case "docker": {
       const parsed = parseDockerTarget(value);
       if (
-        Object.values(parsed.env ?? {}).some(
-          (name) => !validWorkerSecretName(name),
-        )
+        [
+          ...Object.values(parsed.env ?? {}),
+          ...Object.values(parsed.buildSecrets ?? {}),
+        ].some((name) => !validWorkerSecretName(name))
       )
         throw new Error(
           "Docker apps must use dedicated test secrets, never controller credentials.",
@@ -432,7 +433,10 @@ export function validateWorkerSecretReferences(config: ProjectConfig): void {
       target.kind === "vercel"
         ? [target.bypassSecret]
         : target.kind === "docker"
-          ? Object.values(target.env ?? {})
+          ? [
+              ...Object.values(target.env ?? {}),
+              ...Object.values(target.buildSecrets ?? {}),
+            ]
           : [],
     ),
   ].filter((name): name is string => name !== undefined);
@@ -543,7 +547,11 @@ export function projectSecretNames(config: ProjectConfig): string[] {
             target.credentialsSecret ?? "GCP_SERVICE_ACCOUNT_JSON",
           ];
         if (target.kind === "docker")
-          return [...access, ...Object.values(target.env ?? {})];
+          return [
+            ...access,
+            ...Object.values(target.env ?? {}),
+            ...Object.values(target.buildSecrets ?? {}),
+          ];
         return access;
       }),
     ),

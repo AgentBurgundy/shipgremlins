@@ -16,6 +16,10 @@ import type {
   RevisionTreeEntry,
   RepoRef,
   WorkflowRun,
+  WorkflowRunEvidence,
+  FailedJobRerunTarget,
+  FailedJobRerunPlan,
+  FailedJobRerunEvidence,
 } from "./types.ts";
 
 export interface GitHubForgeOptions {
@@ -89,6 +93,12 @@ interface RestRun {
   conclusion: string | null;
   created_at: string;
   html_url: string;
+  repository?: { full_name: string };
+  head_repository?: { full_name: string };
+  head_sha?: string;
+  head_branch?: string;
+  event?: string;
+  run_attempt?: number;
 }
 
 const sleep = (ms: number): Promise<void> =>
@@ -218,15 +228,20 @@ export class GitHubForge implements Forge {
     method: string,
     path: string,
     body?: unknown,
+    once = false,
   ): Promise<T> {
-    return fetchJson<T>(`${this.apiBase}${path}`, {
-      method,
-      headers: {
-        ...this.headers(),
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
+    return fetchJson<T>(
+      `${this.apiBase}${path}`,
+      {
+        method,
+        headers: {
+          ...this.headers(),
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+      once ? { retries: 0 } : {},
+    );
   }
 
   private async restOrNull<T>(
@@ -402,6 +417,27 @@ export class GitHubForge implements Forge {
     }
   }
 
+  async getPullDiffStats(repo: RepoRef, number: number) {
+    const value = await this.rest<
+      RestPull & { changed_files: number; additions: number; deletions: number }
+    >("GET", `/repos/${repo}/pulls/${number}`);
+    if (
+      ![value.changed_files, value.additions, value.deletions].every(
+        (item) => Number.isSafeInteger(item) && item >= 0,
+      ) ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.head.sha)
+    )
+      throw new Error(
+        "Exact-head pull request diff statistics are unavailable.",
+      );
+    return {
+      headSha: value.head.sha,
+      files: value.changed_files,
+      additions: value.additions,
+      deletions: value.deletions,
+    };
+  }
+
   async createPull(
     repo: RepoRef,
     input: CreatePullInput,
@@ -555,11 +591,18 @@ export class GitHubForge implements Forge {
   // ── checks ────────────────────────────────────────────────────────────────
 
   private async checkRuns(repo: RepoRef, sha: string): Promise<RestCheckRun[]> {
-    const res = await this.rest<{ check_runs: RestCheckRun[] }>(
-      "GET",
-      `/repos/${repo}/commits/${sha}/check-runs?per_page=${PAGE}`,
+    const out: RestCheckRun[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const res = await this.rest<{ check_runs: RestCheckRun[] }>(
+        "GET",
+        `/repos/${repo}/commits/${sha}/check-runs?per_page=${PAGE}${page > 1 ? `&page=${page}` : ""}`,
+      );
+      out.push(...res.check_runs);
+      if (res.check_runs.length < PAGE) return out;
+    }
+    throw new Error(
+      "The complete check-run set is unavailable; no CI retry can be inferred.",
     );
-    return res.check_runs;
   }
 
   private async jobLogTail(
@@ -659,8 +702,112 @@ export class GitHubForge implements Forge {
       await this.rest<null>(
         "POST",
         `/repos/${repo}/actions/runs/${runId}/rerun-failed-jobs`,
+        undefined,
+        true,
       );
     }
+  }
+
+  private async exactRerunRun(target: FailedJobRerunTarget): Promise<RestRun> {
+    if (
+      target.provider !== "github" ||
+      !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(target.repository) ||
+      target.repository.split("/").some((part) => [".", ".."].includes(part)) ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(target.sha) ||
+      !Number.isSafeInteger(target.runId) ||
+      target.runId < 1 ||
+      !Number.isSafeInteger(target.attempt) ||
+      target.attempt < 1
+    )
+      throw new Error("Invalid exact-revision GitHub CI retry target.");
+    const run = await this.rest<RestRun>(
+      "GET",
+      `/repos/${target.repository}/actions/runs/${target.runId}`,
+    );
+    if (
+      run.id !== target.runId ||
+      run.repository?.full_name !== target.repository ||
+      run.head_sha !== target.sha ||
+      !Number.isSafeInteger(run.run_attempt) ||
+      run.run_attempt! < 1
+    )
+      throw new Error(
+        "GitHub CI retry run does not match its reserved repository and exact revision.",
+      );
+    return run;
+  }
+  async planFailedJobRerun(
+    repo: RepoRef,
+    sha: string,
+  ): Promise<FailedJobRerunPlan> {
+    const [checks, statuses] = await Promise.all([
+      this.checkRuns(repo, sha),
+      this.combinedStatuses(repo, sha),
+    ]);
+    if (
+      checks.some((check) => checkRunVerdict(check) === "pending") ||
+      statuses.some((status) => statusVerdict(status) === "pending")
+    )
+      return { state: "pending", targets: [] };
+    const ids = [
+      ...new Set(
+        checks
+          .filter(
+            (check) =>
+              checkRunVerdict(check) === "failed" && isActionsJob(check),
+          )
+          .flatMap((check) => {
+            const value = actionsIds(check);
+            return value ? [value.runId] : [];
+          }),
+      ),
+    ];
+    const targets: FailedJobRerunTarget[] = [];
+    for (const runId of ids) {
+      const detail = await this.rest<RestRun>(
+        "GET",
+        `/repos/${repo}/actions/runs/${runId}`,
+      );
+      if (!Number.isSafeInteger(detail.run_attempt) || detail.run_attempt! < 1)
+        throw new Error(
+          "GitHub did not report a CI run attempt; no retry was requested.",
+        );
+      const target: FailedJobRerunTarget = {
+        provider: "github",
+        repository: repo,
+        sha,
+        runId,
+        attempt: detail.run_attempt!,
+      };
+      const verified = await this.exactRerunRun(target);
+      if (verified.status !== "completed")
+        return { state: "pending", targets: [] };
+      targets.push(target);
+    }
+    return { state: "ready", targets };
+  }
+  async rerunFailedJobTarget(target: FailedJobRerunTarget): Promise<void> {
+    const run = await this.exactRerunRun(target);
+    if (run.run_attempt! > target.attempt) return;
+    if (run.run_attempt !== target.attempt || run.status !== "completed")
+      throw new Error(
+        "The reserved CI attempt changed or is pending; no duplicate retry was requested.",
+      );
+    await this.rest(
+      "POST",
+      `/repos/${target.repository}/actions/runs/${target.runId}/rerun-failed-jobs`,
+      undefined,
+      true,
+    );
+  }
+  async getFailedJobRerunEvidence(
+    target: FailedJobRerunTarget,
+  ): Promise<FailedJobRerunEvidence> {
+    const run = await this.exactRerunRun(target);
+    return {
+      acknowledged: run.run_attempt! > target.attempt,
+      pending: run.status !== "completed",
+    };
   }
 
   // ── workflows ─────────────────────────────────────────────────────────────
@@ -671,12 +818,15 @@ export class GitHubForge implements Forge {
     ref: string,
     inputs: Record<string, string>,
   ): Promise<WorkflowRun> {
-    const marker = randomUUID();
+    const marker = inputs.marker ?? randomUUID();
+    if (!UUID_RE.test(marker))
+      throw new Error("Workflow dispatch needs a valid controller marker.");
     const firedAt = this.now();
     await this.rest<null>(
       "POST",
       `/repos/${hubRepo}/actions/workflows/${encodeURIComponent(workflowFile)}/dispatches`,
       { ref, inputs: { ...inputs, marker } },
+      true,
     );
     const floor = new Date(firedAt.getTime() - DISPATCH_SKEW_MS);
     const qs = new URLSearchParams({
@@ -692,7 +842,9 @@ export class GitHubForge implements Forge {
       );
       const candidates = res.workflow_runs
         .filter(
-          (r) => r.path.endsWith(`/${workflowFile}`) || r.path === workflowFile,
+          (r) =>
+            r.path.split("@")[0]!.endsWith(`/${workflowFile}`) ||
+            r.path.split("@")[0] === workflowFile,
         )
         .filter((r) => Date.parse(r.created_at) >= floor.getTime())
         .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
@@ -700,13 +852,7 @@ export class GitHubForge implements Forge {
         (r) => r.name === marker || r.display_title === marker,
       );
       if (mine) return toRun(mine);
-      // when the workflow echoes markers (run-name), a run that isn't ours is
-      // someone else's dispatch — keep waiting for ours instead of taking it
-      const echoes = candidates.some(
-        (r) =>
-          UUID_RE.test(r.name ?? "") || UUID_RE.test(r.display_title ?? ""),
-      );
-      if (!echoes && candidates[0]) return toRun(candidates[0]);
+      // Never infer ownership from recency: another dispatch may have raced it.
     }
     throw new Error(
       `workflow_dispatch of ${workflowFile} on ${hubRepo} was accepted but no run appeared within ${Math.round((this.pollAttempts * this.pollMs) / 1000)}s`,
@@ -721,5 +867,178 @@ export class GitHubForge implements Forge {
       `/repos/${hubRepo}/actions/runs/${runId}`,
     );
     return r ? toRun(r) : null;
+  }
+
+  private async immutableContent(
+    repo: string,
+    path: string,
+    sha: string,
+  ): Promise<string> {
+    const result = await this.rest<{
+      encoding: string;
+      content: string;
+      size: number;
+    }>(
+      "GET",
+      `/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(sha)}`,
+    );
+    if (
+      result.encoding !== "base64" ||
+      typeof result.content !== "string" ||
+      result.content.length > 180_000 ||
+      !Number.isSafeInteger(result.size) ||
+      result.size < 1 ||
+      result.size > 128_000
+    )
+      throw new Error(
+        "Immutable workflow recovery evidence is unavailable or oversized.",
+      );
+    const text = Buffer.from(result.content, "base64").toString("utf8");
+    if (Buffer.byteLength(text) > 128_000)
+      throw new Error("Immutable workflow recovery evidence is oversized.");
+    return text;
+  }
+  async getWorkflowRunEvidence(
+    hubRepo: string,
+    runId: number,
+  ): Promise<WorkflowRunEvidence | null> {
+    if (!Number.isSafeInteger(runId) || runId < 1)
+      throw new Error("Choose a valid provider workflow run ID.");
+    const run = await this.restOrNull<RestRun>(
+      `/repos/${hubRepo}/actions/runs/${runId}`,
+    );
+    if (!run) return null;
+    if (
+      run.id !== runId ||
+      run.repository?.full_name !== hubRepo ||
+      run.head_repository?.full_name !== hubRepo ||
+      run.event !== "workflow_dispatch" ||
+      run.head_branch !== "main" ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(run.head_sha ?? "") ||
+      run.path.split("@")[0] !== ".github/workflows/developer.yml"
+    )
+      throw new Error(
+        "Provider run metadata cannot prove this developer workflow's repository and revision.",
+      );
+    const source = await this.immutableContent(
+      hubRepo,
+      ".github/workflows/developer.yml",
+      run.head_sha!,
+    );
+    const canonical =
+      '- name: "ShipGremlins dispatch inputs: ${{ toJSON(inputs) }}"';
+    const evidenceAt = source.indexOf(canonical),
+      checkoutAt = source.indexOf("- uses: actions/checkout@");
+    if (
+      evidenceAt < 0 ||
+      source.indexOf(canonical, evidenceAt + canonical.length) !== -1 ||
+      checkoutAt < evidenceAt ||
+      !source.includes(
+        "run: echo 'Dispatch inputs recorded by the workflow.'",
+      ) ||
+      (source.match(/ref: \$\{\{ github\.sha \}\}/g)?.length ?? 0) < 2
+    )
+      throw new Error(
+        "This workflow revision does not emit trusted dispatch inputs before repository execution. Inspect its existing run manually.",
+      );
+    const jobs: {
+      run_id: number;
+      head_sha: string;
+      name: string;
+      steps?: { name: string; status: string; conclusion: string | null }[];
+    }[] = [];
+    for (let page = 1; page <= 5; page++) {
+      const result = await this.rest<{ jobs: typeof jobs }>(
+        "GET",
+        `/repos/${hubRepo}/actions/runs/${runId}/attempts/1/jobs?per_page=100&page=${page}`,
+      );
+      jobs.push(...result.jobs);
+      if (result.jobs.length < 100) break;
+      if (page === 5)
+        throw new Error("The complete workflow input evidence is unavailable.");
+    }
+    const names = jobs
+      .filter(
+        (job) =>
+          job.name === "launch" &&
+          job.run_id === runId &&
+          job.head_sha === run.head_sha,
+      )
+      .flatMap((job) => job.steps ?? [])
+      .filter(
+        (step) =>
+          step.name.startsWith("ShipGremlins dispatch inputs: ") &&
+          step.status === "completed" &&
+          step.conclusion === "success",
+      );
+    if (names.length !== 1) return null;
+    let inputs: Record<string, string>;
+    try {
+      const value: unknown = JSON.parse(
+        names[0]!.name.slice("ShipGremlins dispatch inputs: ".length),
+      );
+      if (
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        Object.entries(value).some(
+          ([key, item]) =>
+            ![
+              "project",
+              "ticket",
+              "kind",
+              "attempt",
+              "branch",
+              "pr",
+              "marker",
+              "scope",
+            ].includes(key) ||
+            typeof item !== "string" ||
+            item.length > 2_000,
+        )
+      )
+        throw new Error();
+      inputs = value as Record<string, string>;
+      if (
+        !/^[a-z][a-z0-9-]{0,62}$/.test(inputs.project ?? "") ||
+        !UUID_RE.test(inputs.marker ?? "") ||
+        !/^[a-f0-9]{64}$/.test(inputs.scope ?? "")
+      )
+        throw new Error();
+    } catch {
+      throw new Error(
+        "The provider workflow input record is invalid; no receipt was changed.",
+      );
+    }
+    const project = JSON.parse(
+      await this.immutableContent(
+        hubRepo,
+        `projects/${inputs.project}/project.json`,
+        run.head_sha!,
+      ),
+    ) as {
+      repo?: string;
+      instanceId?: string;
+      branches?: { integration?: string };
+    };
+    if (
+      typeof project.repo !== "string" ||
+      (project.instanceId !== undefined &&
+        typeof project.instanceId !== "string")
+    )
+      throw new Error(
+        "The workflow's immutable project mapping is unavailable.",
+      );
+    return {
+      run: toRun(run),
+      repository: hubRepo,
+      workflowFile: "developer.yml",
+      ref: "main",
+      event: "workflow_dispatch",
+      inputs,
+      projectRepository: project.repo,
+      ...(project.instanceId ? { projectInstanceId: project.instanceId } : {}),
+      projectIntegrationBranch: project.branches?.integration ?? "pm-staging",
+    };
   }
 }

@@ -12,7 +12,11 @@ import {
 } from "../config.ts";
 import { LinearApi } from "../services/linear.ts";
 import type { LinearClient, LinearTicket } from "../services/types.ts";
-import { readConnections } from "../setup/connections.ts";
+import {
+  readConnections,
+  CONNECTIONS,
+  projectConnections,
+} from "../setup/connections.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import type { LocalJob, LocalJobInput } from "./types.ts";
 import type { DockerJobPayload } from "./docker.ts";
@@ -83,6 +87,10 @@ import {
   testIdentityKey,
   TestIdentityBusyError,
 } from "../testAccess/leases.ts";
+import { createScheduleCursor } from "./scheduleCursor.ts";
+import { createAutomationDiagnostics } from "../setup/automationDiagnostics.ts";
+import { createAutomaticApprovals } from "../autonomy/approval.ts";
+import { assertPublicBuildValues } from "../testEnvironments/recipe.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -118,7 +126,13 @@ export interface JobPreparationOptions {
     Partial<
       Pick<
         LinearApi,
-        "getProject" | "ensureLabels" | "repairProposalAreaLabels"
+        | "getProject"
+        | "ensureLabels"
+        | "repairProposalAreaLabels"
+        | "addLabel"
+        | "removeLabel"
+        | "addComment"
+        | "listComments"
       >
     >;
   preview?: (project: Project, token: string) => Promise<string | null>;
@@ -254,6 +268,9 @@ function accessInstruction(
 }
 
 export function createJobPreparation(options: JobPreparationOptions) {
+  const scheduleCursor = createScheduleCursor(options.root);
+  const diagnostics = createAutomationDiagnostics(options.root);
+  const automaticApprovals = createAutomaticApprovals(options.root);
   const { root } = options;
   const env = options.env ?? process.env;
   const identities = createTestIdentityLeases(root);
@@ -537,6 +554,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
         );
       const area = project.areas.find((item) => item.key === input.area);
       if (!area) throw new JobReadinessError("Choose an existing PM.");
+      if (input.idempotencyKey?.startsWith("auto-discovery:") && !area.enabled)
+        throw new JobReadinessError(
+          "Automatic investigation was paused after discovery was queued. Resume it before starting this work.",
+        );
       const revision = knowledgeRevision(project, area);
       if (requireQueuedBinding && input.discoveryRevision !== revision)
         throw new JobReadinessError(
@@ -1253,6 +1274,13 @@ export function createJobPreparation(options: JobPreparationOptions) {
         branch: checkoutBranch,
       });
       payload.expectedCommitSha = head.sha;
+      assertPublicBuildValues(verification.target, [
+        ...Object.values(readConnections(root)),
+        ...Object.values(credentials),
+        ...[...CONNECTIONS, ...projectConnections(root)].map(
+          (connection) => saved[connection.name],
+        ),
+      ]);
       payload.testEnvironment = {
         target: verification.target,
         env: Object.fromEntries(
@@ -1267,11 +1295,26 @@ export function createJobPreparation(options: JobPreparationOptions) {
             },
           ),
         ),
+        buildSecrets: Object.fromEntries(
+          Object.entries(verification.target.buildSecrets ?? {}).map(
+            ([id, reference]) => {
+              const value = saved[reference];
+              if (!value)
+                throw new JobReadinessError(
+                  "Save the selected Docker build's dedicated test secrets in Connections before running.",
+                );
+              return [id, value];
+            },
+          ),
+        ),
       };
     }
     if (ticket) {
       const current = loadProject(root, project.config.name);
       const currentArea = current.areas.find((item) => item.key === area.key);
+      const approvalBlock =
+        currentArea && automaticApprovals.blocker(current, currentArea, ticket);
+      if (approvalBlock) throw new JobReadinessError(approvalBlock);
       if (
         !currentArea ||
         knowledgeRevision(current, currentArea) !== ownerRevision
@@ -1408,121 +1451,228 @@ export function createJobPreparation(options: JobPreparationOptions) {
     )
       return [];
     const now = options.now?.() ?? new Date();
-    const minute = now.toISOString().slice(0, 16);
     const jobs: LocalJobInput[] = [];
     for (const name of listProjectNames(root)) {
-      const project = loadProject(root, name);
-      if (!project.config.verified) continue;
-      const history = previousJobs.filter(
-        (job) =>
-          job.type === "developer" &&
-          job.project === name &&
-          job.projectInstanceId === project.config.instanceId,
-      );
-      const linearCredential = await linearFor(
-        project.config.linear?.connectionId,
-      )
-        .resolveCredential({
-          minValidityMs: 5 * 60_000,
-          workspaceId: project.config.linear?.workspaceId,
-        })
-        .catch(() => null);
-      for (const area of project.areas.filter(
-        (item) => item.enabled || codingPickupEnabled(item),
-      )) {
-        if (
-          area.enabled &&
-          !pmVerificationBlocker(project, area) &&
-          !foundationNeeded(root, project) &&
-          pmTestAccess(project).ready &&
-          (effectiveVerification(project.config).mode === "repository" ||
-            environmentVerificationStatus(root, project, connections())
-              .status === "passed") &&
-          scheduledThisMinute(area.schedule, now)
-        )
-          jobs.push({
+      let currentProject: Project | undefined;
+      try {
+        const project = loadProject(root, name);
+        currentProject = project;
+        const history = previousJobs.filter(
+          (job) =>
+            job.type === "developer" &&
+            job.project === name &&
+            job.projectInstanceId === project.config.instanceId,
+        );
+        const due = new Map(
+          project.areas.map((area) => {
+            try {
+              const slot = scheduleCursor.due(project, area, now);
+              diagnostics.resolve(project, "schedule", area.key, now);
+              return [area.key, slot] as const;
+            } catch {
+              diagnostics.fail(project, "schedule", "schedule", area.key, now);
+              return [area.key, undefined] as const;
+            }
+          }),
+        );
+        // A new crew can discover the repository before Linear or browser setup.
+        // Stable revision keys survive restarts and retain failed attempts for review.
+        for (const area of project.areas.filter((item) => item.enabled)) {
+          if (foundationNeeded(root, project) || !hasPmMandate(project, area))
+            continue;
+          if (project.config.verified && due.get(area.key)) continue;
+          const snapshot = knowledge.read(name, area.key);
+          if (snapshot.state !== "empty" && !snapshot.stale) continue;
+          if (!diagnostics.ready(project, "discovery", area.key, now)) continue;
+          const revision = knowledgeRevision(project, area);
+          const input: LocalJobInput = {
             type: "pm",
             project: name,
             ...(project.config.instanceId
               ? { projectInstanceId: project.config.instanceId }
               : {}),
             area: area.key,
-            discoveryRevision: knowledgeRevision(project, area),
-            idempotencyKey: `pm:${name}:${area.key}:${area.instanceId ? `${area.instanceId}:` : ""}${minute}`,
-          });
-        if (
-          !linearCredential ||
-          !codingPickupEnabled(area) ||
-          codingEnvironmentBlocker(project)
+            pmMode: "discovery",
+            runOnce: true,
+            discoveryRevision: revision,
+            idempotencyKey: `auto-discovery:${revision}`,
+          };
+          try {
+            await manualPrerequisites(project, area, input, true);
+            jobs.push(input);
+            diagnostics.resolve(project, "discovery", area.key, now);
+          } catch {
+            diagnostics.fail(project, "discovery", "discovery", area.key, now);
+          }
+        }
+        if (!project.config.verified) continue;
+        const linearCredential = diagnostics.ready(
+          project,
+          "source",
+          undefined,
+          now,
         )
-          continue;
-        const tickets = await linear(
-          linearCredential.authorization,
-        ).listTickets(area.linearProjectId, [area.label, LABELS.approved]);
-        const room = Math.max(
-          0,
-          area.wipLimit -
-            codingWorkInProgress(
-              project,
-              area,
-              tickets,
-              history,
-              options.deliveryRecords?.(name) ?? [],
-            ),
-        );
-        let picked = 0;
-        for (const ticket of tickets
-          .filter(
-            (item) =>
-              approvedForArea(item, area) &&
-              !history.some((job) =>
-                job.linearBinding?.ticketId
-                  ? job.linearBinding.ticketId === item.id
-                  : job.ticket === item.identifier,
-              ) &&
-              ![LABELS.dispatched, LABELS.verified, LABELS.testFailed].some(
-                (label) =>
-                  item.labels.some(
-                    (applied) => applied.toLowerCase() === label,
-                  ),
-              ) &&
-              acceptanceCriteria(item.description).length > 0 &&
-              !missionCodingBlocker(root, name, item.id, item),
-          )
-          .sort(
-            (a, b) =>
-              (a.priority || 5) - (b.priority || 5) ||
-              a.createdAt.localeCompare(b.createdAt),
-          )) {
+          ? await linearFor(project.config.linear?.connectionId)
+              .resolveCredential({
+                minValidityMs: 5 * 60_000,
+                workspaceId: project.config.linear?.workspaceId,
+              })
+              .catch(() => null)
+          : null;
+        if (!linearCredential && project.areas.some(codingPickupEnabled))
+          diagnostics.fail(project, "source", "source", undefined, now);
+        else diagnostics.resolve(project, "source", undefined, now);
+        for (const area of project.areas.filter(
+          (item) => item.enabled || codingPickupEnabled(item),
+        )) {
           if (
-            await epicCodingBlocker(
-              root,
-              project,
-              area,
-              ticket,
-              linear(linearCredential.authorization),
-            )
+            area.enabled &&
+            !pmVerificationBlocker(project, area) &&
+            !foundationNeeded(root, project) &&
+            pmTestAccess(project).ready &&
+            (effectiveVerification(project.config).mode === "repository" ||
+              environmentVerificationStatus(root, project, connections())
+                .status === "passed") &&
+            due.get(area.key)
+          )
+            jobs.push({
+              type: "pm",
+              project: name,
+              ...(project.config.instanceId
+                ? { projectInstanceId: project.config.instanceId }
+                : {}),
+              area: area.key,
+              discoveryRevision: knowledgeRevision(project, area),
+              idempotencyKey: scheduleCursor.inputKey(due.get(area.key)!),
+            });
+          if (
+            !linearCredential ||
+            !codingPickupEnabled(area) ||
+            !hasPmMapping(area) ||
+            codingEnvironmentBlocker(project) ||
+            !diagnostics.ready(project, "tickets", area.key, now)
           )
             continue;
-          if (picked++ >= room) break;
-          jobs.push({
-            type: "developer",
-            project: name,
-            ...(project.config.instanceId
-              ? { projectInstanceId: project.config.instanceId }
-              : {}),
-            area: area.key,
-            ticket: ticket.identifier,
-            linearBinding: {
-              connectionId: project.config.linear?.connectionId ?? "default",
-              ...(linearCredential.workspaceId
-                ? { workspaceId: linearCredential.workspaceId }
+          let tickets: LinearTicket[];
+          try {
+            const client = linear(linearCredential.authorization);
+            if (
+              project.config.autonomousApproval?.enabled &&
+              diagnostics.ready(project, "approval", area.key, now)
+            ) {
+              if (
+                !client.addLabel ||
+                !client.removeLabel ||
+                !client.addComment ||
+                !client.listComments
+              )
+                throw new Error(
+                  "This ticket client cannot acknowledge automatic approvals.",
+                );
+              try {
+                await automaticApprovals.approve(
+                  project,
+                  area,
+                  client as LinearClient,
+                  now,
+                );
+                diagnostics.resolve(project, "approval", area.key, now);
+              } catch {
+                diagnostics.fail(
+                  project,
+                  "approval",
+                  "approval",
+                  area.key,
+                  now,
+                );
+              }
+            }
+            tickets = await client.listTickets(area.linearProjectId, [
+              area.label,
+              LABELS.approved,
+            ]);
+            diagnostics.resolve(project, "tickets", area.key, now);
+          } catch {
+            diagnostics.fail(project, "tickets", "tickets", area.key, now);
+            continue; /* One unavailable PM queue must not stop other areas. */
+          }
+          const room = Math.max(
+            0,
+            area.wipLimit -
+              codingWorkInProgress(
+                project,
+                area,
+                tickets,
+                history,
+                options.deliveryRecords?.(name) ?? [],
+              ),
+          );
+          let picked = 0;
+          for (const ticket of tickets
+            .filter(
+              (item) =>
+                approvedForArea(item, area) &&
+                !history.some((job) =>
+                  job.linearBinding?.ticketId
+                    ? job.linearBinding.ticketId === item.id
+                    : job.ticket === item.identifier,
+                ) &&
+                ![LABELS.dispatched, LABELS.verified, LABELS.testFailed].some(
+                  (label) =>
+                    item.labels.some(
+                      (applied) => applied.toLowerCase() === label,
+                    ),
+                ) &&
+                acceptanceCriteria(item.description).length > 0 &&
+                !automaticApprovals.blocker(project, area, item) &&
+                !missionCodingBlocker(root, name, item.id, item),
+            )
+            .sort(
+              (a, b) =>
+                (a.priority || 5) - (b.priority || 5) ||
+                a.createdAt.localeCompare(b.createdAt),
+            )) {
+            if (
+              await epicCodingBlocker(
+                root,
+                project,
+                area,
+                ticket,
+                linear(linearCredential.authorization),
+              )
+            )
+              continue;
+            if (picked++ >= room) break;
+            jobs.push({
+              type: "developer",
+              project: name,
+              ...(project.config.instanceId
+                ? { projectInstanceId: project.config.instanceId }
                 : {}),
-              ticketId: ticket.id,
-            },
-            idempotencyKey: `developer:${name}:${project.config.instanceId ? `${project.config.instanceId}:` : ""}${ticket.id}`,
-          });
+              area: area.key,
+              ticket: ticket.identifier,
+              linearBinding: {
+                connectionId: project.config.linear?.connectionId ?? "default",
+                ...(linearCredential.workspaceId
+                  ? { workspaceId: linearCredential.workspaceId }
+                  : {}),
+                ticketId: ticket.id,
+              },
+              idempotencyKey: `developer:${name}:${project.config.instanceId ? `${project.config.instanceId}:` : ""}${ticket.id}`,
+            });
+          }
         }
+        diagnostics.resolve(project, "scheduler", undefined, now);
+      } catch {
+        if (currentProject)
+          diagnostics.fail(
+            currentProject,
+            "scheduler",
+            "setup",
+            undefined,
+            now,
+          );
+        /* A broken project must not stop automatic work on healthy projects. */
       }
     }
     return jobs;
@@ -1533,6 +1683,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     selectDeveloperTicket,
     prepareJob,
     scheduledJobs,
+    scheduledJobAdmitted: scheduleCursor.admitted,
     releaseJobResources,
     completeJob: knowledge.capture,
     requiresManagedAccess: (job: LocalJob) => {

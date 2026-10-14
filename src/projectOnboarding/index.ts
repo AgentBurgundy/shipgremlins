@@ -28,6 +28,8 @@ import {
   resolveRepositoryHead,
 } from "./repository.ts";
 import { publishSetupDraft } from "./publish.ts";
+import { readComposeRepository, composePath } from "./compose.ts";
+import { assertPublicBuildValues } from "../testEnvironments/recipe.ts";
 import { confirmationState, confirmSetup } from "./confirmation.ts";
 import {
   recommendedDocker,
@@ -517,6 +519,7 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
       environments: { setup: input.target },
       verification: { mode: "browser", environment: "setup" },
     }).environments!.setup!;
+    if (target.kind === "docker") await assertComposeCurrent(project);
     const { id } = await begin(project, current.revision, false);
     try {
       await options.applyProfile({
@@ -545,6 +548,141 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
       });
       throw error;
     }
+    return status(project);
+  }
+  async function assertComposeCurrent(project: string) {
+    const current = await status(project);
+    if (current.report?.composeImports?.length) {
+      const projectConfig = loadProject(root, project);
+      const signal = AbortSignal.timeout(15000);
+      const credential = await bounded(
+        source().resolveCredential({
+          provider: projectConfig.config.provider ?? "github",
+          serverUrl: projectConfig.config.serverUrl,
+          repository: projectConfig.config.repo,
+          write: false,
+          minValidityMs: 60000,
+        }),
+        signal,
+      );
+      const head = await bounded(
+        resolveRepositoryHead({
+          project: projectConfig,
+          branch: current.report.repository.branch,
+          credential,
+          fetch: fetcher,
+          signal,
+        }),
+        signal,
+      );
+      if (head.sha !== current.report.repository.sha)
+        throw new ProjectOnboardingError(
+          "The repository changed after Compose import. Import the current Compose file before saving its Docker recipe.",
+          409,
+          "stale_repository",
+        );
+    }
+  }
+  async function importCompose(
+    project: string,
+    input: { revision: string; path?: string; service?: string },
+  ) {
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Object.keys(input).some(
+        (key) => !["revision", "path", "service"].includes(key),
+      ) ||
+      !/^[a-f0-9]{64}$/.test(input.revision) ||
+      (input.path !== undefined && !composePath(input.path)) ||
+      (input.service !== undefined &&
+        !/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/.test(input.service))
+    )
+      throw new ProjectOnboardingError(
+        "Choose a current repository Compose file and application service.",
+      );
+    const { id, state } = await begin(project, input.revision, false);
+    const controller = new AbortController();
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(60000),
+    ]);
+    const promise = Promise.resolve()
+      .then(async () => {
+        const projectConfig = loadProject(root, project);
+        const credential = await bounded(
+          source().resolveCredential({
+            provider: projectConfig.config.provider ?? "github",
+            serverUrl: projectConfig.config.serverUrl,
+            repository: projectConfig.config.repo,
+            write: false,
+            minValidityMs: 120000,
+          }),
+          signal,
+        );
+        const report = await bounded(
+          readComposeRepository(
+            projectConfig,
+            credential.token,
+            fetcher,
+            signal,
+            input,
+          ),
+          signal,
+        );
+        const saved = env();
+        const privateValues = [
+          credential.token,
+          ...[
+            ...CONNECTIONS.map((connection) => connection.name),
+            ...projectConnections(root).map((connection) => connection.name),
+          ].map((name) => saved[name]),
+        ];
+        for (const candidate of report.composeImports ?? []) {
+          if (candidate.target) {
+            try {
+              assertPublicBuildValues(candidate.target, privateValues);
+            } catch {
+              throw new ProjectOnboardingError(
+                "A Compose public build argument contains a saved credential. Replace it with a reviewed BuildKit TEST_* secret reference before importing.",
+                422,
+              );
+            }
+          }
+        }
+        if (config(project) !== state.configurationRevision)
+          throw new ProjectOnboardingError(
+            "Project settings changed during Compose import. Reload before retrying.",
+            409,
+          );
+        await update(project, id, (next) => {
+          next.report = report;
+          delete next.setupAcknowledgement;
+          delete next.setupPull;
+          delete next.appliedProfile;
+          next.status = "analyzed";
+          next.stage = "review-compose";
+          next.message =
+            "Compose import is ready for review. Choose a supported recipe, save dedicated test inputs, and run the environment check.";
+          delete next.operation;
+        });
+      })
+      .catch(async (error) => {
+        await update(project, id, (next) => {
+          next.status = "failed";
+          next.stage = "failed";
+          next.message =
+            error instanceof ProjectOnboardingError
+              ? error.message
+              : "Compose import could not finish. Check source access and supported Compose features, then retry. Existing settings were preserved.";
+          delete next.operation;
+        }).catch(() => {});
+      })
+      .finally(() => {
+        if (active.get(key(project))?.controller === controller)
+          active.delete(key(project));
+      });
+    active.set(key(project), { controller, promise, publishing: false });
     return status(project);
   }
   return {
@@ -591,6 +729,8 @@ export function createProjectOnboarding(options: ProjectOnboardingOptions) {
       });
       return status(project);
     },
+    importCompose,
+    assertComposeCurrent,
     async confirm(project: string, input: ConfirmProjectSetupInput) {
       if (busy(project))
         throw new ProjectOnboardingError(

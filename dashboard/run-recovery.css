@@ -1,0 +1,52 @@
+.run-failure,
+.operator-recovery,
+.operations-diagnostics {
+  margin: 0 0 20px;
+  padding: 20px;
+  border: 1px solid #ead7bb;
+  border-radius: 12px;
+  background: #fffaf1;
+  color: #6b4a20;
+}
+.run-failure h3,
+.operator-recovery h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.run-failure p,
+.operator-recovery p {
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+.operator-recovery form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid #ead7bb;
+}
+.operator-recovery form p,
+.operator-recovery label {
+  grid-column: 1/-1;
+  margin: 0;
+  font-size: 12px;
+}
+.operator-recovery input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid #d6c7b1;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  background: #fff;
+}
+@media (max-width: 600px) {
+  .operator-recovery form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

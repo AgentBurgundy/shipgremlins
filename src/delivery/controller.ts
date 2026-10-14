@@ -18,6 +18,7 @@ import {
 import {
   effectiveVerification,
   effectiveWorkflow,
+  baseBranch,
 } from "../projectCapabilities.ts";
 import { createSourceControl } from "../sourceControl/index.ts";
 import type { SourceControl } from "../sourceControl/types.ts";
@@ -41,6 +42,7 @@ import type {
 import type { LocalJob, LocalJobInput } from "../localRunners/types.ts";
 import { knowledgeRevision } from "../pmKnowledge/index.ts";
 import { ticketScopeHash } from "../lifecycle/manifest.ts";
+import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import { runPromote, type PromoteOpts } from "../dispatcher/promote.ts";
 import type { Ctx } from "../dispatcher/context.ts";
 import { createCandidateVerifier } from "../evidence/attestation.ts";
@@ -183,6 +185,7 @@ export function reviewPrompt(
   )}\nUse Playwright to investigate every criterion. Then save /output/pm-review-request.json as {"schema":1,"planId":${JSON.stringify(plan.id)},"deliveries":[{"id":"EXACT delivery id","checks":[{"criterion":"EXACT approved criterion text","path":"/non-production-path","kind":"text-visible","text":"Exact visible text"}]}]}. The trusted worker independently replays checks and captures real screenshots AFTER you finish. Supported kinds: text-visible/text-absent with exact text; selector-visible/selector-absent with selector; url-path with expected pathname. For UI or layout changes set viewports to ["mobile", "desktop"] on each affected check: mobile is pinned to 390x844 and desktop to 1280x800. Other checks may choose one name; omitted viewports use desktop. Every requested viewport must replay and pass, with its size and screenshot recorded. Each check opens a fresh browser context per viewport on this deployment only; paths cannot include query/fragment or another origin. Optional steps (maximum 12 per check) replay click/fill/select/check/uncheck with a unique selector; fill/select also use value. ${managedAccess ? "Your managed browser already has the allocated test identity. Do not export storageState, cookies, tokens, or role-session files, and omit the session field. The private helper will sign in again in a fresh context for each independent QA viewport using the same allocated account. It does not establish other roles or tenants; report those checks blocked if they require a different identity." : "To reuse a real login, save Playwright storageState ONLY in /output/.review-sessions/ROLE.json after signing in and set session to ROLE (lowercase letters, digits and hyphens). Cookies and localStorage must belong only to this deployment origin. The worker loads this private role session, replays steps and deletes the session; never save sessions anywhere else under /output; this hidden handoff is excluded from public artifacts and consumed only by the isolated replay phase."} Do not choose a trivial check that fails to test the criterion. If authentication, interaction or an API assertion cannot be reproduced by this contract, omit that check and explain the blocker in your summary; it remains blocked for promotion. Your own JSON pass claims never count as evidence. Continue ordinary PM observation without altering the approved delivery scope.\n`;
 }
 export function createDeliveryController(options: DeliveryControllerOptions) {
+  const automaticApprovals = createAutomaticApprovals(options.root);
   const now = () => options.now?.() ?? new Date();
   const environment = () => ({
     ...process.env,
@@ -843,6 +846,10 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     ticket: LinearTicket,
   ): Promise<DockerJobPayload> {
     const project = projectFor(job.project!);
+    const area = project.areas.find((a) => a.key === job.area);
+    const automaticBlock =
+      area && automaticApprovals.blocker(project, area, ticket);
+    if (automaticBlock) throw new Error(automaticBlock);
     const repairing = job.idempotencyKey?.startsWith("qa-rework:");
     const integrationRepairing = job.idempotencyKey?.startsWith(
       "integration-repair:",
@@ -852,13 +859,16 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     if (!enabled(project)) {
       if (repairing || integrationRepairing || promotionRepairing)
         throw new Error("QA repair requires the admitted promotion workflow.");
-      return payload;
+      if (!automaticApprovals.isAutomatic(project, ticket)) return payload;
     }
     if (
       !job.area ||
       !payload.delivery ||
       payload.delivery.branch !== `gremlins/${job.id}` ||
-      payload.delivery.base !== project.config.branches.integration
+      payload.delivery.base !==
+        (effectiveWorkflow(project.config).kind === "promotion"
+          ? project.config.branches.integration
+          : baseBranch(project.config))
     )
       throw new Error(
         "Promotion coding must target its exact integration branch and owning PM.",
@@ -1228,7 +1238,16 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
     if (!job.project || !["pm", "developer"].includes(job.type) || job.pmMode)
       return;
     const project = projectFor(job.project);
-    if (!enabled(project)) return;
+    const automaticAdmission =
+      job.type === "developer" ? admission(job) : undefined;
+    if (
+      !enabled(project) &&
+      !(
+        automaticAdmission &&
+        automaticApprovals.isAutomatic(project, automaticAdmission.ticket)
+      )
+    )
+      return;
     if (
       result.ok !== true ||
       result.nonce !== job.id ||
@@ -1293,12 +1312,52 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         throw new Error(
           "The worker did not provide an exact source-provider draft and tested head.",
         );
-      const { forge, ledger } = await clients(project);
+      const { forge, ledger, linear } = await clients(project);
       const pull = await forge.getPull(project.config.repo, number);
       if (!pull || pull.headSha !== result.headSha)
         throw new Error(
           "The published draft moved after its checks. Review its new head before delivery registration.",
         );
+      if (automaticApprovals.isAutomatic(project, captured.ticket)) {
+        const currentTicket = await linear.getTicket(captured.ticket.id);
+        const area = project.areas.find((a) => a.key === captured.area);
+        if (!currentTicket || !area)
+          throw new Error(
+            "Automatic approval's ticket or owner is unavailable. Review the preserved draft.",
+          );
+        const scopeBlock = automaticApprovals.blocker(
+          project,
+          area,
+          currentTicket,
+        );
+        const changes = forge.listPullChanges
+          ? await forge.listPullChanges(project.config.repo, number)
+          : undefined;
+        const stats = forge.getPullDiffStats
+          ? await forge.getPullDiffStats(project.config.repo, number)
+          : undefined;
+        const paths =
+          changes?.flatMap((c) => [
+            c.path,
+            ...(c.previousPath ? [c.previousPath] : []),
+          ]) ?? [];
+        const changeBlock = automaticApprovals.changeBlocker(
+          project,
+          currentTicket,
+          paths,
+          stats?.headSha === pull.headSha ? stats : undefined,
+        );
+        if (scopeBlock || changeBlock)
+          throw new Error(scopeBlock || changeBlock);
+        if (
+          (await forge.getPull(project.config.repo, number))?.headSha !==
+          pull.headSha
+        )
+          throw new Error(
+            "The automatic change moved during scope verification. Review the preserved draft.",
+          );
+      }
+      if (!enabled(project)) return;
       const providerChecks = await forge.getChecks(
         project.config.repo,
         pull.headSha,

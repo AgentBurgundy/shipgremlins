@@ -32,6 +32,7 @@ describe("run dialog dismissal", () => {
       return elements.get(id);
     };
     const context = {
+      window: {},
       $,
       selectedJobId: "job-one",
       grumblinReport: { clear: vi.fn() },

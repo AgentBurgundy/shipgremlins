@@ -403,3 +403,7 @@ Do not enable the legacy workflow schedules for a project already scheduled loca
 marketing site is maintained separately.
 
 </details>
+
+## Autonomous work in v0.25
+
+Project discovery starts when its source and AI connections are ready. Project home now includes bounded automatic approvals, durable failure remedies and provider-run recovery. The dashboard adds saved favorites, keyboard search and source freshness. Supported Compose recipes and private BuildKit inputs help existing apps use isolated Docker environments. [Implementation evidence →](docs/IMPROVEMENTS_100.md)

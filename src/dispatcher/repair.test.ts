@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { makeCtx, TEST_REPO } from "../services/fakes.ts";
 import type { TestCtx } from "../services/fakes.ts";
 import {
@@ -8,6 +8,7 @@ import {
   CONFLICT_NEEDS_OWNER_PREFIX,
   formatConflictDispatch,
   LABELS,
+  REPAIR_RESERVED_PREFIX,
 } from "./notes.ts";
 import { runRepair } from "./repair.ts";
 
@@ -21,6 +22,7 @@ function world(
   const ticket = ctx.linear.seedTicket({
     projectId: PROJECT,
     identifier: "GAME-3",
+    labels: [LABELS.approved],
   });
   const pull = ctx.forge.seedPull(TEST_REPO, {
     number: 5,
@@ -72,9 +74,16 @@ describe("runRepair — conflicts", () => {
       kind: "rc",
       branch: "pm/game-3",
       pr: "5",
+      marker: expect.any(String),
+      scope: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(ctx.forge.comments(TEST_REPO, 5)).toEqual([
-      formatConflictDispatch(d.runId, pull.headSha, integ),
+      expect.stringContaining(
+        `${REPAIR_RESERVED_PREFIX} rc attempt 1 (at ${pull.headSha.slice(0, 12)}, integration at ${integ.slice(0, 12)})`,
+      ),
+      expect.stringContaining(
+        formatConflictDispatch(d.runId, pull.headSha, integ),
+      ),
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ rule: "repair", ref: "5" });
@@ -98,7 +107,7 @@ describe("runRepair — conflicts", () => {
     await runRepair(ctx);
     expect(ctx.forge.dispatched).toHaveLength(1);
     expect(ctx.forge.dispatched[0]!.inputs.attempt).toBe("2");
-    expect(ctx.forge.comments(TEST_REPO, 5)).toHaveLength(2);
+    expect(ctx.forge.comments(TEST_REPO, 5)).toHaveLength(3);
   });
 
   it("two failed attempts against the same base → needs owner, ticket needs a human", async () => {
@@ -169,9 +178,9 @@ describe("runRepair — red checks", () => {
 
     const r1 = await runRepair(ctx);
     expect(ctx.forge.reruns).toEqual([pull.headSha]);
-    expect(ctx.forge.comments(TEST_REPO, 5)).toEqual([
-      `${CI_RETRIED_PREFIX} at ${sha12}`,
-    ]);
+    expect(ctx.forge.comments(TEST_REPO, 5).at(-1)).toContain(
+      `${CI_RETRIED_PREFIX} at ${sha12}\nhead-sha: ${pull.headSha}`,
+    );
     expect(r1).toHaveLength(1);
     expect(r1[0]!.needsYou).toBeFalsy();
 
@@ -185,8 +194,12 @@ describe("runRepair — red checks", () => {
       kind: "ci",
       branch: "pm/game-3",
       pr: "5",
+      marker: expect.any(String),
+      scope: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    const fix1 = ctx.forge.comments(TEST_REPO, 5)[1]!;
+    const fix1 = ctx.forge
+      .comments(TEST_REPO, 5)
+      .find((body) => body.startsWith(CI_FIX_DISPATCHED_PREFIX))!;
     expect(
       fix1.startsWith(
         `${CI_FIX_DISPATCHED_PREFIX} ${ctx.forge.dispatched[0]!.runId} (at ${sha12})`,
@@ -268,5 +281,170 @@ describe("runRepair — red checks", () => {
     expect(ctx.forge.dispatched).toEqual([]);
     expect(ctx.forge.comments(TEST_REPO, 5)).toEqual([]);
     expect(ctx.lines.some((l) => l.startsWith("[dry-run]"))).toBe(true);
+  });
+});
+
+describe("runRepair — recovery guards", () => {
+  it("honors approval revoked while provider checks were being read", async () => {
+    const ctx = makeCtx();
+    const { ticket } = world(ctx, { checks: "failure" });
+    const getChecks = ctx.forge.getChecks.bind(ctx.forge);
+    vi.spyOn(ctx.forge, "getChecks").mockImplementationOnce(async (...args) => {
+      const checks = await getChecks(...args);
+      await ctx.linear.removeLabel(ticket.id, LABELS.approved);
+      return checks;
+    });
+    await runRepair(ctx);
+    expect(ctx.forge.reruns).toEqual([]);
+    expect(ctx.forge.dispatched).toEqual([]);
+  });
+  it.each([
+    ["rc", "response"],
+    ["rc", "receipt"],
+    ["ci", "response"],
+    ["ci", "receipt"],
+  ] as const)(
+    "does not repeat a %s repair after losing its %s",
+    async (kind, failure) => {
+      const ctx = makeCtx();
+      const { pull } = world(ctx, {
+        mergeableState: kind === "rc" ? "dirty" : "clean",
+        checks: "failure",
+      });
+      if (kind === "ci")
+        ctx.forge.seedComment(
+          TEST_REPO,
+          5,
+          `${CI_RETRIED_PREFIX} at ${pull.headSha.slice(0, 12)}`,
+        );
+      if (failure === "response") {
+        const dispatch = ctx.forge.dispatchWorkflow.bind(ctx.forge);
+        vi.spyOn(ctx.forge, "dispatchWorkflow").mockImplementationOnce(
+          async (...args) => {
+            await dispatch(...args);
+            throw new Error("lost response");
+          },
+        );
+      } else {
+        const add = ctx.forge.addPullComment.bind(ctx.forge);
+        vi.spyOn(ctx.forge, "addPullComment").mockImplementation(
+          async (repo, number, body) => {
+            if (
+              body.startsWith(CI_FIX_DISPATCHED_PREFIX) ||
+              body.startsWith("🔀 Conflict resolution dispatched")
+            )
+              throw new Error("receipt unavailable");
+            return add(repo, number, body);
+          },
+        );
+      }
+      await expect(runRepair(ctx)).rejects.toThrow();
+      expect(ctx.forge.dispatched).toHaveLength(1);
+      const rows = await runRepair(ctx);
+      expect(ctx.forge.dispatched).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ needsYou: true, ref: "5" });
+      expect(rows[0]?.text).toContain("without a run receipt");
+    },
+  );
+
+  it.each(["CI while conflicting", "conflict while CI is red"])(
+    "waits for a live repair across both lanes (%s)",
+    async (scenario) => {
+      const ctx = makeCtx();
+      const { pull, integ } = world(ctx, {
+        mergeableState: scenario === "CI while conflicting" ? "dirty" : "clean",
+        checks: "failure",
+      });
+      if (scenario === "CI while conflicting") {
+        ctx.forge.seedRun({ id: 70, status: "in_progress" });
+        ctx.forge.seedComment(
+          TEST_REPO,
+          5,
+          `${CI_FIX_DISPATCHED_PREFIX} 70 (at ${pull.headSha.slice(0, 12)})`,
+        );
+      } else seedConflictDispatch(ctx, 70, pull.headSha, integ, "in_progress");
+      expect(await runRepair(ctx)).toEqual([]);
+      expect(ctx.forge.dispatched).toEqual([]);
+      expect(ctx.forge.reruns).toEqual([]);
+    },
+  );
+
+  it.each(["missing", "malformed", "overdue"])(
+    "surfaces %s repair runs without launching competing work",
+    async (scenario) => {
+      const ctx = makeCtx();
+      world(ctx, { checks: "failure" });
+      ctx.forge.seedComment(
+        TEST_REPO,
+        5,
+        `${CI_FIX_DISPATCHED_PREFIX} ${scenario === "malformed" ? "invalid" : "70"}`,
+      );
+      if (scenario === "overdue")
+        ctx.forge.seedRun({
+          id: 70,
+          status: "in_progress",
+          createdAt: "2026-10-02T08:00:00Z",
+        });
+      const rows = await runRepair(ctx);
+      expect(rows[0]).toMatchObject({ needsYou: true, ref: "5" });
+      expect(ctx.forge.dispatched).toEqual([]);
+      expect(ctx.forge.reruns).toEqual([]);
+    },
+  );
+
+  it.each([
+    "revoked",
+    "canceled",
+    "completed",
+    "proposal",
+    "verified",
+    "needs-human",
+    "another project",
+  ])("honors ticket state %s before automatic repairs", async (scenario) => {
+    const ctx = makeCtx();
+    const { ticket } = world(ctx, { mergeableState: "dirty" });
+    if (scenario === "revoked") ticket.labels = [];
+    if (["canceled", "completed"].includes(scenario))
+      ticket.stateType = scenario;
+    if (scenario === "proposal") ticket.labels.push(LABELS.proposal);
+    if (scenario === "verified") ticket.labels.push(LABELS.verified);
+    if (scenario === "needs-human") ticket.labels.push(LABELS.needsHuman);
+    if (scenario === "another project") ticket.projectId = "unrelated";
+    await runRepair(ctx);
+    expect(ctx.forge.dispatched).toEqual([]);
+    expect(ctx.forge.reruns).toEqual([]);
+  });
+
+  it("ignores repair receipts forged by another PR commenter", async () => {
+    const ctx = makeCtx();
+    world(ctx, { checks: "failure" });
+    ctx.forge.seedComment(
+      TEST_REPO,
+      5,
+      `${CI_FIX_DISPATCHED_PREFIX} 999`,
+      "untrusted-user",
+    );
+    await runRepair(ctx);
+    expect(ctx.forge.reruns).toHaveLength(1);
+    expect(ctx.forge.dispatched).toEqual([]);
+  });
+
+  it("repairs a partial owner handoff when its comment succeeded but its ticket label failed", async () => {
+    const ctx = makeCtx();
+    const { ticket, pull, integ } = world(ctx, { mergeableState: "dirty" });
+    seedConflictDispatch(ctx, 70, pull.headSha, integ);
+    seedConflictDispatch(ctx, 71, pull.headSha, integ);
+    vi.spyOn(ctx.linear, "addLabel").mockRejectedValueOnce(
+      new Error("Linear unavailable"),
+    );
+    await expect(runRepair(ctx)).rejects.toThrow();
+    expect(ctx.linear.labelsOf(ticket.id)).not.toContain(LABELS.needsHuman);
+    await runRepair(ctx);
+    expect(ctx.linear.labelsOf(ticket.id)).toContain(LABELS.needsHuman);
+    expect(
+      ctx.forge
+        .comments(TEST_REPO, 5)
+        .filter((body) => body.startsWith(CONFLICT_NEEDS_OWNER_PREFIX)),
+    ).toHaveLength(1);
   });
 });

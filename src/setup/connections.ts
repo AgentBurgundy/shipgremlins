@@ -91,6 +91,7 @@ export interface ProjectConnectionUsage {
     | "preview-bypass"
     | "test-sign-in"
     | "app-environment"
+    | "build-secret"
     | "slack-override"
     | "telemetry-read";
   label: string;
@@ -148,6 +149,19 @@ export function projectConnections(
           }
         }
         if (target.kind === "docker") {
+          for (const [id, name] of Object.entries(target.buildSecrets ?? {}))
+            references.push({
+              ...context,
+              name,
+              group: "preview",
+              provider: "docker",
+              targetType: "docker",
+              purpose: "build-secret",
+              label: `${targetName} · build secret ${id}`,
+              description:
+                "Build-only test credential. Mounted privately by BuildKit; never sent to the AI worker or app runtime.",
+              optional: !active,
+            });
           for (const [variable, name] of Object.entries(target.env ?? {}))
             references.push({
               ...context,
@@ -718,23 +732,32 @@ export function saveConnections(root: string, input: unknown): void {
         entry.name === name &&
         entry.usages.every(
           (usage) =>
-            usage.provider === "app" || usage.purpose === "app-environment",
+            usage.provider === "app" ||
+            usage.purpose === "app-environment" ||
+            usage.purpose === "build-secret",
         ),
     );
     let value = dedicatedInput ? raw : raw.trim();
     if (!value) continue;
     if (dedicatedInput) {
+      const buildOnly = dedicatedInput.usages.every(
+        (usage) => usage.purpose === "build-secret",
+      );
       if (
-        value.length > 16384 ||
+        value.length > (buildOnly ? 65536 : 16384) ||
         [...value].some(
           (character) =>
-            character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+            (character.charCodeAt(0) < 32 &&
+              !(buildOnly && [9, 10, 13].includes(character.charCodeAt(0)))) ||
+            character.charCodeAt(0) === 127,
         ) ||
         ["'", '"', "`"].every((quote) => value.includes(quote))
       )
         throw new ConnectionSaveError(
           "invalid_test_input",
-          "Test inputs must be single-line values under 16384 characters. Use a test credential that does not contain all three quote styles.",
+          buildOnly
+            ? "Build-only inputs must be text under 65536 characters without binary controls or all three quote styles."
+            : "Test inputs must be single-line values under 16384 characters. Use a test credential that does not contain all three quote styles.",
         );
       updates[name] = value;
       continue;

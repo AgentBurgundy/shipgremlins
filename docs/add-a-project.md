@@ -147,3 +147,7 @@ establish a browser session, exercise the app's email-delivery flow, or prove
 the current UI can use the code. The guided environment checker does not run
 this recipe, and Grumblins do not receive its database credential. Do not save
 a one-time code as a password or treat this legacy path as verified end to end.
+
+## Connect and let discovery begin
+
+Enabled new PMs can begin repository discovery as source and AI connections become ready. Linear and a verified test environment are required only for the later work that uses them. Project home explains setup failures, next retry times and direct remedies; existing paused crews stay paused. [Implementation evidence →](audits/backlog-autonomy.md)

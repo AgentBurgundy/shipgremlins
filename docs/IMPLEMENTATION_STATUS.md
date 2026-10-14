@@ -191,3 +191,7 @@ flow. For the separate release tools, provision the trusted verification boundar
 disable conflicting Linear completion automation, and perform a reviewed release.
 The controller does not provision candidate hosting or a trusted signer. See [setup](SETUP.md), [verification](VERIFICATION.md)
 and [Linear lifecycle](LINEAR_LIFECYCLE.md) for the concrete contracts.
+
+## v0.25 completion
+
+All 100 recorded improvements and 25 PM workspace polish changes are implemented, including the 11 previously explicit backlog items. The release preserves newer managed-access, epic, QA/rework and per-PM promotion behavior rather than replacing it with an older workflow. [Implementation evidence →](IMPROVEMENTS_100.md)

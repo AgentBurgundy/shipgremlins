@@ -14,12 +14,12 @@ class Element {
   hidden = false;
   id = "";
   disabled = false;
-  listeners = new Map<string, () => unknown>();
+  focus = vi.fn((_options?: object) => {});
+  listeners = new Map<string, (event?: unknown) => unknown>();
   href = "";
   rel = "";
   target = "";
   dataset: Record<string, string> = {};
-  focus = (_options?: object) => {};
   constructor(public tagName: string) {}
   append(...children: Element[]) {
     for (const child of children) child.parentElement = this;
@@ -28,14 +28,29 @@ class Element {
   setAttribute(name: string, value: string) {
     this.attributes.set(name, value);
   }
-  addEventListener(name: string, callback: () => unknown) {
+  getAttribute(name: string) {
+    return this.attributes.get(name) ?? null;
+  }
+  contains(element: Element): boolean {
+    return (
+      element === this || this.children.some((child) => child.contains(element))
+    );
+  }
+  querySelectorAll(selector: string): Element[] {
+    const tags = selector.split(",").map((tag) => tag.trim().toUpperCase());
+    return this.children.flatMap((child) => [
+      ...(tags.includes(child.tagName) ? [child] : []),
+      ...child.querySelectorAll(selector),
+    ]);
+  }
+  addEventListener(name: string, callback: (event?: unknown) => unknown) {
     this.listeners.set(name, callback);
   }
   replaceChildren(...children: Element[]) {
     this.children = children;
   }
-  fire(name: string) {
-    return this.listeners.get(name)?.();
+  fire(name: string, event?: unknown) {
+    return this.listeners.get(name)?.(event);
   }
   showModal() {
     this.open = true;
@@ -45,13 +60,6 @@ class Element {
   }
   reportValidity() {
     return true;
-  }
-  querySelectorAll(selector: string) {
-    const tags = selector.split(",").map((tag) => tag.toUpperCase());
-    return all(this).filter((item) => tags.includes(item.tagName));
-  }
-  contains(item: Element): boolean {
-    return this === item || this.children.some((child) => child.contains(item));
   }
   querySelector(selector: string) {
     return (
@@ -69,7 +77,11 @@ function fixture() {
     createProjectWorkspace: (
       root: Element,
       options: object,
-    ) => { setStatus(value: object, locked: boolean): void; render(): void };
+    ) => {
+      setStatus(value: object, locked: boolean): void;
+      render(): void;
+      refresh(): Promise<void>;
+    };
     createPmCharter: (
       root: Element,
       prefix: string,
@@ -91,9 +103,9 @@ function fixture() {
     addEventListener() {},
     createElement: (name: string) => {
       const element = new Element(name.toUpperCase());
-      element.focus = () => {
+      element.focus = vi.fn((_options?: object) => {
         document.activeElement = element;
-      };
+      });
       return element;
     },
     createTextNode: (value: string) =>
@@ -107,6 +119,7 @@ function fixture() {
     clearTimeout,
     setTimeout,
     queueMicrotask,
+    AbortController,
   };
   for (const name of [
     "crew-guidance",
@@ -123,7 +136,7 @@ function fixture() {
       ),
       context,
     );
-  return Object.assign(window, { testDocument: document });
+  return Object.assign(window, { testDocument: document, document });
 }
 const all = (root: Element): Element[] => [root, ...root.children.flatMap(all)];
 const text = (root: Element): string =>
@@ -798,6 +811,17 @@ describe("focused project crew workspace", () => {
       all(root).some((item) => item.dataset.editProject === "shipgremlins"),
     ).toBe(true);
     expect(
+      all(root).find((item) => item.className === "pm-workspace-nav"),
+    ).toBeUndefined();
+    expect(
+      all(root).filter((item) => item.className === "pm-project-link"),
+    ).toHaveLength(1);
+    expect(
+      all(root).find((item) => item.className === "pm-project-link")?.href,
+    ).toBe("/projects/shipgremlins");
+    expect(text(root)).not.toContain("All projects");
+    expect(text(root)).not.toContain("Project overview");
+    expect(
       text(
         all(root).find((item) => item.className === "pm-workspace-heading")!,
       ),
@@ -822,7 +846,268 @@ describe("focused project crew workspace", () => {
     view.render();
     expect(
       all(root).filter((item) => item.textContent === "Run discovery"),
+    ).toHaveLength(0);
+    expect(text(root)).toContain("Loading the latest saved knowledge");
+  });
+});
+
+describe("polished PM workspace interaction states", () => {
+  async function workspace(firstLoadFailure = false) {
+    const ui = fixture(),
+      root = new Element("MAIN");
+    const pages = {
+      current: "project",
+      project: "app",
+      pm: "core",
+      tab: "discovery",
+    };
+    const project = {
+      name: "app",
+      repo: "owner/app",
+      instanceId: "current",
+      areas: [
+        {
+          key: "core",
+          name: "Core Gremlin",
+          enabled: true,
+          discoveryRevision: "revision",
+          mandate: "Make useful improvements.",
+        },
+      ],
+    };
+    let data: object = { state: "empty", documents: [] };
+    let failure = firstLoadFailure;
+    const jobs: Record<string, unknown>[] = [];
+    const api = vi.fn(async () => {
+      if (failure) throw new Error("Connection unavailable");
+      return data;
+    });
+    ui.document.hidden = false;
+    const view = ui.createProjectWorkspace(root, {
+      pages,
+      api,
+      getJobs: () => jobs,
+    });
+    view.setStatus({ projects: [project] }, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    return {
+      ui,
+      root,
+      pages,
+      project,
+      view,
+      api,
+      jobs,
+      data: (value: object) => {
+        data = value;
+      },
+      fail: (value: boolean) => {
+        failure = value;
+      },
+    };
+  }
+  it("uses one contextual return link and one PM heading, without the empty sidebar or unrelated adoption action", async () => {
+    const f = await workspace();
+    expect(
+      all(f.root).filter((item) => item.className === "pm-project-link"),
     ).toHaveLength(1);
+    expect(
+      all(f.root)
+        .filter((item) => item.tagName === "H1")
+        .map((item) => item.textContent),
+    ).toEqual(["Core Gremlin"]);
+    expect(
+      all(f.root).find((item) => item.className === "workspace-project-header"),
+    ).toBeUndefined();
+    expect(
+      all(f.root).find((item) => item.className === "pm-workspace-nav"),
+    ).toBeUndefined();
+    expect(text(f.root)).not.toContain("Adopt a gremlin");
+    expect(
+      all(f.root).find((item) => item.dataset.editProject)?.dataset.editProject,
+    ).toBe("app");
+  });
+  it("shows one discovery action in a compact genuine empty state, without the nested illustration/callout", async () => {
+    const f = await workspace();
+    expect(
+      all(f.root).filter((item) => item.textContent === "Run discovery"),
+    ).toHaveLength(1);
+    const empty = all(f.root).find((item) =>
+      item.className.includes("pm-knowledge-empty"),
+    )!;
+    expect(all(empty).filter((item) => item.tagName === "IMG")).toHaveLength(0);
+    expect(text(empty)).toContain("No hosting or ticket tracker needed");
+    expect(
+      all(f.root).find((item) => item.className === "pm-learning-actions"),
+    ).toBeUndefined();
+  });
+  it("keeps cached knowledge during a refresh failure and gives a distinct recoverable first-load error", async () => {
+    const f = await workspace();
+    f.data({
+      state: "ready",
+      documents: [
+        { name: "discovery.md", content: "# Findings\nSaved evidence." },
+      ],
+    });
+    await f.view.refresh();
+    f.fail(true);
+    await f.view.refresh();
+    expect(text(f.root)).toContain("Saved evidence");
+    expect(
+      all(f.root).find((item) => item.attributes.get("role") === "alert"),
+    ).toBeDefined();
+    expect(
+      all(f.root).find((item) => item.className.includes("pm-knowledge-empty")),
+    ).toBeUndefined();
+    const blank = await workspace();
+    blank.view.refresh();
+    blank.fail(true);
+    await blank.view.refresh();
+    blank.ui.document.hidden = true;
+    // A fresh PM identity has no cached notes; failure must not advertise a blank product.
+    blank.pages.pm = "new";
+    const fresh = {
+      ...blank.project,
+      areas: [{ ...blank.project.areas[0]!, key: "new" }],
+    };
+    blank.view.setStatus({ projects: [fresh] }, false);
+    blank.ui.document.hidden = false;
+    await blank.view.refresh();
+    expect(text(blank.root)).toContain("Couldn’t load this knowledge");
+    expect(
+      all(blank.root).find((item) =>
+        item.className.includes("pm-knowledge-empty"),
+      ),
+    ).toBeUndefined();
+    blank.fail(false);
+    await blank.view.refresh();
+    expect(
+      all(blank.root).find((item) =>
+        item.className.includes("pm-knowledge-empty"),
+      ),
+    ).toBeDefined();
+  });
+  it("distinguishes queued from running discovery and ignores stale project/PM scope", async () => {
+    const f = await workspace();
+    const job = {
+      id: "one",
+      runId: 1,
+      type: "pm",
+      pmMode: "discovery",
+      project: "app",
+      projectInstanceId: "current",
+      area: "core",
+      discoveryRevision: "revision",
+      status: "queued",
+    };
+    f.jobs.push(job);
+    f.view.render();
+    expect(
+      all(f.root).find((item) => item.dataset.focusKey === "run-discovery"),
+    ).toMatchObject({ textContent: "Discovery queued", disabled: true });
+    job.status = "running";
+    f.view.render();
+    expect(
+      all(f.root).find((item) => item.dataset.focusKey === "run-discovery")
+        ?.textContent,
+    ).toBe("Discovery running…");
+    job.projectInstanceId = "old";
+    f.view.render();
+    expect(
+      all(f.root).find((item) => item.dataset.focusKey === "run-discovery")
+        ?.textContent,
+    ).toBe("Run discovery");
+  });
+  it("keeps native section links and moves keyboard focus without changing routes", async () => {
+    const f = await workspace();
+    const nav = all(f.root).find(
+      (item) => item.className === "pm-workspace-tabs",
+    )!;
+    f.ui.document.activeElement = nav.children[1]!;
+    const preventDefault = vi.fn();
+    nav.fire("keydown", { key: "ArrowRight", preventDefault });
+    expect(nav.children[2]!.focus).toHaveBeenCalled();
+    nav.fire("keydown", { key: "End", preventDefault });
+    expect(nav.children[5]!.focus).toHaveBeenCalled();
+    expect(f.pages.tab).toBe("discovery");
+    expect(nav.children[1]!.attributes.get("aria-current")).toBe("page");
+  });
+  it("restores the focused section after a status poll replaces the PM DOM", async () => {
+    const f = await workspace();
+    const original = all(f.root).find((item) =>
+      item.href.endsWith("tab=memory"),
+    )!;
+    f.ui.document.activeElement = original;
+    f.jobs.push({
+      id: "one",
+      runId: 1,
+      project: "app",
+      projectInstanceId: "current",
+      type: "pm",
+      area: "core",
+      status: "queued",
+    });
+    f.view.render();
+    const replacement = all(f.root).find((item) =>
+      item.href.endsWith("tab=memory"),
+    )!;
+    expect(replacement).not.toBe(original);
+    expect(replacement.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+  it("restores product exploration to its own action instead of the patrol launcher", async () => {
+    const f = await workspace();
+    f.pages.tab = "brief";
+    f.view.render();
+    const explore = all(f.root).find(
+      (item) => item.dataset.pmMode === "exploration",
+    )!;
+    f.ui.document.activeElement = explore;
+    f.jobs.push({
+      id: "one",
+      runId: 1,
+      project: "app",
+      projectInstanceId: "current",
+      type: "pm",
+      area: "core",
+      status: "queued",
+    });
+    f.view.render();
+    const replacement = all(f.root).find(
+      (item) => item.dataset.pmMode === "exploration",
+    )!;
+    expect(replacement.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(
+      all(f.root).find(
+        (item) => item.dataset.launchCrew === "pm" && !item.dataset.pmMode,
+      )?.focus,
+    ).not.toHaveBeenCalled();
+  });
+  it("clears an uncached first-load error when a replacement project starts loading", async () => {
+    const f = await workspace(true);
+    expect(text(f.root)).toContain("Couldn’t load this knowledge");
+    let finish!: (value: object) => void;
+    f.api.mockImplementationOnce(
+      () =>
+        new Promise<object>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    f.view.setStatus(
+      { projects: [{ ...f.project, instanceId: "replacement" }] },
+      false,
+    );
+    expect(text(f.root)).toContain("Loading the latest saved knowledge");
+    expect(text(f.root)).not.toContain("Connection unavailable");
+    expect(text(f.root)).not.toContain("Couldn’t load this knowledge");
+    finish({ state: "empty", documents: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      all(f.root).find((item) => item.className.includes("pm-knowledge-empty")),
+    ).toBeDefined();
   });
 });
 

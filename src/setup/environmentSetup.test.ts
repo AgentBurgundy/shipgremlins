@@ -356,18 +356,95 @@ describe("automatic environment preparation", () => {
     ).toMatchObject({ target: { access } });
     expect(h.verify).toHaveBeenCalledOnce();
   });
-  it("does not replace an existing URL or Docker environment implicitly", async () => {
-    useTarget({ kind: "url", role: "staging", url: "https://app.test" });
+  it.each([
+    { kind: "url", role: "staging", url: "https://app.test" },
+    {
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "image", image: "example/app:1" },
+      port: 3000,
+    },
+    {
+      kind: "railway",
+      role: "staging",
+      projectId: "project",
+      serviceId: "service",
+      environmentId: "staging",
+    },
+    {
+      kind: "cloud-run",
+      role: "staging",
+      projectId: "project",
+      region: "us-central1",
+      service: "staging-app",
+    },
+  ])(
+    "prepares the saved $kind environment without replacing it or requiring Vercel",
+    async (target) => {
+      useTarget(target);
+      const before = config().content;
+      const h = harness();
+      h.options.verifyReadiness = vi.fn(
+        async () => "The saved environment and project connections are ready.",
+      );
+      const { state } = await run(h);
+      expect(state).toMatchObject({
+        status: "ready",
+        step: "test_access",
+        message: "The saved environment and project connections are ready.",
+      });
+      expect(config().content).toBe(before);
+      expect(h.discover).not.toHaveBeenCalled();
+      expect(h.connect).not.toHaveBeenCalled();
+      expect(h.verify).toHaveBeenCalledOnce();
+      expect(h.options.verifyReadiness).toHaveBeenCalledOnce();
+    },
+  );
+  it("retains a failed Docker environment and routes missing inputs to Connections", async () => {
+    useTarget({
+      kind: "docker",
+      role: "staging",
+      recipe: { kind: "image", image: "example/app:1" },
+      port: 3000,
+    });
     const before = config().content;
     const h = harness();
-    const { state } = await run(h);
-    expect(state).toMatchObject({
+    h.options.verifyReadiness = vi.fn();
+    h.results([
+      {
+        status: "failed",
+        message: "Missing dedicated test inputs",
+        diagnosis: {
+          code: "app_inputs_missing",
+          title: "Missing inputs",
+          detail: "Save test inputs",
+          action: "manage_credentials",
+        },
+      },
+    ]);
+    expect((await run(h)).state).toMatchObject({
       status: "needs_input",
-      action: "choose_preview",
+      action: "manage_credentials",
     });
     expect(config().content).toBe(before);
-    expect(h.discover).not.toHaveBeenCalled();
-    expect(h.connect).not.toHaveBeenCalled();
+    expect(h.options.verifyReadiness).not.toHaveBeenCalled();
+  });
+  it("rejects stale settings changed during a hosted browser check", async () => {
+    useTarget({ kind: "url", role: "staging", url: "https://app.test" });
+    const h = harness();
+    const verify = h.verify.getMockImplementation()!;
+    h.verify.mockImplementation(async () => {
+      edit((raw) => {
+        raw.description = "Owner updated settings";
+      });
+      return verify();
+    });
+    h.options.verifyReadiness = vi.fn();
+    expect((await run(h)).state).toMatchObject({
+      status: "needs_input",
+      action: "retry",
+    });
+    expect(h.options.verifyReadiness).not.toHaveBeenCalled();
   });
   it("requires a choice for multiple exact repository projects and excludes unrelated projects", async () => {
     const h = harness();
@@ -476,9 +553,13 @@ describe("automatic environment preparation", () => {
     useTarget(target);
     const h = harness();
     h.passed();
+    h.options.verifyReadiness = vi.fn(
+      async () => "All project connections are ready.",
+    );
     expect((await run(h)).state?.status).toBe("ready");
     expect(h.verify).not.toHaveBeenCalled();
     expect(h.connect).not.toHaveBeenCalled();
+    expect(h.options.verifyReadiness).toHaveBeenCalledOnce();
     await run(h, { force: true });
     expect(h.verify).toHaveBeenCalledOnce();
   });

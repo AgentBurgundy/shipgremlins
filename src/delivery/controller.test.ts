@@ -213,6 +213,26 @@ function world(realSource = false) {
 }
 const noArtifacts = {} as DockerRunners;
 describe("local delivery controller integration", () => {
+  it.each(["promotion", "pull-request"] as const)(
+    "rejects unacknowledged automatic approval before %s coding or publication",
+    async (workflow) => {
+      const w = world();
+      if (workflow === "pull-request") {
+        w.project.config.workflow = {
+          kind: "pull-request",
+          baseBranch: "main",
+        };
+        w.payload.delivery!.base = "main";
+      }
+      w.ticket.labels.push("pm-auto-approved");
+      await expect(
+        w.controller.beforeDeveloper(w.job, w.payload, w.ticket),
+      ).rejects.toThrow("Automatic approval no longer matches");
+      expect(w.source).not.toHaveBeenCalled();
+      expect(w.forge.merged).toEqual([]);
+      expect(w.controller.deliveryStatus("game").deliveries).toEqual([]);
+    },
+  );
   it("defers a deployment race before recording a review plan, then resumes the same queued job", async () => {
     const w = world();
     await w.controller.beforeDeveloper(w.job, w.payload, w.ticket);

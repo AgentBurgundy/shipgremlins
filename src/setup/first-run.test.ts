@@ -382,4 +382,67 @@ describe("first useful mission guidance", () => {
     ).toBe(true);
     expect(next(status, [{ ...job, project: "other" }]).active).toBe(true);
   });
+  it("follows live work before an older first reviewable change", () => {
+    const status = {
+      ...connected(),
+      projects: [
+        project({
+          name: "established",
+          firstReviewableChange: { url: "https://github.com/org/app/pull/1" },
+        }),
+        withPm(),
+      ],
+    };
+    expect(
+      next(status, [
+        {
+          id: "live",
+          runId: 4,
+          type: "pm",
+          status: "running",
+          project: "my-app",
+          projectInstanceId: "current",
+        },
+        {
+          id: "queued",
+          runId: 5,
+          type: "pm",
+          status: "queued",
+          project: "established",
+          projectInstanceId: "current",
+        },
+      ]),
+    ).toMatchObject({
+      active: false,
+      label: "Follow the mission",
+      href: "/activity?run=live",
+    });
+    expect(next(status)).toMatchObject({
+      active: false,
+      label: "Open your projects",
+      href: "/projects",
+    });
+  });
+  it("explains automatic discovery instead of asking the owner to start it again", () => {
+    const state = next({
+      ...connected(),
+      projects: [withPm(), project({ name: "other" })].map((item, index) =>
+        index
+          ? item
+          : {
+              ...item,
+              autonomy: {
+                enabled: true,
+                state: "waiting",
+                message: "Your crew will explore the repository automatically.",
+              },
+            },
+      ),
+    });
+    expect(state).toMatchObject({
+      label: "Open project",
+      href: "/projects/my-app",
+    });
+    expect(state.description).toContain("automatically");
+  });
 });

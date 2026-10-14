@@ -168,7 +168,7 @@
       );
       const promote = el("section");
       promote.append(
-        el("h3", "Integration → staging"),
+        el("h3", "PM staging → staging"),
         el(
           "p",
           "Each PM tests its changes and collects a separate promotion after its configured number of tickets pass QA. Failed checks return to coding. You can explicitly prepare a smaller batch below; every verification check still applies.",
@@ -194,6 +194,13 @@
       promote.append(areaLabel, area, s.promote, s.advance);
       s.actions.append(s.sync, s.candidate, promote, s.confirmBox);
       s.productionIntro = el("section", undefined, "production-tracking");
+      s.release = button("Prepare staging → production PR", () =>
+        confirm(s, "release"),
+      );
+      s.releaseLink = el("a", "Open production release ↗");
+      s.releaseLink.hidden = true;
+      s.releaseLink.target = "_blank";
+      s.releaseLink.rel = "noopener noreferrer";
       s.openTracking = button("Track a production release", () => {
         s.trackingOpen = true;
         paint(s);
@@ -207,6 +214,8 @@
           "runner-guidance",
         ),
         s.openTracking,
+        s.release,
+        s.releaseLink,
       );
       s.tracking = el(
         "section",
@@ -439,13 +448,17 @@
           "p",
           action === "advance"
             ? "Advance one approved ShipGremlins implementation? This may merge its exact reviewed PR into the integration branch. It does not merge staging or production."
-            : "Prepare this PM's current tested tickets now, even if fewer than its automatic batch target? The controller still checks the assembled candidate and any configured browser verifier before publishing. This does not merge staging or production.",
+            : action === "release"
+              ? "Check staging and open or reuse its draft release PR to production. You review and merge the release."
+              : "Prepare this PM's current tested tickets now, even if fewer than its automatic batch target? The controller still checks the assembled candidate and any configured browser verifier before publishing. This does not merge staging or production.",
         ),
       );
       const accept = button(
         action === "advance"
           ? "Advance approved work"
-          : "Prepare this PM's batch now",
+          : action === "release"
+            ? "Prepare release"
+            : "Prepare this PM's batch now",
         async () => {
           if (s.busy || isLocked()) return;
           s.busy = true;
@@ -456,6 +469,11 @@
               `${endpoint(s)}/${action}`,
               action === "promote" ? { area: s.area.value } : {},
             );
+            if (s.data.release) {
+              s.releaseLink.href = s.data.release.url;
+              s.releaseLink.hidden = false;
+              s.pr.value = String(s.data.release.number);
+            }
             s.confirm = "";
             s.confirmBox.hidden = true;
             await onChanged?.(s.project.name);
@@ -486,7 +504,8 @@
       s.actions.hidden = !available || s.trackingOpen;
       s.productionIntro.hidden = !available || s.trackingOpen;
       s.tracking.hidden = !available || !s.trackingOpen;
-      s.handoffs.hidden = s.trackingOpen;
+      s.handoffs.hidden =
+        s.trackingOpen || s.data?.candidateSetup?.required === false;
       s.declarations.hidden = s.trackingOpen;
       s.openTracking.disabled = disabled;
       const sync = s.data?.stagingSync;
@@ -537,7 +556,7 @@
         }
       }
       const candidate = s.data?.candidateSetup;
-      s.candidate.hidden = !candidate;
+      s.candidate.hidden = !candidate || candidate.required === false;
       const candidateSignature = JSON.stringify(candidate);
       if (
         candidate &&
@@ -600,7 +619,8 @@
           (!s.data ? "Loading delivery controls…" : ""),
         Boolean(s.error || operation?.phase === "error"),
       );
-      s.promote.disabled = disabled || !s.area.value;
+      s.promote.disabled = disabled;
+      s.release.disabled = disabled;
       s.advance.disabled = disabled;
       s.save.disabled = disabled || !s.states?.length;
       const catalog = JSON.stringify([s.data?.revision, s.states]);

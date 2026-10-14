@@ -26,6 +26,8 @@ describe("stopped-line recovery", () => {
       ticket: recovery.identifier,
       attempt: "1",
       kind: "build",
+      marker: expect.any(String),
+      scope: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     ctx.forge.seedRun({
       id: first.runId,
@@ -38,6 +40,8 @@ describe("stopped-line recovery", () => {
       ticket: recovery.identifier,
       attempt: "2",
       kind: "build",
+      marker: expect.any(String),
+      scope: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
   });
 
