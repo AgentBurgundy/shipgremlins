@@ -77,6 +77,30 @@ function delivery(
   };
 }
 describe("project operations priorities", () => {
+  it("preserves observed coding holds when project operations refresh the autonomy card", () => {
+    const codingPickup = {
+      state: "current" as const,
+      needsReview: [
+        {
+          ticketId: "ticket-2",
+          identifier: "SHI-2",
+          area: "core",
+          jobId: "failed-2",
+          runId: 2,
+          status: "failed" as const,
+          reason: "previous-failed" as const,
+          href: "/activity?run=failed-2",
+        },
+      ],
+    };
+    expect(
+      projectOperations(root, "app", [], context, [], [], codingPickup).autonomy
+        .codingPickup,
+    ).toEqual(codingPickup);
+    expect(
+      projectOperations(root, "app", [], context).autonomy.codingPickup,
+    ).toBeUndefined();
+  });
   it("keeps automatic delivery and active repairs out of the human inbox", () => {
     const pending = [
       "awaiting-merge",

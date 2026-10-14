@@ -3113,6 +3113,7 @@ export function createDashboardServer(
                   context,
                   runnerState.execution,
                   delivery.deliveryStatus(name).deliveries,
+                  preparation.codingPickup?.(name, jobs),
                 );
               } catch {
                 return {
@@ -3164,6 +3165,7 @@ export function createDashboardServer(
                 context,
                 runnerState.execution,
                 delivery.deliveryStatus(name).deliveries,
+                preparation.codingPickup?.(name, jobs),
               ),
             );
           } else if (
