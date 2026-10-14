@@ -365,8 +365,8 @@ describe("repository-first project welcome", () => {
       (item) => item.attributes.get("aria-current") === "step",
     );
     expect(current).toHaveLength(1);
-    expect(text(current[0]!)).toContain("Activate daily patrols");
-    await byText(f.root, "Activate ready crew").fire("click");
+    expect(text(current[0]!)).toContain("Autopilot");
+    await byText(f.root, "Start autopilot").fire("click");
     expect(api).toHaveBeenLastCalledWith("/api/projects/app/crew/activate", {
       projectRevision: "fresh-project",
       areasRevision: "fresh-areas",
@@ -385,9 +385,109 @@ describe("repository-first project welcome", () => {
       setupOnly: true,
     });
     expect(text(f.root)).toContain("Your crew is ready.");
-    expect(text(f.root)).toContain("Activate ready crew");
+    expect(text(f.root)).toContain("Start autopilot");
     expect(text(f.root)).not.toContain("Grow your crew");
     expect(text(f.root)).not.toContain("Meet Pip");
+    f.view.destroy();
+  });
+  it("keeps a single next action outside the collapsed complete checklist", async () => {
+    const f = fixture(async () => setup(true));
+    await settle();
+    f.view.mount(f.root, readyProject(), {
+      suggestionsOnly: true,
+      setupOnly: true,
+    });
+    const checklist = walk(f.root).find((node) => node.tagName === "DETAILS")!;
+    expect(byText(checklist, "View setup checks")).toBeDefined();
+    expect(
+      walk(checklist).filter((node) => node.tagName === "LI"),
+    ).toHaveLength(7);
+    const actions = walk(f.root).filter((node) =>
+      ["BUTTON", "A"].includes(node.tagName),
+    );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]!.textContent).toBe("Start autopilot");
+    expect(checklist.contains(actions[0]!)).toBe(false);
+    f.view.destroy();
+  });
+  it("preserves activation errors on the setup-only crew surface without retrying the write", async () => {
+    const api = vi.fn(async (url: string) => {
+      if (url.endsWith("/crew/activate"))
+        throw new Error("Browser access changed. Test it again.");
+      return url.endsWith("/readiness")
+        ? { projectRevision: "p", areasRevision: "a" }
+        : setup(true);
+    });
+    const f = fixture(api);
+    await settle();
+    f.view.mount(f.root, readyProject(), {
+      suggestionsOnly: true,
+      setupOnly: true,
+    });
+    await byText(f.root, "Start autopilot").fire("click");
+    expect(text(f.root)).toContain("Browser access changed. Test it again.");
+    expect(
+      walk(f.root).some((node) => node.attributes.get("role") === "alert"),
+    ).toBe(true);
+    expect(
+      api.mock.calls.filter(([url]) => url.endsWith("/crew/activate")),
+    ).toHaveLength(1);
+    expect(f.onSaved).not.toHaveBeenCalled();
+    f.view.destroy();
+  });
+  it("keeps returned activation readiness saved when only the dashboard refresh fails", async () => {
+    const readiness = readyProject().readiness;
+    const savedReadiness = {
+      ...readiness,
+      areas: readiness.areas.map((area) => ({
+        ...area,
+        enabled: true,
+        codingEnabled: true,
+      })),
+    };
+    const api = vi.fn(async (url: string) =>
+      url.endsWith("/crew/activate")
+        ? { ok: true, readiness: savedReadiness, message: "Autopilot is on." }
+        : url.endsWith("/readiness")
+          ? { projectRevision: "p", areasRevision: "a" }
+          : setup(true),
+    );
+    const f = fixture(
+      api,
+      vi.fn(async () => {
+        throw new Error("Refresh unavailable");
+      }),
+    );
+    await settle();
+    f.view.mount(f.root, readyProject(), {
+      suggestionsOnly: true,
+      setupOnly: true,
+    });
+    await byText(f.root, "Start autopilot").fire("click");
+    expect(byText(f.root, "Start autopilot")).toBeUndefined();
+    expect(text(f.root)).toContain("Autopilot is on.");
+    expect(text(f.root)).toContain(
+      "Refresh the dashboard to see the saved status.",
+    );
+    expect((f.root.children[0] as Element & { hidden: boolean }).hidden).toBe(
+      false,
+    );
+    expect(
+      api.mock.calls.filter(([url]) => url.endsWith("/crew/activate")),
+    ).toHaveLength(1);
+    f.view.destroy();
+  });
+  it("does not require another AI inspection to activate an already adopted and ready crew", async () => {
+    const api = vi.fn(async () => ({ status: "idle", revision: "idle" }));
+    const f = fixture(api);
+    await settle();
+    f.view.mount(f.root, readyProject(), {
+      suggestionsOnly: true,
+      setupOnly: true,
+    });
+    expect(byText(f.root, "Start autopilot")).toBeDefined();
+    expect(walk(f.root).filter((node) => node.tagName === "A")).toHaveLength(0);
+    expect(api).toHaveBeenCalledExactlyOnceWith("/api/projects/app/onboarding");
     f.view.destroy();
   });
   it("surfaces a failed activation without a retry or a claimed active crew", async () => {
@@ -401,7 +501,7 @@ describe("repository-first project welcome", () => {
       f = fixture(api);
     await settle();
     f.view.mount(f.root, readyProject(), { suggestionsOnly: true });
-    await byText(f.root, "Activate ready crew").fire("click");
+    await byText(f.root, "Start autopilot").fire("click");
     expect(
       api.mock.calls.filter(([url]) => url.endsWith("/crew/activate")),
     ).toHaveLength(1);
@@ -434,7 +534,7 @@ describe("repository-first project welcome", () => {
     });
     await settle();
     f.view.mount(f.root, project, { suggestionsOnly: true });
-    await byText(f.root, "Verify & activate crew").fire("click");
+    await byText(f.root, "Verify & start autopilot").fire("click");
     expect(api.mock.calls.slice(-3).map(([url]) => url)).toEqual([
       "/api/projects/app/verify",
       "/api/projects/app/readiness",
@@ -475,7 +575,7 @@ describe("repository-first project welcome", () => {
     });
     await settle();
     f.view.mount(f.root, project, { suggestionsOnly: true });
-    await byText(f.root, "Verify & activate crew").fire("click");
+    await byText(f.root, "Verify & start autopilot").fire("click");
     expect(api.mock.calls.some(([url]) => url.endsWith("/crew/activate"))).toBe(
       false,
     );
@@ -496,7 +596,7 @@ describe("repository-first project welcome", () => {
     )!.ready = false;
     project.readiness.areas[0]!.canRun = false;
     f.view.mount(f.root, project, { suggestionsOnly: true });
-    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    expect(byText(f.root, "Start autopilot")).toBeUndefined();
     const environment = walk(f.root).find(
       (item) => item.tagName === "A" && item.textContent === "Test app access",
     )!;
@@ -506,7 +606,7 @@ describe("repository-first project welcome", () => {
     const badSchedule = readyProject();
     badSchedule.readiness.areas[0]!.canEnable = false;
     f.view.mount(f.root, badSchedule, { suggestionsOnly: true });
-    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    expect(byText(f.root, "Start autopilot")).toBeUndefined();
     f.view.destroy();
   });
   it("does not ask repository-only projects to connect browser hosting or sign-in", async () => {
@@ -524,7 +624,7 @@ describe("repository-first project welcome", () => {
     );
     expect(text(f.root)).toContain("Confirm repository checks");
     expect(text(f.root)).not.toContain("Test app access");
-    expect(byText(f.root, "Activate ready crew")).toBeDefined();
+    expect(byText(f.root, "Start autopilot")).toBeDefined();
     f.view.destroy();
   });
   it("keeps an active ready crew focused without repeating the completed setup checklist", async () => {
@@ -539,7 +639,7 @@ describe("repository-first project welcome", () => {
           item.attributes.get("aria-label") === "Project setup progress",
       ),
     ).toBeUndefined();
-    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    expect(byText(f.root, "Start autopilot")).toBeUndefined();
     expect(text(f.root)).toContain("Grow your crew");
     f.view.destroy();
   });
@@ -593,7 +693,7 @@ describe("repository-first project welcome", () => {
       { ...project, verification: { mode: "repository" } },
       { suggestionsOnly: true },
     );
-    expect(byText(f.root, "Activate ready crew")).toBeUndefined();
+    expect(byText(f.root, "Start autopilot")).toBeUndefined();
     const action = walk(f.root).find(
       (item) =>
         item.tagName === "A" &&

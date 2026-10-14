@@ -603,7 +603,7 @@
       !runnerStatus
         ? "Worker status has not loaded."
         : verified.length
-          ? `${verified.length - busy} idle · ${busy} busy · browser verified`
+          ? `${verified.length - busy} idle · ${busy} busy`
           : workers.length
             ? `${workers.length} configured · none currently verified and available`
             : "Create a worker to run jobs.",
@@ -5993,10 +5993,12 @@
     onConnect: (project, connectionId) =>
       connectProjectService("linear", project, connectionId),
     onSaved: refreshStatus,
-    onReady: (project) =>
-      pages.navigate(
-        `/projects/${encodeURIComponent(project)}?tab=environment`,
-      ),
+    onReady: (name) => {
+      const project = currentStatus?.projects?.find(
+        (item) => item.name === name,
+      );
+      pages.navigate(window.projectSetupDestination(project || { name }));
+    },
   });
   async function connectProjectService(
     provider,

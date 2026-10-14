@@ -54,8 +54,9 @@ phase sequences.
 
 ## Run overview
 
-Overview and Activity show active-run cards with provider, elapsed time, strategy,
-repair count and stage rail. Expand a card to inspect its recorded timeline inline.
+Mission control and Runs show the current stage, elapsed time, repair count and
+stage rail on active-run cards. Expand a card for its provider, strategy and
+recorded timeline inline.
 Project and status filters narrow the board. Stale workers retain their last
 observed phase; old runs without records show stage unavailable. There are no
 invented completion percentages or estimated finish times.

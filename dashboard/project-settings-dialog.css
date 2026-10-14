@@ -3,9 +3,9 @@
   max-height: min(860px, calc(100dvh - 40px));
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--line, #dce5dd);
-  border-radius: 16px;
-  box-shadow: 0 24px 80px #18342a2e;
+  border: 1px solid var(--line, var(--line));
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 24%);
 }
 .project-settings-dialog > form {
   display: flex;
@@ -18,7 +18,7 @@
   flex: 0 0 auto;
   padding: 20px 24px 0;
   gap: 16px;
-  background: #fff;
+  background: var(--surface);
 }
 .project-settings-dialog .settings-dialog-heading > div {
   flex: 1;
@@ -52,16 +52,16 @@
   border-bottom: 2px solid transparent;
   border-radius: 0;
   background: transparent;
-  color: var(--muted, #65756c);
+  color: var(--muted, var(--muted));
   font-weight: 600;
   min-height: 40px;
 }
 .project-settings-dialog .project-editor-sections button[aria-current="page"],
 .project-settings-dialog .project-editor-sections button[aria-selected="true"],
 .project-settings-dialog .project-editor-sections button.active {
-  border-bottom-color: #286448;
-  color: #286448;
-  background: transparent;
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .project-settings-dialog .settings-dialog-body {
   display: flex;
@@ -97,7 +97,7 @@
   flex-shrink: 0;
   margin: 0 0 16px;
   padding: 14px;
-  border-radius: 10px;
+  border-radius: 8px;
 }
 .project-settings-dialog .settings-discard p {
   margin: 0 0 10px;
@@ -141,8 +141,8 @@
 .project-settings-dialog .linear-mapping-row {
   gap: 12px 20px;
   padding: 14px;
-  background: #fff;
-  border-color: var(--line, #dce5dd);
+  background: var(--surface);
+  border-color: var(--line, var(--line));
 }
 .project-settings-dialog .linear-mapping-row > * {
   min-width: 0;
@@ -157,8 +157,8 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px 24px;
-  border-top: 1px solid var(--line, #dce5dd);
-  background: #fafbf9;
+  border-top: 1px solid var(--line, var(--line));
+  background: var(--surface);
 }
 .project-settings-dialog .settings-dialog-footer .small-button {
   padding: 8px 10px;
@@ -171,7 +171,7 @@
   .project-settings-dialog {
     width: calc(100vw - 16px);
     max-height: calc(100dvh - 16px);
-    border-radius: 14px;
+    border-radius: 8px;
   }
   .project-settings-dialog .settings-dialog-heading {
     padding: 18px 16px 0;

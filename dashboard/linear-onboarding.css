@@ -3,18 +3,18 @@
   max-height: min(720px, calc(100dvh - 40px));
   padding: 0;
   overflow: hidden;
-  color: var(--ink, #15392c);
-  background: #fff;
-  border: 1px solid var(--line, #dce5dd);
-  border-radius: 16px;
-  box-shadow: 0 24px 90px #102b2940;
+  color: var(--ink, var(--ink));
+  background: var(--surface);
+  border: 1px solid var(--line, var(--line));
+  border-radius: 10px;
+  box-shadow: 0 24px 90px rgb(0 0 0 / 24%);
 }
 .linear-onboarding[open] {
   display: flex;
   flex-direction: column;
 }
 .linear-onboarding::backdrop {
-  background: #102b2966;
+  background: color-mix(in srgb, var(--surface-inset) 40%, transparent);
   backdrop-filter: blur(5px);
 }
 .linear-onboarding-header {
@@ -24,12 +24,12 @@
   justify-content: space-between;
   gap: 20px;
   padding: 20px 22px 18px;
-  border-bottom: 1px solid #e3e9df;
+  border-bottom: 1px solid var(--line);
 }
 .linear-onboarding-header .eyebrow {
   margin: 0 0 9px;
-  color: #697967;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.15em;
 }
@@ -63,27 +63,27 @@
   font-size: 13px;
 }
 .linear-onboarding-project {
-  color: #667567;
+  color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 .linear-onboarding-account {
-  color: #667567;
+  color: var(--muted);
   font-size: 13px;
 }
 .linear-onboarding-error {
   padding: 13px 15px;
-  color: #853b23;
-  background: #fff2e8;
-  border: 1px solid #f0d2be;
-  border-radius: 12px;
+  color: var(--danger);
+  background: var(--warning-soft);
+  border: 1px solid var(--danger-line);
+  border-radius: 8px;
   overflow-wrap: anywhere;
 }
 .linear-onboarding-team-card {
   padding: 14px 16px;
-  border: 1px solid #dce6d5;
-  border-radius: 10px;
-  background: #f4f8ee;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
   font-weight: 600;
 }
 .linear-onboarding-team-label {
@@ -95,10 +95,10 @@
   width: 100%;
   min-width: 0;
   min-height: 42px;
-  border: 1px solid #cedccc;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--surface);
   color: inherit;
   font: inherit;
 }
@@ -114,16 +114,16 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  color: #234b31;
-  background: #e1efce;
+  color: var(--ink);
+  background: var(--accent-soft);
   font-size: 24px;
 }
 .linear-onboarding-progress {
-  color: #667567;
+  color: var(--muted);
 }
 @media (max-width: 520px) {
   .linear-onboarding {
-    border-radius: 18px;
+    border-radius: 10px;
   }
   .linear-onboarding-header {
     padding: 22px 20px 16px;

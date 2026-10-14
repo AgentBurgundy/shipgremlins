@@ -254,7 +254,7 @@
           );
           if (!result.job?.id)
             throw new Error(
-              "The server did not confirm this run. Check Activity before trying again.",
+              "The server did not confirm this run. Check Runs before trying again.",
             );
           confirmedMessage = "Run queued. Automation is unchanged.";
           acceptedJobs.set(key, {
@@ -288,7 +288,7 @@
             ? {
                 busy: true,
                 mode,
-                message: `${confirmedMessage} The dashboard could not refresh. ${automation ? "Refresh before changing automation again." : "Open Activity to follow this run."}`,
+                message: `${confirmedMessage} The dashboard could not refresh. ${automation ? "Refresh before changing automation again." : "Open Runs to follow this run."}`,
               }
             : { busy: true, mode, error: true, message: error.message },
         );

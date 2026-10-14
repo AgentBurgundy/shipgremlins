@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="theme-color" content="#13231c" />
-    <title>Your crew · ShipGremlins</title>
+    <meta name="theme-color" content="#0b1015" />
+    <meta name="color-scheme" content="dark" />
+    <title>Mission control · ShipGremlins</title>
     <link rel="icon" type="image/svg+xml" href="/assets/mark.svg" />
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/update-banner.css" />
@@ -93,6 +94,7 @@
     <link rel="stylesheet" href="/crew-recommendations.css" />
     <link rel="stylesheet" href="/pm-controls.css" />
     <link rel="stylesheet" href="/pm-workspace.css" />
+    <link rel="stylesheet" href="/mission-control.css" />
   </head>
   <body class="auth-pending">
     <div id="dashboard-sign-in" aria-live="polite">
@@ -116,7 +118,11 @@
         id="workspace-navigation"
         aria-label="Workspace navigation"
       >
-        <a class="brand" href="/overview" aria-label="ShipGremlins overview">
+        <a
+          class="brand"
+          href="/overview"
+          aria-label="ShipGremlins mission control"
+        >
           <img
             class="brand-mark"
             src="/assets/mark.svg"
@@ -126,10 +132,10 @@
           />
           <span
             >Ship<span class="brand-light">Gremlins</span
-            ><small>YOUR PRODUCT CREW</small></span
+            ><small>AUTONOMOUS DEVELOPMENT</small></span
           >
         </a>
-        <div class="workspace-label">WORKSPACE</div>
+        <div class="workspace-label">COMMAND</div>
         <nav class="navigation" aria-label="Main">
           <a class="nav-item" href="/overview"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
@@ -138,23 +144,14 @@
               <rect x="3" y="14" width="7" height="7" rx="1.5" />
               <rect x="14" y="14" width="7" height="7" rx="1.5" />
             </svg>
-            Overview</a
+            Mission control</a
           >
           <a class="nav-item" href="/inbox"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 4h16v16H4zM4 14h5l2 3h2l2-3h5M8 8h8" /></svg
-            >Review inbox<span class="nav-count" id="inbox-count">—</span></a
+            >Approvals<span class="nav-count" id="inbox-count">—</span></a
           >
 
-          <a class="nav-item" href="/connections"
-            ><svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="m9 15 6-6m-4-3 1-1a5 5 0 0 1 7 7l-3 3m-5 3-1 1a5 5 0 0 1-7-7l3-3"
-              />
-            </svg>
-            Connections
-            <span class="nav-count" id="connection-count">—</span></a
-          >
           <a class="nav-item" href="/projects"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -169,19 +166,31 @@
               <circle cx="8" cy="12" r="1" />
               <circle cx="16" cy="12" r="1" />
             </svg>
-            Your gremlins <span class="nav-count" id="runner-count">—</span></a
+            Agents <span class="nav-count" id="runner-count">—</span></a
           >
           <a class="nav-item" href="/activity"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M3 12h4l3-8 4 16 3-8h4" />
             </svg>
-            Activity</a
+            Runs</a
           >
           <a class="nav-item" href="/usage"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 20h16M6 16v-5M12 16V4M18 16V8" />
             </svg>
             Usage</a
+          >
+        </nav>
+        <div class="workspace-label">WORKSPACE</div>
+        <nav class="navigation" aria-label="Workspace tools">
+          <a class="nav-item" href="/connections"
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="m9 15 6-6m-4-3 1-1a5 5 0 0 1 7 7l-3 3m-5 3-1 1a5 5 0 0 1-7-7l3-3"
+              />
+            </svg>
+            Connections
+            <span class="nav-count" id="connection-count">—</span></a
           >
           <a class="nav-item" href="/settings"
             ><svg viewBox="0 0 24 24" aria-hidden="true">
@@ -192,7 +201,7 @@
             Settings</a
           >
         </nav>
-        <div class="workspace-label project-nav-label">YOUR PROJECTS</div>
+        <div class="workspace-label project-nav-label">PROJECTS</div>
         <nav
           class="navigation project-navigation"
           id="project-navigation"
@@ -200,7 +209,7 @@
         ></nav>
         <div class="sidebar-bottom">
           <div class="local-indicator">
-            <span aria-hidden="true"></span> Self-hosted, by you
+            <span aria-hidden="true"></span> Self-hosted workspace
           </div>
           <a
             href="https://github.com/AgentBurgundy/shipgremlins/blob/main/docs/SETUP.md"
@@ -208,7 +217,7 @@
             rel="noreferrer"
             >Setup guide <span aria-hidden="true">↗</span></a
           >
-          <p>Open source. Slightly feral.</p>
+          <p>Your code. Your control.</p>
         </div>
       </aside>
 
@@ -231,7 +240,7 @@
             class="breadcrumbs"
             aria-label="Breadcrumb"
           >
-            <span aria-current="page">Overview</span>
+            <span aria-current="page">Mission control</span>
           </nav>
           <button
             id="quick-jump-trigger"
@@ -239,7 +248,7 @@
             type="button"
             aria-haspopup="dialog"
           >
-            <span>Find anything</span><kbd>⌘ / Ctrl K</kbd>
+            <span>Search workspace</span><kbd>⌘ / Ctrl K</kbd>
           </button>
           <a class="auth-account-link" href="/settings#account-access"
             >Account</a
@@ -264,11 +273,10 @@
           >
             <div class="panel-heading">
               <div>
-                <span class="eyebrow muted">YOU MAKE THE CALL</span>
-                <h1 id="inbox-title">Review inbox</h1>
+                <span class="eyebrow muted">DECISION QUEUE</span>
+                <h1 id="inbox-title">Approvals</h1>
                 <p>
-                  Decisions, blockers, and evidence from every project. Nothing
-                  is approved by opening this page.
+                  Review proposed work, resolve blockers, and inspect evidence.
                 </p>
               </div>
               <button type="button" class="small-button" id="refresh-inbox">
@@ -280,19 +288,21 @@
             </div>
           </section>
           <section
-            class="hero"
+            class="hero mission-heading"
             data-page="overview"
             id="overview"
             aria-labelledby="welcome-title"
           >
             <div class="hero-copy">
-              <span class="eyebrow" id="overview-eyebrow"
-                >YOUR FIRST USEFUL CHANGE</span
+              <span class="eyebrow mission-kicker" id="overview-eyebrow"
+                >MISSION CONTROL</span
               >
-              <h1 id="welcome-title">Make your app better.</h1>
-              <p id="welcome-description">
-                Connect your app, review its setup, and adopt a gremlin to learn
-                the code. Then choose a useful change together.
+              <h1 class="mission-title" id="welcome-title">
+                Build your autonomous crew.
+              </h1>
+              <p class="mission-description" id="welcome-description">
+                Connect a repository, choose your agents, and start autonomous
+                work.
               </p>
               <a
                 id="overview-primary-action"
@@ -314,26 +324,10 @@
                 limits.
               </p>
             </div>
-            <div class="hero-art">
-              <div class="hero-orbit" aria-hidden="true"></div>
-              <span class="mascot-note" aria-hidden="true"
-                >READY TO NITPICK.</span
-              ><img
-                src="/assets/gremlin.webp"
-                width="480"
-                height="540"
-                alt="A friendly green gremlin proudly holding a checked bug report"
-                fetchpriority="high"
-              />
-            </div>
-            <div class="hero-footnote">
-              <span class="tiny-star" aria-hidden="true">✳</span> Real browser
-              evidence. Progress you can follow.
-            </div>
           </section>
 
           <section
-            class="overview-metrics"
+            class="overview-metrics mission-system-strip"
             data-page="overview"
             aria-label="Workspace at a glance"
           >
@@ -346,22 +340,22 @@
               ></a
             >
             <a class="metric-card" href="/runners"
-              ><span>Your crew</span><strong id="overview-pm-count">—</strong
+              ><span>Product managers</span
+              ><strong id="overview-pm-count">—</strong
               ><small
-                >Your crew’s areas of focus
+                >Assigned areas of focus
                 <span aria-hidden="true">↗</span></small
               ></a
             >
             <a class="metric-card" href="/runners#workers"
-              ><span>Available runners</span
+              ><span>Workers ready</span
               ><strong id="overview-worker-count">—</strong
               ><small id="overview-worker-note"
                 >Checking worker status…</small
               ></a
             >
             <a class="metric-card" href="/activity"
-              ><span>Work in progress</span
-              ><strong id="overview-job-count">—</strong
+              ><span>Active runs</span><strong id="overview-job-count">—</strong
               ><small id="overview-job-note">Checking current work…</small></a
             >
           </section>
@@ -443,10 +437,10 @@
           >
             <div class="project-section-title">
               <div>
-                <span class="eyebrow muted">PROGRESS AT A GLANCE</span>
-                <h2 id="workspace-projects-title">Your projects</h2>
+                <span class="eyebrow muted">PROJECT STATUS</span>
+                <h2 id="workspace-projects-title">Projects</h2>
               </div>
-              <a href="/inbox" class="small-button">Open review inbox →</a>
+              <a href="/inbox" class="small-button">Review approvals →</a>
             </div>
             <div id="workspace-projects-list"></div>
           </section>
@@ -2140,10 +2134,9 @@
           >
             <div class="panel-heading">
               <div>
-                <h1 id="runners-title">Your gremlins</h1>
+                <h1 id="runners-title">Agents</h1>
                 <p>
-                  Send a PM to investigate, or a Coding Gremlin to work on an
-                  approved ticket.
+                  Configure workers or launch a PM investigation and coding run.
                 </p>
               </div>
               <a class="small-button" href="#workers"
@@ -2369,10 +2362,10 @@
           >
             <div class="panel-heading">
               <div>
-                <h1 id="activity-title">Activity</h1>
+                <h1 id="activity-title">Runs</h1>
                 <p>
-                  Visible tool calls, progress, checks, and evidence from
-                  running and past jobs.
+                  Follow active agents through each stage and review completed
+                  work.
                 </p>
               </div>
               <span class="runtime-badge" id="job-count">0 jobs</span>
@@ -2940,24 +2933,15 @@
             </section>
           </section>
 
-          <section
-            class="next-card"
+          <details
+            class="mission-panel mission-diagnostics"
             data-page="overview"
             aria-labelledby="next-title"
           >
-            <img
-              src="/assets/gremlin-security.webp"
-              width="512"
-              height="576"
-              alt="A gremlin inspector ready to check your setup"
-              loading="lazy"
-            />
+            <summary id="next-title">Connection diagnostics</summary>
             <div>
-              <span class="eyebrow muted">NEXT UP</span>
-              <h2 id="next-title">Check your project connections</h2>
               <p>
-                Run a live check before your crew gets to work. You can also
-                verify connections from any project’s settings.
+                Run a live check from the terminal or any project’s settings.
               </p>
               <div class="command-line">
                 <code id="doctor-command">gremlins doctor PROJECT</code
@@ -2976,7 +2960,7 @@
                 role="status"
               ></span>
             </div>
-          </section>
+          </details>
           <footer class="page-footer">
             <span
               ><span class="footer-mark" aria-hidden="true">{g}</span> Small

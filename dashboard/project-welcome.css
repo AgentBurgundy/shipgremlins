@@ -1,8 +1,8 @@
 .project-welcome {
   padding: clamp(20px, 2.7vw, 28px);
-  background: #fff;
-  border: 1px solid #dbe5dd;
-  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
   min-width: 0;
   margin-bottom: 24px;
 }
@@ -19,7 +19,7 @@
 }
 .welcome-setup-count {
   flex: none;
-  color: #65756c;
+  color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -33,10 +33,10 @@
   min-width: 8px;
   height: 5px;
   border-radius: 3px;
-  background: #e5ebe4;
+  background: var(--surface-raised);
 }
 .welcome-setup-track > .complete {
-  background: #75a65d;
+  background: var(--accent);
 }
 .welcome-setup-journey:last-child {
   margin-bottom: 0;
@@ -46,7 +46,7 @@
 .welcome-setup-journey {
   margin-bottom: 26px;
   padding-bottom: 22px;
-  border-bottom: 1px solid #e4ebe5;
+  border-bottom: 1px solid var(--line);
 }
 .project-welcome:has(.welcome-setup-journey[data-compact="true"]:last-child) {
   padding: 16px 20px;
@@ -103,20 +103,20 @@
   gap: 8px;
   font-size: 12px;
   line-height: 1.5;
-  color: #65776b;
-  border: 1px solid #e4ebe3;
-  border-radius: 8px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
   padding: 9px 11px;
 }
 .welcome-setup-steps .complete {
-  color: #24573e;
-  background: #f6f9f2;
-  border-color: #e0e9d9;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border-color: var(--line);
 }
 .welcome-setup-steps [aria-current="step"] {
-  color: #18342a;
-  border-color: #9bb792;
-  box-shadow: inset 3px 0 #75a65d;
+  color: var(--ink);
+  border-color: var(--line);
+  box-shadow: inset 3px 0 rgb(0 0 0 / 24%);
   font-weight: 600;
 }
 .welcome-setup-journey > .welcome-note {
@@ -129,7 +129,7 @@
   gap: 10px 24px;
   padding: 0;
   margin: 0 0 30px;
-  color: #6d7b72;
+  color: var(--muted);
   counter-reset: welcome;
   font-size: 12px;
 }
@@ -138,17 +138,17 @@
   content: counter(welcome) ". ";
 }
 .welcome-progress [aria-current] {
-  color: #24573e;
+  color: var(--ink);
   font-weight: 700;
 }
 .welcome-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   align-items: center;
 }
 .welcome-hero h2 {
-  color: #203d2d;
+  color: var(--ink);
   font-size: clamp(24px, 2.5vw, 29px);
   line-height: 1.18;
   letter-spacing: -1px;
@@ -157,7 +157,7 @@
 .welcome-hero p,
 .welcome-summary,
 .welcome-recommendation p {
-  color: #536b5b;
+  color: var(--muted);
   line-height: 1.7;
   font-size: 13px;
   margin: 0;
@@ -166,7 +166,7 @@
 }
 .welcome-crew-suggestion {
   padding: 18px 0;
-  border-bottom: 1px solid #e4ebe5;
+  border-bottom: 1px solid var(--line);
 }
 .welcome-crew-suggestion:last-child {
   border-bottom: 0;
@@ -176,9 +176,7 @@
   margin-top: 14px;
 }
 .welcome-gremlin {
-  width: 120px;
-  height: 120px;
-  object-fit: contain;
+  display: none;
 }
 .welcome-summary {
   margin-top: 26px;
@@ -194,10 +192,10 @@
 }
 .welcome-stack li {
   padding: 5px 10px;
-  border: 1px solid #dce6df;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  background: #f6f9f4;
-  color: #3c5b45;
+  background: var(--surface);
+  color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -209,7 +207,7 @@
 .welcome-open-questions h3 {
   margin: 0 0 8px;
   font-size: 18px;
-  color: #284734;
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
 .welcome-command {
@@ -217,7 +215,7 @@
   align-items: flex-start;
   gap: 12px;
   padding: 18px 0;
-  border-bottom: 1px solid #e4ebe5;
+  border-bottom: 1px solid var(--line);
   cursor: pointer;
   min-width: 0;
 }
@@ -226,27 +224,27 @@
   width: 18px;
   height: 18px;
   margin: 2px 0 0;
-  accent-color: #24573e;
+  accent-color: var(--accent);
 }
 .welcome-command-body {
   display: grid;
   gap: 7px;
   min-width: 0;
   flex: 1;
-  color: #536b5b;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
 }
 .welcome-command-body strong {
-  color: #314e3b;
+  color: var(--ink);
   font-size: 13px;
 }
 .welcome-command-body > code {
   display: block;
-  background: #f5f7f4;
+  background: var(--surface-raised);
   border-radius: 6px;
   padding: 9px 12px;
-  color: #243c2e;
+  color: var(--ink);
   font-size: 13px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -256,7 +254,7 @@
   padding: 0;
   margin: 4px 0 0;
   font-size: 11px;
-  color: #617469;
+  color: var(--muted);
 }
 .welcome-evidence li {
   display: grid;
@@ -271,9 +269,9 @@
 .welcome-recommendation {
   margin: 20px 0;
   padding: 18px;
-  border: 1px solid #d9e5d8;
-  border-radius: 12px;
-  background: #f5f8f0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
 }
 .welcome-recommendation h3 {
   margin-top: 10px;
@@ -296,7 +294,7 @@
 }
 .welcome-note,
 .welcome-provenance {
-  color: #62776a;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.7;
   margin: 12px 0 0;
@@ -307,9 +305,9 @@
   font-size: 11px;
 }
 .welcome-inspecting {
-  background: #f1f6ed;
-  color: #3c5b45;
-  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  border-radius: 8px;
   padding: 18px;
   margin: 24px 0;
   line-height: 1.7;
@@ -317,10 +315,10 @@
 .welcome-error {
   margin: 22px 0;
   padding: 18px;
-  border: 1px solid #edcfc3;
-  border-radius: 10px;
-  background: #fff5ef;
-  color: #8b4532;
+  border: 1px solid var(--danger-line);
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 .welcome-error p {
@@ -333,12 +331,12 @@
   padding-left: 20px;
   font-size: 13px;
   line-height: 1.7;
-  color: #62776a;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .project-welcome button:focus-visible,
 .welcome-command:has(input:focus-visible) {
-  outline: 2px solid #4b784e;
+  outline: 2px solid var(--focus);
   outline-offset: 4px;
 }
 @media (max-width: 600px) {
@@ -362,9 +360,9 @@
 .welcome-local-environment {
   grid-column: 1 / -1;
   padding: 13px 15px;
-  border: 1px solid #d3e2c8;
-  border-radius: 10px;
-  background: #f7fbf2;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
 }
 .welcome-local-environment .welcome-note {
   margin: 0 0 10px;

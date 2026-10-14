@@ -219,7 +219,7 @@
           ],
           [
             "Inspect source",
-            Boolean(s.data?.report?.projectSetup),
+            hasCrew || Boolean(s.data?.report?.projectSetup),
             `/projects/${encodeURIComponent(project.name)}?tab=setup`,
           ],
           [
@@ -249,9 +249,13 @@
                 : ready("test_access") && ready("browser_verification")),
             `/projects/${encodeURIComponent(project.name)}?tab=environment`,
           ],
-          ["Activate daily patrols", activeCrew && allReady, "activate"],
+          ["Autopilot", activeCrew && allReady, "activate"],
         ],
-        section = el("section", undefined, "welcome-setup-journey"),
+        section = el(
+          "section",
+          undefined,
+          "welcome-setup-journey setup-next-action",
+        ),
         list = el("ol", undefined, "welcome-setup-steps");
       if (
         s.suggestionsOnly &&
@@ -264,6 +268,23 @@
       )
         return null;
       section.setAttribute("data-compact", String(s.suggestionsOnly));
+      if (s.suggestionsOnly && activeCrew && allReady) {
+        const optional = el("details", undefined, "setup-advanced");
+        optional.append(
+          el("summary", "Add browser testing · optional"),
+          el(
+            "p",
+            "A local Docker test app is ready to set up. Repository checks do not open the app in a browser.",
+            "welcome-note",
+          ),
+          link(
+            "Set up Docker & test",
+            `/projects/${encodeURIComponent(project.name)}?tab=environment`,
+          ),
+        );
+        section.append(optional);
+        return section;
+      }
       section.append(
         el("span", "CREW SETUP", "eyebrow muted"),
         el(
@@ -316,14 +337,20 @@
         item.append(el("span", done ? "✓" : "○"), el("span", label));
         list.append(item);
       }
-      section.append(list);
+      const checklist = el("details", undefined, "setup-checklist");
+      checklist.open = Boolean(s.checklistOpen);
+      checklist.addEventListener("toggle", () => {
+        s.checklistOpen = checklist.open;
+      });
+      checklist.append(el("summary", "View setup checks"), list);
+      section.append(checklist);
       if ((allReady && !activeCrew) || canVerifyAndActivate) {
         const activate = button(
           s.busy
             ? "Checking crew…"
             : canVerifyAndActivate
-              ? "Verify & activate crew"
-              : "Activate ready crew",
+              ? "Verify & start autopilot"
+              : "Start autopilot",
           async () => {
             if (unavailable(s) || !current(s)) return;
             s.busy = true;
@@ -364,6 +391,32 @@
                 },
               );
               if (!current(s)) return;
+              if (
+                result.ok === true &&
+                Array.isArray(result.readiness?.areas) &&
+                s.project.areas.every((area) =>
+                  result.readiness.areas.some(
+                    (saved) =>
+                      saved.key === area.key &&
+                      typeof saved.enabled === "boolean" &&
+                      typeof saved.codingEnabled === "boolean",
+                  ),
+                )
+              )
+                s.project = {
+                  ...s.project,
+                  readiness: result.readiness,
+                  areas: s.project.areas.map((area) => {
+                    const saved = result.readiness.areas.find(
+                      (item) => item.key === area.key,
+                    );
+                    return {
+                      ...area,
+                      enabled: saved.enabled,
+                      codingEnabled: saved.codingEnabled,
+                    };
+                  }),
+                };
               s.notice =
                 result.message ||
                 "Your ready crew is active. No epic was approved by activation.";
@@ -388,8 +441,10 @@
       } else if (next) {
         const [label, , destination] = next;
         if (destination === "linear" && onSetupLinear) {
-          const configure = button("Set up Linear", () =>
-            onSetupLinear(project.name),
+          const configure = button(
+            "Set up Linear",
+            () => onSetupLinear(project.name),
+            true,
           );
           configure.disabled = unavailable(s);
           section.append(configure);
@@ -410,15 +465,16 @@
             `/projects/${encodeURIComponent(project.name)}?tab=crew`,
           );
           section.append(review);
-        } else
-          section.append(
-            link(
-              label,
-              destination === "linear"
-                ? "/connections#linear-connection"
-                : destination,
-            ),
+        } else {
+          const nextAction = link(
+            label,
+            destination === "linear"
+              ? "/connections#linear-connection"
+              : destination,
           );
+          nextAction.className = "button button-dark";
+          section.append(nextAction);
+        }
       }
       section.append(
         el(
@@ -503,15 +559,29 @@
           s.setupOnly,
           s.project.areas?.map((area) => [area.key, area.mandate]),
           s.project.readiness,
-          s.project.areas?.map((area) => area.enabled),
+          s.project.areas?.map((area) => [area.enabled, area.codingEnabled]),
         ]);
       if (signature === s.signature) return;
       s.signature = signature;
       s.node.replaceChildren();
-      const journey = setupJourney(s);
-      s.node.hidden = Boolean(s.setupOnly && !journey);
+      // The introduction owns inspection/review. The crew page owns the
+      // remaining setup journey, avoiding two competing next actions.
+      const journey = s.suggestionsOnly || s.setupOnly ? setupJourney(s) : null;
+      s.node.hidden = Boolean(s.setupOnly && !journey && !s.notice && !s.error);
       if (journey) s.node.append(journey);
-      if (s.setupOnly) return;
+      if (s.setupOnly) {
+        if (s.notice) {
+          const notice = el("p", s.notice, "welcome-note");
+          notice.setAttribute("role", "status");
+          s.node.append(notice);
+        }
+        if (s.error) {
+          const error = el("p", s.error, "welcome-error");
+          error.setAttribute("role", "alert");
+          s.node.append(error);
+        }
+        return;
+      }
       if (s.suggestionsOnly) {
         if (s.notice) s.node.append(el("p", s.notice, "welcome-note"));
         if (s.error) {
@@ -669,9 +739,15 @@
             onCreatePm?.(s.project.name),
           );
         inspect.disabled = manual.disabled = disabled;
-        actions.append(inspect, manual, link("Connections", "/connections"));
+        const alternatives = el("details", undefined, "setup-advanced");
+        alternatives.append(
+          el("summary", "Choose a PM without AI recommendations"),
+          manual,
+        );
+        actions.append(inspect);
         s.node.append(
           actions,
+          alternatives,
           el(
             "p",
             "Inspection uses your source connection, selected AI provider, and Docker. Linear and a hosted test app can come later.",

@@ -25,13 +25,13 @@ body.is-first-run .first-run-path:not([hidden]) {
   min-width: 0;
   padding: 10px;
   color: var(--muted);
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 12px;
   line-height: 1.4;
 }
 .first-run-progress li[aria-current="step"] {
   color: var(--ink);
-  background: #e9f3df;
+  background: var(--surface-raised);
   font-weight: 700;
 }
 .first-run-step-marker {
@@ -42,17 +42,17 @@ body.is-first-run .first-run-path:not([hidden]) {
   height: 25px;
   border: 1px solid var(--line);
   border-radius: 50%;
-  background: #fff;
+  background: var(--surface);
   font-size: 11px;
 }
 .first-run-progress .complete .first-run-step-marker {
-  color: #286448;
-  background: #e9f3df;
-  border-color: #cadcba;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border-color: var(--line);
 }
 #overview .first-run-note {
   margin: 14px 0 0;
-  color: #60715d;
+  color: var(--muted);
   font-size: 12px;
 }
 @media (max-width: 850px) {
@@ -77,12 +77,11 @@ body.is-first-run .first-run-path:not([hidden]) {
 }
 @media (max-width: 600px) {
   body.is-first-run #overview .hero-copy > .eyebrow {
-    min-height: 72px;
-    padding-top: 20px;
-    padding-right: 82px;
+    min-height: 0;
+    padding: 0;
   }
   body.is-first-run #overview .hero-art {
-    display: flex;
+    display: none;
     position: absolute;
     top: 14px;
     right: 16px;
@@ -106,18 +105,17 @@ body.is-first-run .first-run-path:not([hidden]) {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  background: linear-gradient(140deg, #f4f8ef, #fff 70%);
+  background: linear-gradient(
+    140deg,
+    var(--surface-raised),
+    var(--surface) 70%
+  );
 }
 .project-first-investigation .mission-heading {
-  margin-right: 132px;
+  margin-right: 0;
 }
 .first-investigation-creature {
-  position: absolute;
-  top: 24px;
-  right: 24px;
-  width: 110px;
-  height: 130px;
-  object-fit: contain;
+  display: none;
 }
 @media (max-width: 540px) {
   .project-first-investigation .mission-heading {

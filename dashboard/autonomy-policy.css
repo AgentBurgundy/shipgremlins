@@ -1,7 +1,7 @@
 .approval-policy {
-  border: 1px solid var(--line, #dce5df);
-  border-radius: 18px;
-  background: var(--surface, #fff);
+  border: 1px solid var(--line, var(--line));
+  border-radius: 10px;
+  background: var(--surface, var(--surface));
   margin-top: 16px;
   overflow: hidden;
 }
@@ -19,7 +19,7 @@
   content: "+";
   font-size: 20px;
   font-weight: 400;
-  color: var(--muted, #60736a);
+  color: var(--muted, var(--muted));
 }
 .approval-policy[open] > .approval-policy-summary::before {
   content: "−";
@@ -29,10 +29,10 @@
 }
 .approval-policy-badge {
   font-size: 11px;
-  border-radius: 99px;
+  border-radius: 10px;
   padding: 5px 9px;
-  background: var(--surface-soft, #f0f5f1);
-  color: var(--muted, #60736a);
+  background: var(--surface-raised);
+  color: var(--muted, var(--muted));
 }
 .approval-policy-body {
   padding: 0 20px 20px;
@@ -55,10 +55,10 @@
 .approval-policy-field textarea {
   box-sizing: border-box;
   width: 100%;
-  border: 1px solid var(--line, #dce5df);
-  border-radius: 9px;
+  border: 1px solid var(--line, var(--line));
+  border-radius: 6px;
   padding: 10px;
-  background: var(--surface, #fff);
+  background: var(--surface, var(--surface));
   color: inherit;
   font: inherit;
 }
@@ -74,7 +74,7 @@
   font-weight: 600;
 }
 .approval-policy-toggle input {
-  accent-color: #1e533c;
+  accent-color: var(--accent);
   width: 17px;
   height: 17px;
 }
@@ -86,8 +86,8 @@
 .approval-policy-note {
   font-size: 12px;
   line-height: 1.7;
-  background: var(--surface-soft, #f3f6f3);
-  border-radius: 10px;
+  background: var(--surface-raised);
+  border-radius: 8px;
   padding: 12px 14px;
   margin: 0;
 }
@@ -104,7 +104,7 @@
   padding: 5px 0;
 }
 .approval-policy :focus-visible {
-  outline: 2px solid #408855;
+  outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
 @media (max-width: 520px) {

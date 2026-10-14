@@ -5,10 +5,14 @@
   gap: 16px 24px;
   min-width: 0;
   padding: 24px;
-  border: 1px solid #d4e1d8;
-  border-radius: 18px;
-  background: linear-gradient(115deg, #f0f6ed 0%, #fff 85%);
-  color: #163b2c;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(
+    115deg,
+    var(--surface-raised) 0%,
+    var(--surface) 85%
+  );
+  color: var(--ink);
 }
 .coding-launch-identity {
   display: flex;
@@ -28,10 +32,10 @@
 .coding-launch-status {
   display: block;
   margin-bottom: 7px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
-  color: #5d735f;
+  color: var(--muted);
 }
 .coding-launch h3 {
   margin: 0;
@@ -44,7 +48,7 @@
 .coding-launch p {
   max-width: 62ch;
   margin: 8px 0 0;
-  color: #5c6d65;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -64,7 +68,7 @@
   min-height: 42px;
 }
 .coding-launch-link {
-  color: #426454;
+  color: var(--muted);
   font-size: 12px;
   font-weight: 600;
   text-align: center;
@@ -75,24 +79,24 @@
   text-decoration: underline;
 }
 .coding-launch :is(button, a):focus-visible {
-  outline: 3px solid #738c50;
+  outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
 .coding-launch-progress {
   grid-column: 1 / -1;
   padding-top: 13px;
-  border-top: 1px solid #dce6dc;
-  color: #64756b;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .coding-launch[data-state="error"] {
-  border-color: #e3d1c9;
-  background: #fffaf7;
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
 }
 .coding-launch[data-state="error"] .coding-launch-status {
-  color: #976047;
+  color: var(--danger);
 }
 .coding-launch-compact {
   padding: 20px;
@@ -108,16 +112,16 @@
   max-height: calc(100dvh - 48px);
   margin: auto;
   padding: 28px;
-  border: 1px solid #dbe4dc;
-  border-radius: 18px;
-  background: #fff;
-  color: #244331;
-  box-shadow: 0 24px 80px #10271d33;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 24%);
   overflow-y: auto;
   overflow-x: hidden;
 }
 .remote-enrollment-dialog::backdrop {
-  background: #10271d66;
+  background: color-mix(in srgb, var(--surface-inset) 40%, transparent);
   backdrop-filter: blur(4px);
 }
 .remote-enrollment-heading {
@@ -139,10 +143,10 @@
 }
 .remote-enrollment-step {
   margin: 0 0 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
-  color: #789077;
+  color: var(--muted);
 }
 .remote-enrollment-heading > button {
   flex-shrink: 0;
@@ -166,7 +170,7 @@
 .remote-enrollment-dialog .runner-guidance {
   font-size: 12px;
   line-height: 1.7;
-  color: #6e7d73;
+  color: var(--muted);
 }
 .remote-enrollment-dialog .remote-projects {
   margin: 0;
@@ -183,8 +187,8 @@
   cursor: pointer;
 }
 .remote-enrollment-dialog .remote-project-options label:has(input:checked) {
-  border-color: #8aa478;
-  background: #f0f6ed;
+  border-color: var(--line);
+  background: var(--surface-raised);
 }
 .remote-enrollment-dialog .remote-project-options span {
   min-width: 0;
@@ -196,7 +200,7 @@
   gap: 10px;
   margin-top: 28px;
   padding-top: 20px;
-  border-top: 1px solid #e8eee6;
+  border-top: 1px solid var(--line);
 }
 .remote-enrollment-result h4 {
   font-size: 15px;
@@ -228,9 +232,9 @@
 .workers-section .worker-list {
   gap: 0;
   overflow: hidden;
-  border: 1px solid #dfe7df;
-  border-radius: 12px;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
 }
 .workers-section .worker-card {
   border: 0;
@@ -238,7 +242,7 @@
   padding: 18px 20px;
 }
 .workers-section .worker-card + .worker-card {
-  border-top: 1px solid #e6ece6;
+  border-top: 1px solid var(--line);
 }
 .workers-section .worker-empty {
   border: 0;

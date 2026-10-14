@@ -97,14 +97,18 @@
     }[state];
     let stage =
       job?.status === "queued"
-        ? "Waiting for a worker"
+        ? {
+            "credential-wait": "Waiting for a connection",
+            "environment-wait": "Waiting for the test environment",
+            "ambiguous-launch": "Dispatch unconfirmed",
+          }[job.failure?.category] || "Waiting for a worker"
         : job?.status === "running"
           ? "Working · stage unavailable"
           : "No stage record available";
     if (label)
       stage =
         job?.status === "queued"
-          ? `Waiting · last recorded: ${label}`
+          ? `${stage} · last recorded: ${label}`
           : job?.status === "failed"
             ? `Stopped during ${label}`
             : job?.status === "canceled"
@@ -297,7 +301,6 @@
           role,
           job.type === "developer" ? area?.name || job.area : null,
           state.provider,
-          state.model,
         ]
           .filter(Boolean)
           .join(" · "),
@@ -346,9 +349,9 @@
           `${job.status === "queued" ? "Waiting" : "Elapsed"} ${state.elapsed}`,
         ),
       );
-    if (state.strategy) metrics.append(node("span", "", state.strategy));
     if (
       Number.isSafeInteger(state.flow?.repairUsed) &&
+      state.flow.repairUsed > 0 &&
       Number.isSafeInteger(state.flow?.repairLimit)
     )
       metrics.append(
@@ -360,7 +363,16 @@
       );
     if (state.updated && state.stale)
       metrics.append(node("span", "", `Observed ${state.updated}`));
-    const evidence = node("a", "run-flow-evidence", "Run evidence ↗");
+    const reason = window.normalizedRunFailure?.(job);
+    const evidence = node(
+      "a",
+      "run-flow-evidence",
+      state.attention || job.failure
+        ? "Review run →"
+        : state.live
+          ? "Follow run →"
+          : "View evidence →",
+    );
     evidence.href = `/activity?run=${encodeURIComponent(job.id)}`;
     evidence.dataset.flowFocus = `evidence:${job.id}`;
     evidence.setAttribute(
@@ -368,10 +380,27 @@
       `Open evidence for run ${job.runId || job.id}`,
     );
     footer.append(metrics, evidence);
+    if (reason?.href?.startsWith("/") && !reason.href.startsWith("//")) {
+      const remedy = node(
+        "a",
+        "small-button run-flow-next-action",
+        reason.label,
+      );
+      remedy.href = reason.href;
+      remedy.dataset.flowFocus = `remedy:${job.id}`;
+      footer.append(remedy);
+    }
     root.append(footer);
-    if (state.phases.length) {
+    const metadata = [state.provider, state.model, state.strategy]
+      .filter(Boolean)
+      .join(" · ");
+    if (state.phases.length || metadata) {
       const details = node("details", "run-flow-details"),
-        summary = node("summary", "", "Recorded process");
+        summary = node(
+          "summary",
+          "",
+          state.phases.length ? "Process & history" : "Run details",
+        );
       summary.dataset.flowFocus = `process:${job.id}`;
       summary.setAttribute(
         "aria-label",
@@ -381,7 +410,9 @@
       details.addEventListener("toggle", () =>
         options.onToggle?.(details.open),
       );
-      details.append(summary, process(state, job));
+      details.append(summary);
+      if (metadata) details.append(node("p", "run-flow-metadata", metadata));
+      if (state.phases.length) details.append(process(state, job));
       root.append(details);
     }
     return root;

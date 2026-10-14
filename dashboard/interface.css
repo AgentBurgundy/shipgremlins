@@ -1,10 +1,10 @@
 /* Dashboard design system: one task at a time, readable at every viewport. */
 :root {
-  --ink: #182e25;
-  --muted: #617169;
-  --paper: #f6f8f7;
-  --line: #e0e7e3;
-  --radius: 16px;
+  --ink: var(--text-primary);
+  --muted: var(--text-secondary);
+  --paper: var(--bg);
+  --line: var(--border-default);
+  --radius: 8px;
 }
 
 [hidden] {
@@ -31,6 +31,8 @@
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #46604f transparent;
+  background: var(--surface-inset);
+  border-right: 1px solid var(--line);
 }
 .sidebar > * {
   flex-shrink: 0;
@@ -64,6 +66,8 @@
 }
 .workspace-label {
   margin-top: 32px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.12em;
 }
 .sidebar .project-nav-label {
   margin-top: 30px;
@@ -80,6 +84,8 @@
   .sidebar {
     position: sticky;
     top: 0;
+    background: var(--surface-inset);
+    border-right: 1px solid var(--line);
   }
 }
 #project-list .project-actions {
@@ -105,6 +111,7 @@ main {
 .topbar {
   padding-inline: 40px;
   border-bottom: 1px solid var(--line);
+  background: var(--bg);
 }
 .breadcrumbs {
   min-width: 0;
@@ -129,12 +136,15 @@ main {
 .eyebrow {
   line-height: 1.6;
   letter-spacing: 0.12em;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 500;
 }
 .button,
 .small-button,
 #connections .small-button {
   min-height: 40px;
-  border-radius: 9px;
+  border-radius: 6px;
   padding: 10px 15px;
   gap: 7px;
   font-size: 13px;
@@ -143,12 +153,16 @@ main {
   justify-content: center;
 }
 .button-dark {
-  background: #1d4431;
-  color: #fff;
-  border-color: #1d4431;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  box-shadow: none;
 }
 .button-dark:hover {
-  background: #153524;
+  background: var(--focus);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  box-shadow: none;
 }
 button:focus-visible,
 a:focus-visible,
@@ -156,7 +170,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
-  outline: 3px solid #72a354;
+  outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
 button:disabled {
@@ -171,7 +185,7 @@ input[type="radio"] {
   max-width: 18px;
   flex: 0 0 18px;
   padding: 0;
-  accent-color: #315b40;
+  accent-color: var(--accent);
 }
 .proposal-card > h3,
 .project-section-title > h2 {
@@ -192,7 +206,7 @@ select,
 textarea {
   min-width: 0;
   max-width: 100%;
-  border-radius: 9px;
+  border-radius: 6px;
   font-size: 14px;
 }
 .field label {
@@ -223,13 +237,13 @@ pre {
   display: none;
 }
 .form-message {
-  border-radius: 10px;
+  border-radius: 8px;
   line-height: 1.65;
 }
 .hero[data-page="overview"] {
-  background: #edf3e9;
-  border: 1px solid #dfe8d8;
-  border-radius: 20px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
 .hero[data-page="overview"] .hero-copy {
   min-width: 0;
@@ -279,22 +293,23 @@ pre {
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 22px;
   gap: 18px;
+  box-shadow: none;
 }
 .workspace-project-summary > .coding-launch,
 .workspace-project-summary > .foundation-launch {
   grid-column: 1 / -1;
   margin: 0;
   box-shadow: none;
-  background: #f8faf8;
+  background: var(--surface);
 }
 .foundation-launch,
 .product-exploration-card {
   display: flex;
   align-items: center;
   gap: 24px;
-  border: 1px solid #dce7d8;
-  background: #f0f5eb;
-  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  border-radius: 10px;
   padding: 26px;
   margin-bottom: 28px;
 }
@@ -323,7 +338,7 @@ pre {
 }
 .product-exploration-card {
   margin: 24px 0;
-  background: #f2f4ee;
+  background: var(--surface-raised);
 }
 .product-exploration-card h3 {
   margin: 0 0 10px;
@@ -334,7 +349,7 @@ pre {
   gap: 16px;
 }
 .metric-card {
-  border-radius: 14px;
+  border-radius: 8px;
   box-shadow: none;
   min-width: 0;
 }
@@ -343,7 +358,7 @@ pre {
 }
 .setup-path {
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 10px;
 }
 .project-list,
 .workspace-projects-overview {
@@ -355,8 +370,8 @@ pre {
 .updates-card,
 .operations-card,
 .worker-card {
-  border-radius: 14px;
-  box-shadow: 0 2px 3px #17352403;
+  border-radius: 8px;
+  box-shadow: 0 2px 3px rgb(0 0 0 / 10%);
 }
 .project-pm-row {
   gap: 18px;
@@ -385,7 +400,7 @@ pre {
 .workspace-empty {
   padding: 34px 24px;
   border-style: solid;
-  background: #fff;
+  background: var(--surface);
 }
 .pm-creation-basics:not([hidden]) ~ .form-bottom {
   display: none;
@@ -409,9 +424,9 @@ pre {
 #new-project-drawer .project-wizard {
   margin: 24px auto;
   padding: 32px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 10px;
 }
 #new-project-drawer .project-wizard h2 {
   border: 0;
@@ -421,9 +436,9 @@ pre {
 }
 .operations-empty {
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 10px;
   padding: 32px 24px;
-  background: #fff;
+  background: var(--surface);
 }
 .operations-empty p {
   max-width: 52ch;
@@ -449,16 +464,16 @@ pre {
   flex-wrap: wrap;
   gap: 5px;
   padding: 5px;
-  border-radius: 12px;
-  background: #eaf0ec;
+  border-radius: 8px;
+  background: var(--surface-raised);
   width: fit-content;
   max-width: 100%;
 }
 .surface-tabs button {
   border: 0;
   background: transparent;
-  color: #617169;
-  border-radius: 8px;
+  color: var(--muted);
+  border-radius: 6px;
   padding: 10px 14px;
   min-height: 40px;
   font: inherit;
@@ -466,9 +481,9 @@ pre {
   cursor: pointer;
 }
 .surface-tabs button[aria-current="page"] {
-  background: #fff;
-  color: #20452e;
-  box-shadow: 0 1px 4px #18332412;
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 10%);
 }
 .connection-library-toolbar {
   display: flex;
@@ -497,13 +512,13 @@ pre {
   min-height: 40px;
   padding: 9px 12px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
 }
 .connection-library-empty {
   padding: 28px 20px;
   color: var(--muted);
   border: 1px dashed var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   text-align: center;
   font-size: 13px;
 }
@@ -607,7 +622,7 @@ pre {
   padding: 0;
   width: min(620px, calc(100vw - 32px));
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 10px;
   color: var(--ink);
 }
 .runner-management-action {
@@ -669,8 +684,8 @@ pre {
 .connection-tile {
   padding: 18px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
+  border-radius: 8px;
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -679,8 +694,8 @@ pre {
     box-shadow 160ms ease;
 }
 .connection-tile:hover {
-  border-color: #b5cbb8;
-  box-shadow: 0 4px 14px #18342a08;
+  border-color: var(--line);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 10%);
 }
 .connection-tile-identity {
   display: flex;
@@ -692,11 +707,17 @@ pre {
   height: 36px;
   display: grid;
   place-items: center;
-  border: 1px solid #e8ece9;
-  background: #fafcfb;
-  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 6px;
   flex-shrink: 0;
   font-size: 23px;
+}
+.connection-tile-mark img {
+  filter: brightness(0) invert(1);
+}
+.connection-tile-mark img[src$="slack.svg"] {
+  filter: none;
 }
 .connection-tile h3 {
   margin: 0;
@@ -719,21 +740,21 @@ pre {
 }
 .connection-tile-state {
   font-size: 12px;
-  color: #728077;
+  color: var(--muted);
   line-height: 1.5;
 }
 .connection-tile-state.is-connected {
-  color: #317845;
+  color: var(--muted);
 }
 .connection-tile-state.is-unavailable {
-  color: #8a581c;
+  color: var(--warning);
 }
 #connections
   .connection-detail-panel[data-connection-status="attention"]
   .runtime-badge {
-  color: #8a581c;
-  background: #fff3df;
-  border-color: #edd7b1;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: var(--warning-line);
 }
 .connection-tile-state.is-connected::before {
   content: "";
@@ -741,7 +762,7 @@ pre {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #4b9259;
+  background: var(--accent-soft);
   margin-right: 6px;
   vertical-align: middle;
 }
@@ -751,10 +772,10 @@ dialog.connection-detail-dialog {
   max-height: calc(100dvh - 48px);
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 10px;
   color: var(--ink);
-  background: #fff;
-  box-shadow: 0 26px 100px #0b221e33;
+  background: var(--surface);
+  box-shadow: 0 26px 100px rgb(0 0 0 / 24%);
   overflow: hidden;
 }
 dialog.connection-detail-dialog[open] {
@@ -762,7 +783,7 @@ dialog.connection-detail-dialog[open] {
   flex-direction: column;
 }
 dialog::backdrop {
-  background: #0d221d66;
+  background: color-mix(in srgb, var(--surface-inset) 40%, transparent);
   backdrop-filter: blur(4px);
 }
 .surface-dialog-header {
@@ -781,15 +802,15 @@ dialog::backdrop {
 }
 .icon-close {
   border: 0;
-  border-radius: 8px;
-  background: #f0f4f1;
+  border-radius: 6px;
+  background: var(--surface-raised);
   width: 36px;
   height: 36px;
   font-family: inherit;
   font-size: 24px;
   line-height: 1;
   cursor: pointer;
-  color: #4b6255;
+  color: var(--muted);
 }
 .surface-dialog-body {
   padding: 22px;
@@ -810,7 +831,7 @@ dialog::backdrop {
   flex-wrap: wrap;
   padding: 16px 24px;
   border-top: 1px solid var(--line);
-  background: #f6f8f3;
+  background: var(--surface-raised);
 }
 .connection-onboarding-next p {
   flex: 1 1 180px;
@@ -864,7 +885,7 @@ details > summary::-webkit-details-marker {
 }
 #connections .connection-detail-panel details > summary::after {
   content: "+";
-  color: #688171;
+  color: var(--muted);
   font-size: 16px;
 }
 #connections .connection-detail-panel details[open] > summary::after {
@@ -875,7 +896,7 @@ details > summary::-webkit-details-marker {
 }
 .project-settings-dialog,
 .pm-action-dialog {
-  border-radius: 18px;
+  border-radius: 10px;
   border-color: var(--line);
 }
 .project-editor-sections {
@@ -885,12 +906,12 @@ details > summary::-webkit-details-marker {
 .project-editor-sections button {
   min-height: 38px;
   font-size: 13px;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 .project-editor-sections button[aria-current="page"] {
-  background: #1d4431;
-  color: white;
-  border-color: #1d4431;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 #edit-signals-settings {
   min-width: 0;
@@ -939,7 +960,7 @@ details > summary::-webkit-details-marker {
 }
 .page-footer {
   border: 0;
-  color: #819188;
+  color: var(--muted);
 }
 @media (max-width: 1120px) {
   .connection-library-grid {
@@ -950,6 +971,8 @@ details > summary::-webkit-details-marker {
   }
   .topbar {
     padding-inline: 28px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
   }
 }
 @media (max-width: 760px) {
@@ -961,9 +984,13 @@ details > summary::-webkit-details-marker {
   }
   .topbar {
     padding-inline: 22px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
   }
   .sidebar {
     width: min(280px, calc(100vw - 48px));
+    background: var(--surface-inset);
+    border-right: 1px solid var(--line);
   }
 }
 .pm-brief-dialog-footer {
@@ -976,12 +1003,12 @@ details > summary::-webkit-details-marker {
   position: sticky;
   top: 0;
   z-index: 3;
-  background: #f7f9f6;
+  background: var(--surface);
 }
 .workspace-empty {
   border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #f8faf7;
+  border-radius: 8px;
+  background: var(--surface);
 }
 .pm-workspace-content > .workspace-empty {
   border: 0;
@@ -1021,6 +1048,7 @@ details > summary::-webkit-details-marker {
   .workspace-project-summary {
     grid-template-columns: minmax(0, 1fr);
     padding: 18px;
+    box-shadow: none;
   }
   .foundation-launch,
   .product-exploration-card {
@@ -1035,6 +1063,8 @@ details > summary::-webkit-details-marker {
   .topbar {
     padding-inline: 16px;
     gap: 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
   }
   .topbar-separator {
     margin-inline: 8px;
@@ -1080,7 +1110,7 @@ details > summary::-webkit-details-marker {
   dialog.connection-detail-dialog {
     width: calc(100vw - 20px);
     max-height: calc(100dvh - 24px);
-    border-radius: 14px;
+    border-radius: 8px;
   }
   .surface-dialog-header {
     padding: 18px;
@@ -1111,8 +1141,8 @@ details > summary::-webkit-details-marker {
 /* A calm command surface: live work, requirements, then the next useful action. */
 #overview.hero {
   padding: 30px 32px;
-  background: linear-gradient(115deg, #edf4e6, #f7faf3);
-  border-color: #dce7d4;
+  background: linear-gradient(115deg, var(--surface-raised), var(--surface));
+  border-color: var(--line);
   box-shadow: none;
 }
 #overview .hero-copy {
@@ -1155,9 +1185,9 @@ details > summary::-webkit-details-marker {
   font: inherit;
   font-size: 13px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 .workspace-project-results,
 .connection-library-search-result {
@@ -1172,9 +1202,9 @@ details > summary::-webkit-details-marker {
   margin: 0 0 12px;
   padding: 22px 24px;
   border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 2px 8px #163c2303;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
 }
 #workspace-projects-list .workspace-project-summary > div {
   min-width: 0;
@@ -1199,9 +1229,9 @@ details > summary::-webkit-details-marker {
   align-items: center;
   gap: 7px;
   padding: 5px 9px;
-  border-radius: 7px;
-  background: #f0f3f1;
-  color: #53645a;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--muted);
   font-size: 11px;
   font-weight: 700;
   line-height: 1.4;
@@ -1210,8 +1240,8 @@ details > summary::-webkit-details-marker {
 .work-state-autonomous,
 .work-state-waiting,
 .work-state-scheduled {
-  color: #2f633e;
-  background: #edf5e7;
+  color: var(--muted);
+  background: var(--surface-raised);
 }
 .work-state-running::before {
   content: "";
@@ -1221,14 +1251,14 @@ details > summary::-webkit-details-marker {
   background: currentColor;
 }
 .work-state-queued {
-  color: #3a647c;
-  background: #edf4f8;
+  color: var(--accent);
+  background: var(--surface-raised);
 }
 .work-state-blocked,
 .work-state-setup,
 .work-state-review {
-  color: #8b5b21;
-  background: #faf1e2;
+  color: var(--warning);
+  background: var(--warning-soft);
 }
 .project-autonomy {
   display: flex;
@@ -1237,9 +1267,9 @@ details > summary::-webkit-details-marker {
   gap: 24px;
   padding: 24px;
   margin: 0 0 24px;
-  border: 1px solid #dce6d7;
-  border-radius: 14px;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
 }
 .project-autonomy-copy {
   min-width: 0;
@@ -1266,7 +1296,7 @@ details > summary::-webkit-details-marker {
 }
 .project-autonomy .autonomy-scope {
   margin-top: 8px;
-  color: #385b42;
+  color: var(--muted);
   font-size: 12px;
 }
 .project-autonomy .autonomy-next {
@@ -1293,7 +1323,7 @@ details > summary::-webkit-details-marker {
   display: inline-block;
   margin-top: 10px;
   font-size: 12px;
-  color: #79501c;
+  color: var(--warning);
   text-underline-offset: 3px;
 }
 .connection-library-empty {
@@ -1301,7 +1331,7 @@ details > summary::-webkit-details-marker {
   text-align: center;
   color: var(--muted);
   border: 1px dashed var(--line);
-  border-radius: 14px;
+  border-radius: 8px;
   font-size: 13px;
 }
 @media (max-width: 700px) {

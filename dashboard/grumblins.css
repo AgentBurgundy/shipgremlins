@@ -6,8 +6,8 @@
   margin: 20px 0;
   padding: 18px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
+  border-radius: 8px;
+  background: var(--surface);
   min-width: 0;
 }
 .grumblins-launcher h3 {
@@ -56,8 +56,8 @@
   max-width: 880px;
   padding: 22px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
+  border-radius: 8px;
+  background: var(--surface);
 }
 .grumblins-focus label {
   font-size: 17px;
@@ -81,9 +81,9 @@
 }
 .grumblins-guidance {
   padding: 16px 18px;
-  border-left: 3px solid #9eb599;
-  border-radius: 0 12px 12px 0;
-  background: #f2f6ef;
+  border-left: 3px solid var(--line);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-raised);
   margin: 18px 0;
   font-size: 13px;
   line-height: 1.7;
@@ -105,8 +105,8 @@
   padding: 18px;
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
+  border-radius: 8px;
+  background: var(--surface);
   overflow-wrap: anywhere;
 }
 .grumblin-identity {
@@ -128,19 +128,19 @@
   width: 40px;
   height: 40px;
   flex-shrink: 0;
-  border-radius: 11px;
-  background: #e5eedd;
-  color: #3a5435;
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--ink);
   font-size: 24px;
   font-weight: 700;
 }
 .grumblin-tone-1 .grumblin-mark {
-  background: #f8ead2;
-  color: #886123;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .grumblin-tone-2 .grumblin-mark {
-  background: #e9e4f3;
-  color: #665084;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .grumblin-role {
   font-size: 12px;
@@ -156,7 +156,7 @@
 }
 .grumblin-goal-label,
 .grumblins-simulation-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 1.2px;
   color: var(--muted);
@@ -176,7 +176,7 @@
 .grumblin-status {
   font-size: 12px;
   line-height: 1.6;
-  color: var(--forest);
+  color: var(--accent);
 }
 .grumblin-actions {
   margin-top: auto;
@@ -233,8 +233,8 @@
   margin: 20px 0;
   padding: 20px;
   border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #fff;
+  border-radius: 8px;
+  background: var(--surface);
   min-width: 0;
 }
 .grumblins-report .grumblins-disclaimer {
@@ -257,7 +257,7 @@ dialog.grumblins-dialog {
   width: min(720px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 10px;
   overflow: hidden;
   color: var(--ink);
 }
@@ -289,8 +289,8 @@ dialog.grumblins-dialog[open] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
   padding: 20px;
-  background: #f6f8f5;
-  border-radius: 12px;
+  background: var(--surface);
+  border-radius: 8px;
 }
 .grumblins-traits dt {
   font-size: 11px;

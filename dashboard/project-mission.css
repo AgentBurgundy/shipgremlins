@@ -7,10 +7,10 @@
 .promotion-work {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid #dbe5dd;
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 1px 2px #14201a05;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
 }
 .promotion-batch-header,
 .promotion-work-header {
@@ -34,7 +34,7 @@
 .promotion-batch-intro,
 .promotion-batch-notice {
   margin: 12px 24px 20px;
-  color: #607368;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.65;
   overflow-wrap: anywhere;
@@ -45,14 +45,14 @@
   gap: 16px;
   margin: 0 24px 20px;
   padding: 18px 0;
-  border-block: 1px solid #e6ece7;
+  border-block: 1px solid var(--line);
 }
 .promotion-batch-totals > div {
   display: grid;
   gap: 5px;
 }
 .promotion-batch-totals strong {
-  color: #264b37;
+  color: var(--ink);
   font-size: 28px;
   font-weight: 650;
   line-height: 1;
@@ -60,14 +60,14 @@
 }
 .promotion-batch-totals span,
 .promotion-work-count {
-  color: #607368;
+  color: var(--muted);
   font-size: 12px;
 }
 .promotion-batch-notice.is-held {
   padding: 12px 14px;
   border-radius: 6px;
-  background: #fff5e8;
-  color: #7c4e21;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .promotion-ticket-list {
   margin: 0;
@@ -79,7 +79,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   padding: 15px 24px;
-  border-top: 1px solid #e6ece7;
+  border-top: 1px solid var(--line);
 }
 .promotion-ticket-title {
   display: flex;
@@ -91,19 +91,19 @@
   overflow-wrap: anywhere;
 }
 .promotion-ticket-id {
-  color: #748377;
+  color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 .promotion-ticket-content p {
   margin: 5px 0 0;
-  color: #65776c;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .promotion-ticket-content .promotion-ticket-evidence {
-  color: #856c50;
+  color: var(--warning);
 }
 .promotion-ticket-meta {
   display: grid;
@@ -124,22 +124,22 @@
   max-width: 200px;
   border-radius: 5px;
   padding: 4px 7px;
-  background: #f0f3f1;
-  color: #506c5c;
+  background: var(--surface-raised);
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 .promotion-ticket-status.passed {
-  background: #eef6e8;
-  color: #3d6539;
+  background: var(--surface-raised);
+  color: var(--muted);
 }
 .promotion-ticket-status.needs-attention {
-  background: #fff2e3;
-  color: #875b2a;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .promotion-ticket-activity {
-  color: #416854;
+  color: var(--muted);
   font-size: 12px;
   text-underline-offset: 3px;
 }
@@ -153,7 +153,7 @@
 }
 .promotion-history {
   margin: 0;
-  color: #6c7d72;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -188,12 +188,12 @@
 .mission-changes {
   min-width: 0;
   padding: clamp(20px, 2.4vw, 26px);
-  border: 1px solid #dbe5dd;
-  border-radius: 14px;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
 }
 .mission-form {
-  background: #fff;
+  background: var(--surface);
 }
 .mission-heading {
   max-width: 760px;
@@ -204,13 +204,13 @@
   font-size: clamp(21px, 2.2vw, 26px);
   letter-spacing: -0.6px;
   line-height: 1.2;
-  color: #203d2d;
+  color: var(--ink);
 }
 .mission-heading p,
 .mission-current > p,
 .mission-change-card > p {
   margin: 0;
-  color: #536b5b;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.7;
   overflow-wrap: anywhere;
@@ -220,7 +220,7 @@
   display: block;
   font-size: 12px;
   font-weight: 700;
-  color: #304b3b;
+  color: var(--ink);
   margin: 18px 0 8px;
 }
 .mission-form textarea,
@@ -230,10 +230,10 @@
   display: block;
   width: 100%;
   max-width: 100%;
-  border: 1px solid #bdcfc1;
-  border-radius: 9px;
-  background: #fff;
-  color: #203d2d;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
   font: inherit;
   font-size: 14px;
   padding: 13px;
@@ -260,7 +260,7 @@
 .mission-note {
   font-size: 12px;
   line-height: 1.7;
-  color: #607767;
+  color: var(--muted);
   margin: 12px 0 0;
   overflow-wrap: anywhere;
 }
@@ -268,7 +268,7 @@
 .mission-plan-step,
 .mission-proposal {
   min-width: 0;
-  border-top: 1px solid #e0e8e1;
+  border-top: 1px solid var(--line);
   padding: 16px 0 4px;
   margin-top: 14px;
 }
@@ -277,7 +277,7 @@
 .mission-proposal h3 {
   font-size: 17px;
   line-height: 1.45;
-  color: #274733;
+  color: var(--ink);
   margin: 0 0 8px;
   overflow-wrap: anywhere;
 }
@@ -304,10 +304,10 @@
 }
 .mission-error {
   padding: 18px;
-  border: 1px solid #e8c8a9;
-  border-radius: 12px;
-  background: #fff7ed;
-  color: #704321;
+  border: 1px solid var(--warning-line);
+  border-radius: 8px;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .mission-error > p {
   margin: 0 0 12px;
@@ -353,7 +353,7 @@
   flex-wrap: wrap;
   gap: 12px;
   padding: 18px 0;
-  border-top: 1px solid #dbe5dd;
+  border-top: 1px solid var(--line);
 }
 .promotion-pm-batch > div {
   min-width: 0;
@@ -366,14 +366,14 @@
 }
 .promotion-pm-batch p {
   margin: 0;
-  color: #607767;
+  color: var(--muted);
   font-size: 13px;
 }
 .project-tool {
-  border: 1px solid #dbe5dd;
-  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   padding: 18px;
-  background: #fff;
+  background: var(--surface);
   min-width: 0;
 }
 .project-tool h3 {
@@ -382,11 +382,11 @@
 }
 .project-tool p {
   font-size: 13px;
-  color: #607767;
+  color: var(--muted);
   line-height: 1.6;
 }
 .wizard-choice-secondary {
-  background: #fafbf8 !important;
+  background: var(--surface) !important;
   box-shadow: none !important;
 }
 .wizard-choice-secondary strong {
@@ -397,7 +397,7 @@
   .mission-form,
   .mission-changes {
     padding: 20px 17px;
-    border-radius: 12px;
+    border-radius: 8px;
   }
   .mission-actions {
     align-items: stretch;

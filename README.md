@@ -153,7 +153,7 @@ a disposable Docker app. [Find a test home →](docs/PROJECT_ONBOARDING.md)
 
 The dashboard shows each crew's **Patrol plan** and separates finished runs from recorded browser activity, images and check results. To test ShipGremlins itself, use the [disposable dashboard Docker fixture](examples/dashboard-test/README.md): the real UI and configuration handlers with clearly simulated integrations, no real credentials or Docker socket.
 
-Separate pages keep Connections, Projects, Your gremlins, Activity, and Settings
+Separate pages keep Connections, Projects, Agents, Runs, and Settings
 focused. Provider cards contain setup instructions and token creation links.
 In **Connections → AI provider**, choose Claude Code or Codex. Codex uses your
 ChatGPT account: choose **Sign in to Codex**, or import an existing managed
@@ -164,7 +164,7 @@ choices; active runs keep their recorded provider. [AI setup →](docs/SETUP.md#
 
 Coding workers plan against acceptance criteria, check the baseline, prove a failing
 test for behavior changes, implement, request a fresh read-only review, and run the
-final configured checks before publishing a draft. Overview and Activity show each
+final configured checks before publishing a draft. Mission control and Runs show each
 run's recorded stages and repair budget, with an expandable timeline inline.
 [Coding process →](docs/CODING_WORKFLOW.md)
 Connect Slack once for the workspace; every project inherits that channel unless
@@ -210,7 +210,7 @@ welcome screen for Discovery, or **Prepare first mission** to finish its setup.
 Discovery needs no Linear or browser environment. A fresh idea starts with
 **Build the foundation** instead. For later patrols, choose **Run now** on a PM
 card or its workspace without turning on its schedule. Missing
-setup opens a checklist for that PM with direct actions. Review Activity, then
+setup opens a checklist for that PM with direct actions. Review Runs, then
 enable **Look for new improvements** for scheduled patrols or **Automatically
 build approved work** for approved-ticket pickup. These controls are independent.
 Turning either off stops its new automatic work; manual runs remain separate. A manual
@@ -286,7 +286,7 @@ gremlins stop
 Omit `--lan` for a local-only dashboard. Stop pauses scheduling; already-running Docker jobs continue. For unattended restart after a server reboot, use the [service-manager example](docs/SETUP.md#restart-after-a-server-reboot).
 
 Need capacity on another machine? Create a project-scoped enrollment under
-**Your gremlins**, then run `gremlins worker` there using the displayed command.
+**Agents**, then run `gremlins worker` there using the displayed command.
 Workers connect outbound to the controller. Linux, Windows and macOS hosts use
 Linux Docker containers; native iOS simulation is not supported yet.
 [Remote worker setup →](docs/REMOTE_WORKERS.md)

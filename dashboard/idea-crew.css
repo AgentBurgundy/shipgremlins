@@ -11,8 +11,8 @@
 }
 .idea-milestone {
   padding: 18px 20px;
-  border-left: 3px solid #5b8c36;
-  background: #f0f7e6;
+  border-left: 3px solid var(--accent-line);
+  background: var(--warning-soft);
   color: var(--ink);
   margin: 20px 0;
 }
@@ -29,7 +29,7 @@
 .idea-crew-cards > li {
   padding: 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   min-width: 0;
 }
 .idea-crew-cards h4 {
@@ -44,12 +44,12 @@
   overflow-wrap: anywhere;
 }
 .idea-why {
-  color: #52614f;
+  color: var(--muted);
 }
 .idea-dependency {
   border-top: 1px solid var(--line);
   padding-top: 12px;
-  color: #365b24;
+  color: var(--ink);
 }
 .idea-next {
   padding: 16px 0;

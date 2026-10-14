@@ -3931,6 +3931,7 @@ export function createDashboardServer(
           assertNoSymlinks(root);
           assertNoSymlinks(join(root, "hub.json"));
           const saved = readConnections(root);
+          const statusAiEnvironment = aiEnvironment();
           const sourceConnections = await sourceControl.status();
           const serviceConnections = await serviceStatuses();
           const readiness = await readinessContext(
@@ -3961,6 +3962,11 @@ export function createDashboardServer(
               const project = loadProject(root, name);
               const verification = effectiveVerification(project.config);
               const snapshot = projectReadiness(name, readiness);
+              const setupSelection = resolveAiSelection(
+                root,
+                statusAiEnvironment,
+                projectAiTarget(project, "setup"),
+              );
               return {
                 name,
                 repo: project.config.repo,
@@ -3987,6 +3993,14 @@ export function createDashboardServer(
                     ? { [verification.environment]: verification.target }
                     : {}),
                 commands: project.config.commands,
+                setupAi: {
+                  ...setupSelection,
+                  configured: hasAiCredentials(
+                    root,
+                    statusAiEnvironment,
+                    setupSelection,
+                  ),
+                },
                 telemetry: project.config.telemetry ?? {},
                 branches: project.config.branches,
                 verified: project.config.verified,

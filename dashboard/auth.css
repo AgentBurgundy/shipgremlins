@@ -9,7 +9,8 @@ body.auth-pending > :not(#dashboard-sign-in) {
   align-items: center;
   padding: 44px 24px 24px;
   background:
-    radial-gradient(ellipse at 20% 0, #e8f1de 0, transparent 50%), #f4f6f3;
+    radial-gradient(ellipse at 50% 0, var(--accent-soft), transparent 70%),
+    var(--bg);
 }
 #dashboard-sign-in[hidden] {
   display: none;
@@ -18,10 +19,10 @@ body.auth-pending > :not(#dashboard-sign-in) {
   width: min(100%, 460px);
   box-sizing: border-box;
   padding: 32px;
-  border: 1px solid var(--line, #dce5dd);
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 14px 60px #173c2110;
+  border: 1px solid var(--line, var(--line));
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-dialog);
 }
 .auth-brand {
   display: flex;
@@ -40,11 +41,11 @@ body.auth-pending > :not(#dashboard-sign-in) {
 .auth-card button,
 #account-access button {
   min-height: 42px;
-  border: 1px solid #cddace;
-  border-radius: 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   padding: 10px 15px;
-  background: #fff;
-  color: #234831;
+  background: var(--surface);
+  color: var(--ink);
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -52,18 +53,19 @@ body.auth-pending > :not(#dashboard-sign-in) {
 }
 .auth-card button.primary,
 #account-access button.primary {
-  border-color: #286448;
-  background: #286448;
-  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: none;
 }
 .auth-card button:hover:not(:disabled),
 #account-access button:hover:not(:disabled) {
-  border-color: #648664;
-  background: #f0f5eb;
+  border-color: var(--line);
+  background: var(--surface-raised);
 }
 .auth-card button.primary:hover:not(:disabled),
 #account-access button.primary:hover:not(:disabled) {
-  background: #315d3d;
+  background: var(--surface-inset);
 }
 .auth-card button:disabled,
 #account-access button:disabled {
@@ -71,11 +73,11 @@ body.auth-pending > :not(#dashboard-sign-in) {
   opacity: 0.5;
 }
 #account-access button.danger {
-  color: #a53225;
-  border-color: #e1b9ad;
+  color: var(--danger);
+  border-color: var(--danger-line);
 }
 .auth-description {
-  color: var(--muted, #65756c);
+  color: var(--muted, var(--muted));
   font-size: 14px;
   line-height: 1.6;
   margin: 0 0 24px;
@@ -101,14 +103,14 @@ body.auth-pending > :not(#dashboard-sign-in) {
   min-height: 46px;
   box-sizing: border-box;
   font-size: 16px;
-  background: #fff;
-  border: 1px solid #cbd7cd;
-  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
   padding: 10px 12px;
 }
 .auth-field input:focus {
-  outline: 3px solid #bce57666;
-  border-color: #557b49;
+  outline: 3px solid color-mix(in srgb, var(--focus) 40%, transparent);
+  border-color: var(--accent-line);
 }
 .auth-check {
   display: flex;
@@ -123,10 +125,10 @@ body.auth-pending > :not(#dashboard-sign-in) {
   width: 17px;
   height: 17px;
   margin: 2px 0 0;
-  accent-color: #214d34;
+  accent-color: var(--accent);
 }
 .auth-hint {
-  color: #69796c;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
   margin: -8px 0 18px;
@@ -144,7 +146,7 @@ body.auth-pending > :not(#dashboard-sign-in) {
   display: block;
   border: 0;
   background: transparent;
-  color: #607060;
+  color: var(--muted);
   margin: 18px auto 0;
   padding: 5px 0;
   font-size: 12px;
@@ -152,9 +154,9 @@ body.auth-pending > :not(#dashboard-sign-in) {
   text-underline-offset: 3px;
 }
 .auth-transport {
-  border: 1px solid #e3d6af;
-  border-radius: 10px;
-  background: #fffaf0;
+  border: 1px solid var(--warning-line);
+  border-radius: 8px;
+  background: var(--warning-soft);
   padding: 15px;
   font-size: 12px;
   line-height: 1.7;
@@ -170,21 +172,21 @@ body.auth-pending > :not(#dashboard-sign-in) {
   font-size: 13px;
   line-height: 1.65;
   margin: 16px 0 0;
-  color: #3f5e41;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .auth-notice.is-error {
-  color: #a53225;
+  color: var(--danger);
 }
 .auth-command {
   display: block;
   padding: 15px;
-  background: #f0f4ed;
-  border-radius: 8px;
+  background: var(--surface-raised);
+  border-radius: 6px;
   margin: 0 0 24px;
 }
 .auth-footer {
-  color: #7c887c;
+  color: var(--muted);
   font-size: 11px;
   margin: 24px 0 0;
 }
@@ -201,12 +203,12 @@ body.auth-pending > :not(#dashboard-sign-in) {
   align-items: center;
   gap: 10px 24px;
   padding: 18px 0;
-  border-block: 1px solid #dee6dc;
+  border-block: 1px solid var(--line);
   font-size: 13px;
   margin-bottom: 22px;
 }
 .auth-account-summary span {
-  color: #6a766a;
+  color: var(--muted);
   font-size: 12px;
 }
 .auth-password-change {
@@ -221,9 +223,9 @@ body.auth-pending > :not(#dashboard-sign-in) {
 .auth-signout-confirm {
   margin-top: 18px;
   padding: 18px;
-  background: #fff8ed;
-  border: 1px solid #e9dcc1;
-  border-radius: 10px;
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-line);
+  border-radius: 8px;
   font-size: 13px;
   line-height: 1.7;
 }
@@ -236,7 +238,7 @@ body.auth-pending > :not(#dashboard-sign-in) {
 .auth-account-link {
   font-size: 12px;
   text-decoration: none;
-  color: #385140;
+  color: var(--ink);
   white-space: nowrap;
 }
 @media (max-width: 520px) {
@@ -246,7 +248,7 @@ body.auth-pending > :not(#dashboard-sign-in) {
   }
   .auth-card {
     padding: 26px 22px;
-    border-radius: 14px;
+    border-radius: 8px;
     margin-top: 6vh;
   }
   .auth-brand {

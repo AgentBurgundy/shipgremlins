@@ -1,35 +1,35 @@
 .button-danger,
 .danger-button {
-  color: #9f3428;
-  border-color: #e6c4bc;
-  background: #fff9f7;
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
 }
 .button-danger:hover:not(:disabled),
 .danger-button:hover:not(:disabled) {
-  background: #fce8e0;
-  border-color: #c57867;
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
 }
 .deletion-dialog {
   width: min(650px, calc(100vw - 32px));
   max-height: calc(100dvh - 40px);
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 10px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 .deletion-dialog::backdrop {
-  background: #10281f80;
+  background: color-mix(in srgb, var(--surface-inset) 50%, transparent);
   backdrop-filter: blur(3px);
 }
 .deletion-heading {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #fff;
+  background: var(--surface);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -63,7 +63,7 @@
   margin: 14px 0;
   padding: 14px 16px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 .deletion-content h3 {
   font-size: 14px;
@@ -80,11 +80,11 @@
   overflow-wrap: anywhere;
 }
 .deletion-blockers {
-  background: #fff4e8;
-  border-color: #e3c6a0 !important;
+  background: var(--warning-soft);
+  border-color: var(--warning-line) !important;
 }
 .deletion-retained {
-  background: #f8faf7;
+  background: var(--surface);
 }
 .deletion-recovery-note {
   font-size: 13px;
@@ -112,7 +112,7 @@
   position: sticky;
   bottom: 0;
   z-index: 1;
-  background: #fafbf9;
+  background: var(--surface);
   display: flex;
   justify-content: flex-end;
   gap: 10px;

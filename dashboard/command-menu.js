@@ -31,13 +31,13 @@
         href: `/activity?run=${encodeURIComponent(job.id)}`,
       });
     for (const [label, href] of [
-      ["Overview", "/overview"],
+      ["Mission control", "/overview"],
       ["Projects", "/projects"],
-      ["Your gremlins", "/runners"],
-      ["Activity", "/activity"],
+      ["Agents", "/runners"],
+      ["Runs", "/activity"],
       ["Connections", "/connections"],
       ["Usage", "/usage"],
-      ["Review inbox", "/inbox"],
+      ["Approvals", "/inbox"],
       ["Add a project", "/projects#project-form"],
       ["Connect source control", "/connections#source-control"],
       ["Connect AI", "/connections#model-connections"],
@@ -56,7 +56,7 @@
     };
     const dialog = node("dialog", "command-menu"),
       heading = node("header"),
-      title = node("h2", "", "Go somewhere"),
+      title = node("h2", "", "Search workspace"),
       close = node("button", "small-button", "Close"),
       input = node("input"),
       label = node(

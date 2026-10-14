@@ -647,10 +647,18 @@
         s.root.append(section);
       }
       if (earlier.length) {
-        const section = el("section", undefined, "promotion-work");
-        const header = el("header", undefined, "promotion-work-header");
+        const section = el(
+          "details",
+          undefined,
+          "promotion-work mission-detail",
+        );
+        section.open = Boolean(s.historyOpen);
+        section.addEventListener("toggle", () => {
+          s.historyOpen = section.open;
+        });
+        const header = el("summary", undefined, "promotion-work-header");
         header.append(
-          el("h2", "Earlier promotions"),
+          el("span", "Earlier promotions"),
           el("span", `${earlier.length} tickets`, "promotion-work-count"),
         );
         const rows = el("ul", undefined, "promotion-ticket-list");
@@ -662,7 +670,7 @@
       history.append(
         el("span", "One current state per ticket. Earlier attempts stay in "),
       );
-      const historyLink = safeLink("Activity history", "/activity");
+      const historyLink = safeLink("Run history", "/activity");
       if (historyLink) {
         historyLink.className = "promotion-ticket-activity";
         history.append(historyLink);
@@ -1057,7 +1065,7 @@
           el(
             "p",
             promotionWorkflow(s) && item.status === "review-changes"
-              ? "Coding has finished. Delivery above shows the integration checks, PM QA result and promotion progress; any blocker remains visible."
+              ? "Coding has finished. Delivery shows the integration checks, PM QA result and promotion progress; any blocker remains visible."
               : item.message,
             "mission-note",
           ),
@@ -1227,8 +1235,8 @@
         notice.setAttribute("role", "status");
         s.root.append(notice);
       }
-      renderChanges(s);
       if (s.view === "changes") {
+        renderChanges(s);
         if (!list(s.data?.changes).length && !promotionWorkflow(s))
           s.root.append(
             heading(
@@ -1239,7 +1247,7 @@
           );
         s.root.append(
           safeLink(
-            "Advanced delivery workflow",
+            "Delivery controls",
             `${projectPath(s.project.name)}?tab=delivery`,
           ),
         );
@@ -1247,6 +1255,7 @@
       }
       if (s.newMission || !s.selected) form(s);
       else mission(s);
+      renderChanges(s);
       if (list(s.data?.missions).length > 1) {
         const label = el("label", "Other missions"),
           select = el("select");

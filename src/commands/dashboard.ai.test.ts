@@ -138,6 +138,52 @@ async function fixture() {
 }
 
 describe("dashboard AI provider HTTP contract", () => {
+  it("reports the actual project setup provider independently from workspace and PM routes without exposing credentials", async () => {
+    const f = await fixture();
+    await f.call("/api/connections", {
+      values: { CLAUDE_CODE_OAUTH_TOKEN: claude },
+    });
+    await f.call("/api/ai", { provider: "claude" });
+    const before = (await (
+      await f.call("/api/projects/app/ai")
+    ).json()) as AiRoutingView;
+    expect(
+      (
+        await f.call(
+          "/api/projects/app/ai",
+          {
+            revision: before.revision,
+            default: { provider: "codex", model: "synthetic-coder" },
+            pm: { provider: "claude" },
+          },
+          "PUT",
+        )
+      ).status,
+    ).toBe(200);
+    const status = async () =>
+      (await (await f.call("/api/status")).json()) as {
+        ai: AiView;
+        projects: Array<{ setupAi: Omit<AiView, "providers"> }>;
+      };
+    const missing = await status();
+    expect(missing.ai).toMatchObject({ provider: "claude", configured: true });
+    expect(missing.projects[0]!.setupAi).toEqual({
+      provider: "codex",
+      model: "synthetic-coder",
+      configured: false,
+    });
+    assertPrivate(missing);
+    await f.call("/api/connections", { values: { CODEX_AUTH_JSON: codex } });
+    const connected = await status();
+    expect(connected.projects[0]!.setupAi).toEqual({
+      provider: "codex",
+      model: "synthetic-coder",
+      configured: true,
+    });
+    assertPrivate(connected);
+    expect(f.models.list).not.toHaveBeenCalled();
+    expect(f.login.prepare).not.toHaveBeenCalled();
+  });
   it("returns safe model catalog choices only for an authenticated exact provider query", async () => {
     const f = await fixture();
     expect(

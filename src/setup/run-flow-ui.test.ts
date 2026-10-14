@@ -155,6 +155,57 @@ function fixture() {
   return { window, document, root, board, update, byId, cards, timers };
 }
 describe("live recorded run process", () => {
+  it("keeps every recorded stage visible on the board without opening a run or its history", () => {
+    const f = fixture();
+    f.update([job({ flow: flow() })]);
+    const card = f.cards()[0]!,
+      details = all(card).find((item) => item.tagName === "DETAILS")!;
+    const rail = card.children.find(
+      (item) => item.className === "run-flow-rail",
+    )!;
+    expect(rail).toBeDefined();
+    expect(all(details)).not.toContain(rail);
+    expect(
+      all(card).filter((item) => item.className === "run-flow-rail"),
+    ).toHaveLength(1);
+    expect(text(rail)).toContain("Implement");
+    expect(text(rail)).toContain("Draft PR");
+    expect(details.open).toBe(false);
+  });
+  it("keeps the current blocker and its next action outside optional process details", () => {
+    const f = fixture();
+    Object.assign(f.window, {
+      normalizedRunFailure: () => ({
+        detail: "Reconnect the saved account.",
+        label: "Review connections",
+        href: "/connections",
+      }),
+    });
+    f.update([
+      job({
+        status: "queued",
+        failure: { category: "credential-wait" },
+        ai: { provider: "codex", model: "selected-model" },
+      }),
+    ]);
+    const card = f.cards()[0]!,
+      details = all(card).find((item) => item.tagName === "DETAILS")!;
+    expect(text(card)).toContain("Waiting for a connection");
+    const blocker = all(card).find(
+      (item) => item.className === "run-flow-blocker",
+    )!;
+    const remedy = all(card).find((item) =>
+      item.className.includes("run-flow-next-action"),
+    )!;
+    expect(remedy.href).toBe("/connections");
+    expect(all(details)).not.toContain(blocker);
+    expect(all(details)).not.toContain(remedy);
+    expect(text(details)).toContain("Codex · selected-model");
+    expect(details.open).toBe(false);
+    expect(
+      all(card).filter((item) => item.className === "run-flow-rail"),
+    ).toHaveLength(0);
+  });
   it("shows the real phase inline with readable labels, provider, elapsed time and bounded repair count", () => {
     const f = fixture();
     f.update([
@@ -165,6 +216,13 @@ describe("live recorded run process", () => {
     expect(text(f.root)).toContain("Draft PR");
     expect(text(f.root)).toContain("Checkout quality");
     expect(text(f.root)).toContain("Codex · gpt-5.4");
+    const card = f.cards()[0]!,
+      details = all(card).find((item) => item.tagName === "DETAILS")!,
+      role = all(card).find((item) => item.className === "run-flow-role")!;
+    expect(text(role)).toBe("Coding · Checkout quality · Codex");
+    expect(all(details)).not.toContain(role);
+    expect(text(role)).not.toContain("gpt-5.4");
+    expect(details.open).toBe(false);
     expect(text(f.root)).toContain("Elapsed 4m 0s");
     expect(text(f.root)).toContain("Repairs 1/2");
     expect(f.cards()[0]!.className).toContain("is-live");
@@ -202,7 +260,13 @@ describe("live recorded run process", () => {
   );
   it("shows queued and legacy-running jobs without inventing process phases", () => {
     const f = fixture();
-    f.update([job({ id: "waiting", status: "queued" }), job({ id: "old" })]);
+    f.update([
+      job({ id: "waiting", status: "queued" }),
+      job({
+        id: "old",
+        ai: { provider: "unknown", model: "unverified-model" },
+      }),
+    ]);
     expect(text(f.root)).toContain("Waiting for a worker");
     expect(text(f.root)).toContain("Working · stage unavailable");
     expect(all(f.root).some((item) => item.className === "run-flow-rail")).toBe(
@@ -210,6 +274,8 @@ describe("live recorded run process", () => {
     );
     expect(text(f.root)).not.toContain("Repairs");
     expect(text(f.root)).not.toContain("Codex");
+    expect(text(f.root)).not.toContain("Claude Code");
+    expect(text(f.root)).not.toContain("unverified-model");
   });
   it.each([{ freshness: "stale" }, { stale: true }])(
     "keeps stale flow readable and removes the live animation marker",

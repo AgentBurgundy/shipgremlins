@@ -18,6 +18,7 @@ interface Step {
 const window: {
   firstRunNextStep?: (status: unknown, runners: unknown) => Step | null;
   projectFirstStep?: (project: unknown, jobs?: unknown[]) => string;
+  projectSetupDestination?: (project: unknown) => string;
 } = {};
 runInNewContext(source, { window });
 const next = (status: unknown, jobs: unknown[] = []) =>
@@ -49,6 +50,64 @@ const withPm = (blockers: object[] = []) =>
   });
 
 describe("first useful mission guidance", () => {
+  it("returns Linear setup to crew for repository checks or verified browser access, and to the exact unfinished environment otherwise", () => {
+    const destination = window.projectSetupDestination!;
+    expect(destination(project({ verification: { mode: "repository" } }))).toBe(
+      "/projects/my-app?tab=crew",
+    );
+    expect(
+      destination(
+        project({
+          verification: { mode: "browser" },
+          readiness: {
+            steps: [
+              { id: "test_access", ready: true },
+              { id: "browser_verification", ready: true },
+            ],
+            blockers: [],
+          },
+        }),
+      ),
+    ).toBe("/projects/my-app?tab=crew");
+    for (const id of [
+      "environment",
+      "browser_connections",
+      "test_access",
+      "browser_verification",
+    ])
+      expect(
+        destination(
+          project({
+            verification: { mode: "browser" },
+            readiness: { steps: [], blockers: [{ id }] },
+          }),
+        ),
+      ).toBe("/projects/my-app?tab=environment");
+    expect(
+      destination(
+        project({
+          verification: { mode: "browser" },
+          readiness: {
+            steps: [{ id: "browser_verification", ready: false }],
+            blockers: [],
+          },
+        }),
+      ),
+    ).toBe("/projects/my-app?tab=environment");
+    expect(
+      destination(
+        project({
+          verification: { mode: "browser" },
+          readiness: {
+            areas: [{ coding: { enableBlockers: [{ id: "environment" }] } }],
+          },
+        }),
+      ),
+    ).toBe("/projects/my-app?tab=environment");
+    expect(destination(project({ readiness: undefined }))).toBe(
+      "/projects/my-app?tab=environment",
+    );
+  });
   it("sends promotion projects to delivery progress instead of a manual draft review", () => {
     const value = next({
       ...connected(),
@@ -232,6 +291,105 @@ describe("first useful mission guidance", () => {
       index: 0,
       href: "/connections#source-control",
     });
+  });
+  it("uses the project's routed AI readiness when the workspace default is disconnected", () => {
+    const value = next({
+      ...connected(),
+      ai: { provider: "claude", configured: false },
+      connections: [{ name: "CODEX_AUTH_JSON", configured: true }],
+      projects: [
+        project({
+          readiness: {
+            steps: [
+              { id: "source_connection", ready: true },
+              { id: "ai_connection", ready: true },
+            ],
+            areas: [],
+          },
+        }),
+      ],
+    });
+    expect(value).toMatchObject({ index: 3, label: "Find my gremlins" });
+  });
+  it("uses setup AI before PM adoption instead of disconnected workspace or future PM routes", () => {
+    const value = next({
+      ...connected(),
+      ai: { provider: "claude", configured: false },
+      projects: [
+        project({
+          setupAi: { provider: "codex", configured: true },
+          readiness: {
+            steps: [
+              { id: "source_connection", ready: true },
+              { id: "ai_connection", ready: false },
+            ],
+            areas: [],
+          },
+        }),
+      ],
+    });
+    expect(value).toMatchObject({ index: 3, label: "Find my gremlins" });
+    const missing = next({
+      ...connected(),
+      projects: [
+        project({
+          setupAi: { provider: "codex", configured: false },
+          readiness: {
+            steps: [
+              { id: "source_connection", ready: true },
+              { id: "ai_connection", ready: true },
+            ],
+            areas: [],
+          },
+        }),
+      ],
+    });
+    expect(missing).toMatchObject({ index: 1, label: "Connect Codex" });
+    expect(missing.description).toContain("Connect Codex");
+  });
+  it("does not let a connected workspace default conceal the selected project's missing AI", () => {
+    const value = next({
+      ...connected(),
+      projects: [
+        project({
+          readiness: {
+            steps: [
+              { id: "source_connection", ready: true },
+              {
+                id: "ai_connection",
+                ready: false,
+                message: "Connect the selected project account.",
+              },
+            ],
+            areas: [],
+          },
+        }),
+      ],
+    });
+    expect(value).toMatchObject({
+      index: 1,
+      label: "Connect project AI",
+      description: "Connect the selected project account.",
+    });
+  });
+  it("uses PM readiness after adoption even when setup uses a connected different account", () => {
+    const value = next({
+      ...connected(),
+      projects: [
+        project({
+          areas: [{ key: "core" }],
+          setupAi: { provider: "codex", configured: true },
+          readiness: {
+            steps: [
+              { id: "source_connection", ready: true },
+              { id: "ai_connection", ready: false },
+            ],
+            areas: [{ key: "core" }],
+          },
+        }),
+      ],
+    });
+    expect(value).toMatchObject({ index: 1, label: "Connect project AI" });
   });
   it("finds a suggested crew before adoption and learns the app before asking for an outcome", () => {
     const status = { ...connected(), projects: [project()] };
@@ -438,7 +596,7 @@ describe("first useful mission guidance", () => {
     });
     expect(next(status)).toMatchObject({
       active: false,
-      label: "Open your projects",
+      label: "Open projects",
       href: "/projects",
     });
   });
@@ -463,5 +621,100 @@ describe("first useful mission guidance", () => {
       href: "/projects/my-app",
     });
     expect(state.description).toContain("automatically");
+  });
+  it("takes a fully ready paused crew to the gated autopilot action rather than another manual run", () => {
+    const value = next({
+      ...connected(),
+      projects: [
+        project({
+          areas: [
+            { key: "core", name: "Pip", enabled: false, codingEnabled: false },
+          ],
+          readiness: {
+            steps: [
+              { id: "source_connection", ready: true },
+              { id: "ai_connection", ready: true },
+            ],
+            areas: [
+              {
+                key: "core",
+                canRun: true,
+                canEnable: true,
+                coding: { canEnable: true },
+              },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(value).toMatchObject({
+      label: "Start autopilot",
+      href: "/projects/my-app?tab=crew",
+    });
+    expect(value.description).toContain("saved approval policy");
+  });
+  it.each([undefined, { enabled: false }])(
+    "keeps a fully active legacy crew on monitoring when its autonomy summary is %j",
+    (autonomy) => {
+      const value = next({
+        ...connected(),
+        projects: [
+          project({
+            autonomy,
+            areas: [
+              { key: "core", enabled: true },
+              { key: "billing", enabled: true, codingEnabled: true },
+            ],
+            readiness: {
+              steps: [
+                { id: "source_connection", ready: true },
+                { id: "ai_connection", ready: true },
+              ],
+              areas: ["core", "billing"].map((key) => ({
+                key,
+                canRun: true,
+                canEnable: true,
+                coding: { canEnable: true },
+              })),
+            },
+          }),
+        ],
+      });
+      expect(value).toMatchObject({
+        label: "Open project",
+        href: "/projects/my-app",
+      });
+      expect(value.description).toContain("No run is currently in flight.");
+      expect(value.title).not.toBe("Ready for autopilot.");
+    },
+  );
+  it("offers activation to a fully ready mixed crew with one coding pickup still paused", () => {
+    const value = next({
+      ...connected(),
+      projects: [
+        project({
+          areas: [
+            { key: "core", enabled: true, codingEnabled: true },
+            { key: "billing", enabled: true, codingEnabled: false },
+          ],
+          readiness: {
+            steps: [
+              { id: "source_connection", ready: true },
+              { id: "ai_connection", ready: true },
+            ],
+            areas: ["core", "billing"].map((key) => ({
+              key,
+              canRun: true,
+              canEnable: true,
+              coding: { canEnable: true },
+            })),
+          },
+        }),
+      ],
+    });
+    expect(value).toMatchObject({
+      label: "Start autopilot",
+      href: "/projects/my-app?tab=crew",
+    });
   });
 });

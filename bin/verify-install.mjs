@@ -71,6 +71,7 @@ for (const path of [
   "dashboard/ai-routing.css",
   "dashboard/run-flow.js",
   "dashboard/run-flow.css",
+  "dashboard/mission-control.css",
 ])
   assert(
     packagedPaths.has(path),

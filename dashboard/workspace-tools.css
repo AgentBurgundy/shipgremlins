@@ -1,8 +1,8 @@
 .dashboard-freshness {
   margin: 0 0 18px;
-  color: #667b70;
+  color: var(--muted);
   font-size: 11px;
-  border-bottom: 1px solid #e1e9e3;
+  border-bottom: 1px solid var(--line);
   padding-bottom: 12px;
 }
 .dashboard-freshness summary {
@@ -11,7 +11,7 @@
   line-height: 1.5;
 }
 .dashboard-freshness.degraded summary {
-  color: #8b5b21;
+  color: var(--warning);
 }
 .dashboard-freshness ul {
   display: grid;
@@ -27,7 +27,7 @@
   line-height: 1.5;
 }
 .dashboard-freshness li strong {
-  color: #385b42;
+  color: var(--muted);
   min-width: 110px;
 }
 .project-preference-actions {
@@ -39,18 +39,18 @@
   min-width: 32px;
   min-height: 32px;
   padding: 5px 8px;
-  border: 1px solid #e1e9e3;
-  border-radius: 7px;
-  background: #fff;
-  color: #667b70;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .project-preference-actions button[aria-pressed="true"] {
-  color: #245b40;
-  background: #edf5e7;
-  border-color: #c8dbbc;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 .project-preference-actions button:disabled {
   opacity: 0.4;

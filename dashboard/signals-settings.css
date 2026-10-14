@@ -11,18 +11,18 @@
   gap: 4px;
   padding: 5px;
   margin: 0 0 20px;
-  border: 1px solid #e4eae6;
-  border-radius: 11px;
-  background: #f4f6f3;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
 }
 .signals-provider-tabs button {
   min-width: 0;
   min-height: 36px;
   padding: 8px 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--muted, #617169);
+  color: var(--muted, var(--muted));
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -31,13 +31,13 @@
   cursor: pointer;
 }
 .signals-provider-tabs button[aria-selected="true"] {
-  background: #fff;
-  color: #20452e;
-  box-shadow: 0 1px 4px #18332412;
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 10%);
 }
 .signals-provider-tabs button:hover:not([aria-selected="true"]) {
-  color: #20452e;
-  background: #e6eee8;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .signals-provider-tabs button[data-enabled="true"]::after {
   content: "";
@@ -46,12 +46,12 @@
   height: 6px;
   margin-left: 7px;
   border-radius: 50%;
-  background: #649453;
+  background: var(--accent-soft);
   vertical-align: 2px;
 }
 .signals-provider-tabs button:focus-visible,
 .signal-reference-toggle:focus-visible {
-  outline: 3px solid #72a354;
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .signals-settings .signal-provider-panel {
@@ -75,9 +75,9 @@
 .signals-settings .signal-enable {
   padding: 12px 14px;
   margin: 0 0 18px;
-  border: 1px solid #e1e8e3;
-  border-radius: 10px;
-  background: #f8faf7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.5;
@@ -92,9 +92,9 @@
 .signals-settings .signal-secret-references {
   margin: 14px 0 18px;
   padding: 14px;
-  border: 1px solid #e1e8e3;
-  border-radius: 10px;
-  background: #fafcfb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
   min-width: 0;
 }
 .signal-secret-references > .runner-guidance {
