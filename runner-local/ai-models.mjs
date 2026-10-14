@@ -39,6 +39,13 @@ export async function readAiModelCatalog(input, dependencies = {}) {
     (input.provider === "claude" && input.auth !== undefined)
   )
     throw new Error("Invalid model catalog input.");
+  if (
+    input.provider === "codex" &&
+    (typeof input.auth !== "string" ||
+      Buffer.byteLength(input.auth) > 65536 ||
+      JSON.parse(input.auth).tokens?.refresh_token !== "")
+  )
+    throw new Error("Catalog discovery requires access-only auth.");
   const directory = dependencies.directory ?? "/auth",
     provider = input.provider;
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -46,12 +53,6 @@ export async function readAiModelCatalog(input, dependencies = {}) {
   const home = join(directory, "claude-home");
   const secrets = [];
   if (provider === "codex") {
-    if (
-      typeof input.auth !== "string" ||
-      Buffer.byteLength(input.auth) > 65536 ||
-      JSON.parse(input.auth).tokens?.refresh_token !== ""
-    )
-      throw new Error("Catalog discovery requires access-only auth.");
     secrets.push(
       ...codexSecretValues(input.auth),
       JSON.parse(input.auth).tokens?.account_id,
