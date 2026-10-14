@@ -7,12 +7,16 @@ import { matchesPrefix } from "../config.ts";
 import { resolve } from "node:path";
 import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import { ticketFromBranch } from "./repair.ts";
+import { developerEpicBlocker } from "./dispatch.ts";
+import { usesEpicApproval } from "../epics.ts";
+import { ticketScopeHash } from "../lifecycle/manifest.ts";
 import type { Comment, PullRequest } from "../forge/types.ts";
 import { branchesOf, repoOf, type Ctx, type DigestRow } from "./context.ts";
 import {
   formatMergeFailed,
   developerBranch,
   HUB_CONFIG_PREFIX,
+  LABELS,
   MERGE_FAILED_PREFIX,
   MERGED_PREFIX,
   parseMergeFailedSha,
@@ -201,6 +205,35 @@ async function mergeOne(
   const ticket = ticketIdentifier
     ? await ctx.linear.getTicket(ticketIdentifier)
     : null;
+  const epicRequired =
+    usesEpicApproval(ctx.project) &&
+    !recovery &&
+    !pr.headRef.startsWith(SYNC_BRANCH_PREFIX);
+  const epicScope = ticket ? ticketScopeHash(ticket) : undefined;
+  const epicMergeBlocker = async () => {
+    const current = ticket ? await ctx.linear.getTicket(ticket.id) : null;
+    if (
+      !current ||
+      ticketScopeHash(current) !== epicScope ||
+      !current.labels.includes(LABELS.approved) ||
+      [LABELS.proposal, LABELS.needsHuman, LABELS.verified].some((label) =>
+        current.labels.includes(label),
+      ) ||
+      ["completed", "canceled"].includes(current.stateType)
+    )
+      return "The coding ticket's current approved scope is unavailable. Review its scope before integration merge.";
+    return developerEpicBlocker(ctx, current);
+  };
+  if (epicRequired) {
+    const reason = await epicMergeBlocker();
+    if (reason)
+      return {
+        rule: "merge",
+        text: `#${pr.number}: ${reason}`,
+        needsYou: true,
+        ref: String(pr.number),
+      };
+  }
   const automaticOrigin =
     ticket &&
     createAutomaticApprovals(resolve(ctx.project.dir, "../..")).isAutomatic(
@@ -265,6 +298,16 @@ async function mergeOne(
     const reason = createAutomaticApprovals(
       resolve(ctx.project.dir, "../.."),
     ).blocker(ctx.project, area, current);
+    if (reason)
+      return {
+        rule: "merge",
+        text: `#${pr.number}: ${reason}`,
+        needsYou: true,
+        ref: String(pr.number),
+      };
+  }
+  if (epicRequired) {
+    const reason = await epicMergeBlocker();
     if (reason)
       return {
         rule: "merge",

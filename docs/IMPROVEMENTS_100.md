@@ -12,7 +12,7 @@ Implemented means the change exists with source/automated-test evidence in this 
 
 The completed follow-up evidence is recorded in `docs/audits/backlog-environments.md`, `backlog-recovery.md`, `backlog-dashboard.md`, and `backlog-autonomy.md`. Older provider runs without authenticated workflow-input evidence still require manual inspection.
 
-Final v0.25.0 verification: **213 test files passed; 3,688 tests passed and 6 skipped.** TypeScript, ESLint, formatting, dashboard bundle and diff whitespace checks passed, alongside real packaged CLI installation and staged-update/rollback smoke tests. Desktop and 390×844 browser QA verified the overview, project state, Enable/Pause controls, PM workspace and unified search with Escape/focus restoration. Release preview screenshots are in `.run/release-qa/`. Docker Desktop was launched for a disposable runtime check, but its Linux engine did not become available; no live-container success is claimed. Hosted-provider authentication and staging deployment still require live certification.
+Final v0.25.0 verification: **214 test files passed; 3,704 tests passed and 6 skipped.** TypeScript, ESLint, formatting, dashboard bundle and diff whitespace checks passed, alongside real packaged CLI installation and staged-update/rollback smoke tests. Desktop and 390×844 browser QA verified the overview, project state, Enable/Pause controls, PM workspace and unified search with Escape/focus restoration. Release preview screenshots are in `.run/release-qa/`. Docker Desktop was launched for a disposable runtime check, but its Linux engine did not become available; no live-container success is claimed. Hosted-provider authentication and staging deployment still require live certification.
 
 ## Environment and setup · 001–025
 

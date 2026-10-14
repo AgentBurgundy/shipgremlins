@@ -4,8 +4,13 @@
 
 import type { Ctx, DigestRow } from "./context.ts";
 import { branchesOf, repoOf } from "./context.ts";
-import { isCurrentRecoveryTicket } from "./stopTheLine.ts";
-import { fireDeveloper, isLiveRun, lastIndexWhere } from "./dispatch.ts";
+import { isCurrentRecoveryTicket, type RecoveryLane } from "./stopTheLine.ts";
+import {
+  developerEpicBlocker,
+  fireDeveloper,
+  isLiveRun,
+  lastIndexWhere,
+} from "./dispatch.ts";
 import {
   createDispatchReservation,
   reservationBody,
@@ -25,7 +30,10 @@ import {
 const isDispatchNote = (body: string): boolean =>
   body.startsWith(DISPATCHED_PREFIX) || body.startsWith(RETRIGGERED_PREFIX);
 
-export async function runHeal(ctx: Ctx): Promise<DigestRow[]> {
+export async function runHeal(
+  ctx: Ctx,
+  opts: { recovery?: RecoveryLane } = {},
+): Promise<DigestRow[]> {
   const rows: DigestRow[] = [];
   const repo = repoOf(ctx);
 
@@ -176,6 +184,20 @@ export async function runHeal(ctx: Ctx): Promise<DigestRow[]> {
         comments.some((b) => b.startsWith(RETRIGGERED_PREFIX)) ||
         comments.filter((b) => b.startsWith(DISPATCHED_PREFIX)).length >= 2;
       if (!retriggered) {
+        const epicBlocker = await developerEpicBlocker(
+          ctx,
+          currentTicket,
+          opts.recovery,
+        );
+        if (epicBlocker) {
+          rows.push({
+            rule: "heal",
+            ref: t.identifier,
+            needsYou: true,
+            text: `${t.identifier}: ${epicBlocker}`,
+          });
+          continue;
+        }
         if (ctx.dryRun) {
           ctx.log(
             `[dry-run] re-fire developer for ${t.identifier} (run ${runId} ended with no PR)`,
@@ -200,11 +222,15 @@ export async function runHeal(ctx: Ctx): Promise<DigestRow[]> {
           t.id,
           reservationBody(`${RETRY_RESERVED_PREFIX} ${runId}`, reservation),
         );
-        const next = await fireDeveloper(ctx, {
-          ...args,
-          marker: reservation.id,
-          scope: reservation.inputs.scope,
-        });
+        const next = await fireDeveloper(
+          ctx,
+          {
+            ...args,
+            marker: reservation.id,
+            scope: reservation.inputs.scope,
+          },
+          opts.recovery,
+        );
         await ctx.linear.addComment(
           t.id,
           reservationReceipt(reservation, next),

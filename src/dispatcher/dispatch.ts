@@ -4,7 +4,11 @@
 import type { WorkflowRun } from "../forge/types.ts";
 import type { LinearTicket } from "../services/types.ts";
 import { branchesOf, repoOf, type Ctx, type DigestRow } from "./context.ts";
-import { isCurrentRecoveryTicket, type RecoveryLane } from "./stopTheLine.ts";
+import {
+  integrationHealth,
+  isCurrentRecoveryTicket,
+  type RecoveryLane,
+} from "./stopTheLine.ts";
 import {
   DISPATCHED_PREFIX,
   LABELS,
@@ -16,6 +20,7 @@ import {
 import { codingPickupEnabled } from "../config.ts";
 import { resolve } from "node:path";
 import { createAutomaticApprovals } from "../autonomy/approval.ts";
+import { epicCodingBlocker, usesEpicApproval } from "../epics.ts";
 import {
   createDispatchReservation,
   reservationBody,
@@ -56,8 +61,17 @@ export function developerInputs(args: DeveloperArgs): Record<string, string> {
 export async function fireDeveloper(
   ctx: Ctx,
   args: DeveloperArgs,
+  recovery?: RecoveryLane,
 ): Promise<WorkflowRun> {
   const ticket = await ctx.linear.getTicket(args.ticket);
+  if (!["sync", "port"].includes(args.kind)) {
+    const epicBlocker = await developerEpicBlocker(
+      ctx,
+      ticket,
+      args.kind === "build" ? recovery : undefined,
+    );
+    if (epicBlocker) throw new Error(epicBlocker);
+  }
   const approvals = createAutomaticApprovals(resolve(ctx.project.dir, "../.."));
   if (ticket && approvals.isAutomatic(ctx.project, ticket)) {
     const areas = ctx.project.areas.filter(
@@ -77,6 +91,45 @@ export async function fireDeveloper(
     "developer.yml",
     "main",
     developerInputs(args),
+  );
+}
+
+/** The recovery lane is controller state, never inferred from worker-editable labels. */
+export async function developerEpicBlocker(
+  ctx: Ctx,
+  ticket: LinearTicket | null,
+  recovery?: RecoveryLane,
+): Promise<string | null> {
+  if (!usesEpicApproval(ctx.project)) return null;
+  if (
+    ticket &&
+    recovery &&
+    ticket.id === recovery.ticketId &&
+    ticket.identifier === recovery.identifier &&
+    ctx.project.areas.some(
+      (area) => area.linearProjectId === ticket.projectId,
+    ) &&
+    isCurrentRecoveryTicket(ticket, recovery.sha, branchesOf(ctx).integration)
+  ) {
+    const health = await integrationHealth(ctx);
+    if (health.state === "unhealthy" && health.sha === recovery.sha)
+      return null;
+  }
+  const areas = ticket
+    ? ctx.project.areas.filter(
+        (area) =>
+          area.linearProjectId === ticket.projectId &&
+          ticket.labels.includes(area.label),
+      )
+    : [];
+  if (!ticket || areas.length !== 1)
+    return "Epic approval has no unique current ticket and owning PM mapping. Repair its Linear mapping before coding.";
+  return epicCodingBlocker(
+    resolve(ctx.project.dir, "../.."),
+    ctx.project,
+    areas[0]!,
+    ticket,
+    ctx.linear,
   );
 }
 
@@ -309,6 +362,21 @@ export async function runDispatch(
           )) !== opts.recovery.sha)
       )
         continue;
+      const epicBlocker = await developerEpicBlocker(
+        ctx,
+        currentTicket,
+        opts.recovery,
+      );
+      if (epicBlocker) {
+        if (needsSlot) room++;
+        rows.push({
+          rule: "dispatch",
+          ref: ticket.identifier,
+          needsYou: true,
+          text: `${ticket.identifier}: ${epicBlocker}`,
+        });
+        continue;
+      }
       // Claim the ticket before the provider request. A lost dispatch response
       // must leave a visible receipt gap, not another automatic launch.
       await ctx.linear.addLabel(ticket.id, LABELS.dispatched);
@@ -335,11 +403,15 @@ export async function runDispatch(
           reservation,
         ),
       );
-      const run = await fireDeveloper(ctx, {
-        ...args,
-        marker: reservation.id,
-        scope: reservation.inputs.scope,
-      });
+      const run = await fireDeveloper(
+        ctx,
+        {
+          ...args,
+          marker: reservation.id,
+          scope: reservation.inputs.scope,
+        },
+        opts.recovery,
+      );
       await ctx.linear.addComment(
         ticket.id,
         reservationReceipt(reservation, run),

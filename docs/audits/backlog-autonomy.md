@@ -24,6 +24,8 @@ An audited ticket can be sent back to manual review from the policy panel. The c
 
 Evidence: `src/autonomy/policy.ts`, `approval.ts`, `approval.test.ts`, `approval.safety.test.ts`; authenticated approval-policy HTTP tests; the dashboard policy form; job preparation, delivery and dispatcher guards; GitHub/GitLab exact-head diff adapters; owner proposal review.
 
+The legacy Actions dispatcher also checks current parent-epic approval before ordinary coding, retries and integration merge, including a final check after marking a draft ready. Blocked tickets retain no new launch reservation and do not consume another ticket's WIP slot. The controller-selected recovery lane remains limited to its exact unhealthy integration revision; editable ticket labels alone cannot grant this exception. `src/dispatcher/epicAuthorization.test.ts` covers missing/stale approval, changed PM context, revoked approval before merge, forged recovery labels, approved work following blocked work and genuine bounded CI repair.
+
 ## 100: Durable reasons and remedies
 
 Setup and scheduling retain typed safe failure codes, occurrence times and a bounded next retry per project/PM. Messages and remedies come from fixed controller text, never raw exceptions or logs. Retry delays grow from five to thirty minutes and survive restart. Successful checks resolve the retained alert; replacement projects have separate state.

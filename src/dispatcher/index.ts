@@ -51,7 +51,7 @@ export async function runDispatcher(
     return line.rows;
   });
 
-  await guarded("heal", () => runHeal(ctx));
+  await guarded("heal", () => runHeal(ctx, { recovery }));
   await guarded("repair", () => runRepair(ctx));
   await guarded("merge", async () => {
     const merged = await runMerge(ctx, {
