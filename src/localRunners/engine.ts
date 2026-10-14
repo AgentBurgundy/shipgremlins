@@ -508,6 +508,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
   const runFlows = createRunFlows({ root: options.root, now: clock });
   let imageReady = false;
   let inFlight: Promise<void> | undefined;
+  let admissionState: State | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let lastScheduled = 0;
   let stopping = false;
@@ -830,7 +831,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     }
   }
 
-  function save(state: State): void {
+  function save(state: State, committed?: () => void): void {
     state.usage ??= {};
     const oldest = new Date(clock().getTime() - 31 * 86400000)
       .toISOString()
@@ -853,6 +854,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     state.jobs = state.jobs.filter((job) => !archived.has(job.id));
     for (const job of archive) delete state.launched[job.id];
     writeJson(stateFile, state);
+    committed?.();
     // Side effects happen after durable transitions and do not hold up the queue.
     for (const job of [...state.jobs, ...archive])
       track(
@@ -949,10 +951,13 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
 
   async function exclusive<T>(
     operation: (state: State) => Promise<T> | T,
+    admitJobs = false,
   ): Promise<T> {
     const release = acquire();
     try {
-      return await operation(read());
+      const state = read();
+      if (admitJobs) admissionState = state;
+      return await operation(state);
     } catch (error) {
       if (error instanceof LocalRunnerError) throw error;
       throw new LocalRunnerError(
@@ -960,8 +965,33 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         500,
       );
     } finally {
+      if (admitJobs) admissionState = undefined;
       release();
     }
+  }
+
+  function admit(state: State, input: LocalJobInput): LocalJob {
+    if (!validInput(input))
+      throw new LocalRunnerError(
+        "Choose a valid local job request. Credentials and prompts are not queue fields.",
+      );
+    if (input.type === "verify")
+      throw new LocalRunnerError(
+        "Use a worker's Verify action to queue its browser check.",
+      );
+    // Stage append/pruning changes until persistence succeeds. Retain existing
+    // job and worker references: a scheduling step may hold them across an await.
+    const candidate: State = {
+      ...state,
+      jobs: [...state.jobs],
+      launched: { ...state.launched },
+      usage: { ...state.usage },
+    };
+    const job = queue(candidate, input);
+    // Observers may synchronously enqueue follow-up work before their first
+    // await. Publish the committed state before invoking any such callback.
+    save(candidate, () => Object.assign(state, candidate));
+    return job;
   }
 
   function archivedJob(id: string): LocalJob | undefined {
@@ -1928,7 +1958,7 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
             : "Local workers are watching the queue.",
         };
       save(state);
-    });
+    }, true);
   }
 
   async function allJobs(): Promise<LocalJob[]> {
@@ -2224,20 +2254,22 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
         release();
       }
     },
-    enqueue: (input) =>
-      exclusive((state) => {
-        if (!validInput(input))
-          throw new LocalRunnerError(
-            "Choose a valid local job request. Credentials and prompts are not queue fields.",
-          );
-        if (input.type === "verify")
-          throw new LocalRunnerError(
-            "Use a worker's Verify action to queue its browser check.",
-          );
-        const job = queue(state, input);
-        save(state);
-        return job;
-      }),
+    async enqueue(input) {
+      if (!admissionState) return exclusive((state) => admit(state, input));
+      // This controller already owns the storage lock. Admit synchronously into
+      // its current transaction while Docker/provider work yields, so the next
+      // scheduler save cannot overwrite the newly accepted job. Other controllers
+      // and configuration mutations still have to acquire the same lock.
+      try {
+        return admit(admissionState, input);
+      } catch (error) {
+        if (error instanceof LocalRunnerError) throw error;
+        throw new LocalRunnerError(
+          "The local runner operation could not complete. Check Docker and storage permissions; saved configuration is unchanged.",
+          500,
+        );
+      }
+    },
     async cancel(id) {
       const job = await requireJob(id);
       if (TERMINAL.has(job.status)) return job;

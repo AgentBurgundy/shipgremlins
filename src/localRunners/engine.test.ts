@@ -24,7 +24,7 @@ import type { DockerJobPayload, DockerRunners } from "./docker.ts";
 import { RunnerWorkspaceError } from "./workspace.ts";
 import { ManagedAccessError } from "./managedAccess.ts";
 import { TestEnvironmentError } from "../testEnvironments/index.ts";
-import type { LocalJobInput } from "./types.ts";
+import type { LocalJob, LocalJobInput } from "./types.ts";
 import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import { createUsage } from "../usage/index.ts";
 import type { JobNotificationEvent } from "../slack/messages.ts";
@@ -33,12 +33,19 @@ import type { ActivityStore } from "../storage/activity.ts";
 const lockWriteFault = vi.hoisted(() => ({
   once: undefined as ((fd: number) => void) | undefined,
 }));
+const admissionWriteFault = vi.hoisted(() => ({
+  once: undefined as ((value: string) => boolean) | undefined,
+}));
 vi.mock("node:fs", async (load) => {
   const actual = await load<typeof import("node:fs")>();
   return {
     ...actual,
     writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
       const [file, value] = args;
+      if (typeof value === "string" && admissionWriteFault.once?.(value)) {
+        admissionWriteFault.once = undefined;
+        throw Object.assign(new Error("Disk full"), { code: "ENOSPC" });
+      }
       if (
         lockWriteFault.once &&
         typeof file === "number" &&
@@ -258,6 +265,279 @@ it("serializes deletion guards with job admission and preserves typed mutation e
       throw expected;
     }),
   ).rejects.toBe(expected);
+});
+it.each([1, 2])(
+  "durably admits another PM during preparation with %i worker(s)",
+  async (workerCount) => {
+    const f = fixture();
+    for (let i = 0; i < workerCount; i++) await f.ready();
+    let enter!: () => void, release!: () => void;
+    const started = new Promise<void>((done) => (enter = done));
+    const gate = new Promise<void>((done) => (release = done));
+    const prepare = f.options.prepareJob.getMockImplementation()!;
+    f.options.prepareJob.mockImplementationOnce(async (job) => {
+      enter();
+      await gate;
+      return prepare(job);
+    });
+    const first = await f.engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "core",
+    });
+    const tick = f.engine.tick();
+    await started;
+    try {
+      const input: LocalJobInput = {
+        type: "pm",
+        project: "demo",
+        area: "security",
+        idempotencyKey: "pm:demo:security:manual",
+      };
+      const second = await f.engine.enqueue(input);
+      expect(second.status).toBe("queued");
+      expect(await f.engine.enqueue(input)).toEqual(second);
+      await expect(
+        f.engine.enqueue({ type: "pm", project: "demo", area: "core" }),
+      ).rejects.toMatchObject({ status: 409 });
+      const restarted = createLocalRunners(f.options);
+      expect(await restarted.job(second.id)).toMatchObject({
+        status: "queued",
+      });
+      expect((await restarted.status()).jobs.map((job) => job.runId)).toEqual(
+        expect.arrayContaining([first.runId, second.runId]),
+      );
+      await expect(restarted.tick()).rejects.toMatchObject({ status: 409 });
+      await expect(
+        f.engine.withConfigurationMutation({ project: "demo" }, vi.fn()),
+      ).rejects.toMatchObject({ status: 409 });
+      release();
+      await tick;
+      expect(await f.engine.job(first.id)).toMatchObject({ status: "running" });
+      expect(await f.engine.job(second.id)).toMatchObject({
+        status: workerCount === 2 ? "running" : "queued",
+      });
+      if (workerCount === 1) {
+        f.finish(first.id);
+        await f.engine.tick();
+        expect(await f.engine.job(second.id)).toMatchObject({
+          status: "running",
+        });
+      }
+      const launches = f.calls.filter((call) => call.payload.kind === "pm");
+      expect(launches.map((call) => call.id)).toEqual([first.id, second.id]);
+      if (workerCount === 2)
+        expect(new Set(launches.map((call) => call.workerId)).size).toBe(2);
+    } finally {
+      release();
+      await tick;
+    }
+  },
+);
+it("admits a PM while completed work is being reconciled without losing either transition", async () => {
+  const f = fixture();
+  await f.ready();
+  let enter!: () => void, release!: () => void;
+  const started = new Promise<void>((done) => (enter = done));
+  const gate = new Promise<void>((done) => (release = done));
+  const engine = createLocalRunners({
+    ...f.options,
+    reconcileCompletedJob: async () => {
+      enter();
+      await gate;
+    },
+  });
+  const first = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  f.finish(first.id);
+  const tick = engine.tick();
+  await started;
+  try {
+    const second = await engine.enqueue({
+      type: "pm",
+      project: "other",
+      area: "core",
+    });
+    expect(await createLocalRunners(f.options).job(second.id)).toMatchObject({
+      status: "queued",
+    });
+    release();
+    await tick;
+    expect(await engine.job(first.id)).toMatchObject({ status: "succeeded" });
+    expect(await engine.job(second.id)).toMatchObject({ status: "running" });
+  } finally {
+    release();
+    await tick;
+  }
+});
+it.each(["state", "retry index"])(
+  "does not launch an unacknowledged PM after its %s write fails during a tick",
+  async (write) => {
+    const f = fixture();
+    await f.ready();
+    let enter!: () => void, release!: () => void;
+    const started = new Promise<void>((done) => (enter = done));
+    const gate = new Promise<void>((done) => (release = done));
+    const prepare = f.options.prepareJob.getMockImplementation()!;
+    f.options.prepareJob.mockImplementationOnce(async (job) => {
+      enter();
+      await gate;
+      return prepare(job);
+    });
+    const first = await f.engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "core",
+    });
+    const tick = f.engine.tick();
+    await started;
+    try {
+      admissionWriteFault.once = (value) => {
+        const record = JSON.parse(value);
+        return write === "state"
+          ? record.nextRunId !== undefined
+          : typeof record.id === "string";
+      };
+      await expect(
+        f.engine.enqueue({
+          type: "pm",
+          project: "demo",
+          area: "security",
+          idempotencyKey: "unacknowledged",
+        }),
+      ).rejects.toMatchObject({ status: 500 });
+      expect(
+        (await f.engine.jobs()).some((job) => job.area === "security"),
+      ).toBe(false);
+      release();
+      await tick;
+      f.finish(first.id);
+      await f.engine.tick();
+      expect(
+        (await f.engine.jobs()).some((job) => job.area === "security"),
+      ).toBe(false);
+      expect(
+        f.calls
+          .filter((call) => call.payload.kind === "pm")
+          .map((call) => call.id),
+      ).toEqual([first.id]);
+      const retry = await f.engine.enqueue({
+        type: "pm",
+        project: "demo",
+        area: "security",
+        idempotencyKey: "unacknowledged",
+      });
+      await f.engine.tick();
+      expect(await f.engine.job(retry.id)).toMatchObject({ status: "running" });
+    } finally {
+      admissionWriteFault.once = undefined;
+      release();
+      await tick;
+    }
+  },
+);
+it("cancels a newly admitted PM before the idle runner can pick it up", async () => {
+  const f = fixture();
+  await f.ready();
+  await f.ready();
+  let enter!: () => void, release!: () => void;
+  const started = new Promise<void>((done) => (enter = done));
+  const gate = new Promise<void>((done) => (release = done));
+  const prepare = f.options.prepareJob.getMockImplementation()!;
+  f.options.prepareJob.mockImplementationOnce(async (job) => {
+    enter();
+    await gate;
+    return prepare(job);
+  });
+  await f.engine.enqueue({ type: "pm", project: "demo", area: "core" });
+  const tick = f.engine.tick();
+  await started;
+  try {
+    const second = await f.engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "security",
+    });
+    expect(await f.engine.cancel(second.id)).toHaveProperty(
+      "cancelRequestedAt",
+    );
+    release();
+    await tick;
+    expect(await f.engine.job(second.id)).toMatchObject({ status: "canceled" });
+    expect(f.calls.some((call) => call.id === second.id)).toBe(false);
+  } finally {
+    release();
+    await tick;
+  }
+});
+it("keeps reentrant activity-triggered admissions durable with distinct run IDs", async () => {
+  const f = fixture();
+  await f.ready();
+  let enter!: () => void, release!: () => void;
+  const started = new Promise<void>((done) => (enter = done));
+  const gate = new Promise<void>((done) => (release = done));
+  const prepare = f.options.prepareJob.getMockImplementation()!;
+  f.options.prepareJob.mockImplementationOnce(async (job) => {
+    enter();
+    await gate;
+    return prepare(job);
+  });
+  let followup: Promise<LocalJob> | undefined,
+    triggered = false;
+  const engine = createLocalRunners({
+    ...f.options,
+    activityStore: {
+      recordRun: async (job: LocalJob) => {
+        if (job.area === "security" && !triggered) {
+          triggered = true;
+          followup = engine.enqueue({
+            type: "pm",
+            project: "demo",
+            area: "product",
+          });
+        }
+      },
+      captureRun: async () => {},
+    } as unknown as ActivityStore,
+  });
+  const first = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  const tick = engine.tick();
+  await started;
+  try {
+    const second = await engine.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "security",
+    });
+    const third = await followup!;
+    expect(third).toBeDefined();
+    expect(new Set([first.runId, second.runId, third.runId]).size).toBe(3);
+    const restarted = createLocalRunners(f.options);
+    expect(await restarted.job(second.id)).toMatchObject({ status: "queued" });
+    expect(await restarted.job(third.id)).toMatchObject({ status: "queued" });
+    release();
+    await tick;
+    f.finish(first.id);
+    await engine.tick();
+    f.finish(second.id);
+    await engine.tick();
+    expect(
+      f.calls
+        .filter((call) => call.payload.kind === "pm")
+        .map((call) => call.id),
+    ).toEqual([first.id, second.id, third.id]);
+  } finally {
+    release();
+    await tick;
+  }
 });
 it("persists remote worker bindings and checks project scope before preparing credentials", async () => {
   const f = fixture(),
@@ -1137,6 +1417,7 @@ function fixture() {
 
 afterEach(() => {
   lockWriteFault.once = undefined;
+  admissionWriteFault.once = undefined;
   vi.restoreAllMocks();
   vi.useRealTimers();
   for (const root of roots.splice(0))
