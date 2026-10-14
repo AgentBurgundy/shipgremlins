@@ -1,25 +1,25 @@
 /* Mission control foundation. Component files consume these semantic tokens. */
 :root {
-  --bg: #0b1015;
-  --surface-base: #121b23;
+  --bg: #0d1410;
+  --surface-base: #151f18;
   --surface: var(--surface-base);
-  --surface-raised: #17232d;
-  --surface-inset: #0a1219;
-  --text-primary: #e7edf2;
-  --text-secondary: #a0adba;
-  --border-default: #2a3946;
-  --accent: #51d5e4;
-  --accent-line: #337a87;
-  --accent-soft: #102b34;
-  --success: #b5e56a;
+  --surface-raised: #1d2a20;
+  --surface-inset: #0b110d;
+  --text-primary: #edf3e8;
+  --text-secondary: #a4b3a6;
+  --border-default: #304335;
+  --accent: #c3f66b;
+  --accent-line: #577d3a;
+  --accent-soft: #1b2b20;
+  --success: #8bd5a3;
   --error: #ff8b87;
   --danger-line: #794b50;
   --danger-soft: #301c24;
   --warning: #edc576;
   --warning-line: #77613d;
   --warning-soft: #2b261c;
-  --focus: #73e6f1;
-  --on-accent: #07191f;
+  --focus: #d3ff8d;
+  --on-accent: #13231c;
   --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   --shadow-dialog: 0 24px 80px rgb(0 0 0 / 55%);
 

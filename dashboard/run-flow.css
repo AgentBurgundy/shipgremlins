@@ -442,10 +442,10 @@
 @keyframes run-flow-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 3px rgb(81 213 228 / 8%);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 6px rgb(81 213 228 / 16%);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent);
   }
 }
 @media (max-width: 1100px) {
