@@ -15,6 +15,16 @@ import type { LocalJob } from "../localRunners/types.ts";
 import type { Project } from "../config.ts";
 import { loadProject } from "../config.ts";
 import { createAutomationDiagnostics } from "./automationDiagnostics.ts";
+import {
+  initializeCodingAgents,
+  readCodingAgents,
+  saveCodingAgents,
+} from "../codingAgents/index.ts";
+import {
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
 let root: string;
 const ready: ReadinessContext = {
   env: {
@@ -52,6 +62,8 @@ function edit(
     >;
     verified?: string;
     instanceId?: string;
+    workflow?: { kind: string; baseBranch: string };
+    automationPaused?: boolean;
   }) => void,
 ) {
   const path = join(root, `projects/${name}/${file}.json`);
@@ -103,6 +115,74 @@ function fixture() {
   };
 }
 describe("automatic project preparation", () => {
+  function independentCoder(provider: "claude" | "codex") {
+    edit("app", "project", (raw) => {
+      raw.workflow = { kind: "pull-request", baseBranch: "main" };
+    });
+    edit("app", "areas", (raw) => {
+      raw.areas.core!.enabled = false;
+      raw.areas.core!.codingEnabled = false;
+    });
+    initializeCodingAgents(root, "app");
+    saveCodingAgents(root, "app", {
+      revision: readCodingAgents(root, "app").revision,
+      agents: [
+        {
+          key: "builder",
+          name: "Builder",
+          enabled: true,
+          areas: ["core"],
+          maxConcurrent: 1,
+          ai: { provider },
+        },
+      ],
+    });
+    const project = loadProject(root, "app"),
+      scope = projectAiTarget(project, "pm", project.areas[0]);
+    saveAiRouting(
+      root,
+      scope,
+      {
+        revision: readAiRouting(root, scope, {}).revision,
+        pm: { provider: "codex" },
+      },
+      {},
+    );
+  }
+  it("prepares an enabled coder independently while its PM and disconnected PM provider remain paused", async () => {
+    independentCoder("claude");
+    const f = fixture();
+    await f.run();
+    expect(f.provision).toHaveBeenCalledExactlyOnceWith("app", "core");
+    expect(f.verify).toHaveBeenCalledOnce();
+    expect(loadProject(root, "app").areas[0]).toMatchObject({
+      enabled: false,
+      codingEnabled: false,
+    });
+    expect(readCodingAgents(root, "app").agents[0]!.enabled).toBe(true);
+    expect(loadProject(root, "app").config.verified).toBe("2026-10-14");
+  });
+  it("does not use a connected PM account as fallback for a disconnected coder or bypass master pause", async () => {
+    independentCoder("codex");
+    const f = fixture();
+    await f.run();
+    expect(f.provision).not.toHaveBeenCalled();
+    expect(f.verify).not.toHaveBeenCalled();
+    const current = readCodingAgents(root, "app");
+    saveCodingAgents(root, "app", {
+      revision: current.revision,
+      agents: current.agents.map((agent) => ({
+        ...agent,
+        ai: { provider: "claude" },
+      })),
+    });
+    edit("app", "project", (raw) => {
+      raw.automationPaused = true;
+    });
+    await f.run();
+    expect(f.provision).not.toHaveBeenCalled();
+    expect(f.verify).not.toHaveBeenCalled();
+  });
   it("prepares enabled mappings then verifies once, preserving paused mandates", async () => {
     edit("app", "areas", (raw) => {
       raw.areas.later = {

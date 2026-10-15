@@ -658,7 +658,7 @@ describe("dashboard interface surfaces", () => {
     expect(f.get("workers").hidden).toBe(true);
     expect(f.get("job-form")).toBe(form);
     expect(f.get("job-ticket").value).toBe("APP-12");
-    f.button(f.nav("Runner workspace"), "Runners").emit("click");
+    f.button(f.nav("Runner workspace"), "Workers").emit("click");
     expect(f.get("workers").hidden).toBe(false);
   });
 

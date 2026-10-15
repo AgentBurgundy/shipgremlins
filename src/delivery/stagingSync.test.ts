@@ -1105,6 +1105,75 @@ describe("durable local staging synchronization", () => {
     },
   );
 
+  it("durably binds a sync repair to one coding profile before enqueue and preserves that identity after a lost response", async () => {
+    const w = world();
+    w.dirty();
+    const binding = {
+      area: "core",
+      coderKey: "builder",
+      coderInstanceId: "11111111-1111-4111-8111-111111111111",
+    };
+    const bindCoder = vi.fn((input: LocalJobInput) => ({
+      ...input,
+      ...binding,
+    }));
+    w.enqueue.mockRejectedValueOnce(
+      new Error("Queue response unavailable before admission"),
+    );
+    const service = () => createStagingSync({ ...w.options, bindCoder });
+    expect((await service().reconcile()).phase).toBe("blocked");
+    expect(w.state().repairs[0].coder).toEqual({
+      area: binding.area,
+      key: binding.coderKey,
+      instanceId: binding.coderInstanceId,
+    });
+    bindCoder.mockImplementation(() => {
+      throw new Error("Must not select another coding agent");
+    });
+    expect((await service().reconcile()).phase).toBe("repairing");
+    expect(bindCoder).toHaveBeenCalledOnce();
+    expect(w.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining(binding),
+    );
+    expect(await service().repairIntent(w.jobs[0]!)).toMatchObject({
+      coder: { key: "builder" },
+      jobId: w.jobs[0]!.id,
+    });
+    for (const forged of [
+      { area: "other" },
+      { coderKey: "another" },
+      { coderInstanceId: "22222222-2222-4222-8222-222222222222" },
+    ])
+      await expect(
+        service().repairIntent({ ...w.jobs[0]!, ...forged }),
+      ).rejects.toThrow("matching controller admission");
+    expect(w.merge).not.toHaveBeenCalled();
+  });
+
+  it("keeps a sync conflict actionable without enqueueing when no coding profile is eligible, then uses the same bounded attempt", async () => {
+    const w = world();
+    w.dirty();
+    const bindCoder = vi.fn((_input: LocalJobInput): LocalJobInput => {
+      throw new Error("Private account and profile details");
+    });
+    const service = () => createStagingSync({ ...w.options, bindCoder });
+    expect(await service().reconcile()).toMatchObject({
+      phase: "blocked",
+      message: expect.stringContaining("enabled coding agent"),
+    });
+    expect(w.enqueue).not.toHaveBeenCalled();
+    expect(JSON.stringify(w.state())).not.toContain("Private account");
+    bindCoder.mockImplementation((input) => ({
+      ...input,
+      area: "core",
+      coderKey: "builder",
+      coderInstanceId: "11111111-1111-4111-8111-111111111111",
+    }));
+    expect((await service().reconcile()).phase).toBe("repairing");
+    expect(w.jobs[0]!.attempt).toBe(1);
+    expect(w.state().repairs).toHaveLength(1);
+  });
+
   it.each([
     [
       "id",

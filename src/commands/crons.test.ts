@@ -56,6 +56,18 @@ jobs: {}
 `;
 
 describe("cronEntries", () => {
+  it("preserves PM flags while excluding a project-wide pause", () => {
+    const paused = makeProject({
+      config: {
+        name: "paused",
+        verified: "2026-10-15",
+        automationPaused: true,
+      },
+      areas: [{ enabled: true }],
+    });
+    expect(cronEntries([paused])).toEqual([]);
+    expect(paused.areas[0]!.enabled).toBe(true);
+  });
   it("lists enabled areas of verified projects only, project then area order", () => {
     expect(cronEntries([shop, draft, game])).toEqual([
       { project: "game", area: "core", cron: "0 13 * * 1-5" },

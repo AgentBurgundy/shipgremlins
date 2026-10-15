@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { makeCtx, makeProject } from "../services/fakes.ts";
 import {
   DISPATCHED_PREFIX,
@@ -50,6 +53,45 @@ describe("developerInputs", () => {
 });
 
 describe("fireDeveloper", () => {
+  it("refuses legacy CI execution that would ignore named coder identities and models", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gremlins-legacy-coder-"));
+    try {
+      writeFileSync(join(dir, "coders.json"), "{}");
+      const ctx = makeCtx();
+      ctx.project.dir = dir;
+      await expect(
+        fireDeveloper(ctx, {
+          project: "game",
+          ticket: "GAME-1",
+          attempt: 1,
+          kind: "build",
+        }),
+      ).rejects.toThrow("saved identities or model choices");
+      expect(await runDispatch(ctx)).toEqual([
+        expect.objectContaining({ rule: "dispatch", needsYou: true }),
+      ]);
+      expect(ctx.forge.dispatched).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("holds automatic CI dispatch when the project master is paused", async () => {
+    const ctx = makeCtx({
+      project: makeProject({ config: { automationPaused: true } }),
+    });
+    await expect(
+      fireDeveloper(ctx, {
+        project: "game",
+        ticket: "GAME-1",
+        attempt: 1,
+        kind: "build",
+      }),
+    ).rejects.toThrow("automation is paused");
+    expect(await runDispatch(ctx)).toEqual([
+      { rule: "dispatch", text: "Project automation is paused." },
+    ]);
+    expect(ctx.forge.dispatched).toEqual([]);
+  });
   it("dispatches developer.yml on main in the hub repo", async () => {
     const ctx = makeCtx();
     const run = await fireDeveloper(ctx, {

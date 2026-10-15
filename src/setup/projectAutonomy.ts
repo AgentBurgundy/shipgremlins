@@ -8,7 +8,14 @@ import type { CodingPickupView } from "../localRunners/codingPickup.ts";
 import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
 import { createScheduleCursor } from "../localRunners/scheduleCursor.ts";
 import {
+  CodingAgentError,
+  readCodingAgents,
+  type CodingAgentsView,
+} from "../codingAgents/index.ts";
+import { inspectCodingReadiness } from "../codingAgents/readiness.ts";
+import {
   inspectPmReadiness,
+  hasExplicitCodingAgents,
   PmControlError,
   type ReadinessBlocker,
   type ReadinessContext,
@@ -25,9 +32,23 @@ export function projectAutonomy(
 ) {
   const project = loadProject(root, name);
   const readiness = inspectPmReadiness(project, context);
+  let coders: CodingAgentsView;
+  let coderConfigurationError = false;
+  try {
+    coders = readCodingAgents(root, name);
+  } catch (error) {
+    if (!(error instanceof CodingAgentError)) throw error;
+    coderConfigurationError = true;
+    coders = { revision: "", agents: [], legacy: false };
+  }
+  const explicitCoders = !coders.legacy;
+  const projectPaused = project.config.automationPaused === true;
   const investigationEnabled = project.areas.some((area) => area.enabled);
-  const codingEnabled = project.areas.some(codingPickupEnabled);
-  const enabled = investigationEnabled || codingEnabled;
+  const codingEnabled = explicitCoders
+    ? coders.agents.some((agent) => agent.enabled)
+    : project.areas.some(codingPickupEnabled);
+  const hasAutomaticAgents = investigationEnabled || codingEnabled;
+  const enabled = !projectPaused && hasAutomaticAgents;
   const own = jobs.filter((job) => jobBelongsToProject(project.config, job));
   const active = own.filter((job) =>
     ["queued", "running"].includes(job.status),
@@ -40,13 +61,20 @@ export function projectAutonomy(
   });
   const foundation = foundationNeeded(root, project);
   const enabledAreas = readiness.areas.filter(
-    (area) => area.enabled || area.codingEnabled,
+    (area) => area.enabled || (!explicitCoders && area.codingEnabled),
   );
   const blockers: ReadinessBlocker[] = [];
   const add = (blocker: ReadinessBlocker) => {
     if (!blockers.some((item) => item.id === blocker.id))
       blockers.push(blocker);
   };
+  if (coderConfigurationError)
+    add({
+      id: "coding_configuration",
+      action: "config",
+      message:
+        "Coding agent settings need repair. PM investigation can continue; review coding configuration before starting coders.",
+    });
   if (enabled && foundation)
     add({
       id: "foundation",
@@ -69,6 +97,20 @@ export function projectAutonomy(
       );
       for (const blocker of area.blockers)
         if (!discovering || discoveryIds.has(blocker.id)) add(blocker);
+    }
+    if (explicitCoders) {
+      for (const agent of coders.agents.filter((agent) => agent.enabled))
+        for (const blocker of inspectCodingReadiness(
+          root,
+          project,
+          agent,
+          context,
+        ).blockers)
+          add(blocker);
+      if (codingEnabled && !readiness.workerReady) {
+        const worker = readiness.steps.find((step) => step.id === "worker");
+        if (worker) add(worker);
+      }
     }
   }
   const canDiscover =
@@ -95,9 +137,18 @@ export function projectAutonomy(
         area.canRun &&
         !area.enableBlockers.some((blocker) => blocker.id === "schedule"),
     );
-  const canCode = enabledAreas.some(
-    (area) => area.codingEnabled && area.blockers.length === 0,
-  );
+  const canCode =
+    !foundation &&
+    (explicitCoders
+      ? readiness.workerReady &&
+        coders.agents.some(
+          (agent) =>
+            agent.enabled &&
+            inspectCodingReadiness(root, project, agent, context).canEnable,
+        )
+      : enabledAreas.some(
+          (area) => area.codingEnabled && area.blockers.length === 0,
+        ));
   let nextRunAt: string | null = null;
   if (enabled && canDiscover) nextRunAt = now.toISOString();
   else if (enabled && canPatrol) {
@@ -133,18 +184,25 @@ export function projectAutonomy(
       (item) => item.id === "schedule",
     ))
       add(blocker);
-  const state = !enabled
-    ? "paused"
-    : active.some((job) => job.status === "running")
-      ? "running"
-      : active.length
-        ? "queued"
-        : canDiscover || canPatrol || canCode
-          ? "waiting"
-          : "blocked";
+  const state =
+    coderConfigurationError && !investigationEnabled && !projectPaused
+      ? "blocked"
+      : !enabled
+        ? "paused"
+        : active.some((job) => job.status === "running")
+          ? "running"
+          : active.length
+            ? "queued"
+            : canDiscover || canPatrol || canCode
+              ? "waiting"
+              : "blocked";
   const message =
     state === "paused"
-      ? "Automatic work is paused. Start it once and the controller will resume when connections are ready."
+      ? explicitCoders
+        ? projectPaused
+          ? "Project autopilot is paused. Resume it to continue with each agent's saved settings."
+          : "Enable a PM or coding agent before starting project autopilot."
+        : "Automatic work is paused. Start it once and the controller will resume when connections are ready."
       : state === "running"
         ? "Your crew is working. The controller continues when you close the browser."
         : state === "queued"
@@ -168,8 +226,11 @@ export function projectAutonomy(
   return {
     state,
     enabled,
+    projectPaused,
+    hasAutomaticAgents,
     investigationEnabled,
     codingEnabled,
+    codingConfigurationError: coderConfigurationError,
     codingPickup,
     message,
     nextRunAt,
@@ -204,7 +265,20 @@ export function setProjectAutonomy(
       "Provide enabled and the current project and crew revisions.",
     );
   const project = loadProject(root, name);
-  if (project.areas.length === 0)
+  const explicitCoders = hasExplicitCodingAgents(project);
+  let coders: CodingAgentsView;
+  try {
+    coders = readCodingAgents(root, name);
+  } catch (error) {
+    if (!(error instanceof CodingAgentError) || !explicitCoders) throw error;
+    if (input.enabled && !project.areas.some((area) => area.enabled))
+      throw new PmControlError(
+        "Repair coding agent settings before resuming project autopilot.",
+        409,
+      );
+    coders = { revision: "", agents: [], legacy: false };
+  }
+  if (!explicitCoders && project.areas.length === 0)
     throw new PmControlError("Adopt a PM before starting automatic work.", 409);
   const document = readEditableConfig(root, `projects/${name}/areas.json`);
   if (
@@ -216,6 +290,33 @@ export function setProjectAutonomy(
       "Project or crew settings changed. Refresh before changing automatic work.",
       409,
     );
+  if (explicitCoders) {
+    if (
+      input.enabled &&
+      !project.areas.some((area) => area.enabled) &&
+      !coders.agents.some((agent) => agent.enabled)
+    )
+      throw new PmControlError(
+        "Enable a PM or coding agent before resuming project autopilot.",
+        409,
+      );
+    const document = readEditableConfig(root, `projects/${name}/project.json`);
+    const value = JSON.parse(document.content);
+    const paused = !input.enabled;
+    if ((project.config.automationPaused === true) !== paused) {
+      value.automationPaused = paused;
+      saveEditableConfig(root, {
+        path: document.path,
+        revision: document.revision,
+        content: JSON.stringify(value, null, 2) + "\n",
+      });
+      const saved = loadProject(root, name),
+        cursor = createScheduleCursor(root);
+      for (const area of project.areas.filter((area) => area.enabled))
+        cursor.reset(saved, new Date(), area.key);
+    }
+    return { ok: true };
+  }
   const value = JSON.parse(document.content);
   for (const area of Object.values(value.areas) as Array<
     Record<string, unknown>

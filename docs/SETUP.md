@@ -60,8 +60,9 @@ project**, then choose the path that fits your app:
    starts with the reviewed **foundation build**: a Coding Gremlin creates the
    initial app and tests. Review and merge that work before asking PMs to explore.
 8. **Start autonomous work.** Open **Your crew** and use **Start autopilot** when
-   setup is ready. The action validates every adopted PM and coder and saves their
-   automation flags together. The controller keeps working after you close the
+   setup is ready. This validates and enables the adopted PMs. Create named
+   coding agents in **Agents**, assign their PM queues and enable them separately.
+   The controller keeps working after you close the
    browser, using your saved schedules, approval policy and run limits.
 
 Adoption saves the PM and its brief. Crew controls show its saved automation state;
@@ -119,10 +120,10 @@ automatically.
 
 1. Open **Source control** and connect the official GitHub or GitLab app using the displayed device code. Choose the repositories available to your account; GitHub also requires installing the App on the selected repositories. Manual source tokens remain an advanced option. Choose an AI provider in Connections for repository analysis. Linear and hosting can come later. See [source-control setup](SOURCE_CONTROL.md).
 2. In **Projects → Add project**, choose **Improve my app**. Follow **Investigate → Choose your crew → Adopt**. Importing can start bounded source analysis, but creates no PM or coding job. Review suggested commands separately in project setup. Manual adoption remains available. The experimental idea path creates a private-by-default repository and starts with the reviewed foundation build before source discovery. See [idea onboarding](IDEA_TO_APP.md) or [your first adoption](#your-first-adoption).
-3. Adopt one or more suggested PMs with focused **Product briefs**, or choose your own. Their welcome and project setup guide you through connecting Linear, creating missing PM projects and labels, and connecting a test environment. These steps remain available if you close the welcome. New PMs start with both automation controls off.
+3. Adopt one or more suggested PMs with focused **Product briefs**, or choose your own. Their welcome and project setup guide you through connecting Linear, creating missing PM projects and labels, and connecting a test environment. These steps remain available if you close the welcome. New PMs start paused and do not create coding agents.
 4. Choose **Create local worker**, then **Explore the codebase** for Discovery. The worker runs on the CLI/dashboard server; its first image build can take time. Worker readiness requires actual Chromium evidence, but the PM's source-only Discovery needs no app hosting or Linear mapping.
 5. **Connect a test environment** for browser walkthroughs. Environment offers **Connect Vercel** even on a fresh installation, then resumes automatic preview setup after authorization. You can also choose another hosted target or a disposable Docker app. Code-only Discovery remains available while setup is incomplete. For a fresh idea, build and merge the foundation first. Keep test-account and app-input values in Connections. See [project onboarding](PROJECT_ONBOARDING.md).
-6. Finish the visible setup checklist, including a real browser login test when the app needs one. **Activate ready crew** validates every adopted PM and enables daily patrols plus eligible coding pickup together. An incomplete crew stays paused with its next missing step. You can still manage patrols and coding independently or run one job manually. Activation does not approve work: in the new managed workflow, review the PM's bounded epic once, then the crew handles its child tickets through QA and per-PM promotion.
+6. Finish the visible setup checklist, including a real browser login test when the app needs one. **Activate ready crew** validates and enables the adopted PMs. Create named coding agents in **Agents**, assign their queues and enable their automation separately. Each role supports manual runs. Activation does not approve work: review the PM's bounded epic once, then coders handle its child tickets through QA and per-PM promotion.
 
 New projects use epic approval. A `pm-epic` proposal is approved once in ShipGremlins; its PM creates native child tickets with `pm-approved`, finite acceptance criteria and its area label. The controller checks its own approval receipt, not just labels. It manages coding drafts and internal merges; your next review is the PM's promotion to staging. Existing ticket-policy and direct-PR projects retain their settings until migrated. See [setup, delivery and recovery flowcharts](AUTONOMOUS_WORKFLOW.md).
 
@@ -251,11 +252,13 @@ Open **Connections → AI provider** and choose **Claude Code** or **Codex**.
 This is the workspace default. Both providers can stay connected at once.
 In **Project → Settings → AI choices**, set a project default, **PM work**, and
 **Coding work** independently. In a PM's **Product brief → AI choices**, choose
-**This PM** and **Coding for this PM**. Leave a choice on **Inherit** to use its
+**This PM**. Set a coding agent's provider and model on its own card in **Agents**.
+Leave a choice on **Inherit** to use its
 parent setting. Model dropdowns belong to each explicit provider choice;
 switching providers resets that choice's model override.
 
-PM and coding runs use, in order: individual PM override, project role override,
+PM runs use their individual PM override; coding runs use their own coder override.
+Both then inherit the project role override,
 project default, workspace default. Setup suggestions use the project default or
 workspace default. New queued work resolves the current choice before launch;
 existing runs keep their original provider. Selecting a disconnected provider

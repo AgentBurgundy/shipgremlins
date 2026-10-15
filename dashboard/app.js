@@ -220,6 +220,8 @@
   const areaActions = new Map();
   let pmActions;
   let codingActions;
+  let codingAgents;
+  let coderRoster;
   let projectLayoutInitialized = false;
   let projectWorkspace = null;
   const pmCharter = window.createPmCharter(
@@ -581,18 +583,24 @@
       "overview-project-count",
       currentStatus ? String(projects.length) : "—",
     );
+    const pmCount = projects.reduce(
+        (total, project) => total + (project.areas?.length || 0),
+        0,
+      ),
+      coderCount = projects.reduce(
+        (total, project) => total + (project.coders?.agents?.length || 0),
+        0,
+      );
     text(
       "overview-pm-count",
+      currentStatus ? String(pmCount + coderCount) : "—",
+    );
+    text("runner-count", currentStatus ? String(pmCount + coderCount) : "—");
+    text(
+      "overview-agent-note",
       currentStatus
-        ? String(
-            projects.reduce(
-              (total, project) =>
-                total +
-                (Array.isArray(project.areas) ? project.areas.length : 0),
-              0,
-            ),
-          )
-        : "—",
+        ? `${pmCount} PMs · ${coderCount} coders`
+        : "PMs and coding agents",
     );
     text(
       "overview-worker-count",
@@ -623,6 +631,33 @@
       runners: runnerStatus,
       jobs: mergedJobs(),
     });
+    renderCodingRoster();
+  }
+  function renderCodingRoster() {
+    if (!codingAgents || pages.current !== "runners") return;
+    if (!coderRoster) {
+      coderRoster = element("section", "workspace-coding-agents");
+      coderRoster.setAttribute("aria-label", "Your coding agents");
+      $("crew-roster")?.append(coderRoster);
+      const roster = $("crew-roster");
+      if (roster && !roster.querySelector("h2")) {
+        const heading = element("h2", "", "Product managers");
+        roster.insertBefore(heading, roster.firstElementChild);
+        roster.setAttribute("aria-label", "Product managers and coding agents");
+      }
+    }
+    if (codingAgents.protectFocus(coderRoster)) return;
+    coderRoster.replaceChildren();
+    const projects = currentStatus?.projects || [];
+    for (const project of projects) codingAgents.mount(coderRoster, project);
+    if (!projects.length)
+      coderRoster.append(
+        element(
+          "p",
+          "coder-empty",
+          "Add a project to create a coding agent and assign its PM queues.",
+        ),
+      );
   }
   function renderStatus(status) {
     currentStatus = status;
@@ -2047,6 +2082,9 @@
       (item) => item.key === $("job-area").value,
     );
     const pm = $("job-type").value === "pm";
+    const coder = selected?.coders?.agents?.find(
+      (agent) => agent.key === $("job-coder").value,
+    );
     const pmCanPrepare =
       area?.canRun === true ||
       (area?.blockers?.length > 0 &&
@@ -2061,11 +2099,13 @@
       Boolean(selected?.foundation?.needed) ||
       (pm
         ? !$("job-area").value || !pmCanPrepare
-        : !selected?.readiness?.canRun);
+        : !coder || coder.readiness?.canEnable === false);
     $("job-ticket").required = false;
     $("job-ticket").disabled = pm;
     $("job-area").disabled = !pm;
     $("job-area-field").hidden = !pm;
+    $("job-coder").disabled = pm;
+    $("job-coder-field").hidden = pm;
     $("job-ticket-field").hidden = pm;
     $("run-job").textContent = runnerRequestBusy
       ? "Queuing…"
@@ -2081,7 +2121,7 @@
       );
     const blockers = pm
       ? area?.blockers || selected?.readiness?.blockers
-      : selected?.readiness?.blockers;
+      : coder?.readiness?.blockers || selected?.readiness?.blockers;
     $("job-guidance").textContent = selected?.foundation?.needed
       ? "Build the first milestone from this project’s Environment tab. Your PMs can explore once there is an app."
       : !project
@@ -2094,9 +2134,11 @@
               ? "Create a PM mandate in Projects first."
               : pm
                 ? "Investigates this mandate once. Automation stays as it is."
-                : $("job-ticket").value.trim()
-                  ? "Checks this ticket’s approval and ownership, then starts one coding run. Automation stays as it is."
-                  : "Finds the next ready, approved ticket in this project’s Linear queue and starts one coding run. It does not approve tickets or change automation.";
+                : !coder
+                  ? "Add a named coding agent from this project’s Agents tab, then choose it here."
+                  : $("job-ticket").value.trim()
+                    ? "Checks this ticket’s approval and ownership, then starts one coding run. Automation stays as it is."
+                    : "Finds the next ready, approved ticket in this project’s Linear queue and starts one coding run. It does not approve tickets or change automation.";
     $("job-setup-guide").replaceChildren(
       ...(selected &&
       (selected.foundation?.needed ||
@@ -2161,12 +2203,28 @@
     for (const area of areas)
       select.append(
         new Option(
-          `${area.name || area.key}${area.enabled ? " · investigations on" : ""}${(area.codingEnabled ?? area.enabled) ? " · coding pickup on" : ""}`,
+          `${area.name || area.key}${area.enabled ? " · investigations on" : " · investigations paused"}`,
           area.key,
         ),
       );
     if (!areas.length) select.append(new Option("Create a PM first", ""));
     if (areas.some((area) => area.key === chosen)) select.value = chosen;
+    const coders = project?.coders?.agents || [],
+      coder = $("job-coder"),
+      previousCoder = coder.value;
+    coder.replaceChildren(
+      ...coders.map(
+        (agent) =>
+          new Option(
+            `${agent.name} · ${agent.enabled ? "pickup on" : "paused"}${agent.readiness?.canEnable === false ? " · setup needed" : ""}`,
+            agent.key,
+          ),
+      ),
+    );
+    if (!coders.length)
+      coder.append(new Option("Add a coding agent first", ""));
+    if (coders.some((agent) => agent.key === previousCoder))
+      coder.value = previousCoder;
     updateRunnerControls();
   }
 
@@ -2203,7 +2261,10 @@
     );
     $("runner-count").textContent = String(
       (currentStatus?.projects || []).reduce(
-        (total, project) => total + (project.areas?.length || 0),
+        (total, project) =>
+          total +
+          (project.areas?.length || 0) +
+          (project.coders?.agents?.length || 0),
         0,
       ),
     );
@@ -2570,6 +2631,7 @@
     renderJobAreas();
   });
   $("job-area").addEventListener("change", updateRunnerControls);
+  $("job-coder").addEventListener("change", updateRunnerControls);
   $("job-ticket").addEventListener("input", updateRunnerControls);
   $("job-type").addEventListener("change", updateRunnerControls);
   for (const button of document.querySelectorAll("[data-crew-type]"))
@@ -2592,7 +2654,18 @@
     const { type, project } = input;
     const body = { type, project };
     if (type === "pm") body.area = input.area;
-    else if (input.ticket?.trim()) body.ticket = input.ticket.trim();
+    else {
+      body.coderKey = input.coderKey || $("job-coder").value;
+      if (!body.coderKey) {
+        message(
+          $("job-message"),
+          "Choose a named coding agent before starting implementation.",
+          true,
+        );
+        return;
+      }
+      if (input.ticket?.trim()) body.ticket = input.ticket.trim();
+    }
     runnerRequestBusy = true;
     updateRunnerControls();
     message(
@@ -2655,6 +2728,7 @@
       project: $("job-project").value,
       area: $("job-area").value,
       ticket: $("job-ticket").value,
+      coderKey: $("job-coder").value,
     });
   });
 
@@ -5716,6 +5790,8 @@
       pmPlanning ||
       pmCreating ||
       pmActions?.isBusy() ||
+      codingAgents?.isDirty() ||
+      codingAgents?.isBusy() ||
       projectWorkspace?.isDirty() ||
       projectWorkspace?.isBusy() ||
       workspaceDeletion?.isBusy() ||
@@ -6059,9 +6135,22 @@
       return response.blob();
     },
   });
+  codingAgents = window.createCodingAgents({
+    api,
+    getJobs: mergedJobs,
+    isLocked: () => formsLocked || !auth.isAuthenticated() || restarting,
+    onChanged: refreshStatus,
+    onJob: (job) => {
+      jobHistory = [...jobHistory.filter((item) => item.id !== job.id), job];
+      selectJob(job.id);
+      refreshRunners();
+    },
+  });
+  window.addEventListener("dashboard:pagechange", renderCodingRoster);
   projectWorkspace = window.createProjectWorkspace($("project-workspace"), {
     api,
     pages,
+    codingAgents,
     operations: projectOperations,
     onboarding: projectOnboarding,
     getJobs: () => mergedJobs(),

@@ -1321,17 +1321,33 @@
       }
       const actions = node("div", undefined, "onboarding-actions");
       if (["review", "failed"].includes(stage)) {
-        const build = button(
-          s.busy
-            ? "Setting up your build…"
-            : stage === "failed"
-              ? "Retry foundation build"
-              : "Approve & build foundation",
-          () => runFoundation(s, "build"),
-          true,
+        const hasCoder = s.project.coders?.agents?.some((agent) =>
+          agent.areas?.includes("foundation"),
         );
-        build.disabled = isLocked() || s.loading || s.busy;
-        actions.append(build);
+        if (!hasCoder) {
+          const choose = node("a", "Add coding agent", "button button-dark");
+          choose.href = `/projects/${encodeURIComponent(s.project.name)}?tab=crew`;
+          actions.append(choose);
+          s.foundation.append(
+            node(
+              "p",
+              "Assign a named coding agent to the Foundation PM queue before starting this build. Its automatic pickup can stay paused.",
+              "onboarding-help",
+            ),
+          );
+        } else {
+          const build = button(
+            s.busy
+              ? "Setting up your build…"
+              : stage === "failed"
+                ? "Retry foundation build"
+                : "Approve & build foundation",
+            () => runFoundation(s, "build"),
+            true,
+          );
+          build.disabled = isLocked() || s.loading || s.busy;
+          actions.append(build);
+        }
       }
       if (data.job) {
         const run = node("a", "Open coding run", "button");

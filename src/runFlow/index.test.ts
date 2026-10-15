@@ -250,6 +250,50 @@ describe("controller run flows", () => {
     }
     expect(() => f.store.authorization({ ...j, runId: 2 })).toThrow(/safely/);
   });
+  it("binds independent coder provenance while preserving the exact legacy authorization identity", () => {
+    const f = world(),
+      legacy = job(),
+      previous = f.store.authorization(legacy);
+    const saved = JSON.parse(
+      readFileSync(recordPath(f.root, "authorizations"), "utf8"),
+    );
+    expect(JSON.parse(saved.identity)).toEqual([
+      legacy.id,
+      legacy.runId,
+      legacy.type,
+      legacy.project,
+      legacy.projectInstanceId,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      legacy.createdAt,
+      null,
+    ]);
+    expect(
+      createRunFlows({ root: f.root, now: f.now }).authorization(legacy),
+    ).toEqual(previous);
+    const bound = job("job-2", {
+        coderKey: "builder",
+        coderInstanceId: "22222222-2222-4222-8222-222222222222",
+      }),
+      r = runtime(f.store.authorization(bound), bound);
+    r.writer.phase("build", "running");
+    expect(f.store.capture(bound, r.lines)).toMatchObject({ phase: "build" });
+    for (const changed of [
+      { ...bound, coderKey: "another" },
+      { ...bound, coderInstanceId: "33333333-3333-4333-8333-333333333333" },
+      { ...bound, coderKey: undefined, coderInstanceId: undefined },
+    ]) {
+      expect(f.store.capture(changed, r.lines)).toBeUndefined();
+      expect(f.store.flow(changed)).toBeUndefined();
+    }
+    expect(() =>
+      f.store.authorization({ ...bound, coderInstanceId: undefined }),
+    ).toThrow("safely");
+  });
   it("ignores replays and late ordered events without rewinding phases or repair attempts", () => {
     const f = world(),
       j = job(),

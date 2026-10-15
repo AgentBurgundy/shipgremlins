@@ -239,6 +239,21 @@ async function failed() {
 describe("bounded owning-PM QA repairs", () => {
   it("publishes exact QA evidence to Linear once across controller restarts and queues the repair", async () => {
     const w = await failed();
+    const binding = {
+      coderKey: "original-builder",
+      coderInstanceId: "11111111-1111-4111-8111-111111111111",
+    };
+    w.jobs.push({
+      id: "job-original",
+      runId: 1,
+      type: "developer",
+      project: "game",
+      area: "core",
+      ticket: w.ticket.identifier,
+      status: "succeeded",
+      createdAt: "2026-10-05T00:00:00Z",
+      ...binding,
+    });
     await w.controller().reconcileQaRework("game");
     await w.controller().reconcileQaRework("game");
     const comments = w.linear.commentsOf(w.ticket.id);
@@ -251,7 +266,34 @@ describe("bounded owning-PM QA repairs", () => {
     expect(w.linear.labelsOf(w.ticket.id)).toContain("pm-approved");
     expect(w.linear.stateUpdates).toEqual([]);
     expect(w.enqueue).toHaveBeenCalledTimes(1);
+    expect(w.enqueue).toHaveBeenCalledWith(expect.objectContaining(binding));
     expect(w.create().list()[0]!.review!.feedback?.status).toBe("sent");
+  });
+
+  it("rejects a queued repair that substitutes another coder for its explicitly bound source", async () => {
+    const w = await failed(),
+      binding = {
+        coderKey: "original-builder",
+        coderInstanceId: "11111111-1111-4111-8111-111111111111",
+      };
+    w.jobs.push({
+      id: "job-original",
+      runId: 1,
+      type: "developer",
+      project: "game",
+      area: "core",
+      ticket: w.ticket.identifier,
+      status: "succeeded",
+      createdAt: "2026-10-05T00:00:00Z",
+      ...binding,
+    });
+    await w.controller().reconcileQaRework("game");
+    w.jobs.find((job) =>
+      job.idempotencyKey?.startsWith("qa-rework:"),
+    )!.coderKey = "substitute";
+    await w.controller().reconcileQaRework("game");
+    expect(w.create().list()[0]!.rework?.phase).toBe("stopped");
+    expect(w.enqueue).toHaveBeenCalledOnce();
   });
 
   it("recovers a lost Linear comment response without duplication or delaying coding", async () => {

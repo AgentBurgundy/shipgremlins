@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
-import {
-  codingPickupEnabled,
-  loadProject,
-  type AreaConfig,
-  type Project,
-} from "../config.ts";
+import { loadProject, type AreaConfig, type Project } from "../config.ts";
 import { jobBelongsToProject } from "../projectIdentity.ts";
 import type { LinearTicket } from "../services/types.ts";
 import type { LocalJob } from "./types.ts";
+import {
+  codingAgentsForArea,
+  readCodingAgents,
+} from "../codingAgents/index.ts";
 
 export interface CodingPickupHold {
   ticketId: string;
@@ -44,13 +43,14 @@ type Observation = {
   areas: Map<string, AreaObservation>;
 };
 
-const fingerprint = (project: Project) =>
+const fingerprint = (root: string, project: Project) =>
   createHash("sha256")
     .update(
       JSON.stringify({
         config: project.config,
         areas: project.areas,
         tiers: project.tiers,
+        coders: readCodingAgents(root, project.config.name),
       }),
     )
     .digest("hex");
@@ -66,15 +66,22 @@ export function createCodingPickup(
     snapshots.get(observation.name) === observation;
 
   function begin(project: Project) {
+    let stamp = "";
+    try {
+      stamp = fingerprint(root, project);
+    } catch {
+      // A broken coding profile store must not prevent the independent PM scheduler.
+    }
     const observation: Observation = {
       name: project.config.name,
-      fingerprint: fingerprint(project),
+      fingerprint: stamp,
       areas: new Map(),
     };
     snapshots.delete(observation.name);
     snapshots.set(observation.name, observation);
     while (snapshots.size > MAX_PROJECTS)
       snapshots.delete(snapshots.keys().next().value!);
+    if (!stamp) unavailable(observation);
     return observation;
   }
 
@@ -159,7 +166,10 @@ export function createCodingPickup(
     }
     const observation = snapshots.get(name);
     try {
-      if (!observation || observation.fingerprint !== fingerprint(project))
+      if (
+        !observation ||
+        observation.fingerprint !== fingerprint(root, project)
+      )
         return { state: "checking", needsReview: [] };
     } catch {
       return { state: "unavailable", needsReview: [] };
@@ -170,7 +180,14 @@ export function createCodingPickup(
     const projectFailure = observation.areas.get("");
     if (projectFailure && fresh(projectFailure))
       return { state: "unavailable", needsReview: [] };
-    const areas = project.areas.filter(codingPickupEnabled);
+    let areas: AreaConfig[];
+    try {
+      areas = project.areas.filter(
+        (area) => codingAgentsForArea(root, project, area.key).length > 0,
+      );
+    } catch {
+      return { state: "unavailable", needsReview: [] };
+    }
     const history = currentJobs
       .filter(
         (job) =>

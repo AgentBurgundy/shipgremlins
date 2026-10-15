@@ -25,6 +25,7 @@
     <script src="/ai-models.js" defer></script>
     <script src="/ai-connections.js" defer></script>
     <script src="/ai-routing.js" defer></script>
+    <script src="/coding-agents.js" defer></script>
     <script src="/connections-view.js" defer></script>
     <script src="/update-banner.js" defer></script>
     <script src="/connection-profiles.js" defer></script>
@@ -93,6 +94,7 @@
     <link rel="stylesheet" href="/crew-console.css" />
     <link rel="stylesheet" href="/crew-recommendations.css" />
     <link rel="stylesheet" href="/pm-controls.css" />
+    <link rel="stylesheet" href="/coding-agents.css" />
     <link rel="stylesheet" href="/pm-workspace.css" />
     <link rel="stylesheet" href="/mission-control.css" />
   </head>
@@ -340,10 +342,9 @@
               ></a
             >
             <a class="metric-card" href="/runners"
-              ><span>Product managers</span
-              ><strong id="overview-pm-count">—</strong
+              ><span>Agents</span><strong id="overview-pm-count">—</strong
               ><small
-                >Assigned areas of focus
+                ><span id="overview-agent-note">PMs and coding agents</span>
                 <span aria-hidden="true">↗</span></small
               ></a
             >
@@ -2226,6 +2227,12 @@
                     <label for="job-area">PM mandate</label
                     ><select id="job-area">
                       <option value="">Choose a project</option>
+                    </select>
+                  </div>
+                  <div class="field" id="job-coder-field" hidden>
+                    <label for="job-coder">Coding agent</label>
+                    <select id="job-coder">
+                      <option value="">Add a coding agent first</option>
                     </select>
                   </div>
                   <div class="field" id="job-ticket-field" hidden>

@@ -3833,6 +3833,9 @@ describe("guided environment target review", () => {
       name: "shop",
       repo: "owner/shop",
       ideaPlanId: "saved-idea",
+      coders: {
+        agents: [{ key: "builder", enabled: false, areas: ["foundation"] }],
+      },
     });
     await settle();
     expect(text(root)).toContain("Approve & build foundation");
@@ -3872,6 +3875,42 @@ describe("guided environment target review", () => {
     expect(api.mock.calls.some(([path]) => path.includes("/api/jobs"))).toBe(
       false,
     );
+    f.panel.destroy();
+  });
+  it("requires a named agent assigned to the Foundation queue before offering a foundation build", async () => {
+    const f = fixture(
+        vi.fn(async () => ({
+          ...state(),
+          foundation: {
+            stage: "review",
+            revision: "brief-1",
+            title: "Build",
+            milestone: "App",
+            assignment: "Implement",
+            acceptanceCriteria: [],
+            buildBrief: "Scope",
+          },
+        })),
+      ),
+      root = new Element();
+    f.panel.mount(root, {
+      name: "shop",
+      repo: "owner/shop",
+      ideaPlanId: "saved-idea",
+      coders: { agents: [{ key: "other", areas: ["checkout"] }] },
+    });
+    await settle();
+    expect(text(root)).not.toContain("Approve & build foundation");
+    const add = walk(root).find(
+      (element) => element.textContent === "Add coding agent",
+    )!;
+    expect(add).toBeDefined();
+    expect((add as Element & { href: string }).href).toBe(
+      "/projects/shop?tab=crew",
+    );
+    expect(
+      f.api.mock.calls.some(([path]) => path.includes("/foundation/build")),
+    ).toBe(false);
     f.panel.destroy();
   });
   it("keeps environment choices out of the way until the user chooses manual setup", async () => {

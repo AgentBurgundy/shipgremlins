@@ -167,7 +167,13 @@ assert.equal(
   "local",
 );
 assert.equal(resolve(created.directory), resolve(config));
-assert.equal(created.created.length, 11);
+assert.equal(created.created.length, 12);
+assert.deepEqual(
+  JSON.parse(
+    readFileSync(join(config, "projects", "smoke-app", "coders.json"), "utf8"),
+  ).agents,
+  [],
+);
 writeFileSync(
   join(config, "projects", "smoke-app", "core", "mandate.md"),
   "Keep this custom mandate.\n",

@@ -9,6 +9,17 @@ import {
   DashboardAuthError,
 } from "../dashboardAuth/index.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
+import {
+  CodingAgentError,
+  readCodingAgents,
+  previewCodingAgents,
+  saveCodingAgents,
+  ensureCodingAgents,
+  initializeCodingAgents,
+  effectiveCodingAi,
+  codingAgentOwnsArea,
+} from "../codingAgents/index.ts";
+import { inspectCodingReadiness } from "../codingAgents/readiness.ts";
 import { automaticPromotionKey } from "../delivery/batching.ts";
 import { createUsage } from "../usage/index.ts";
 import { createRunFlows } from "../runFlow/index.ts";
@@ -432,6 +443,15 @@ export function createDashboardServer(
   if (networkHosts.some((host) => !isIPv4(host)))
     throw new Error("Dashboard network hosts must be IPv4 addresses.");
   const hosts = new Set(["127.0.0.1", ...networkHosts]);
+  // Freeze legacy coding intent before PM adoption can change the queue list.
+  // Corrupt projects remain visible with a configuration error and cannot run.
+  for (const name of listProjectNames(root)) {
+    try {
+      ensureCodingAgents(root, name);
+    } catch {
+      /* Status and admission report the protected configuration error. */
+    }
+  }
   let publicOrigin: URL | undefined;
   if (options.publicUrl) {
     try {
@@ -875,6 +895,7 @@ export function createDashboardServer(
         const validated = await preparation.validate(input);
         const job = await runners().enqueue({
           ...input,
+          ...coderBinding(validated),
           linearBinding: validated.linearBinding,
           projectInstanceId: validated.project.config.instanceId,
         });
@@ -1557,22 +1578,18 @@ export function createDashboardServer(
             "Choose local runners in Settings before building the foundation.",
             409,
           );
+        const project = loadProject(root, name);
+        const coder = foundationCoder(name);
         if (
+          !coder ||
           !hasAiCredentials(
             root,
-            {
-              ...readConnections(root),
-              ...process.env,
-            },
-            resolveAiSelection(
-              root,
-              aiEnvironment(),
-              projectAiTarget(loadProject(root, name), "coder"),
-            ),
+            aiEnvironment(),
+            effectiveCodingAi(root, project, coder, aiEnvironment()),
           )
         )
           throw new IdeaCrewError(
-            "Connect your selected AI provider in Connections before building the foundation.",
+            "Create a coding agent, assign its PM queue and connect its selected AI provider before building the foundation.",
             409,
           );
         const workers = (await runners().status()).runners;
@@ -1636,7 +1653,16 @@ export function createDashboardServer(
           ).authorization,
         }),
       enqueue: async (input) => {
+        const coder = foundationCoder(input.project!);
+        if (!coder)
+          throw new IdeaCrewError(
+            "Create a coding agent assigned to the foundation PM queue before building.",
+            409,
+          );
+        input.coderKey = coder.key;
+        input.coderInstanceId = coder.instanceId;
         const validated = await preparation.validate(input);
+        Object.assign(input, coderBinding(validated));
         input.linearBinding = validated.linearBinding;
         input.projectInstanceId = validated.project.config.instanceId;
         const existing = (await runners().jobs()).find(
@@ -1766,6 +1792,58 @@ export function createDashboardServer(
       environmentVerification: (project) =>
         environmentAccess.status(project.config.name),
     };
+  }
+  function coderBinding(
+    validated: Awaited<ReturnType<typeof preparation.validate>>,
+  ) {
+    return validated.coder
+      ? {
+          coderKey: validated.coder.key,
+          coderInstanceId: validated.coder.instanceId,
+        }
+      : {};
+  }
+  function foundationCoder(name: string) {
+    const project = loadProject(root, name);
+    return readCodingAgents(root, name)
+      .agents.filter((agent) =>
+        codingAgentOwnsArea(root, project, agent, "foundation"),
+      )
+      .sort(
+        (a, b) =>
+          Number(b.enabled) - Number(a.enabled) || a.key.localeCompare(b.key),
+      )[0];
+  }
+  function codingAgentsView(name: string, context: ReadinessContext) {
+    const project = loadProject(root, name);
+    const view = readCodingAgents(root, name);
+    return {
+      ...view,
+      providers: workspaceAiStatus().providers,
+      agents: view.agents.map((agent) => {
+        const { effectiveAi, ...readiness } = inspectCodingReadiness(
+          root,
+          project,
+          agent,
+          context,
+        );
+        return { ...agent, effectiveAi, readiness };
+      }),
+    };
+  }
+  function codingAgentsStatus(name: string, context: ReadinessContext) {
+    try {
+      return codingAgentsView(name, context);
+    } catch (error) {
+      if (!(error instanceof CodingAgentError)) throw error;
+      return {
+        revision: null,
+        agents: [],
+        legacy: false,
+        error: error.message,
+        providers: workspaceAiStatus().providers,
+      };
+    }
   }
   function projectReadiness(name: string, context: ReadinessContext) {
     const projectDocument = readEditableConfig(
@@ -1920,6 +1998,7 @@ export function createDashboardServer(
     const validated = await preparation.validate(input);
     const admitted = {
       ...input,
+      ...coderBinding(validated),
       projectInstanceId: validated.project.config.instanceId,
       linearBinding: validated.linearBinding,
       ...(input.type === "pm"
@@ -1968,16 +2047,19 @@ export function createDashboardServer(
     for (const name of listProjectNames(root)) {
       try {
         const project = loadProject(root, name);
-        const targets = project.areas.flatMap((area) => [
-          ...(area.enabled ? [projectAiTarget(project, "pm", area)] : []),
-          ...((area.codingEnabled ?? area.enabled)
-            ? [projectAiTarget(project, "coder", area)]
-            : []),
-        ]);
+        const targets = project.areas.flatMap((area) =>
+          area.enabled ? [projectAiTarget(project, "pm", area)] : [],
+        );
         if (!targets.length) targets.push(projectAiTarget(project, "setup"));
         for (const target of targets)
           aiCredentialNames(
             resolveAiSelection(root, aiEnvironment(), target).provider,
+          ).forEach((name) => required.add(name));
+        for (const agent of readCodingAgents(root, name).agents.filter(
+          (agent) => agent.enabled,
+        ))
+          aiCredentialNames(
+            effectiveCodingAi(root, project, agent, aiEnvironment()).provider,
           ).forEach((name) => required.add(name));
         requireService("linear", project.config.linear?.connectionId);
         const verification = effectiveVerification(project.config);
@@ -3277,12 +3359,23 @@ export function createDashboardServer(
           if (
             Object.keys(input).some(
               (key) =>
-                !["type", "project", "area", "ticket", "pmMode"].includes(key),
+                ![
+                  "type",
+                  "project",
+                  "area",
+                  "ticket",
+                  "pmMode",
+                  "coderKey",
+                ].includes(key),
             ) ||
             !["pm", "developer"].includes(String(input.type)) ||
             typeof input.project !== "string" ||
             (input.area !== undefined && typeof input.area !== "string") ||
             (input.ticket !== undefined && typeof input.ticket !== "string") ||
+            (input.coderKey !== undefined &&
+              (input.type !== "developer" ||
+                typeof input.coderKey !== "string" ||
+                !/^[a-z][a-z0-9-]{0,62}$/.test(input.coderKey))) ||
             (input.pmMode !== undefined &&
               (input.type !== "pm" ||
                 !["discovery", "exploration"].includes(String(input.pmMode)) ||
@@ -3453,6 +3546,7 @@ export function createDashboardServer(
             );
           }
           jobInput.linearBinding = validated.linearBinding;
+          Object.assign(jobInput, coderBinding(validated));
           jobInput.projectInstanceId = validated.project.config.instanceId;
           if (jobInput.type === "pm")
             jobInput.discoveryRevision = validated.discoveryRevision;
@@ -3706,6 +3800,89 @@ export function createDashboardServer(
           json(res, 202, updateStatus());
           return;
         }
+        const codersRoute =
+          /^\/api\/projects\/([a-z][a-z0-9-]{0,62})\/coders$/.exec(
+            url.pathname,
+          );
+        if (codersRoute) {
+          if (url.search)
+            throw new RequestError(
+              400,
+              "Coding agents do not accept query parameters.",
+            );
+          if (req.method !== "GET" && req.method !== "PUT")
+            throw new RequestError(405, "Use GET or PUT for coding agents.");
+          const name = codersRoute[1]!;
+          if (!listProjectNames(root).includes(name))
+            throw new RequestError(404, "This project is unavailable.");
+          if (req.method === "PUT") {
+            const input = await body(req, 64 * 1024);
+            const previous = readCodingAgents(root, name);
+            const preview = previewCodingAgents(root, name, input);
+            const project = loadProject(root, name);
+            const context = await readinessContext();
+            const secrets = [
+              ...aiSecretValues(aiEnvironment()),
+              ...aiSecretValues(readConnections(root)),
+            ];
+            for (const agent of preview.agents) {
+              if (
+                agent.ai?.model &&
+                secrets.some((secret) => agent.ai!.model!.includes(secret))
+              )
+                throw new RequestError(
+                  400,
+                  "Use a model ID here. Save credentials in Connections.",
+                );
+              const before = previous.agents.find(
+                (item) =>
+                  item.key === agent.key &&
+                  item.instanceId === agent.instanceId,
+              );
+              if (
+                agent.enabled &&
+                (!before?.enabled ||
+                  agent.areas.some(
+                    (key) => !codingAgentOwnsArea(root, project, before, key),
+                  ) ||
+                  JSON.stringify([
+                    before.areas,
+                    before.ai,
+                    before.maxConcurrent,
+                  ]) !==
+                    JSON.stringify([
+                      agent.areas,
+                      agent.ai,
+                      agent.maxConcurrent,
+                    ]))
+              ) {
+                const readiness = inspectCodingReadiness(
+                  root,
+                  project,
+                  agent,
+                  context,
+                  true,
+                );
+                if (!readiness.canEnable)
+                  throw new RequestError(
+                    409,
+                    readiness.blockers
+                      .map((blocker) => blocker.message)
+                      .join(" "),
+                  );
+              }
+            }
+            // Profile edits are reversible; queued work rechecks identity and intent.
+            // The store owns the lifecycle lock and CAS. Destructive-operation locks
+            // would prevent owners from pausing a coder while its jobs are queued.
+            saveCodingAgents(root, name, {
+              revision: input.revision,
+              agents: preview.agents,
+            });
+          }
+          json(res, 200, codingAgentsView(name, await readinessContext()));
+          return;
+        }
         const aiRouteMatch =
           /^\/api\/projects\/([a-z][a-z0-9-]{0,62})(?:\/pms\/([a-z][a-z0-9-]{0,62}))?\/ai$/.exec(
             url.pathname,
@@ -3732,6 +3909,11 @@ export function createDashboardServer(
           const scope = projectAiTarget(project, "setup", area);
           if (req.method === "PUT") {
             const input = await body(req, 8192);
+            if (area && input.coder !== undefined)
+              throw new RequestError(
+                409,
+                "Configure coding models in Coding agents. PM settings only control product management.",
+              );
             if (!listProjectNames(root).includes(project.config.name))
               throw new RequestError(404, "This project is unavailable.");
             const currentProject = loadProject(root, project.config.name);
@@ -4016,6 +4198,7 @@ export function createDashboardServer(
                   preparation.codingPickup?.(name, foundationJobs),
                 ),
                 linear: linearProvisioning.status(name),
+                coders: codingAgentsStatus(name, readiness),
                 ...snapshot,
                 areas: project.areas.map(
                   (
@@ -4024,7 +4207,6 @@ export function createDashboardServer(
                       name: areaName,
                       instanceId: areaInstanceId,
                       enabled,
-                      codingEnabled,
                       verificationRequirement,
                       linearProjectId,
                       mandate,
@@ -4046,7 +4228,6 @@ export function createDashboardServer(
                       project.areas[areaIndex]!,
                     ),
                     enabled,
-                    codingEnabled: codingEnabled ?? enabled,
                     verificationRequirement,
                     linearProjectId,
                     mandate,
@@ -4841,7 +5022,18 @@ export function createDashboardServer(
                 throw new RequestError(400, "Choose a lowercase project ID.");
               const created = await withConfigurationMutation(
                 { project: destination.project },
-                () => ideaCrew.create(ideaRoute[1]!, destination),
+                async () => {
+                  const existed = listProjectNames(root).includes(
+                    destination.project as string,
+                  );
+                  const result = await ideaCrew.create(
+                    ideaRoute[1]!,
+                    destination,
+                  );
+                  if (existed) ensureCodingAgents(root, result.project);
+                  else initializeCodingAgents(root, result.project);
+                  return result;
+                },
               );
               activeMutationRequests++;
               countedMutation = true;
@@ -5033,8 +5225,8 @@ export function createDashboardServer(
           const output: string[] = [];
           const code = await withConfigurationMutation(
             { project: input.project },
-            () =>
-              runSetup(
+            async () => {
+              const result = await runSetup(
                 root,
                 args,
                 { log: (line) => output.push(line), error: () => {} },
@@ -5058,7 +5250,13 @@ export function createDashboardServer(
                       .map((key) => [key, input[key]]),
                   ),
                 },
-              ),
+              );
+              if (result === 0) {
+                if (existed) ensureCodingAgents(root, input.project as string);
+                else initializeCodingAgents(root, input.project as string);
+              }
+              return result;
+            },
           );
           // The creation transaction excluded its own request from the global
           // mutation count. Keep later provider provisioning guarded as usual.
@@ -5506,12 +5704,7 @@ export function createDashboardServer(
           if (
             Object.keys(input).some(
               (key) =>
-                ![
-                  "enabled",
-                  "codingEnabled",
-                  "revision",
-                  "projectRevision",
-                ].includes(key),
+                !["enabled", "revision", "projectRevision"].includes(key),
             )
           )
             throw new RequestError(
@@ -5900,6 +6093,7 @@ export function createDashboardServer(
               adopted = await runners().withConfigurationMutation(
                 { project, area: input.key },
                 async () => {
+                  ensureCodingAgents(root, project);
                   await linearProvisioning.addArea(project, input);
                   const saved = loadProject(root, project),
                     area = saved.areas.find((item) => item.key === input.key);
@@ -6037,7 +6231,8 @@ export function createDashboardServer(
         error instanceof RemoteWorkerError ||
         error instanceof AiProviderError ||
         error instanceof CodexLoginError ||
-        error instanceof AiRoutingError
+        error instanceof AiRoutingError ||
+        error instanceof CodingAgentError
           ? error.status
           : error instanceof ConnectionSaveError
             ? 400
@@ -6057,7 +6252,8 @@ export function createDashboardServer(
         error instanceof RemoteWorkerError ||
         error instanceof AiProviderError ||
         error instanceof CodexLoginError ||
-        error instanceof AiRoutingError
+        error instanceof AiRoutingError ||
+        error instanceof CodingAgentError
           ? error.message
           : "Dashboard request failed. Check your local configuration files and permissions.";
       if (!res.headersSent) json(res, status, { error: message });
@@ -6078,9 +6274,11 @@ export function createDashboardServer(
         listProjectNames(root).some((name) => {
           try {
             const project = loadProject(root, name);
-            return project.areas.some(
-              (area) =>
-                (area.enabled &&
+            if (project.config.automationPaused) return false;
+            return (
+              project.areas.some(
+                (area) =>
+                  area.enabled &&
                   hasAiCredentials(
                     root,
                     aiEnvironment(),
@@ -6089,17 +6287,17 @@ export function createDashboardServer(
                       aiEnvironment(),
                       projectAiTarget(project, "pm", area),
                     ),
-                  )) ||
-                ((area.codingEnabled ?? area.enabled) &&
+                  ),
+              ) ||
+              readCodingAgents(root, name).agents.some(
+                (agent) =>
+                  agent.enabled &&
                   hasAiCredentials(
                     root,
                     aiEnvironment(),
-                    resolveAiSelection(
-                      root,
-                      aiEnvironment(),
-                      projectAiTarget(project, "coder", area),
-                    ),
-                  )),
+                    effectiveCodingAi(root, project, agent, aiEnvironment()),
+                  ),
+              )
             );
           } catch {
             return false;

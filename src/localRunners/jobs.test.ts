@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { initializeSetup } from "../setup/files.ts";
 import type { LinearTicket } from "../services/types.ts";
 import { createJobPreparation, scheduledThisMinute } from "./jobs.ts";
-import type { LocalJob } from "./types.ts";
+import type { LocalJob, LocalJobInput } from "./types.ts";
 import { SourceControlError } from "../sourceControl/types.ts";
 import { LocalJobDeferredError } from "./engine.ts";
 import { OAuthConnectionError } from "../oauthConnection/types.ts";
@@ -29,6 +29,18 @@ import { saveConnections } from "../setup/connections.ts";
 import type { TestAccess } from "../testAccess.ts";
 import { deliveryConfiguration } from "../delivery/index.ts";
 import type { DeliveryRecord } from "../delivery/types.ts";
+import {
+  initializeCodingAgents,
+  ensureCodingAgents,
+  readCodingAgents,
+  saveCodingAgents,
+  type CodingAgent,
+} from "../codingAgents/index.ts";
+import {
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
 
 let root: string;
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -68,6 +80,7 @@ function edit(
   file: string,
   mutate: (raw: {
     verified: string | null;
+    automationPaused?: boolean;
     privateOperatorNote?: string;
     instanceId?: string;
     workflow?: unknown;
@@ -2514,6 +2527,487 @@ describe("local job preparation", () => {
         (input) => input.type === "developer",
       ),
     ).toEqual([]);
+  });
+});
+
+describe("independent coding-agent preparation", () => {
+  function saveCoders(
+    agents: Array<Omit<CodingAgent, "instanceId"> & { instanceId?: string }>,
+  ) {
+    return saveCodingAgents(root, "app", {
+      revision: readCodingAgents(root, "app").revision,
+      agents,
+    });
+  }
+  const profile = (key = "builder", over: Partial<CodingAgent> = {}) => ({
+    key,
+    name: "Product builder",
+    enabled: true,
+    areas: ["core"],
+    maxConcurrent: 2,
+    ...over,
+  });
+  function scopedJob(
+    input: LocalJobInput,
+    overrides: Partial<LocalJob> = {},
+  ): LocalJob {
+    return {
+      ...job,
+      ...input,
+      id: "job-11111111-1111-4111-8111-111111111111",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+  function queue(tickets = [ticket], history: LocalJob[] = []) {
+    return createJobPreparation({
+      root,
+      env,
+      listJobs: async () => history,
+      linear: () => ({
+        getTicket: async (id) =>
+          tickets.find((item) => item.id === id || item.identifier === id) ??
+          null,
+        listTickets: async () => tickets,
+      }),
+      preview: async () => "https://app-preview.vercel.app",
+      now: () => new Date("2026-10-04T09:00:45Z"),
+    });
+  }
+  function addSecondPm() {
+    const path = join(root, "projects/app/areas.json"),
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    raw.areas.core.wipLimit = 4;
+    raw.areas.core.paths = ["core/**"];
+    raw.areas.core.sharedTouchpoints = [];
+    raw.areas.other = {
+      ...raw.areas.core,
+      name: "Other PM",
+      label: "pm:other",
+      paths: ["other/**"],
+    };
+    writeFileSync(path, JSON.stringify(raw));
+    mkdirSync(join(root, "projects/app/other"));
+    writeFileSync(
+      join(root, "projects/app/other/mandate.md"),
+      "Inspect the other approved product journeys and implement finite acceptance criteria.",
+    );
+  }
+  it("does not create a coder for an enabled PM, and schedules an independently enabled coder while that PM is paused", async () => {
+    chooseBrowserAccess();
+    initializeCodingAgents(root, "app");
+    const prepared = queue();
+    expect((await prepared.scheduledJobs()).map((input) => input.type)).toEqual(
+      ["pm"],
+    );
+    edit("areas.json", (raw) => {
+      raw.areas.core.enabled = false;
+      raw.areas.core.codingEnabled = false;
+    });
+    const coder = saveCoders([profile()]).agents[0]!;
+    const jobs = await prepared.scheduledJobs();
+    expect(jobs).toEqual([
+      expect.objectContaining({
+        type: "developer",
+        area: "core",
+        coderKey: coder.key,
+        coderInstanceId: coder.instanceId,
+        ticket: ticket.identifier,
+      }),
+    ]);
+    expect(jobs[0]!.idempotencyKey).toBe("developer:app:ticket-id");
+    expect((await prepared.validate(jobs[0]!, true)).coder).toEqual(coder);
+  });
+  it("balances deterministic coder slots across every assigned queue without exceeding profile concurrency or duplicating a ticket", async () => {
+    chooseBrowserAccess();
+    addSecondPm();
+    const coders = saveCoders([
+      profile("beta", { maxConcurrent: 1 }),
+      profile("alpha", { areas: ["core", "other"], maxConcurrent: 2 }),
+    ]).agents;
+    const alpha = coders.find((coder) => coder.key === "alpha")!;
+    const history = [
+      scopedJob(
+        {
+          type: "developer",
+          project: "app",
+          area: "other",
+          coderKey: alpha.key,
+          coderInstanceId: alpha.instanceId,
+          ticket: "APP-99",
+        },
+        { status: "running" },
+      ),
+    ];
+    const tickets = Array.from({ length: 4 }, (_, i) => ({
+      ...ticket,
+      id: `ticket-${i}`,
+      identifier: `APP-${i}`,
+      createdAt: `2026-10-01T00:0${i}:00Z`,
+    }));
+    const prepared = queue([...tickets, tickets[0]!], history);
+    const jobs = (await prepared.scheduledJobs(history)).filter(
+      (input) => input.type === "developer",
+    );
+    expect(jobs.map((input) => [input.ticket, input.coderKey])).toEqual([
+      ["APP-0", "beta"],
+      ["APP-1", "alpha"],
+    ]);
+    expect(
+      new Set(jobs.map((input) => input.linearBinding!.ticketId)).size,
+    ).toBe(jobs.length);
+    expect(
+      prepared.admissionBlocker(
+        scopedJob(jobs[1]!, { id: "job-33333333-3333-4333-8333-333333333333" }),
+        [
+          ...history,
+          scopedJob(jobs[1]!, {
+            id: "job-22222222-2222-4222-8222-222222222222",
+            status: "running",
+          }),
+        ],
+      ),
+    ).toContain("concurrency limit");
+    expect(
+      prepared.admissionBlocker(scopedJob(jobs[0]!), history),
+    ).toBeUndefined();
+  });
+  it("keeps ambiguous PM ownership out of automatic coding even when separate coders serve both queues", async () => {
+    chooseBrowserAccess();
+    addSecondPm();
+    saveCoders([profile("first"), profile("second", { areas: ["other"] })]);
+    const ambiguous = { ...ticket, labels: [...ticket.labels, "pm:other"] },
+      prepared = queue([ambiguous]);
+    expect(
+      (await prepared.scheduledJobs()).filter(
+        (input) => input.type === "developer",
+      ),
+    ).toEqual([]);
+    await expect(
+      prepared.validate({
+        type: "developer",
+        project: "app",
+        ticket: ticket.identifier,
+        runOnce: true,
+      }),
+    ).rejects.toThrow("mapped to this project's PM");
+  });
+  it("binds a manually selected paused coder without enabling it and rejects unassigned or new unbound queued work", async () => {
+    chooseBrowserAccess();
+    addSecondPm();
+    initializeCodingAgents(root, "app");
+    const coder = saveCoders([
+        profile("paused", { enabled: false }),
+        profile("other", { areas: ["other"] }),
+      ]).agents[0]!,
+      prepared = queue();
+    const input: LocalJobInput = {
+      type: "developer",
+      project: "app",
+      coderKey: coder.key,
+      runOnce: true,
+    };
+    const selected = await prepared.selectDeveloperTicket(input, []);
+    expect(selected).toMatchObject({
+      area: "core",
+      coderKey: coder.key,
+      coderInstanceId: coder.instanceId,
+      ticket: ticket.identifier,
+    });
+    expect((await prepared.validate(selected)).coder?.enabled).toBe(false);
+    expect((await prepared.prepareJob(scopedJob(selected))).ai?.provider).toBe(
+      "claude",
+    );
+    expect(readCodingAgents(root, "app").agents[0]!.enabled).toBe(false);
+    await expect(
+      prepared.validate({ ...selected, runOnce: false }, true),
+    ).rejects.toThrow("paused");
+    await expect(
+      prepared.validate(
+        { ...selected, idempotencyKey: "qa-rework:" + "a".repeat(64) },
+        true,
+      ),
+    ).rejects.toThrow("paused");
+    await expect(
+      prepared.validate({
+        ...selected,
+        coderKey: "other",
+        coderInstanceId: undefined,
+      }),
+    ).rejects.toThrow("assigned");
+    await expect(
+      prepared.validate(
+        scopedJob(
+          {
+            type: "developer",
+            project: "app",
+            area: "core",
+            ticket: ticket.identifier,
+            runOnce: true,
+          },
+          { createdAt: new Date(Date.now() + 60_000).toISOString() },
+        ),
+        true,
+      ),
+    ).rejects.toThrow("changed");
+  });
+  it("preserves an actual pre-migration queued job's legacy coder and AI without rebinding it to a new profile", async () => {
+    chooseBrowserAccess();
+    const project = loadProject(root, "app"),
+      scope = projectAiTarget(project, "coder", project.areas[0]!);
+    saveAiRouting(root, scope, {
+      revision: readAiRouting(root, scope).revision,
+      coder: { provider: "claude", model: "legacy-coder-model" },
+    });
+    const historical = scopedJob({
+      type: "developer",
+      project: "app",
+      area: "core",
+      ticket: ticket.identifier,
+    });
+    const legacyCoder = ensureCodingAgents(root, "app").agents[0]!;
+    saveCoders([
+      {
+        ...legacyCoder,
+        ai: { provider: "claude", model: "current-profile-model" },
+      },
+      profile("new-builder", {
+        ai: { provider: "claude", model: "new-independent-model" },
+      }),
+    ]);
+    const prepared = queue(),
+      validated = await prepared.validate(historical, true);
+    expect(validated.coder?.key).toBe("core");
+    expect((await prepared.prepareJob(historical)).ai).toEqual({
+      provider: "claude",
+      model: "legacy-coder-model",
+    });
+    expect(historical.coderKey).toBeUndefined();
+    await expect(
+      prepared.validate(
+        {
+          type: "developer",
+          project: "app",
+          area: "core",
+          ticket: ticket.identifier,
+        },
+        true,
+      ),
+    ).rejects.toThrow("changed");
+    expect(
+      (
+        await prepared.validate({
+          type: "developer",
+          project: "app",
+          area: "core",
+          ticket: ticket.identifier,
+          coderKey: "new-builder",
+        })
+      ).coder?.key,
+    ).toBe("new-builder");
+  });
+  it("rejects a replaced coder incarnation before acquiring worker credentials", async () => {
+    chooseBrowserAccess();
+    const first = saveCoders([profile()]).agents[0]!,
+      prepared = queue(),
+      input = {
+        type: "developer" as const,
+        project: "app",
+        area: "core",
+        ticket: ticket.identifier,
+        coderKey: first.key,
+        coderInstanceId: first.instanceId,
+      };
+    saveCoders([]);
+    const replacement = saveCoders([profile()]).agents[0]!;
+    expect(replacement.instanceId).not.toBe(first.instanceId);
+    await expect(prepared.prepareJob(scopedJob(input))).rejects.toThrow(
+      "changed",
+    );
+    expect(
+      (await prepared.validate({ ...input, coderInstanceId: undefined })).coder
+        ?.instanceId,
+    ).toBe(replacement.instanceId);
+  });
+  it("uses the independent coder model and preserves PM and owner scope while rechecking model changes before launch", async () => {
+    chooseBrowserAccess();
+    const project = loadProject(root, "app"),
+      pmScope = projectAiTarget(project, "pm", project.areas[0]!),
+      projectScope = projectAiTarget(project, "coder");
+    saveAiRouting(root, pmScope, {
+      revision: readAiRouting(root, pmScope).revision,
+      pm: { provider: "claude", model: "pm-only" },
+      coder: { provider: "claude", model: "legacy-area-only" },
+    });
+    saveAiRouting(root, projectScope, {
+      revision: readAiRouting(root, projectScope).revision,
+      coder: { provider: "claude", model: "project-builder" },
+    });
+    const coder = saveCoders([profile()]).agents[0]!,
+      input: LocalJobInput = {
+        type: "developer",
+        project: "app",
+        area: "core",
+        ticket: ticket.identifier,
+        coderKey: coder.key,
+        coderInstanceId: coder.instanceId,
+        runOnce: true,
+      };
+    const payload = await queue().prepareJob(scopedJob(input));
+    expect(payload.ai).toEqual({
+      provider: "claude",
+      model: "project-builder",
+    });
+    expect(payload.prompt).toContain("CURRENT OWNER PRODUCT CONTEXT");
+    expect(payload.prompt).toContain('"area":"core"');
+    const changed = createJobPreparation({
+      root,
+      env,
+      linear: () => ({
+        getTicket: async () => ticket,
+        listTickets: async () => [ticket],
+      }),
+      preview: async () => "https://app-preview.vercel.app",
+      beforeDeveloper: async (_job, value) => {
+        saveCoders([
+          { ...coder, ai: { provider: "claude", model: "changed-builder" } },
+        ]);
+        return value;
+      },
+    });
+    await expect(
+      changed.prepareJob(
+        scopedJob(input, { id: "job-33333333-3333-4333-8333-333333333333" }),
+      ),
+    ).rejects.toBeInstanceOf(LocalJobDeferredError);
+  });
+  it("honors the project-wide automation pause without changing individual PM/coder intent or manual admission", async () => {
+    chooseBrowserAccess();
+    const coder = saveCoders([profile()]).agents[0]!,
+      prepared = queue();
+    edit("project.json", (raw) => {
+      raw.automationPaused = true;
+    });
+    expect(await prepared.scheduledJobs()).toEqual([]);
+    await expect(
+      prepared.validate({
+        type: "developer",
+        project: "app",
+        ticket: ticket.identifier,
+        coderKey: coder.key,
+        runOnce: true,
+      }),
+    ).resolves.toMatchObject({ coder: { enabled: true } });
+    expect(loadProject(root, "app").areas[0]!.enabled).toBe(true);
+    expect(readCodingAgents(root, "app").agents[0]!.enabled).toBe(true);
+  });
+  it("gives a PM only the coding holds from its own approved queue", async () => {
+    chooseBrowserAccess();
+    addSecondPm();
+    saveCoders([profile("builder", { areas: ["core", "other"] })]);
+    const otherTicket = {
+      ...ticket,
+      id: "other-ticket",
+      identifier: "APP-99",
+      labels: ["pm:other", "pm-approved"],
+    };
+    const failed = scopedJob(
+      {
+        type: "developer",
+        project: "app",
+        area: "core",
+        ticket: ticket.identifier,
+        linearBinding: { connectionId: "default", ticketId: ticket.id },
+      },
+      { status: "failed" },
+    );
+    const otherFailed = scopedJob(
+      {
+        ...failed,
+        area: "other",
+        ticket: otherTicket.identifier,
+        linearBinding: { connectionId: "default", ticketId: otherTicket.id },
+      },
+      {
+        id: "job-22222222-2222-4222-8222-222222222222",
+        runId: 2,
+        status: "failed",
+      },
+    );
+    const prepared = queue([ticket, otherTicket], [failed, otherFailed]);
+    await prepared.scheduledJobs([failed, otherFailed]);
+    expect(
+      prepared.codingPickup("app", [failed, otherFailed]).needsReview,
+    ).toHaveLength(2);
+    const input: LocalJobInput = {
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+      },
+      validated = await prepared.validate(input);
+    const payload = await prepared.prepareJob(
+      scopedJob(
+        {
+          ...input,
+          discoveryRevision: validated.discoveryRevision,
+          linearBinding: validated.linearBinding,
+        },
+        { id: "job-33333333-3333-4333-8333-333333333333" },
+      ),
+    );
+    expect(payload.prompt).toContain(`/activity?run=${failed.id}`);
+    expect(payload.prompt).not.toContain(`/activity?run=${otherFailed.id}`);
+  });
+  it("allows an explicitly assigned coder to implement approved finite scope without requiring PM investigation text", async () => {
+    chooseBrowserAccess();
+    saveCoders([profile()]);
+    writeFileSync(join(root, "projects/app/core/mandate.md"), "");
+    const prepared = queue();
+    await expect(
+      prepared.validate({
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+      }),
+    ).rejects.toThrow("mandate");
+    const selected = await prepared.selectDeveloperTicket(
+      { type: "developer", project: "app", runOnce: true },
+      [],
+    );
+    expect(selected.coderKey).toBe("builder");
+    await expect(prepared.validate(selected)).resolves.toMatchObject({
+      coder: { key: "builder" },
+      ticket: { id: ticket.id },
+    });
+    await expect(
+      prepared.validate({ ...selected, ticket: "APP-12" }),
+    ).resolves.toMatchObject({ area: { key: "core" } });
+  });
+  it("keeps healthy PM investigation independent from an unreadable coding profile store", async () => {
+    chooseBrowserAccess();
+    initializeCodingAgents(root, "app");
+    writeFileSync(
+      join(root, "projects/app/coders.json"),
+      "Invalid coding configuration",
+    );
+    const prepared = queue();
+    expect((await prepared.scheduledJobs()).map((input) => input.type)).toEqual(
+      ["pm"],
+    );
+    expect(prepared.codingPickup("app", [])).toEqual({
+      state: "unavailable",
+      needsReview: [],
+    });
+    await expect(
+      prepared.validate({
+        type: "pm",
+        project: "app",
+        area: "core",
+        runOnce: true,
+      }),
+    ).resolves.toMatchObject({ area: { key: "core" } });
   });
 });
 

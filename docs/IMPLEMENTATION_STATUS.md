@@ -1,6 +1,6 @@
 # ShipGremlins alpha implementation status
 
-Updated October 14, 2026. The master plan is a product roadmap, not a statement that
+Updated October 15, 2026. The master plan is a product roadmap, not a statement that
 every capability is shipped. This page records the implemented foundation.
 
 Controller-managed coding now has enforced planning, baseline checks, attributable
@@ -8,7 +8,8 @@ red tests for behavior changes, implementation, fresh read-only review and final
 source-bound gates. Two inner repair attempts are shared across stages. Overview
 and Activity visualize signed recorded phases inline. Claude Code and Codex can
 remain connected together, with workspace/project defaults and separate project
-and individual-PM choices for PM and coding work. Missing selected credentials
+and individual PM and named coder choices. Coders have independent automation,
+queue assignments and concurrency. Missing selected credentials
 block the route; no automatic provider fallback is implemented. Checkpoints retain
 evidence, not edited-source resumption across containers. See the
 [coding workflow](CODING_WORKFLOW.md).

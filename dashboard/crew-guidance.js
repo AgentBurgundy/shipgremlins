@@ -129,7 +129,6 @@
       launchArea: area.key,
     });
     run.disabled = locked || Boolean(operation?.busy);
-    const codingEnabled = area.codingEnabled ?? area.enabled;
     const automationSwitch = (label, description, enabled, mode) => {
       const pending = operation?.busy && operation.mode === mode;
       const control = el(
@@ -175,24 +174,13 @@
       areaProject: project.name,
       enableArea: String(!area.enabled),
     });
-    const coding = automationSwitch(
-      "Approved coding",
-      "Automatically build approved work",
-      codingEnabled,
-      "coding-automation",
-    );
-    Object.assign(coding.dataset, {
-      toggleArea: area.key,
-      areaProject: project.name,
-      automationKind: "coding",
-    });
     const automation = el("div", "pm-automation-controls");
     automation.setAttribute("role", "group");
     automation.setAttribute(
       "aria-label",
       `Automatic work for ${area.name || area.key}`,
     );
-    automation.append(toggle, coding);
+    automation.append(toggle);
     buttons.append(run);
     const main = el("div", "pm-controls-main");
     const heading = el("div", "pm-controls-heading");
@@ -200,27 +188,19 @@
       "span",
       "pm-controls-status",
       operation?.busy
-        ? ["automation", "coding-automation"].includes(operation.mode)
+        ? operation.mode === "automation"
           ? "Saving changes…"
           : "Starting a run…"
         : locked
           ? "Temporarily unavailable"
-          : area.enabled && codingEnabled
-            ? "Both enabled"
-            : area.enabled
-              ? "Investigations enabled"
-              : codingEnabled
-                ? "Approved coding enabled"
-                : "Paused",
+          : area.enabled
+            ? "Investigations enabled"
+            : "Investigations paused",
     );
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
     heading.append(
-      el(
-        compact ? "span" : "h3",
-        "pm-controls-title",
-        compact ? "Automation" : "Automatic work",
-      ),
+      el(compact ? "span" : "h3", "pm-controls-title", "PM investigations"),
       status,
     );
     main.append(heading, buttons);
@@ -230,7 +210,9 @@
       el(
         "p",
         "pm-controls-note",
-        "Changes save immediately. Pausing affects future runs.",
+        project.autonomy?.projectPaused
+          ? "Project automation is paused. This PM’s schedule is kept; Run now is still available."
+          : "Changes save immediately. Pausing affects future investigations.",
       ),
     );
     if (operation?.message) {
@@ -247,6 +229,12 @@
   window.renderFoundationLauncher = (project) => {
     const stage = project.foundation?.stage;
     const active = ["queued", "building"].includes(stage);
+    const needsCoder =
+      !active &&
+      stage !== "review-code" &&
+      !project.coders?.agents?.some((agent) =>
+        agent.areas?.includes("foundation"),
+      );
     const root = el("section", "foundation-launch");
     const copy = el("div", "foundation-launch-copy");
     copy.append(
@@ -265,7 +253,9 @@
         "",
         active
           ? "A coding agent is building the first working version on your runner. Follow its progress and review the pull request here."
-          : "Start with a working app and checks. Your crew sets up Linear and gives a coding agent a focused foundation ticket.",
+          : needsCoder
+            ? "Add a named coding agent and assign the Foundation PM queue. Then return here to review and start the first build. Automatic pickup can stay paused."
+            : "Start with a working app and checks. Your crew sets up Linear and gives a coding agent a focused foundation ticket.",
       ),
     );
     const action = el(
@@ -275,9 +265,11 @@
         ? "View build"
         : stage === "review-code"
           ? "Review foundation"
-          : "Build foundation",
+          : needsCoder
+            ? "Add coding agent"
+            : "Build foundation",
     );
-    action.href = `/projects/${encodeURIComponent(project.name)}?tab=environment`;
+    action.href = `/projects/${encodeURIComponent(project.name)}?tab=${needsCoder ? "crew" : "environment"}`;
     root.append(copy, action);
     return root;
   };
@@ -341,7 +333,7 @@
       el(
         "p",
         "setup-help",
-        "Investigation schedules and approved-work pickup are independent. Turning either off leaves current jobs running.",
+        "PMs investigate and review. Coding agents implement approved work with their own queues and controls. Pausing investigations leaves current runs running.",
       ),
     );
     const settings = el("a", "small-button", "Project settings");

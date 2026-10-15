@@ -8,6 +8,10 @@ export interface LocalJobInput {
   /** Bound by the controller; omitted only for legacy project incarnations. */
   projectInstanceId?: string;
   area?: string;
+  /** Independent coding profile selected by the controller, never the owning PM identity. */
+  coderKey?: string;
+  /** Exact coding-profile incarnation; replaced profiles cannot inherit queued work. */
+  coderInstanceId?: string;
   ticket?: string;
   attempt?: number;
   developerKind?: "build" | "rc" | "ci" | "sync" | "port";
@@ -29,6 +33,20 @@ export interface LocalJobInput {
   grumblin?: import("../grumblins/schema.ts").GrumblinProfileSnapshot;
   /** Owner configuration snapshot for adopting learned PM observations. */
   discoveryRevision?: string;
+}
+
+/** Controller-created one-off contracts also carry automatic work reservations. */
+export function isAutomaticLocalJob(input: LocalJobInput): boolean {
+  return (
+    input.runOnce !== true ||
+    [
+      "auto-discovery:",
+      "qa-rework:",
+      "integration-repair:",
+      "promotion-repair:",
+      "staging-sync:",
+    ].some((prefix) => input.idempotencyKey?.startsWith(prefix))
+  );
 }
 
 export interface LocalJob extends LocalJobInput {

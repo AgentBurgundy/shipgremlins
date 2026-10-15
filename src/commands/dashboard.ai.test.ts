@@ -256,7 +256,7 @@ describe("dashboard AI provider HTTP contract", () => {
       CODEX_AUTH_JSON: codex,
     });
   });
-  it("supports an individual PM and its coder, clears inheritance, and rejects stale parent revisions", async () => {
+  it("routes PM models independently, rejects PM coder settings and guards parent revisions", async () => {
     const f = await fixture();
     const area = loadProject(f.root, "app").areas[0]!.key;
     const path = `/api/projects/app/pms/${area}/ai`;
@@ -266,7 +266,6 @@ describe("dashboard AI provider HTTP contract", () => {
       {
         revision: first.revision,
         pm: { provider: "codex" },
-        coder: { provider: "claude", model: "haiku" },
       },
       "PUT",
     );
@@ -277,11 +276,18 @@ describe("dashboard AI provider HTTP contract", () => {
       source: "pm-role",
       configured: false,
     });
-    expect(view.effective.coder).toMatchObject({
-      provider: "claude",
-      model: "haiku",
-      source: "pm-role",
-    });
+    expect(
+      (
+        await f.call(
+          path,
+          {
+            revision: view.revision,
+            coder: { provider: "claude", model: "haiku" },
+          },
+          "PUT",
+        )
+      ).status,
+    ).toBe(409);
     const project = (await (
       await f.call("/api/projects/app/ai")
     ).json()) as AiRoutingView;
@@ -312,10 +318,7 @@ describe("dashboard AI provider HTTP contract", () => {
       model: "sonnet",
       source: "project-default",
     });
-    expect(inherited.overrides.coder).toEqual({
-      provider: "claude",
-      model: "haiku",
-    });
+    expect(inherited.overrides.coder).toBeUndefined();
   });
   it("does not substitute a connected provider for an unconnected project choice", async () => {
     const f = await fixture();

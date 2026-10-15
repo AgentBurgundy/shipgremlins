@@ -201,6 +201,8 @@ function fixture(
     refreshError?: boolean;
     noCrew?: boolean;
     pending?: Promise<void>;
+    projectPaused?: boolean;
+    hasAutomaticAgents?: boolean;
   } = {},
 ) {
   let autonomy = {
@@ -213,6 +215,8 @@ function fixture(
     projectRevision: "project-r1",
     blockers: [],
     nextRunAt: null,
+    projectPaused: options.projectPaused,
+    hasAutomaticAgents: options.hasAutomaticAgents,
   };
   const api = vi.fn(async (path: string, body?: { enabled: boolean }) => {
     if (path.endsWith("/autonomy")) {
@@ -251,9 +255,10 @@ function fixture(
       clearTimeout() {},
     },
   );
+  const navigate = vi.fn();
   const controller = window.createProjectOperations({
     api,
-    pages: { current: "project", project: "alpha" },
+    pages: { current: "project", project: "alpha", navigate },
     inbox: null,
     getProject: () =>
       project({ autonomy, ...(options.noCrew ? { areas: [] } : {}) }),
@@ -265,7 +270,7 @@ function fixture(
   const root = new Element("SECTION");
   controller.mountAutonomy(root, { name: "alpha" });
   const button = all(root).find((node) => node.tagName === "BUTTON")!;
-  return { root, button, api };
+  return { root, button, api, navigate };
 }
 
 describe("project autonomy controls", () => {
@@ -279,8 +284,10 @@ describe("project autonomy controls", () => {
       revision: "areas-r1",
       projectRevision: "project-r1",
     });
-    expect(f.button.textContent).toBe("Pause automatic work");
-    expect(text(f.root)).toContain("Investigations on · Approved coding on");
+    expect(f.button.textContent).toBe("Pause project automation");
+    expect(text(f.root)).toContain(
+      "PM investigations enabled · Coding agents enabled",
+    );
     await f.button.fire();
     expect(f.api).toHaveBeenLastCalledWith("/api/projects/alpha/operations");
     expect(text(f.root)).toContain(
@@ -317,12 +324,31 @@ describe("project autonomy controls", () => {
     const f = fixture({ refreshError: true });
     await flush();
     await f.button.fire();
-    expect(f.button.textContent).toBe("Pause automatic work");
+    expect(f.button.textContent).toBe("Pause project automation");
     expect(text(f.root)).toContain("your setting was saved");
   });
-  it("does not offer an executable autonomy toggle until a PM has been adopted", async () => {
+  it("routes an empty crew to agent setup instead of sending an ineffective master toggle", async () => {
     const f = fixture({ noCrew: true });
     await flush();
-    expect(f.button.disabled).toBe(true);
+    expect(f.button.disabled).toBe(false);
+    expect(f.button.textContent).toBe("Choose automatic agents");
+    await f.button.fire();
+    expect(f.navigate).toHaveBeenCalledWith("/projects/alpha?tab=crew");
+    expect(f.api.mock.calls.some(([path]) => path.endsWith("/autonomy"))).toBe(
+      false,
+    );
   });
+  it.each([true, false])(
+    "uses project pause intent %s independently of individual agent flags",
+    async (projectPaused) => {
+      const f = fixture({ projectPaused, hasAutomaticAgents: true });
+      await flush();
+      await f.button.fire();
+      expect(f.api).toHaveBeenCalledWith("/api/projects/alpha/autonomy", {
+        enabled: projectPaused,
+        revision: "areas-r1",
+        projectRevision: "project-r1",
+      });
+    },
+  );
 });

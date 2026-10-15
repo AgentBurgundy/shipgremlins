@@ -4,6 +4,13 @@
   const list = (value) => (Array.isArray(value) ? value : []);
   const projectPath = (project) =>
     `/projects/${encodeURIComponent(project.name)}`;
+  const foundationNeedsCoder = (project) =>
+    !["queued", "building", "review-code"].includes(
+      project.foundation?.stage,
+    ) &&
+    !project.coders?.agents?.some((agent) =>
+      agent.areas?.includes("foundation"),
+    );
   const belongs = (job, project) =>
     job.project === project.name &&
     (job.projectInstanceId ?? null) === (project.instanceId ?? null);
@@ -97,8 +104,10 @@
             : "Foundation needed",
         detail:
           "Finish the first working app before recurring product work begins.",
-        action: "Open foundation",
-        href: `${href}?tab=environment`,
+        action: foundationNeedsCoder(project)
+          ? "Add coding agent"
+          : "Open foundation",
+        href: `${href}?tab=${foundationNeedsCoder(project) ? "crew" : "environment"}`,
       };
     if (operations.inbox?.length)
       return {
@@ -362,6 +371,14 @@
         "Review settings",
         "/settings#advanced-settings",
       );
+    if (project.foundation?.needed && foundationNeedsCoder(project))
+      return step(
+        4,
+        "Choose who will build your idea.",
+        "Add a named coding agent and assign the Foundation PM queue, then review and start its first build. Automatic pickup can stay paused.",
+        "Add coding agent",
+        `${projectPath(project)}?tab=crew`,
+      );
     if (project.foundation?.needed)
       return step(
         4,
@@ -370,16 +387,21 @@
           : "Give your idea a real foundation.",
         project.foundation.stage === "review-code"
           ? "Review the coding run and its draft, then check the merged app before PMs explore it."
-          : "Your crew’s first job is to build a working app. Review the foundation plan, then explicitly start the Coding Gremlin.",
+          : "Your crew’s first job is to build a working app. Review the foundation plan, then explicitly start its assigned coding agent.",
         project.foundation.stage === "review-code"
           ? "Review foundation"
           : "Review foundation plan",
         `${projectPath(project)}?tab=environment`,
       );
     const activeCrew =
-      project.areas.length > 0 &&
-      project.areas.every(
-        (area) => area.enabled && (area.codingEnabled ?? area.enabled),
+      project.areas.length > 0 && project.areas.every((area) => area.enabled);
+    if (project.autonomy?.projectPaused === true)
+      return step(
+        4,
+        "Project automation is paused.",
+        "Your PM and coding-agent settings are kept. Resume project automation when you want scheduled work to continue.",
+        "Review project automation",
+        projectPath(project),
       );
     if (project.autonomy?.enabled === true || activeCrew) {
       const automatic = window.projectWorkState(project, jobs);
@@ -397,15 +419,13 @@
       project.areas.length &&
       !activeCrew &&
       project.readiness.areas?.length === project.areas.length &&
-      project.readiness.areas.every(
-        (area) => area.canRun && area.canEnable && area.coding?.canEnable,
-      )
+      project.readiness.areas.every((area) => area.canRun && area.canEnable)
     )
       return step(
         4,
-        "Ready for autopilot.",
-        "Your PMs and coders passed setup. Start scheduled investigations and automatic pickup of eligible work under your saved approval policy.",
-        "Start autopilot",
+        "Your PMs are ready.",
+        "Start scheduled PM investigations. Create and enable coding agents separately to implement approved work.",
+        "Start PM investigations",
         `${projectPath(project)}?tab=crew`,
       );
     const firstStep = window.projectFirstStep(project, jobs);

@@ -102,8 +102,8 @@
             },
           ]
         : []),
-      { key: "run", label: "Start a run", panel: workbench },
-      { key: "workers", label: "Runners", panel: workers },
+      { key: "run", label: "Advanced launch", panel: workbench },
+      { key: "workers", label: "Workers", panel: workers },
     ]);
     const shortcut = runners.querySelector(".panel-heading a");
     if (shortcut) shortcut.hidden = true;

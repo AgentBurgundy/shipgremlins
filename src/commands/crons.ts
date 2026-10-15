@@ -53,7 +53,12 @@ export const PM_AGENT_WORKFLOW = join(".github", "workflows", "pm-agent.yml");
 export function cronEntries(projects: Project[]): CronEntry[] {
   return [...projects]
     .sort((a, b) => a.config.name.localeCompare(b.config.name))
-    .filter((p) => p.config.verified !== null && supportsLegacyCI(p.config))
+    .filter(
+      (p) =>
+        !p.config.automationPaused &&
+        p.config.verified !== null &&
+        supportsLegacyCI(p.config),
+    )
     .flatMap((p) =>
       p.areas
         .filter((a) => a.enabled)

@@ -70,8 +70,9 @@ by the public log viewer or run cards.
 ## AI choices
 
 Connect Claude Code and Codex in Connections. Choose defaults in project settings
-and overrides in each PM's Product brief. A PM and its coding work can use different
-providers or models from dropdown lists. Only the selected provider's current credential enters that
+and each PM's model in its Product brief. Create separate named coding agents in
+the project's Agents page, with their own provider/model dropdowns, assigned queues
+and concurrency. Only the selected provider's current credential enters that
 job. A missing connection blocks the selected route; there is no silent fallback.
 
 The workspace default also covers new-project planning before a project exists.

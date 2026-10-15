@@ -45,6 +45,8 @@ export interface ProjectConfig extends ProjectCapabilities {
   ideaPlanId?: string;
   execution?: ExecutionLimits;
   autonomousApproval?: AutonomousApprovalPolicy;
+  /** Project-wide pause preserves each PM and coder's own automatic-work setting. */
+  automationPaused?: boolean;
   /** The Linear team for this app; existing area project IDs remain authoritative. */
   linear?: {
     teamId?: string;
@@ -358,6 +360,17 @@ export function loadProject(root: string, name: string): Project {
     throw new ConfigError(pf, (error as Error).message);
   }
   const config: ProjectConfig = {
+    ...(raw.automationPaused === undefined
+      ? {}
+      : {
+          automationPaused: need(
+            pf,
+            raw,
+            "automationPaused",
+            (value): value is boolean => typeof value === "boolean",
+            "a boolean",
+          ),
+        }),
     ...(raw.ideaPlanId === undefined
       ? {}
       : {

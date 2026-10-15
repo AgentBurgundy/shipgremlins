@@ -77,15 +77,14 @@ acceptance evidence**. A mocked integration stays labelled as mocked. Missing
 visual verification stays unverified. This report improves review quality; it
 does not let an agent certify its own browser evidence or authorize a merge.
 
-## Two independent automation controls
+## Separate PMs and coding agents
 
 - **Scheduled PM patrols:** investigate the mandate on its configured schedule.
-- **Automatic coding pickup:** select eligible, approved tickets on available
-  runners without waiting for a PM patrol.
+- **Named coding agents:** select eligible, approved tickets from assigned PM
+  queues, with independent providers, models and concurrency.
 
-New PMs start with both off. Existing configuration that omits `codingEnabled`
-keeps the prior behavior by inheriting `enabled`; saving the dashboard controls
-makes both choices explicit. Manual single runs remain available. Current scope,
+New PMs start paused and do not create coders. Existing PM-linked coding settings
+migrate into separate named coder profiles. Manual single runs remain available. Current scope,
 approval, dependency, duplicate-work, WIP, budget, and source protections still
 apply to automated work.
 

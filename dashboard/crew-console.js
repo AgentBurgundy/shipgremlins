@@ -35,12 +35,16 @@
         (item.instanceId ?? null) === (job.projectInstanceId ?? null),
     );
     const area = list(project?.areas).find((item) => item.key === job.area);
+    const coder = list(project?.coders?.agents).find(
+      (item) =>
+        item.key === job.coderKey && item.instanceId === job.coderInstanceId,
+    );
     return job.grumblin
       ? job.grumblin.name
       : job.type === "pm"
         ? area?.name || job.area || "PM Gremlin"
         : job.type === "developer"
-          ? "Coding Gremlin"
+          ? job.coderName || coder?.name || "Coding agent"
           : "Browser verification";
   };
   const crew = (projects, jobs) =>
@@ -168,7 +172,7 @@
     roster.setAttribute("aria-label", "Your product managers");
     $("runners")?.append(roster);
     const toolbar = el("div", "crew-toolbar");
-    const filterLabel = el("label", "crew-filter", "Find a gremlin");
+    const filterLabel = el("label", "crew-filter", "Find a PM");
     const filter = Object.assign(el("input"), {
       type: "search",
       placeholder: "Search names or areas…",

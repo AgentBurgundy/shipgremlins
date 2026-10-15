@@ -54,6 +54,23 @@
       `coding-launch${compact ? " coding-launch-compact" : ""}`,
     );
     root.setAttribute("aria-label", `Coding agents for ${project.name}`);
+    if (project.coders) {
+      const count = project.coders.agents?.length || 0;
+      root.append(
+        node(
+          "div",
+          "coding-launch-copy",
+          count
+            ? "Choose a coding agent for approved work."
+            : "Add your first coding agent.",
+        ),
+        link(
+          count ? "Open coding agents" : "Add a coding agent",
+          `/projects/${encodeURIComponent(project.name)}?tab=crew`,
+        ),
+      );
+      return root;
+    }
     const identity = node("div", "coding-launch-identity"),
       avatar = node("img", "coding-launch-avatar"),
       copy = node("div", "coding-launch-copy"),

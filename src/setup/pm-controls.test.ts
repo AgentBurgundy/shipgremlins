@@ -26,6 +26,7 @@ const text = (root: Element) =>
     .join(" ");
 const window = {} as {
   renderCrewSetup: (project: object, options?: object) => Element;
+  renderFoundationLauncher: (project: object) => Element;
   renderPmControls: (
     project: object,
     area: object,
@@ -54,6 +55,33 @@ const run = (root: Element) =>
   all(root).find((item) => item.dataset.launchCrew === "pm")!;
 
 describe("compact PM work controls", () => {
+  it("routes an unassigned foundation to coding agents and preserves active or paused assigned builds", () => {
+    const initial = {
+      ...project,
+      foundation: { stage: "review" },
+      coders: { agents: [] as object[] },
+    };
+    let root = window.renderFoundationLauncher(initial);
+    expect(all(root).find((item) => item.tagName === "A")?.href).toBe(
+      "/projects/alpha?tab=crew",
+    );
+    expect(text(root)).toContain("Add coding agent");
+    initial.coders.agents.push({
+      key: "builder",
+      enabled: false,
+      areas: ["foundation"],
+    });
+    root = window.renderFoundationLauncher(initial);
+    expect(text(root)).toContain("Build foundation");
+    expect(all(root).find((item) => item.tagName === "A")?.href).toBe(
+      "/projects/alpha?tab=environment",
+    );
+    initial.coders.agents = [];
+    initial.foundation.stage = "building";
+    expect(text(window.renderFoundationLauncher(initial))).toContain(
+      "View build",
+    );
+  });
   it("keeps one immediate setup action while retaining every scoped check in the expandable checklist", () => {
     const root = window.renderCrewSetup({
       ...project,
@@ -99,28 +127,20 @@ describe("compact PM work controls", () => {
         .map((node) => node.dataset.setupStep),
     ).toEqual(["worker", "linear_connection"]);
   });
-  it("keeps investigation and approved coding states distinct, labeled and scoped", () => {
+  it("shows only the PM investigation switch with its scoped accessible label", () => {
     const root = render(),
-      [investigate, coding] = switches(root);
+      [investigate] = switches(root);
+    expect(switches(root)).toHaveLength(1);
+    expect(text(root)).not.toContain("Approved coding");
     expect(investigate!.attributes.get("aria-label")).toBe(
       "Investigations for Pip",
     );
-    expect(coding!.attributes.get("aria-label")).toBe(
-      "Approved coding for Pip",
-    );
     expect(investigate!.attributes.get("aria-checked")).toBe("true");
-    expect(coding!.attributes.get("aria-checked")).toBe("false");
     expect(text(investigate!)).toContain("On");
-    expect(text(coding!)).toContain("Off");
     expect(investigate!.dataset).toEqual({
       toggleArea: "core",
       areaProject: "alpha",
       enableArea: "false",
-    });
-    expect(coding!.dataset).toEqual({
-      toggleArea: "core",
-      areaProject: "alpha",
-      automationKind: "coding",
     });
     expect(run(root).dataset).toEqual({
       launchProject: "alpha",
@@ -128,27 +148,24 @@ describe("compact PM work controls", () => {
       launchArea: "core",
     });
   });
-  it("preserves legacy coding fallback and reports both enabled or paused accurately", () => {
-    expect(
-      switches(render({}, { codingEnabled: undefined }))[1]!.attributes.get(
-        "aria-checked",
-      ),
-    ).toBe("true");
-    expect(text(render({}, { codingEnabled: true }))).toContain("Both enabled");
-    expect(text(render({}, { enabled: false }))).toContain("Paused");
+  it("does not expose old coding settings as PM controls and describes only investigation intent", () => {
+    expect(switches(render({}, { codingEnabled: true }))).toHaveLength(1);
+    expect(text(render({}, { codingEnabled: true }))).toContain(
+      "Investigations enabled",
+    );
+    expect(text(render({}, { enabled: false, codingEnabled: true }))).toContain(
+      "Investigations paused",
+    );
   });
-  it("announces only the pending setting while preserving both last-saved switch values", () => {
+  it("announces pending investigations while preserving the saved switch value", () => {
     const root = render({
-        operation: { busy: true, mode: "coding-automation" },
+        operation: { busy: true, mode: "automation" },
       }),
-      [investigate, coding] = switches(root);
+      [investigate] = switches(root);
     expect(root.attributes.get("aria-busy")).toBe("true");
-    expect(investigate!.attributes.get("aria-busy")).toBe("false");
-    expect(coding!.attributes.get("aria-busy")).toBe("true");
+    expect(investigate!.attributes.get("aria-busy")).toBe("true");
     expect(investigate!.attributes.get("aria-checked")).toBe("true");
-    expect(coding!.attributes.get("aria-checked")).toBe("false");
-    expect(text(investigate!)).not.toContain("Saving");
-    expect(text(coding!)).toContain("Saving…");
+    expect(text(investigate!)).toContain("Saving…");
     expect(switches(root).every((item) => item.disabled)).toBe(true);
     expect(run(root).disabled).toBe(true);
   });

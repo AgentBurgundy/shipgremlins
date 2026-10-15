@@ -26,8 +26,12 @@ import { createLinearConnection } from "../linearConnection/index.ts";
 import { createVercelConnection } from "../vercelConnection/index.ts";
 import type { OAuthConnection } from "../oauthConnection/types.ts";
 import { readConnections } from "../setup/connections.ts";
-import { resolveAiSelection, selectedAiCredential } from "../ai/provider.ts";
-import { projectAiTarget } from "../ai/routing.ts";
+import { selectedAiCredential } from "../ai/provider.ts";
+import {
+  codingAgentsForArea,
+  effectiveCodingAi,
+  resolveCodingAgent,
+} from "../codingAgents/index.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import { assertBrowserSecretSafety } from "../setup/credentialScope.ts";
 import { GitHubForge } from "../forge/github.ts";
@@ -63,6 +67,7 @@ import {
   validQaFinding,
 } from "./qaRework.ts";
 import { prepareProductionRelease } from "./release.ts";
+import type { DeliveryRecord } from "./types.ts";
 import { reconcileManagedCompletion } from "./managedCompletion.ts";
 import { createDraftAdoption, type CompletedDraft } from "./adoption.ts";
 import { readPromotionBatch, readPromotionBatches } from "./promotionBatch.ts";
@@ -212,6 +217,52 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       now,
       jobs: options.syncJobs,
       enqueue: options.enqueueSyncRepair,
+      bindCoder: (input, jobs) => {
+        const current = projectFor(project.config.name),
+          env = environment();
+        const candidates = current.areas.flatMap((area) =>
+          codingAgentsForArea(options.root, current, area.key).map((coder) => ({
+            area,
+            coder,
+          })),
+        );
+        const load = (key: string, instanceId: string) =>
+          jobs.filter(
+            (job) =>
+              job.type === "developer" &&
+              jobBelongsToProject(current.config, job) &&
+              ["queued", "running"].includes(job.status) &&
+              job.coderKey === key &&
+              job.coderInstanceId === instanceId,
+          ).length;
+        const chosen = candidates
+          .filter(
+            ({ coder }) =>
+              load(coder.key, coder.instanceId) < coder.maxConcurrent &&
+              !!selectedAiCredential(
+                options.root,
+                env,
+                effectiveCodingAi(options.root, current, coder, env),
+              ),
+          )
+          .sort(
+            (a, b) =>
+              load(a.coder.key, a.coder.instanceId) -
+                load(b.coder.key, b.coder.instanceId) ||
+              a.coder.key.localeCompare(b.coder.key) ||
+              a.area.key.localeCompare(b.area.key),
+          )[0];
+        if (!chosen)
+          throw new Error(
+            "Choose an available enabled coding agent for staging conflict repair.",
+          );
+        return {
+          ...input,
+          area: chosen.area.key,
+          coderKey: chosen.coder.key,
+          coderInstanceId: chosen.coder.instanceId,
+        };
+      },
       forge: async () => {
         const credential = await source().resolveCredential({
           provider: project.config.provider ?? "github",
@@ -289,18 +340,18 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
   async function prepareSyncRepair(job: LocalJob): Promise<DockerJobPayload> {
     const project = projectFor(job.project!);
     const intent = await stagingSync(project).repairIntent(job);
+    const coder = resolveCodingAgent(options.root, project, job);
+    const selectedAi = effectiveCodingAi(
+      options.root,
+      project,
+      coder,
+      environment(),
+      job,
+    );
     const aiCredential = selectedAiCredential(
       options.root,
       environment(),
-      resolveAiSelection(
-        options.root,
-        environment(),
-        projectAiTarget(
-          project,
-          "coder",
-          project.areas.find((area) => area.key === job.area),
-        ),
-      ),
+      selectedAi,
     );
     if (!aiCredential)
       throw new Error(
@@ -318,7 +369,22 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       minutes: 50,
     });
     // A connection refresh may take time. Recheck durable admission before handing off secrets.
-    await stagingSync(projectFor(job.project!)).repairIntent(job);
+    const current = projectFor(job.project!);
+    await stagingSync(current).repairIntent(job);
+    const currentAi = effectiveCodingAi(
+      options.root,
+      current,
+      resolveCodingAgent(options.root, current, job),
+      environment(),
+      job,
+    );
+    if (
+      currentAi.provider !== selectedAi.provider ||
+      currentAi.model !== selectedAi.model
+    )
+      throw new LocalJobDeferredError(
+        "The coding agent's AI selection changed while preparing staging repair. It will retry with the current selection.",
+      );
     return createSyncRepairPayload({
       project,
       job,
@@ -570,12 +636,20 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         continue;
       }
       const jobs = await options.qaJobs();
+      const input = originatingCoder(
+        qaRepairInput(current, record),
+        current,
+        record,
+        jobs,
+      );
       const matching = jobs.filter(
         (j) => j.idempotencyKey === record.rework!.key,
       );
       if (
         matching.length > 1 ||
-        (matching[0] && !matchesQaRepair(matching[0], project, record))
+        (matching[0] &&
+          (!matchesQaRepair(matching[0], project, record) ||
+            !sameOriginatingCoder(matching[0], input)))
       ) {
         await ledger.noteQaRepair(
           record.rework.key,
@@ -598,14 +672,17 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           continue;
         // The intent is durable before queueing. The queue's retained idempotency
         // key recovers a lost response or restart without launching a duplicate.
-        job = await options.enqueueQaRepair(qaRepairInput(current, record));
+        job = await options.enqueueQaRepair(input);
       }
       const saved = ledger.list().find((r) => r.id === record.id);
       if (saved?.rework?.phase === "awaiting-review") {
         results.push(saved);
         continue;
       }
-      if (!matchesQaRepair(job, project, record))
+      if (
+        !matchesQaRepair(job, project, record) ||
+        !sameOriginatingCoder(job, input)
+      )
         throw new Error("The queue returned a different QA repair job.");
       if (["failed", "canceled", "succeeded"].includes(job.status)) {
         await ledger.noteQaRepair(
@@ -620,6 +697,43 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       results.push(await ledger.admitQaRepair(job));
     }
     return results;
+  }
+  function originatingCoder(
+    input: LocalJobInput,
+    project: Project,
+    record: DeliveryRecord,
+    jobs: LocalJob[],
+  ): LocalJobInput {
+    const original = jobs.find((job) => job.id === record.jobId);
+    // A genuinely older, unbound implementation may use a newly selected coder
+    // for its distinct repair attempt. Never reroute an explicitly bound source.
+    if (!original || (!original.coderKey && !original.coderInstanceId))
+      return input;
+    if (
+      !original.coderKey ||
+      !original.coderInstanceId ||
+      original.type !== "developer" ||
+      !jobBelongsToProject(project.config, original) ||
+      original.area !== record.area ||
+      original.ticket !== record.ticket.identifier ||
+      (original.linearBinding?.ticketId &&
+        original.linearBinding.ticketId !== record.ticket.id)
+    )
+      throw new Error(
+        "Originating coding profile identity changed. Inspect the preserved implementation before starting repair.",
+      );
+    return {
+      ...input,
+      coderKey: original.coderKey,
+      coderInstanceId: original.coderInstanceId,
+    };
+  }
+  function sameOriginatingCoder(job: LocalJob, input: LocalJobInput) {
+    return (
+      !input.coderKey ||
+      (job.coderKey === input.coderKey &&
+        job.coderInstanceId === input.coderInstanceId)
+    );
   }
   function qaFeedbackSecrets() {
     return Object.entries(environment())
@@ -661,12 +775,20 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         )
           continue;
         const jobs = await options.qaJobs();
+        const input = originatingCoder(
+          promotionRepairInput(project, record),
+          project,
+          record,
+          jobs,
+        );
         const matching = jobs.filter(
           (job) => job.idempotencyKey === intent.key,
         );
         if (
           matching.length > 1 ||
-          (matching[0] && !matchesPromotionRepair(matching[0], project, record))
+          (matching[0] &&
+            (!matchesPromotionRepair(matching[0], project, record) ||
+              !sameOriginatingCoder(matching[0], input)))
         )
           throw new Error("Promotion repair queue identity changed.");
         let job = matching[0];
@@ -681,15 +803,15 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
             )
           )
             continue;
-          job = await options.enqueueQaRepair(
-            promotionRepairInput(project, record),
-          );
+          job = await options.enqueueQaRepair(input);
         }
         if (
           ledger.list().find((r) => r.id === record.id)?.promotionRepair
             ?.phase === "replaced"
         )
           continue;
+        if (!sameOriginatingCoder(job, input))
+          throw new Error("Promotion repair queue identity changed.");
         if (["succeeded", "failed", "canceled"].includes(job.status)) {
           await ledger.stopPromotionRepair(
             intent.key,
@@ -703,7 +825,7 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
         // identity or admission drift stops the intent; other failures retry it.
         if (
           error instanceof Error &&
-          /queue identity changed|bounded promotion repair.*changed|retry key already identifies different work/i.test(
+          /queue identity changed|coding profile identity changed|bounded promotion repair.*changed|retry key already identifies different work/i.test(
             error.message,
           )
         )
@@ -807,12 +929,20 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
       if (["stopped", "replaced"].includes(record.integrationRepair!.phase))
         continue;
       const jobs = await options.qaJobs();
+      const input = originatingCoder(
+        integrationRepairInput(project, record),
+        project,
+        record,
+        jobs,
+      );
       const matching = jobs.filter(
         (job) => job.idempotencyKey === record.integrationRepair!.key,
       );
       if (
         matching.length > 1 ||
-        (matching[0] && !matchesIntegrationRepair(matching[0], project, record))
+        (matching[0] &&
+          (!matchesIntegrationRepair(matching[0], project, record) ||
+            !sameOriginatingCoder(matching[0], input)))
       ) {
         await ledger.stopIntegrationRepair(
           record.integrationRepair!.key,
@@ -832,12 +962,13 @@ export function createDeliveryController(options: DeliveryControllerOptions) {
           )
         )
           continue;
-        job = await options.enqueueQaRepair(
-          integrationRepairInput(project, record),
-        );
+        job = await options.enqueueQaRepair(input);
       }
       if (ledger.list().find((r) => r.id === record.id)?.supersededBy) continue;
-      if (!matchesIntegrationRepair(job, project, record))
+      if (
+        !matchesIntegrationRepair(job, project, record) ||
+        !sameOriginatingCoder(job, input)
+      )
         throw new Error("The queue returned a different pre-merge repair.");
       if (["failed", "canceled", "succeeded"].includes(job.status)) {
         await ledger.stopIntegrationRepair(

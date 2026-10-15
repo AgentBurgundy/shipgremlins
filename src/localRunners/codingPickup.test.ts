@@ -14,6 +14,11 @@ import { loadProject } from "../config.ts";
 import type { LinearTicket } from "../services/types.ts";
 import type { LocalJob } from "./types.ts";
 import { createCodingPickup } from "./codingPickup.ts";
+import {
+  initializeCodingAgents,
+  readCodingAgents,
+  saveCodingAgents,
+} from "../codingAgents/index.ts";
 
 const roots: string[] = [];
 const WORKSPACE = "44444444-4444-4444-8444-444444444444";
@@ -323,6 +328,60 @@ it("does not allow an earlier asynchronous pass to replace a later observation",
   f.cache.unavailable(previous);
   expect(f.cache.read("app", [f.failed])).toMatchObject({
     state: "current",
+    needsReview: [],
+  });
+});
+
+it("observes only independently enabled coder assignments, including a paused owning PM, and invalidates changes to coder settings", () => {
+  const f = fixture();
+  f.edit("areas.json", (value) => {
+    value.areas.core.enabled = false;
+    value.areas.core.codingEnabled = false;
+  });
+  initializeCodingAgents(f.root, "app");
+  f.observe();
+  expect(f.cache.read("app", [f.failed])).toEqual({
+    state: "checking",
+    needsReview: [],
+  });
+  const coder = saveCodingAgents(f.root, "app", {
+    revision: readCodingAgents(f.root, "app").revision,
+    agents: [
+      {
+        key: "builder",
+        name: "Independent builder",
+        enabled: true,
+        areas: ["core"],
+        maxConcurrent: 1,
+      },
+    ],
+  }).agents[0]!;
+  expect(f.cache.read("app", [f.failed])).toEqual({
+    state: "checking",
+    needsReview: [],
+  });
+  f.observe();
+  expect(f.cache.read("app", [f.failed])).toMatchObject({
+    state: "current",
+    needsReview: [{ identifier: "SHI-2", area: "core" }],
+  });
+  saveCodingAgents(f.root, "app", {
+    revision: readCodingAgents(f.root, "app").revision,
+    agents: [{ ...coder, ai: { provider: "codex" } }],
+  });
+  expect(f.cache.read("app", [f.failed])).toEqual({
+    state: "checking",
+    needsReview: [],
+  });
+  f.observe();
+  expect(f.cache.read("app", [f.failed]).needsReview).toHaveLength(1);
+  saveCodingAgents(f.root, "app", {
+    revision: readCodingAgents(f.root, "app").revision,
+    agents: [{ ...coder, enabled: false }],
+  });
+  f.observe();
+  expect(f.cache.read("app", [f.failed])).toEqual({
+    state: "checking",
     needsReview: [],
   });
 });

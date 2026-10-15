@@ -66,6 +66,7 @@ import type {
   RunnerOperation,
   WorkerAction,
 } from "./types.ts";
+import { isAutomaticLocalJob } from "./types.ts";
 
 const ID =
   /^(?:job|worker)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -99,6 +100,8 @@ const INPUT_KEYS = [
   "project",
   "projectInstanceId",
   "area",
+  "coderKey",
+  "coderInstanceId",
   "ticket",
   "attempt",
   "developerKind",
@@ -209,6 +212,18 @@ function validInput(value: unknown): value is LocalJobInput {
   )
     return false;
   if (Object.keys(value).some((key) => !INPUT_KEYS.includes(key))) return false;
+  if (value.coderKey !== undefined || value.coderInstanceId !== undefined) {
+    if (
+      value.type !== "developer" ||
+      typeof value.coderKey !== "string" ||
+      !NAME.test(value.coderKey) ||
+      typeof value.coderInstanceId !== "string" ||
+      !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(
+        value.coderInstanceId,
+      )
+    )
+      return false;
+  }
   if (
     value.projectInstanceId !== undefined &&
     (typeof value.projectInstanceId !== "string" ||
@@ -326,6 +341,22 @@ function inputOf(job: Record<string, unknown>): Record<string, unknown> {
       key,
       job[key],
     ]),
+  );
+}
+
+function sameDeveloperTicket(
+  first: LocalJobInput,
+  second: LocalJobInput,
+): boolean {
+  const a = first.linearBinding,
+    b = second.linearBinding;
+  if (!a?.ticketId || !b?.ticketId)
+    return first.ticket?.toLowerCase() === second.ticket?.toLowerCase();
+  return (
+    a.ticketId === b.ticketId &&
+    (a.workspaceId && b.workspaceId
+      ? a.workspaceId === b.workspaceId
+      : a.connectionId === b.connectionId)
   );
 }
 
@@ -1078,10 +1109,11 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
           !TERMINAL.has(job.status) &&
           job.type === input.type &&
           job.project === input.project &&
+          job.projectInstanceId === input.projectInstanceId &&
           (input.type === "pm"
             ? job.area === input.area
             : input.type === "developer"
-              ? job.ticket === input.ticket
+              ? sameDeveloperTicket(job, input)
               : false),
       )
     )
@@ -1319,6 +1351,17 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       return false;
     if (job.type === "verify" || !job.project) return true;
     try {
+      if (
+        isAutomaticLocalJob(job) &&
+        existsSync(
+          join(options.root, "projects", job.project, "project.json"),
+        ) &&
+        loadProject(options.root, job.project).config.automationPaused
+      ) {
+        job.message =
+          "Project automation is paused. This queued run will resume with the project.";
+        return false;
+      }
       const blocked = options.admissionBlocker?.(
         job,
         state.jobs.filter(
@@ -1574,11 +1617,12 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
       return;
     }
     if (!canLaunch(state, job)) return;
-    const keepQueued = async () => {
+    const keepQueued = async (
+      message = "The controller stopped before launch. This job remains queued.",
+    ) => {
       job.status = "queued";
       job.startedAt = undefined;
-      job.message =
-        "The controller stopped before launch. This job remains queued.";
+      job.message = message;
       delete state.launched[job.id];
       idleWorker(worker);
       if (job.type === "verify" && !worker.paused)
@@ -1692,6 +1736,12 @@ export function createLocalRunners(options: LocalRunnersOptions): LocalRunners {
     if (await reconcileCancellation(state, job)) {
       save(state);
       if (job.status !== "running") await releaseResources(job);
+      return;
+    }
+    // Preparation may await credentials or image access. Recheck pauses and
+    // profile limits after those yields, before consuming budget or starting Docker.
+    if (!canLaunch(state, job)) {
+      await keepQueued(job.message);
       return;
     }
     if (job.project) {

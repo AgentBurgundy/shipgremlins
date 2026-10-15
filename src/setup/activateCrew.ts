@@ -2,6 +2,7 @@ import { loadProject } from "../config.ts";
 import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
 import {
   inspectPmReadiness,
+  hasExplicitCodingAgents,
   PmControlError,
   type ReadinessContext,
 } from "./pmReadiness.ts";
@@ -38,6 +39,7 @@ export async function activateProjectCrew(
   };
   unchanged();
   const project = loadProject(root, name);
+  const explicitCoders = hasExplicitCodingAgents(project);
   if (!project.areas.length)
     throw new PmControlError(
       "Adopt at least one PM before activating your crew.",
@@ -46,7 +48,10 @@ export async function activateProjectCrew(
   const context = await options.context();
   const readiness = inspectPmReadiness(project, context);
   const blocked = readiness.areas.filter(
-    (area) => !area.canRun || !area.canEnable || !area.coding.canEnable,
+    (area) =>
+      !area.canRun ||
+      !area.canEnable ||
+      (!explicitCoders && !area.coding.canEnable),
   );
   if (blocked.length)
     throw new PmControlError(
@@ -57,7 +62,7 @@ export async function activateProjectCrew(
               [
                 ...area.blockers,
                 ...area.enableBlockers,
-                ...area.coding.enableBlockers,
+                ...(explicitCoders ? [] : area.coding.enableBlockers),
               ].map((blocker) => blocker.message),
             ),
           ),
@@ -66,11 +71,16 @@ export async function activateProjectCrew(
     );
   for (const area of project.areas) await options.validate(area.key);
   unchanged();
+  if (hasExplicitCodingAgents(loadProject(root, name)) !== explicitCoders)
+    throw new PmControlError(
+      "Coding agent settings changed. Refresh your crew before activating it.",
+      409,
+    );
   const value = JSON.parse(areasDocument.content);
   for (const area of project.areas)
     Object.assign(value.areas[area.key], {
       enabled: true,
-      codingEnabled: true,
+      ...(explicitCoders ? {} : { codingEnabled: true }),
     });
   const saved = saveEditableConfig(root, {
     path: areasDocument.path,
@@ -82,7 +92,8 @@ export async function activateProjectCrew(
     projectRevision: projectDocument.revision,
     areasRevision: saved.revision,
     readiness: inspectPmReadiness(loadProject(root, name), context),
-    message:
-      "Your crew is active. PMs run on their schedules; coding picks up eligible work under your saved approval and delivery policy.",
+    message: explicitCoders
+      ? "Your PMs are active and run on their schedules. Coding agents keep their own saved automation settings."
+      : "Your crew is active. PMs run on their schedules; coding picks up eligible work under your saved approval and delivery policy.",
   };
 }
