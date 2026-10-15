@@ -7,6 +7,7 @@ import {
 } from "../setup/files.ts";
 import { detectHubRepository } from "../setup/location.ts";
 import { loadHub } from "../config.ts";
+import { initializeCodingAgents } from "../codingAgents/index.ts";
 import { preflightSummary } from "../terminal.ts";
 import { inspectSetup, type PreflightDeps } from "../setup/preflight.ts";
 import { parseFlags, type Io } from "./crons.ts";
@@ -166,6 +167,17 @@ export async function runSetup(
             }
           : deps.projectSettings,
       });
+      if (
+        project &&
+        result.created.some(
+          (path) =>
+            path.replace(/\\/g, "/") === `projects/${project}/project.json`,
+        ) &&
+        loadHub(directory).runners.mode === "local"
+      ) {
+        initializeCodingAgents(directory, project);
+        result.created.push(`projects/${project}/coders.json`);
+      }
       if (values.json) io.log(JSON.stringify(result, null, 2));
       else {
         io.log(`ShipGremlins configuration: ${result.directory}`);

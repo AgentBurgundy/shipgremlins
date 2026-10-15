@@ -86,6 +86,8 @@ export interface SyncRepairIntent {
   jobId?: string;
   /** Preserves a proven v0.21 queue key after moving to the stable Git scope. */
   legacyScope?: string;
+  /** Trusted controller selection, saved before enqueue so a lost response cannot reroute work. */
+  coder?: { area: string; key: string; instanceId: string };
 }
 interface State {
   schema: 1;
@@ -104,6 +106,7 @@ export interface StagingSyncOptions {
   deployment: () => Promise<ReviewDeployment>;
   jobs?: () => Promise<LocalJob[]>;
   enqueue?: (input: LocalJobInput) => Promise<LocalJob>;
+  bindCoder?: (input: LocalJobInput, jobs: LocalJob[]) => LocalJobInput;
   now?: () => Date;
 }
 
@@ -188,7 +191,17 @@ export function createStagingSync(options: StagingSyncOptions) {
               r.attempt,
               r.legacyScope ?? expectedScope,
             ) ||
-          (r.jobId !== undefined && !/^job-[a-f0-9-]{36}$/.test(r.jobId)),
+          (r.jobId !== undefined && !/^job-[a-f0-9-]{36}$/.test(r.jobId)) ||
+          (r.coder !== undefined &&
+            (!r.coder ||
+              !/^[a-z][a-z0-9-]{0,62}$/.test(r.coder.area) ||
+              !/^[a-z][a-z0-9-]{0,62}$/.test(r.coder.key) ||
+              !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(
+                r.coder.instanceId,
+              ) ||
+              Object.keys(r.coder).some(
+                (key) => !["area", "key", "instanceId"].includes(key),
+              ))),
       )
     )
       throw new Error("Invalid staging sync state.");
@@ -669,7 +682,7 @@ export function createStagingSync(options: StagingSyncOptions) {
           ? "The completed sync repair no longer covers the current branch histories or still conflicts. The controller will queue its remaining automatic repair attempt."
           : "Staging conflicts with PM changes. The controller will queue a Coding Gremlin to resolve the conflict.",
       );
-    const intent = pending ?? {
+    const intent: SyncRepairIntent = pending ?? {
       key: repairKey(staging, lastAttempt + 1),
       stagingSha: staging,
       integrationSha: integration,
@@ -680,7 +693,7 @@ export function createStagingSync(options: StagingSyncOptions) {
       save(state);
     }
     assertCurrent();
-    const job = await options.enqueue({
+    let input: LocalJobInput = {
       type: "developer",
       developerKind: "sync",
       project: project.config.name,
@@ -690,7 +703,34 @@ export function createStagingSync(options: StagingSyncOptions) {
       branch: branches.integration,
       idempotencyKey: intent.key,
       runOnce: true,
-    });
+    };
+    if (intent.coder)
+      input = {
+        ...input,
+        area: intent.coder.area,
+        coderKey: intent.coder.key,
+        coderInstanceId: intent.coder.instanceId,
+      };
+    else if (options.bindCoder) {
+      try {
+        input = options.bindCoder(input, jobs);
+      } catch {
+        return update(
+          state,
+          "blocked",
+          "Staging conflict repair needs an enabled coding agent with an available slot. Assign a coding agent to a current PM queue and connect its selected AI provider; existing repair work is preserved.",
+        );
+      }
+      if (!input.area || !input.coderKey || !input.coderInstanceId)
+        throw new Error("Sync repair coding identity was not bound.");
+      intent.coder = {
+        area: input.area,
+        key: input.coderKey,
+        instanceId: input.coderInstanceId,
+      };
+      save(state);
+    }
+    const job = await options.enqueue(input);
     intent.jobId = job.id;
     return update(
       state,
@@ -935,7 +975,11 @@ export function createStagingSync(options: StagingSyncOptions) {
       job.branch === branches.integration &&
       job.runOnce === true &&
       job.idempotencyKey === intent.key &&
-      !job.area &&
+      (intent.coder
+        ? job.area === intent.coder.area &&
+          job.coderKey === intent.coder.key &&
+          job.coderInstanceId === intent.coder.instanceId
+        : !job.area && !job.coderKey && !job.coderInstanceId) &&
       !job.pmMode &&
       !job.linearBinding &&
       !job.grumblin

@@ -159,7 +159,8 @@ In **Connections → AI provider**, choose Claude Code or Codex. Codex uses your
 ChatGPT account: choose **Sign in to Codex**, or import an existing managed
 `auth.json`. Keep both providers connected. In **Project → Settings → AI choices**,
 choose a project default and separate PM/coding providers. Each PM's **Product brief →
-AI choices** can override its own work and associated coding. New runs inherit these
+AI choices** controls that PM. Create named **Coding agents** in the project's Agents page;
+each coder has its own provider, model, assigned PM queues and concurrency. New runs inherit these
 choices; active runs keep their recorded provider. [AI setup →](docs/SETUP.md#choose-your-ai-provider)
 
 Coding workers plan against acceptance criteria, check the baseline, prove a failing
@@ -205,19 +206,20 @@ required connection verification can be prepared when you start that run.
 The worker runs on the CLI/dashboard server, even when you
 visit from a phone. Ready requires actual Chromium screenshot evidence.
 
-New PMs start with both automation controls paused. Choose **Explore the codebase** on the
+New PMs start with scheduled investigation paused. Choose **Explore the codebase** on the
 welcome screen for Discovery, or **Prepare first mission** to finish its setup.
 Discovery needs no Linear or browser environment. A fresh idea starts with
 **Build the foundation** instead. For later patrols, choose **Run now** on a PM
 card or its workspace without turning on its schedule. Missing
 setup opens a checklist for that PM with direct actions. Review Runs, then
-enable **Look for new improvements** for scheduled patrols or **Automatically
-build approved work** for approved-ticket pickup. These controls are independent.
-Turning either off stops its new automatic work; manual runs remain separate. A manual
+enable **Look for new improvements** for scheduled patrols. Create a separate
+coding agent, assign its PM queues and enable automatic coding on that coder.
+Each agent has its own pause and run controls. Pausing a PM does not pause its coders.
+Project-wide pause preserves all individual settings. A manual
 Coding run still requires an open, approved ticket in the PM's Linear project.
 For new managed projects, that ticket must be a native child of a currently
-approved epic. **Activate ready crew** can enable the ready PMs and coding together;
-it does not approve any epic. [Complete workflow and recovery diagrams →](docs/AUTONOMOUS_WORKFLOW.md)
+approved epic. **Activate ready crew** enables ready PMs; coders keep their own settings.
+It does not approve any epic. [Separate agent setup →](docs/CODING_AGENTS.md)
 
 New projects and existing projects without PMs offer **Find my gremlins**. AI
 investigates the repository and suggests one to five PMs with distinct product

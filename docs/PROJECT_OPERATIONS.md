@@ -77,12 +77,12 @@ All new coding tickets need a finite bullet list under `## Acceptance criteria`.
 New PM prompts request this structure; the review page explains when an older
 proposal needs that checklist before it can be approved for coding.
 
-PM settings have separate **Scheduled PM patrols** and **Automatic coding pickup**
-switches. The first controls recurring investigations; the second controls
-approved-ticket implementation. New PMs start with both off. Existing configurations
-without `codingEnabled` inherit `enabled` until the owner saves explicit choices.
-Pausing either one does not cancel an active job or pause an independently approved
-mission; use the mission's pause control or Activity for that work.
+PM settings control scheduled investigations. Separate **Coding agents** implement
+approved tickets from their assigned PM queues, with individual models and concurrency.
+New PMs start paused and do not create coders. Existing coding settings migrate into
+named coder profiles with the same enabled state and effective model. Pausing a PM
+does not pause a coder. Project-wide pause preserves every agent's individual setting.
+Pausing automation does not cancel an active job; use Activity for cancellation.
 
 For Slack links back to this same review surface, set
 `SHIPGREMLINS_DASHBOARD_URL` to your credential-free HTTPS dashboard URL in the

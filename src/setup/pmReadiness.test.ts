@@ -17,6 +17,16 @@ import { readEditableConfig } from "./configEditor.ts";
 import { createRemoteWorkers } from "../remoteWorkers/index.ts";
 import { createDockerRunners } from "../localRunners/docker.ts";
 import {
+  initializeCodingAgents,
+  readCodingAgents,
+  saveCodingAgents,
+} from "../codingAgents/index.ts";
+import {
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
+import {
   inspectPmReadiness,
   hasPmMandate,
   setPmAutomation,
@@ -88,6 +98,130 @@ function fixture() {
   };
 }
 describe("PM readiness and automation controls", () => {
+  it("keeps PM readiness and controls usable when protected coder settings are malformed without reactivating legacy flags", async () => {
+    const f = fixture();
+    initializeCodingAgents(f.root, "demo");
+    const areas = JSON.parse(readFileSync(f.areasFile, "utf8"));
+    areas.areas.core.codingEnabled = true;
+    writeFileSync(f.areasFile, JSON.stringify(areas));
+    const coderFile = join(f.root, "projects/demo/coders.json");
+    writeFileSync(coderFile, "malformed-coder-settings");
+    expect(f.inspect()).toMatchObject({
+      codingConfigurationError: true,
+      areas: [
+        {
+          canRun: true,
+          codingEnabled: false,
+          coding: {
+            canEnable: false,
+            enableBlockers: expect.arrayContaining([
+              expect.objectContaining({ id: "coding_configuration" }),
+            ]),
+          },
+        },
+      ],
+    });
+    await setPmAutomation(f.root, "demo", "core", f.input(true), {
+      context: async () => f.context,
+    });
+    expect(loadProject(f.root, "demo").areas[0]!.enabled).toBe(true);
+    expect(loadProject(f.root, "demo").areas[0]!.codingEnabled).toBe(true);
+    expect(readFileSync(coderFile, "utf8")).toBe("malformed-coder-settings");
+  });
+  it("derives coding switches from explicit profiles and keeps old PM coder routing out of coding readiness", () => {
+    const f = fixture();
+    initializeCodingAgents(f.root, "demo");
+    const project = loadProject(f.root, "demo"),
+      scope = projectAiTarget(project, "coder", project.areas[0]);
+    saveAiRouting(
+      f.root,
+      scope,
+      {
+        revision: readAiRouting(f.root, scope, {}).revision,
+        coder: { provider: "codex" },
+      },
+      {},
+    );
+    expect(f.inspect().areas[0]).toMatchObject({
+      codingEnabled: false,
+      coding: { canEnable: true },
+    });
+    saveCodingAgents(f.root, "demo", {
+      revision: readCodingAgents(f.root, "demo").revision,
+      agents: [
+        {
+          key: "builder",
+          name: "Builder",
+          enabled: true,
+          areas: ["core"],
+          maxConcurrent: 1,
+        },
+      ],
+    });
+    expect(f.inspect().areas[0]).toMatchObject({
+      enabled: false,
+      codingEnabled: true,
+      coding: { canEnable: true },
+    });
+  });
+  it("rejects PM coding toggles in explicit mode and preserves coder profiles and legacy private flags", async () => {
+    const f = fixture();
+    initializeCodingAgents(f.root, "demo");
+    const coders = saveCodingAgents(f.root, "demo", {
+      revision: readCodingAgents(f.root, "demo").revision,
+      agents: [
+        {
+          key: "builder",
+          name: "Builder",
+          enabled: true,
+          areas: ["core"],
+          maxConcurrent: 1,
+        },
+      ],
+    });
+    const old = readFileSync(f.areasFile, "utf8");
+    await expect(
+      setPmAutomation(
+        f.root,
+        "demo",
+        "core",
+        { ...f.input(true), codingEnabled: false },
+        { context: async () => f.context },
+      ),
+    ).rejects.toThrow(/coding agent/);
+    expect(readFileSync(f.areasFile, "utf8")).toBe(old);
+    const enabled = await setPmAutomation(
+      f.root,
+      "demo",
+      "core",
+      f.input(true),
+      { context: async () => f.context },
+    );
+    expect(enabled.area).toMatchObject({ enabled: true, codingEnabled: true });
+    const raw = JSON.parse(readFileSync(f.areasFile, "utf8"));
+    expect(raw.areas.core.codingEnabled).toBeUndefined();
+    await setPmAutomation(f.root, "demo", "core", f.input(false), {
+      context: async () => f.context,
+    });
+    expect(readCodingAgents(f.root, "demo").agents).toEqual(coders.agents);
+    expect(f.inspect().areas[0]).toMatchObject({
+      enabled: false,
+      codingEnabled: true,
+    });
+  });
+  it("rejects a legacy PM toggle if explicit coder migration occurs during readiness checks", async () => {
+    const f = fixture(),
+      before = readFileSync(f.areasFile, "utf8");
+    await expect(
+      setPmAutomation(f.root, "demo", "core", f.input(true), {
+        context: async () => {
+          initializeCodingAgents(f.root, "demo");
+          return f.context;
+        },
+      }),
+    ).rejects.toThrow(/changed/);
+    expect(readFileSync(f.areasFile, "utf8")).toBe(before);
+  });
   it("blocks only the UI PM when its minimum browser requirement has no runtime", async () => {
     const f = fixture();
     const areas = JSON.parse(readFileSync(f.areasFile, "utf8"));

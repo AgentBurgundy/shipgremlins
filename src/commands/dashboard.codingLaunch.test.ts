@@ -178,8 +178,18 @@ describe("coding agent launcher", () => {
           },
         },
       ) as (input: object) => Promise<void>;
-      await queue({ type: "developer", project: "app", ticket: "APP-1" });
-      expect(api).toHaveBeenCalledOnce();
+      await queue({
+        type: "developer",
+        project: "app",
+        ticket: "APP-1",
+        coderKey: "builder",
+      });
+      expect(api).toHaveBeenCalledExactlyOnceWith("/api/jobs", {
+        type: "developer",
+        project: "app",
+        ticket: "APP-1",
+        coderKey: "builder",
+      });
       expect(selectJob).toHaveBeenCalledWith("existing-run");
       expect(messages.at(-1)).toEqual({
         text: expect.stringContaining("No duplicate run was started"),

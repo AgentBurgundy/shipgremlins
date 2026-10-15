@@ -176,6 +176,15 @@
       const control = btn("Loading…", async () => {
         const autonomy = s.data?.autonomy || getProject(s.name)?.autonomy;
         if (!autonomy || s.autonomyBusy || isLocked()) return;
+        if (
+          autonomy.hasAutomaticAgents === false ||
+          (autonomy.hasAutomaticAgents === undefined &&
+            !getProject(s.name)?.areas?.length &&
+            !getProject(s.name)?.coders?.agents?.length)
+        ) {
+          pages.navigate(route(s.name, "crew"));
+          return;
+        }
         s.autonomyBusy = true;
         s.autonomyNotice = "";
         update();
@@ -183,16 +192,18 @@
           const response = await api(
             `/api/projects/${encodeURIComponent(s.name)}/autonomy`,
             {
-              enabled: !autonomy.enabled,
+              enabled: autonomy.projectPaused ?? !autonomy.enabled,
               revision: autonomy.revision,
               projectRevision: autonomy.projectRevision,
             },
           );
           if (!s.data) s.data = {};
           s.data.autonomy = response.autonomy;
-          s.autonomyNotice = response.autonomy.enabled
-            ? "Autonomy enabled. Your crew starts as soon as its requirements are ready."
-            : "Future automatic starts are paused. Current runs can finish.";
+          s.autonomyNotice =
+            response.autonomy.projectPaused === false ||
+            response.autonomy.enabled
+              ? "Autonomy enabled. Your crew starts as soon as its requirements are ready."
+              : "Future automatic starts are paused. Current runs can finish.";
           s.autonomyError = false;
           try {
             await onChanged?.();
@@ -236,8 +247,8 @@
           autonomy?.message ||
           "Checking the saved autonomy settings for this project.";
         scope.textContent = autonomy
-          ? `Investigations ${autonomy.investigationEnabled ? "on" : "off"} · Approved coding ${autonomy.codingEnabled ? "on" : "off"}`
-          : "Investigations and approved-ticket pickup share this project’s run limits.";
+          ? `PM investigations ${autonomy.investigationEnabled ? "enabled" : "paused"} · Coding agents ${autonomy.codingEnabled ? "enabled" : "paused"}${autonomy.projectPaused ? " · Project automation paused" : ""}`
+          : "PMs investigate. Coding agents implement approved tickets within project run limits.";
         const scheduled =
           autonomy?.nextRunAt &&
           Number.isFinite(Date.parse(autonomy.nextRunAt));
@@ -265,14 +276,20 @@
           ? "Saving…"
           : !autonomy
             ? "Checking…"
-            : autonomy.enabled
-              ? "Pause automatic work"
-              : "Enable autonomous work";
+            : autonomy.hasAutomaticAgents === false ||
+                (autonomy.hasAutomaticAgents === undefined &&
+                  !project?.areas?.length &&
+                  !project?.coders?.agents?.length)
+              ? "Choose automatic agents"
+              : autonomy.projectPaused === true
+                ? "Resume project automation"
+                : autonomy.enabled
+                  ? "Pause project automation"
+                  : "Enable autonomous work";
         control.className = autonomy?.enabled
           ? "small-button"
           : "button button-dark";
-        control.disabled =
-          s.autonomyBusy || isLocked() || !autonomy || !project?.areas?.length;
+        control.disabled = s.autonomyBusy || isLocked() || !autonomy;
         control.setAttribute(
           "aria-label",
           `${control.textContent} for ${s.name}`,

@@ -1,10 +1,14 @@
 import {
-  codingPickupEnabled,
   listProjectNames,
   loadHub,
   loadProject,
   type Project,
 } from "../config.ts";
+import {
+  CodingAgentError,
+  codingAgentsForArea,
+} from "../codingAgents/index.ts";
+import { inspectCodingReadiness } from "../codingAgents/readiness.ts";
 import { projectRuntimeKey, jobBelongsToProject } from "../projectIdentity.ts";
 import type { LocalJob } from "../localRunners/types.ts";
 import { foundationNeeded } from "../ideaCrew/foundation.ts";
@@ -29,6 +33,14 @@ export function createAutomaticPreparation(options: {
 }) {
   const attempted = new Map<string, number>();
   const diagnostics = createAutomationDiagnostics(options.root);
+  const codersFor = (project: Project, area: string) => {
+    try {
+      return codingAgentsForArea(options.root, project, area);
+    } catch (error) {
+      if (error instanceof CodingAgentError) return [];
+      throw error;
+    }
+  };
   let busy = false;
   return async () => {
     if (busy) return;
@@ -53,12 +65,13 @@ export function createAutomaticPreparation(options: {
               new Date(options.now?.() ?? Date.now()),
             );
           if (
+            project.config.automationPaused ||
             project.config.verified ||
             foundationNeeded(options.root, project)
           )
             continue;
           const areas = project.areas.filter(
-            (area) => area.enabled || codingPickupEnabled(area),
+            (area) => area.enabled || codersFor(project, area.key).length > 0,
           );
           if (
             !areas.length ||
@@ -70,13 +83,37 @@ export function createAutomaticPreparation(options: {
           )
             continue;
           const readiness = inspectPmReadiness(project, context);
+          const readyArea = (
+            current: Project,
+            areaKey: string,
+            allowed: string[],
+          ) => {
+            const pm = inspectPmReadiness(current, context).areas.find(
+              (area) => area.key === areaKey,
+            );
+            return (
+              Boolean(
+                pm?.enabled &&
+                pm.blockers.every((blocker) => allowed.includes(blocker.id)),
+              ) ||
+              codersFor(current, areaKey).some((agent) =>
+                inspectCodingReadiness(
+                  options.root,
+                  current,
+                  agent,
+                  context,
+                ).blockers.every((blocker) => allowed.includes(blocker.id)),
+              )
+            );
+          };
           if (
             !readiness.areas.some(
               (area) =>
                 areas.some((item) => item.key === area.key) &&
-                area.blockers.every((blocker) =>
-                  ["linear_mapping", "verification"].includes(blocker.id),
-                ),
+                readyArea(project, area.key, [
+                  "linear_mapping",
+                  "verification",
+                ]),
             )
           )
             continue;
@@ -111,7 +148,7 @@ export function createAutomaticPreparation(options: {
             current.areas.some(
               (area) =>
                 areas.some((item) => item.key === area.key) &&
-                area.blockers.every((blocker) => blocker.id === "verification"),
+                readyArea(project, area.key, ["verification"]),
             )
           ) {
             phase = "verification";
@@ -148,8 +185,10 @@ export function createAutomaticPreparation(options: {
           try {
             const project = loadProject(options.root, name);
             if (
+              !project.config.automationPaused &&
               project.areas.some(
-                (area) => area.enabled || codingPickupEnabled(area),
+                (area) =>
+                  area.enabled || codersFor(project, area.key).length > 0,
               )
             )
               diagnostics.fail(

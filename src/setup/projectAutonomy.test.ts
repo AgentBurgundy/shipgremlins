@@ -17,6 +17,16 @@ import type { LocalJob } from "../localRunners/types.ts";
 import { loadProject } from "../config.ts";
 import { knowledgeRevision } from "../pmKnowledge/index.ts";
 import { PM_KNOWLEDGE_FILES } from "../pmKnowledge/prompts.ts";
+import {
+  initializeCodingAgents,
+  readCodingAgents,
+  saveCodingAgents,
+} from "../codingAgents/index.ts";
+import {
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
 
 let root: string;
 const now = new Date("2026-10-14T12:30:00Z");
@@ -52,6 +62,151 @@ const state = (jobs: LocalJob[] = [], ready = context) =>
   projectAutonomy(root, "app", jobs, ready, now);
 
 describe("project autonomous work", () => {
+  it("isolates malformed coder state from healthy PM discovery and still permits master pause", () => {
+    initializeCodingAgents(root, "app");
+    const coderFile = join(root, "projects/app/coders.json");
+    writeFileSync(coderFile, "malformed-coder-settings");
+    expect(state()).toMatchObject({
+      state: "waiting",
+      enabled: true,
+      investigationEnabled: true,
+      codingEnabled: false,
+      codingConfigurationError: true,
+      blockers: expect.arrayContaining([
+        expect.objectContaining({ id: "coding_configuration" }),
+      ]),
+    });
+    setProjectAutonomy(root, "app", input(false));
+    expect(state()).toMatchObject({
+      state: "paused",
+      projectPaused: true,
+      investigationEnabled: true,
+    });
+    setProjectAutonomy(root, "app", input(true));
+    expect(state()).toMatchObject({
+      state: "waiting",
+      projectPaused: false,
+      investigationEnabled: true,
+      codingConfigurationError: true,
+    });
+    setProjectAutonomy(root, "app", input(false));
+    const areasFile = join(root, "projects/app/areas.json"),
+      areas = JSON.parse(readFileSync(areasFile, "utf8"));
+    areas.areas.core.enabled = false;
+    writeFileSync(areasFile, JSON.stringify(areas));
+    expect(() => setProjectAutonomy(root, "app", input(true))).toThrow(
+      /Repair coding agent/,
+    );
+    expect(readFileSync(coderFile, "utf8")).toBe("malformed-coder-settings");
+  });
+  it("uses a master pause in explicit mode without changing individual PMs or coding agents", () => {
+    initializeCodingAgents(root, "app");
+    saveCodingAgents(root, "app", {
+      revision: readCodingAgents(root, "app").revision,
+      agents: [
+        {
+          key: "builder",
+          name: "Builder",
+          enabled: true,
+          areas: ["core"],
+          maxConcurrent: 1,
+        },
+      ],
+    });
+    const areas = readFileSync(join(root, "projects/app/areas.json")),
+      coders = readFileSync(join(root, "projects/app/coders.json"));
+    setProjectAutonomy(root, "app", input(false));
+    expect(state()).toMatchObject({
+      state: "paused",
+      enabled: false,
+      projectPaused: true,
+      hasAutomaticAgents: true,
+      investigationEnabled: true,
+      codingEnabled: true,
+      nextRunAt: null,
+    });
+    expect(readFileSync(join(root, "projects/app/areas.json"))).toEqual(areas);
+    expect(readFileSync(join(root, "projects/app/coders.json"))).toEqual(
+      coders,
+    );
+    setProjectAutonomy(root, "app", input(true));
+    expect(state()).toMatchObject({
+      enabled: true,
+      projectPaused: false,
+      hasAutomaticAgents: true,
+    });
+    expect(readFileSync(join(root, "projects/app/areas.json"))).toEqual(areas);
+    expect(readFileSync(join(root, "projects/app/coders.json"))).toEqual(
+      coders,
+    );
+  });
+  it("refuses explicit resume when no automatic agents are enabled", () => {
+    initializeCodingAgents(root, "app");
+    const file = join(root, "projects/app/areas.json"),
+      value = JSON.parse(readFileSync(file, "utf8"));
+    value.areas.core.enabled = false;
+    value.areas.core.codingEnabled = true;
+    writeFileSync(file, JSON.stringify(value));
+    expect(state()).toMatchObject({
+      enabled: false,
+      hasAutomaticAgents: false,
+      codingEnabled: false,
+    });
+    expect(() => setProjectAutonomy(root, "app", input(true))).toThrow(
+      /Enable a PM or coding agent/,
+    );
+    expect(loadProject(root, "app").areas[0]!.enabled).toBe(false);
+  });
+  it("reports independent coder readiness when the assigned PM is paused and its selected model is disconnected", () => {
+    const projectFile = join(root, "projects/app/project.json"),
+      config = JSON.parse(readFileSync(projectFile, "utf8"));
+    config.verified = "2026-10-15";
+    config.workflow = { kind: "pull-request", baseBranch: "main" };
+    writeFileSync(projectFile, JSON.stringify(config));
+    const areaFile = join(root, "projects/app/areas.json"),
+      areas = JSON.parse(readFileSync(areaFile, "utf8"));
+    areas.areas.core.enabled = false;
+    areas.areas.core.linearProjectId = "mapped-core";
+    writeFileSync(areaFile, JSON.stringify(areas));
+    initializeCodingAgents(root, "app");
+    saveCodingAgents(root, "app", {
+      revision: readCodingAgents(root, "app").revision,
+      agents: [
+        {
+          key: "builder",
+          name: "Builder",
+          enabled: true,
+          areas: ["core"],
+          maxConcurrent: 1,
+          ai: { provider: "claude" },
+        },
+      ],
+    });
+    const project = loadProject(root, "app"),
+      scope = projectAiTarget(project, "pm", project.areas[0]);
+    saveAiRouting(
+      root,
+      scope,
+      {
+        revision: readAiRouting(root, scope, {}).revision,
+        pm: { provider: "codex" },
+      },
+      {},
+    );
+    expect(
+      state([], {
+        ...context,
+        env: { ...context.env, LINEAR_API_KEY: "linear" },
+      }),
+    ).toMatchObject({
+      state: "waiting",
+      enabled: true,
+      investigationEnabled: false,
+      codingEnabled: true,
+      blockers: [],
+      discoveryPending: [],
+    });
+  });
   it("reports the next UTC patrol after discovery and keeps coding independent of a broken schedule", () => {
     const projectFile = join(root, "projects/app/project.json");
     const raw = JSON.parse(readFileSync(projectFile, "utf8"));

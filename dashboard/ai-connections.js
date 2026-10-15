@@ -36,7 +36,7 @@
     const group = node("div", "ai-provider-choices"),
       choices = new Map();
     group.setAttribute("role", "radiogroup");
-    group.setAttribute("aria-label", "AI provider for new work");
+    group.setAttribute("aria-label", "Workspace default AI provider");
     const summary = node("p", "ai-provider-summary signal-state");
     summary.setAttribute("role", "status");
     const notice = node("p", "form-message");
@@ -208,7 +208,7 @@
       node(
         "p",
         "setup-help",
-        "Provider default uses the selected provider’s model choice. Existing runs keep their original provider and model.",
+        "This workspace default is inherited by projects and agents without an override. Each PM and coding agent can choose its own connected provider and model. Existing runs keep their original choice.",
       ),
       modelSave,
     );

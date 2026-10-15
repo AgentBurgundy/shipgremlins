@@ -28,7 +28,7 @@
           "span",
           "ai-routing-description",
           area
-            ? "Choose who investigates and who implements this PM’s work."
+            ? "Choose the provider and model for this PM’s investigations and reviews."
             : "Set the default AI, with separate choices for PM and coding work.",
         ),
       );
@@ -55,14 +55,7 @@
       actions.append(save, reload, connections);
       const rows = new Map();
       for (const [key, label, description] of area
-        ? [
-            ["pm", "This PM", "Investigations, discovery and PM reviews"],
-            [
-              "coder",
-              "Coding for this PM",
-              "Implementation and coding repairs",
-            ],
-          ]
+        ? [["pm", "This PM", "Investigations, discovery and PM reviews"]]
         : [
             [
               "default",
@@ -192,7 +185,9 @@
             ? `${names[effective.provider] || "AI"}${effective.model ? ` · ${effective.model}` : ""} · ${sources[effective.source] || (override ? (area ? "PM override" : "Project override") : "Inherited")}${connected ? "" : " · Connection needed"}`
             : "Effective choice is unavailable.";
         }
-        preview.textContent = `PM ${names[view.effective?.pm?.provider] || "—"} · Coding ${names[view.effective?.coder?.provider] || "—"}`;
+        preview.textContent = area
+          ? `PM ${names[view.effective?.pm?.provider] || "—"}`
+          : `PM ${names[view.effective?.pm?.provider] || "—"} · Coding ${names[view.effective?.coder?.provider] || "—"}`;
         sync();
       };
       const load = async (refreshModels = false) => {

@@ -214,12 +214,13 @@ describe("live recorded run process", () => {
     expect(f.cards()).toHaveLength(1);
     expect(text(f.root)).toContain("Implement");
     expect(text(f.root)).toContain("Draft PR");
-    expect(text(f.root)).toContain("Checkout quality");
+    expect(text(f.root)).toContain("Coding · Coding agent · Codex");
+    expect(text(f.root)).not.toContain("Coding · Checkout quality");
     expect(text(f.root)).toContain("Codex · gpt-5.4");
     const card = f.cards()[0]!,
       details = all(card).find((item) => item.tagName === "DETAILS")!,
       role = all(card).find((item) => item.className === "run-flow-role")!;
-    expect(text(role)).toBe("Coding · Checkout quality · Codex");
+    expect(text(role)).toBe("Coding · Coding agent · Codex");
     expect(all(details)).not.toContain(role);
     expect(text(role)).not.toContain("gpt-5.4");
     expect(details.open).toBe(false);

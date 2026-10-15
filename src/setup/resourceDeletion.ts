@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, parse, resolve } from "node:path";
 import { loadProject } from "../config.ts";
+import { pausedCodingAgentsDocument } from "../codingAgents/index.ts";
 
 export interface ResourceTarget {
   project: string;
@@ -1307,6 +1308,11 @@ export function createResourceDeletion(options: {
               );
             }
           }
+          if (stat(join(source, "coders.json")))
+            write(
+              join(live, "coders.json"),
+              bytes(join(source, "coders.json"), 128 * 1024),
+            );
           write(join(live, "areas.json"), bytes(join(source, "areas.json")));
           write(
             join(live, "project.json"),
@@ -1336,6 +1342,7 @@ export function createResourceDeletion(options: {
           const project = objectFile(join(staged, "project.json")),
             areas = objectFile(join(staged, "areas.json"));
           project.verified = null;
+          project.automationPaused = true;
           for (const row of Object.values(
             areas.areas as Record<string, Record<string, unknown>>,
           )) {
@@ -1373,6 +1380,15 @@ export function createResourceDeletion(options: {
         } else {
           const projectFile = join(live, "project.json"),
             areasFile = join(live, "areas.json"),
+            codersFile = join(live, "coders.json"),
+            oldCoders = stat(codersFile)
+              ? bytes(codersFile, 128 * 1024)
+              : undefined,
+            pausedCoders = pausedCodingAgentsDocument(
+              root,
+              journal.project,
+              journal.area,
+            ),
             oldProject = bytes(projectFile),
             oldAreas = bytes(areasFile),
             project = JSON.parse(oldProject.toString("utf8")),
@@ -1404,6 +1420,11 @@ export function createResourceDeletion(options: {
             join(validation, "projects", journal.project, "areas.json"),
             json(areas),
           );
+          if (pausedCoders !== undefined)
+            write(
+              join(validation, "projects", journal.project, "coders.json"),
+              pausedCoders,
+            );
           loadProject(validation, journal.project);
           const archived = join(directory, "pm");
           if (stat(archived) && !stat(join(live, journal.area)))
@@ -1431,6 +1452,8 @@ export function createResourceDeletion(options: {
           writeJournal(directory, journal);
           let moved = false;
           try {
+            // Pause assigned coders before the restored queue becomes visible.
+            if (pausedCoders !== undefined) write(codersFile, pausedCoders);
             if (stat(staged)) {
               move(staged, join(live, journal.area));
               moved = true;
@@ -1440,6 +1463,8 @@ export function createResourceDeletion(options: {
           } catch {
             write(areasFile, oldAreas);
             write(projectFile, oldProject);
+            if (pausedCoders !== undefined && oldCoders !== undefined)
+              write(codersFile, oldCoders);
             if (moved) renameSync(join(live, journal.area), staged);
             journal.status = "deleted";
             delete journal.restoredTree;

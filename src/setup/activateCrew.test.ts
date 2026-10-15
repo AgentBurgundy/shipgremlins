@@ -14,6 +14,16 @@ import { readEditableConfig } from "./configEditor.ts";
 import { activateProjectCrew } from "./activateCrew.ts";
 import { projectAutonomy } from "./projectAutonomy.ts";
 import type { ReadinessContext } from "./pmReadiness.ts";
+import {
+  initializeCodingAgents,
+  readCodingAgents,
+} from "../codingAgents/index.ts";
+import { loadProject } from "../config.ts";
+import {
+  projectAiTarget,
+  readAiRouting,
+  saveAiRouting,
+} from "../ai/routing.ts";
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -91,6 +101,55 @@ function fixture() {
   };
 }
 describe("crew activation", () => {
+  it("can activate healthy PMs while malformed explicit coder settings stay blocked and untouched", async () => {
+    const f = fixture();
+    initializeCodingAgents(f.root, "app");
+    const coderFile = join(f.root, "projects/app/coders.json");
+    writeFileSync(coderFile, "malformed-coder-settings");
+    const result = await f.run();
+    expect(result.readiness.codingConfigurationError).toBe(true);
+    expect(
+      result.readiness.areas.every(
+        (area) => area.enabled && !area.codingEnabled,
+      ),
+    ).toBe(true);
+    expect(readFileSync(coderFile, "utf8")).toBe("malformed-coder-settings");
+  });
+  it("activates PMs without enabling coders or requiring the old area coder provider in explicit mode", async () => {
+    const f = fixture();
+    initializeCodingAgents(f.root, "app");
+    const project = loadProject(f.root, "app");
+    for (const area of project.areas) {
+      const scope = projectAiTarget(project, "coder", area);
+      saveAiRouting(
+        f.root,
+        scope,
+        {
+          revision: readAiRouting(f.root, scope, {}).revision,
+          coder: { provider: "codex" },
+        },
+        {},
+      );
+    }
+    const before = readFileSync(join(f.root, "projects/app/coders.json"));
+    const result = await f.run();
+    expect(result.message).toMatch(/PMs are active/);
+    expect(
+      result.readiness.areas.every(
+        (area) => area.enabled && !area.codingEnabled,
+      ),
+    ).toBe(true);
+    expect(
+      loadProject(f.root, "app").areas.every(
+        (area) => area.enabled && area.codingEnabled === false,
+      ),
+    ).toBe(true);
+    expect(readCodingAgents(f.root, "app").agents).toEqual([]);
+    expect(readFileSync(join(f.root, "projects/app/coders.json"))).toEqual(
+      before,
+    );
+    expect(f.validate.mock.calls).toEqual([["core"], ["billing"]]);
+  });
   it("activates managed epic automation only after its saved deployment probe passes, without creating epic authority", async () => {
     const f = fixture();
     f.project.workflow = {

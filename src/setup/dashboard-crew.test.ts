@@ -183,7 +183,7 @@ describe("dashboard crew model", () => {
       ]),
     ).toBe("Impatient shopper");
     expect(model().jobName(job({ type: "developer" }), [project()])).toBe(
-      "Coding Gremlin",
+      "Coding agent",
     );
   });
   it("builds searchable route destinations from configured projects and areas with safe URL encoding", () => {

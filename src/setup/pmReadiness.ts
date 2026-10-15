@@ -2,6 +2,11 @@ import { lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { hasAiCredentials, resolveAiSelection } from "../ai/provider.ts";
 import { projectAiTarget } from "../ai/routing.ts";
+import {
+  CodingAgentError,
+  codingAgentsForArea,
+  readCodingAgents,
+} from "../codingAgents/index.ts";
 import { CronExpressionParser } from "cron-parser";
 import { createScheduleCursor } from "../localRunners/scheduleCursor.ts";
 import {
@@ -127,12 +132,28 @@ function validSchedule(schedule: string) {
     return false;
   }
 }
+/** A broken explicit document must never reactivate legacy PM coding flags. */
+export function hasExplicitCodingAgents(project: Project): boolean {
+  return Boolean(
+    lstatSync(join(project.dir, "coders.json"), { throwIfNoEntry: false }),
+  );
+}
 export function inspectPmReadiness(
   project: Project,
   context: ReadinessContext,
 ) {
   const config = project.config;
   const workspaceRoot = resolve(project.dir, "../..");
+  const explicitCoders = hasExplicitCodingAgents(project);
+  let coderConfigurationError = false;
+  if (explicitCoders) {
+    try {
+      readCodingAgents(workspaceRoot, project.config.name);
+    } catch (error) {
+      if (!(error instanceof CodingAgentError)) throw error;
+      coderConfigurationError = true;
+    }
+  }
   const aiFor = (role: "pm" | "coder", area?: AreaConfig) =>
     resolveAiSelection(
       workspaceRoot,
@@ -378,19 +399,30 @@ export function inspectPmReadiness(
           "browser_verification",
           "pm_browser_required",
           "ai_connection",
+          ...(explicitCoders ? ["mandate"] : []),
         ].includes(item.id),
     );
-    if (!aiReady("coder", area))
+    if (!explicitCoders && !aiReady("coder", area))
       codingBlockers.push({
         id: "ai_connection",
         action: "ai",
         message: `Connect ${aiFor("coder", area).provider === "codex" ? "Codex" : "Claude Code"} in Connections for coding work, or change its AI choice.`,
       });
     if (promotionEnvironment) codingBlockers.push(promotionEnvironment);
+    if (coderConfigurationError)
+      codingBlockers.push({
+        id: "coding_configuration",
+        action: "config",
+        message:
+          "Coding agent settings need repair. Review their protected configuration before starting coding work.",
+      });
     return {
       key: area.key,
       enabled: area.enabled,
-      codingEnabled: codingPickupEnabled(area),
+      codingEnabled: explicitCoders
+        ? !coderConfigurationError &&
+          codingAgentsForArea(workspaceRoot, project, area.key).length > 0
+        : codingPickupEnabled(area),
       configured: blockers.every((item) =>
         ["verification", "worker"].includes(item.id),
       ),
@@ -438,6 +470,7 @@ export function inspectPmReadiness(
       .filter((step) => !step.ready)
       .map(({ id, message, action }) => ({ id, message, action })),
     areas,
+    codingConfigurationError: coderConfigurationError,
   };
 }
 export async function setPmAutomation(
@@ -490,6 +523,11 @@ export async function setPmAutomation(
     throw conflict();
   const project = loadProject(root, projectName),
     area = project.areas.find((item) => item.key === areaKey);
+  const explicitCoders = hasExplicitCodingAgents(project);
+  if (explicitCoders && Object.hasOwn(input, "codingEnabled"))
+    throw new PmControlError(
+      "Manage coding automation from its coding agent. PM controls change investigation only.",
+    );
   if (!area)
     throw new PmControlError(
       "Choose an existing PM before changing its automation.",
@@ -497,7 +535,8 @@ export async function setPmAutomation(
     );
   const codingEnabled = input.codingEnabled ?? codingPickupEnabled(area);
   const enablingPm = input.enabled && !area.enabled;
-  const enablingCoding = codingEnabled && !codingPickupEnabled(area);
+  const enablingCoding =
+    !explicitCoders && codingEnabled && !codingPickupEnabled(area);
   const context = await options.context().catch((error) => {
     if (enablingPm || enablingCoding) throw error;
     // Pausing must remain possible when a saved connection or worker needs repair.
@@ -528,14 +567,16 @@ export async function setPmAutomation(
     readEditableConfig(root, projectDocument.path).revision !==
       projectDocument.revision ||
     readEditableConfig(root, areasDocument.path).revision !==
-      areasDocument.revision
+      areasDocument.revision ||
+    hasExplicitCodingAgents(loadProject(root, projectName)) !== explicitCoders
   )
     throw conflict();
   const value = JSON.parse(areasDocument.content);
   value.areas[areaKey].enabled = input.enabled;
-  value.areas[areaKey].codingEnabled = codingEnabled;
+  if (!explicitCoders) value.areas[areaKey].codingEnabled = codingEnabled;
   const saved =
-    area.enabled === input.enabled && area.codingEnabled === codingEnabled
+    area.enabled === input.enabled &&
+    (explicitCoders || area.codingEnabled === codingEnabled)
       ? { revision: areasDocument.revision }
       : saveEditableConfig(root, {
           path: areasDocument.path,
@@ -548,14 +589,25 @@ export async function setPmAutomation(
       new Date(),
       areaKey,
     );
+  const currentReadiness = inspectPmReadiness(
+    loadProject(root, projectName),
+    context,
+  );
+  const effectiveCodingEnabled = explicitCoders
+    ? currentReadiness.areas.find((item) => item.key === areaKey)!.codingEnabled
+    : codingEnabled;
   return {
     ok: true,
     enabled: input.enabled,
-    codingEnabled,
+    codingEnabled: effectiveCodingEnabled,
     revision: saved.revision,
     areasRevision: saved.revision,
     projectRevision: projectDocument.revision,
-    area: { key: areaKey, enabled: input.enabled, codingEnabled },
-    readiness: inspectPmReadiness(loadProject(root, projectName), context),
+    area: {
+      key: areaKey,
+      enabled: input.enabled,
+      codingEnabled: effectiveCodingEnabled,
+    },
+    readiness: currentReadiness,
   };
 }

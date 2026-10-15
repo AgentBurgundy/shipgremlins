@@ -250,6 +250,15 @@
       onSaved,
       isLocked: () => locked,
     });
+    const codingAgents =
+      options.codingAgents ||
+      window.createCodingAgents?.({
+        api,
+        getJobs,
+        onChanged: onSaved,
+        onJob,
+        isLocked: () => locked,
+      });
     let request = null,
       generation = 0,
       timer = null,
@@ -899,12 +908,13 @@
           "",
           running.length || active.length
             ? "Open a run to follow its recorded activity, output, and evidence."
-            : "See each PM’s assignment, latest run, and automation below.",
+            : "See each PM and coding agent’s assignment, latest run, and automation below.",
         ),
       );
       const counts = node("div", "crew-pulse-counts");
       for (const [value, label] of [
         [project.areas?.length || 0, "PMs"],
+        [project.coders?.agents?.length || 0, "Coders"],
         [running.length, "Working"],
         [active.length - running.length, "Queued"],
       ]) {
@@ -1092,7 +1102,7 @@
       } else if (step === "welcome" && welcome) welcome.mount(root, project);
       else if (step === "discovery") firstInvestigation(project);
       else if (missions) missions.mount(root, project);
-      else if (project.areas?.length)
+      else if (project.areas?.length && !project.coders)
         root.append(
           window.renderCodingLauncher(project, {
             locked,
@@ -1276,6 +1286,7 @@
       if (!project.areas?.length && crewRecommendations) {
         welcome?.deactivate?.();
         crewRecommendations.mount(root, project);
+        codingAgents?.mount(root, project);
         return;
       }
       if (project.areas?.length) root.append(crewPulse(project));
@@ -1285,13 +1296,7 @@
           const state = project.readiness?.areas?.find(
             (item) => item.key === area.key,
           );
-          return (
-            !area.enabled ||
-            !(area.codingEnabled ?? area.enabled) ||
-            !state?.canRun ||
-            !state.canEnable ||
-            !state.coding?.canEnable
-          );
+          return !area.enabled || !state?.canRun || !state.canEnable;
         });
       if (setupIncomplete)
         welcome?.mount(root, project, {
@@ -1372,6 +1377,7 @@
       }
       crew.append(cards);
       root.append(crew);
+      codingAgents?.mount(root, project);
       if (!setupIncomplete)
         welcome?.mount(root, project, {
           suggestionsOnly: true,
@@ -1402,7 +1408,7 @@
         tools.append(card);
       }
       root.append(tools);
-      if (project.areas?.length)
+      if (project.areas?.length && !codingAgents)
         root.append(
           window.renderCodingLauncher(project, {
             locked,
@@ -1744,7 +1750,7 @@
           node(
             "p",
             "runner-guidance",
-            "Discovery maps the product. Patrols investigate it. Automation adds scheduled patrols and approved-ticket pickup; it never approves its own tickets.",
+            "Discovery maps the product. Patrols investigate it. PM automation schedules investigations; separate coding agents pick up approved tickets. PMs never approve their own tickets outside the configured approval policy.",
           ),
         );
         content.append(advanced);
@@ -1985,6 +1991,7 @@
         (options.operations?.protectFocus(root) ||
           options.onboarding?.protectFocus(root) ||
           aiRouting?.protectFocus(root) ||
+          codingAgents?.protectFocus(root) ||
           grumblins?.protectFocus() ||
           missions?.protectFocus() ||
           welcome?.protectFocus() ||
@@ -2191,10 +2198,12 @@
       render,
       discover,
       openBrief,
-      isDirty: () => isDirty() || aiRouting?.isDirty(),
+      isDirty: () =>
+        isDirty() || aiRouting?.isDirty() || codingAgents?.isDirty(),
       isBusy: () =>
         editor.busy ||
         aiRouting?.isBusy() ||
+        codingAgents?.isBusy() ||
         launching ||
         missions?.isBusy() ||
         welcome?.isBusy() ||
@@ -2218,6 +2227,7 @@
             knowledgeErrors.delete(key);
           }
         aiRouting?.forget(project, area);
+        if (!area) codingAgents?.forget(project);
         setupSuggestions?.forget(project, area);
         if (!area) options.onboarding?.forget(project);
         if (!area) options.operations?.forget(project);

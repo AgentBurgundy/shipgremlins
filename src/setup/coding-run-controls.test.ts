@@ -79,6 +79,7 @@ function queueFixture(
   })),
 ) {
   const $ = elements();
+  $("job-coder").value = "builder";
   const state = {
     $,
     api,
@@ -110,6 +111,7 @@ function queueFixture(
     project: string;
     ticket?: string;
     area?: string;
+    coderKey?: string;
   }) => Promise<void>;
   return { $, state, queue };
 }
@@ -182,6 +184,11 @@ describe("manual coding queue controls", () => {
     const $ = elements();
     $("job-project").value = "shop";
     $("job-type").value = "developer";
+    $("job-coder").value = "builder";
+    const coder = {
+      key: "builder",
+      readiness: { canEnable: true, blockers: [] },
+    };
     const context = {
       $,
       formsLocked: false,
@@ -200,6 +207,7 @@ describe("manual coding queue controls", () => {
           {
             name: "shop",
             readiness: { canRun: true, blockers: [], areas: [] },
+            coders: { agents: [coder] },
           },
         ],
       },
@@ -220,7 +228,11 @@ describe("manual coding queue controls", () => {
     $("job-ticket").value = "APP-12";
     update();
     expect($("run-job").textContent).toContain("Run this ticket");
+    // A coding agent's readiness is independent from the PM's readiness.
     context.currentStatus.projects[0]!.readiness.canRun = false;
+    update();
+    expect($("run-job").disabled).toBe(false);
+    coder.readiness.canEnable = false;
     update();
     expect($("run-job").disabled).toBe(true);
   });
@@ -232,6 +244,7 @@ describe("manual coding queue controls", () => {
       {
         type: "developer",
         project: "shop",
+        coderKey: "builder",
       },
       "POST",
       90000,
@@ -248,6 +261,7 @@ describe("manual coding queue controls", () => {
     expect(f.state.api).toHaveBeenLastCalledWith("/api/jobs", {
       type: "developer",
       project: "shop",
+      coderKey: "builder",
       ticket: "APP-8",
     });
     await f.queue({
@@ -263,6 +277,23 @@ describe("manual coding queue controls", () => {
         project: "shop",
         area: "security",
       },
+      "POST",
+      90000,
+    );
+  });
+  it("requires a named coder and lets an explicit selection override the form selection", async () => {
+    const f = queueFixture();
+    f.$("job-coder").value = "";
+    await f.queue({ type: "developer", project: "shop" });
+    expect(f.state.api).not.toHaveBeenCalled();
+    expect(f.$("job-message").textContent).toContain(
+      "Choose a named coding agent",
+    );
+    expect(f.state.runnerRequestBusy).toBe(false);
+    await f.queue({ type: "developer", project: "shop", coderKey: "release" });
+    expect(f.state.api).toHaveBeenCalledWith(
+      "/api/jobs",
+      { type: "developer", project: "shop", coderKey: "release" },
       "POST",
       90000,
     );

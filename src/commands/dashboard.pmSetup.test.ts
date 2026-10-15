@@ -15,6 +15,7 @@ import { createDashboardServer } from "./dashboard.ts";
 import { initializeSetup } from "../setup/files.ts";
 import { loadProject } from "../config.ts";
 import { readEditableConfig } from "../setup/configEditor.ts";
+import { readCodingAgents, saveCodingAgents } from "../codingAgents/index.ts";
 import {
   createLinearProvisioning,
   type LinearProvisioningClient,
@@ -261,6 +262,11 @@ describe("PM prepare and verify admission", () => {
       area.codingEnabled = false;
     }
     writeFileSync(areasFile, JSON.stringify(areas));
+    const coders = readCodingAgents(f.root, "demo");
+    saveCodingAgents(f.root, "demo", {
+      revision: coders.revision,
+      agents: coders.agents.map((agent) => ({ ...agent, enabled: false })),
+    });
     const input = {
       projectRevision: readEditableConfig(f.root, "projects/demo/project.json")
         .revision,
@@ -280,8 +286,11 @@ describe("PM prepare and verify admission", () => {
     expect(f.runners.start).toHaveBeenCalledOnce();
     expect(
       loadProject(f.root, "demo").areas.every(
-        (area) => area.enabled && area.codingEnabled,
+        (area) => area.enabled && area.codingEnabled === false,
       ),
+    ).toBe(true);
+    expect(
+      readCodingAgents(f.root, "demo").agents.every((agent) => !agent.enabled),
     ).toBe(true);
     expect(f.enqueue).not.toHaveBeenCalled();
   });

@@ -196,7 +196,7 @@ describe("project and PM AI routing controls", () => {
     expect(f.control.isDirty()).toBe(false);
     expect(f.onSaved).toHaveBeenCalledOnce();
   });
-  it("keeps PM scope to its two roles and clears an override with inherit", async () => {
+  it("keeps PM scope to investigations only and clears its override with inherit", async () => {
     const api = vi.fn<Api>(async () =>
       view({ pm: { provider: "codex", model: "gpt-5.4" } }),
     );
@@ -204,7 +204,10 @@ describe("project and PM AI routing controls", () => {
     f.mount(true);
     await settle();
     expect(text(f.root)).toContain("This PM");
-    expect(text(f.root)).toContain("Coding for this PM");
+    expect(text(f.root)).not.toContain("Coding for this PM");
+    expect(
+      all(f.root).some((item) => item.id === "ai-routing-shop-checkout-coder"),
+    ).toBe(false);
     expect(
       all(f.root).some(
         (item) => item.id === "ai-routing-shop-checkout-default",
@@ -218,7 +221,7 @@ describe("project and PM AI routing controls", () => {
     await f.submit();
     expect(api).toHaveBeenCalledWith(
       "/api/projects/shop/pms/checkout/ai",
-      { revision: "revision-one", pm: null, coder: null },
+      { revision: "revision-one", pm: null },
       "PUT",
     );
   });

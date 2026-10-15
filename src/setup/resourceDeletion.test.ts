@@ -25,6 +25,11 @@ import { readEditableConfig, saveEditableConfig } from "./configEditor.ts";
 import { createProjectKnowledge } from "../projectKnowledge/index.ts";
 import { createOnboardingStore } from "../projectOnboarding/store.ts";
 import { projectRuntimeKey } from "../projectIdentity.ts";
+import {
+  initializeCodingAgents,
+  readCodingAgents,
+  saveCodingAgents,
+} from "../codingAgents/index.ts";
 const roots: string[] = [];
 afterEach(
   () => {
@@ -100,6 +105,157 @@ async function replacedPmFixture() {
   };
 }
 describe("reversible project and PM deletion", () => {
+  function explicitCoders(f: ReturnType<typeof fixture>) {
+    const areas = JSON.parse(readFileSync(f.areasFile, "utf8"));
+    areas.areas.core.instanceId = "11111111-2222-4333-8444-555555555555";
+    areas.areas.billing = {
+      ...areas.areas.core,
+      instanceId: "22222222-3333-4444-8555-666666666666",
+      label: "pm:billing",
+      name: "Billing",
+    };
+    writeFileSync(f.areasFile, JSON.stringify(areas));
+    initializeCodingAgents(f.root, "app");
+    return saveCodingAgents(f.root, "app", {
+      revision: readCodingAgents(f.root, "app").revision,
+      agents: [
+        {
+          key: "core-builder",
+          name: "Core builder",
+          enabled: true,
+          areas: ["core"],
+          maxConcurrent: 1,
+        },
+        {
+          key: "billing-builder",
+          name: "Billing builder",
+          enabled: true,
+          areas: ["billing"],
+          maxConcurrent: 1,
+        },
+        {
+          key: "shared-builder",
+          name: "Shared builder",
+          enabled: true,
+          areas: ["core", "billing"],
+          maxConcurrent: 1,
+        },
+      ],
+    });
+  }
+  it("restores a PM with its assigned coders paused while preserving unrelated automation and identities", async () => {
+    const f = fixture(),
+      initial = explicitCoders(f),
+      beforeProject = loadProject(f.root, "app");
+    const original = beforeProject.areas.find((area) => area.key === "core")!;
+    const removed = await f.service.remove(
+      await f.service.preview({ project: "app", area: "core" }),
+    );
+    expect(
+      readCodingAgents(f.root, "app").agents.every((agent) => agent.enabled),
+    ).toBe(true);
+    const deletedRevision = readCodingAgents(f.root, "app").revision;
+    await f.service.restore(await f.service.previewRestore(removed.recoveryId));
+    const restored = loadProject(f.root, "app"),
+      coders = readCodingAgents(f.root, "app");
+    expect(restored.areas.find((area) => area.key === "core")).toMatchObject({
+      enabled: false,
+      instanceId: original.instanceId,
+    });
+    expect(restored.areas.find((area) => area.key === "billing")!.enabled).toBe(
+      true,
+    );
+    expect(restored.config.automationPaused).toBe(
+      beforeProject.config.automationPaused,
+    );
+    expect(coders.agents).toEqual(
+      initial.agents.map((agent) => ({
+        ...agent,
+        enabled: agent.key === "billing-builder",
+      })),
+    );
+    expect(coders.revision).not.toBe(deletedRevision);
+    expect(coders.agents.map((agent) => agent.instanceId)).toEqual(
+      initial.agents.map((agent) => agent.instanceId),
+    );
+  });
+  it("rolls back coder pauses with a failed PM restore and safely retries the same protected profiles", async () => {
+    const f = fixture();
+    explicitCoders(f);
+    const removed = await f.service.remove(
+      await f.service.preview({ project: "app", area: "core" }),
+    );
+    const codersFile = join(f.root, "projects/app/coders.json"),
+      before = readFileSync(codersFile);
+    let failed = false;
+    const interrupted = f.create({
+      write: (file, content) => {
+        if (file === f.projectFile && !failed) {
+          failed = true;
+          throw new Error("synthetic restore write failure");
+        }
+        writeFileSync(file, content, { mode: 0o600 });
+      },
+    });
+    await expect(
+      interrupted.restore(await interrupted.previewRestore(removed.recoveryId)),
+    ).rejects.toThrow();
+    expect(readFileSync(codersFile)).toEqual(before);
+    expect(
+      loadProject(f.root, "app").areas.some((area) => area.key === "core"),
+    ).toBe(false);
+    await f
+      .create()
+      .restore(await f.create().previewRestore(removed.recoveryId));
+    expect(
+      readCodingAgents(f.root, "app")
+        .agents.filter((agent) => agent.areas.includes("core"))
+        .every((agent) => !agent.enabled),
+    ).toBe(true);
+  });
+  it("resumes a journalled PM restore with existing old coder bytes and rejects unreviewed intervening coder edits", async () => {
+    const f = fixture();
+    explicitCoders(f);
+    const removed = await f.service.remove(
+      await f.service.preview({ project: "app", area: "core" }),
+    );
+    const coderFile = join(f.root, "projects/app/coders.json"),
+      before = readFileSync(coderFile);
+    await f.service.restore(await f.service.previewRestore(removed.recoveryId));
+    const after = readFileSync(coderFile),
+      journalFile = join(removed.recoveryPath, "recovery.json"),
+      journal = JSON.parse(readFileSync(journalFile, "utf8"));
+    journal.status = "restoring";
+    writeFileSync(journalFile, JSON.stringify(journal));
+    writeFileSync(
+      join(f.root, ".run/deleted/reservations/areas/app/core.json"),
+      JSON.stringify({ id: removed.recoveryId, project: "app", area: "core" }),
+    );
+    writeFileSync(coderFile, before);
+    const plan = await f.create().previewRestore(removed.recoveryId);
+    expect(plan.blockers).toEqual([]);
+    const view = readCodingAgents(f.root, "app");
+    saveCodingAgents(f.root, "app", {
+      revision: view.revision,
+      agents: view.agents.map((agent) => ({
+        ...agent,
+        name: agent.name + " edited",
+      })),
+    });
+    await expect(f.create().restore(plan)).rejects.toMatchObject({
+      status: 409,
+    });
+    writeFileSync(coderFile, before);
+    await f
+      .create()
+      .restore(await f.create().previewRestore(removed.recoveryId));
+    expect(readFileSync(coderFile)).toEqual(after);
+    expect(
+      readCodingAgents(f.root, "app")
+        .agents.filter((agent) => agent.areas.includes("core"))
+        .every((agent) => !agent.enabled),
+    ).toBe(true);
+  });
   it.each(["project", "PM"])(
     "pauses independent coding pickup when restoring a %s",
     async (kind) => {

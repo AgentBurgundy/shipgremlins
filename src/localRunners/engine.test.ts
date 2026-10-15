@@ -29,6 +29,9 @@ import { grumblinFixture } from "../grumblins/runtime-test-support.ts";
 import { createUsage } from "../usage/index.ts";
 import type { JobNotificationEvent } from "../slack/messages.ts";
 import type { ActivityStore } from "../storage/activity.ts";
+import { makeProject } from "../services/fakes.ts";
+import { createJobPreparation } from "./jobs.ts";
+import { readCodingAgents, saveCodingAgents } from "../codingAgents/index.ts";
 
 const lockWriteFault = vi.hoisted(() => ({
   once: undefined as ((fd: number) => void) | undefined,
@@ -872,6 +875,475 @@ it("keeps cancellation pending and credentials reserved during Docker outage, th
   expect(await restarted.job(job.id)).toMatchObject({ status: "canceled" });
   expect(cleanup).toHaveBeenCalledWith(job.id);
 });
+
+it("retains exact coder identities through restart and rejects partial bindings, shared-ticket duplicates and changed retry-key identities", async () => {
+  const f = fixture(),
+    binding = {
+      coderKey: "builder",
+      coderInstanceId: "11111111-1111-4111-8111-111111111111",
+    },
+    input: LocalJobInput = {
+      type: "developer",
+      project: "demo",
+      area: "core",
+      ticket: "APP-1",
+      idempotencyKey: "developer:demo:ticket-1",
+      ...binding,
+    };
+  const job = await f.engine.enqueue(input),
+    restarted = createLocalRunners(f.options);
+  expect(await restarted.job(job.id)).toMatchObject(binding);
+  expect((await restarted.enqueue(input)).id).toBe(job.id);
+  await expect(
+    restarted.enqueue({ ...input, coderKey: "different" }),
+  ).rejects.toMatchObject({ status: 409 });
+  await expect(
+    restarted.enqueue({
+      ...input,
+      idempotencyKey: undefined,
+      coderKey: "different",
+    }),
+  ).rejects.toMatchObject({ status: 409 });
+  for (const invalid of [
+    { ...input, coderInstanceId: undefined },
+    { ...input, coderKey: undefined },
+    { ...input, coderInstanceId: "not-a-uuid" },
+    { ...input, type: "pm" },
+  ])
+    await expect(
+      restarted.enqueue(invalid as LocalJobInput),
+    ).rejects.toMatchObject({ status: 400 });
+  expect(
+    (await restarted.jobs()).filter((entry) => entry.type === "developer"),
+  ).toHaveLength(1);
+});
+
+it("deduplicates exact Linear issues across renamed identifiers and connection aliases, while isolating current project incarnations and unrelated issues", async () => {
+  const f = fixture(),
+    projectInstanceId = "11111111-1111-4111-8111-111111111111",
+    input: LocalJobInput = {
+      type: "developer",
+      project: "demo",
+      projectInstanceId,
+      area: "core",
+      ticket: "OLD-1",
+      coderKey: "first",
+      coderInstanceId: "22222222-2222-4222-8222-222222222222",
+      linearBinding: {
+        connectionId: "old-alias",
+        workspaceId: "workspace-1",
+        ticketId: "immutable-ticket",
+      },
+    };
+  await f.engine.enqueue(input);
+  await expect(
+    f.engine.enqueue({
+      ...input,
+      ticket: "NEW-2",
+      coderKey: "second",
+      coderInstanceId: "33333333-3333-4333-8333-333333333333",
+      linearBinding: { ...input.linearBinding!, connectionId: "new-alias" },
+    }),
+  ).rejects.toMatchObject({ status: 409 });
+  await expect(
+    f.engine.enqueue({
+      ...input,
+      ticket: "NEXT-3",
+      linearBinding: { ...input.linearBinding!, ticketId: "another-ticket" },
+    }),
+  ).resolves.toMatchObject({ status: "queued" });
+  await expect(
+    f.engine.enqueue({
+      ...input,
+      projectInstanceId: "44444444-4444-4444-8444-444444444444",
+    }),
+  ).resolves.toMatchObject({ status: "queued" });
+  const legacy = await f.engine.enqueue({
+    type: "developer",
+    project: "legacy",
+    ticket: "APP-1",
+  });
+  await expect(
+    f.engine.enqueue({
+      type: "developer",
+      project: "legacy",
+      ticket: "app-1",
+      coderKey: "other",
+      coderInstanceId: "33333333-3333-4333-8333-333333333333",
+    }),
+  ).rejects.toMatchObject({ status: 409 });
+  expect((await f.engine.job(legacy.id))?.status).toBe("queued");
+});
+
+function pauseProjectFixture(root: string) {
+  const project = makeProject({
+      config: { name: "demo", database: "none", signIn: null },
+    }),
+    directory = join(root, "projects/demo");
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, "project.json");
+  writeFileSync(path, JSON.stringify(project.config));
+  writeFileSync(
+    join(directory, "areas.json"),
+    JSON.stringify({
+      areas: Object.fromEntries(project.areas.map((area) => [area.key, area])),
+    }),
+  );
+  writeFileSync(join(directory, "tiers.json"), JSON.stringify(project.tiers));
+  return (paused: boolean) =>
+    writeFileSync(
+      path,
+      JSON.stringify({ ...project.config, automationPaused: paused }),
+    );
+}
+it("holds automatic queued work across project pause and restart while allowing an explicit one-off, then resumes the original job", async () => {
+  const f = fixture();
+  await f.ready();
+  const pause = pauseProjectFixture(f.root);
+  pause(true);
+  const automatic = await f.engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await f.engine.tick();
+  expect(await f.engine.job(automatic.id)).toMatchObject({
+    status: "queued",
+    message: expect.stringContaining("automation is paused"),
+  });
+  expect(f.options.prepareJob).not.toHaveBeenCalled();
+  const restarted = createLocalRunners(f.options),
+    manual = await restarted.enqueue({
+      type: "pm",
+      project: "demo",
+      area: "other",
+      runOnce: true,
+    });
+  await restarted.tick();
+  expect(await restarted.job(manual.id)).toMatchObject({ status: "running" });
+  f.finish(manual.id);
+  await restarted.tick();
+  pause(false);
+  await restarted.tick();
+  expect(await restarted.job(automatic.id)).toMatchObject({
+    status: "running",
+  });
+  expect(f.calls.filter((call) => call.id === automatic.id)).toHaveLength(1);
+});
+it("rechecks a project pause that arrives during preparation before spending budget or launching, then reuses the queued job", async () => {
+  const f = fixture();
+  await f.ready();
+  const pause = pauseProjectFixture(f.root),
+    release = vi.fn(async (_job: string) => {});
+  let once = true;
+  const engine = createLocalRunners({
+    ...f.options,
+    releaseJobResources: release,
+    prepareJob: async (job) => {
+      if (once) {
+        pause(true);
+        once = false;
+      }
+      return f.options.prepareJob(job);
+    },
+  });
+  const job = await engine.enqueue({
+    type: "pm",
+    project: "demo",
+    area: "core",
+  });
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({
+    status: "queued",
+    message: expect.stringContaining("automation is paused"),
+  });
+  expect((await engine.job(job.id))?.budget).toBeUndefined();
+  expect(f.calls.filter((call) => call.id === job.id)).toEqual([]);
+  expect(release).toHaveBeenCalledWith(job.id);
+  pause(false);
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({ status: "running" });
+  expect(f.calls.filter((call) => call.id === job.id)).toHaveLength(1);
+});
+
+it.each([
+  "auto-discovery:",
+  "qa-rework:",
+  "integration-repair:",
+  "promotion-repair:",
+  "staging-sync:",
+])(
+  "holds controller automatic %s reservations during project pause even with a one-off runtime contract",
+  async (prefix) => {
+    const f = fixture();
+    await f.ready();
+    const pause = pauseProjectFixture(f.root);
+    pause(true);
+    const engine = createLocalRunners({
+      ...f.options,
+      prepareJob: async (job) => ({
+        ...(await f.options.prepareJob(job)),
+        ...(job.pmMode ? { pmMode: job.pmMode } : {}),
+      }),
+    });
+    const input: LocalJobInput =
+      prefix === "auto-discovery:"
+        ? {
+            type: "pm",
+            project: "demo",
+            area: "core",
+            pmMode: "discovery",
+            discoveryRevision: "a".repeat(64),
+            runOnce: true,
+            idempotencyKey: prefix + "a".repeat(64),
+          }
+        : {
+            type: "developer",
+            project: "demo",
+            area: "core",
+            ticket: "REPAIR-1",
+            developerKind:
+              prefix === "staging-sync:"
+                ? "sync"
+                : prefix === "promotion-repair:"
+                  ? "port"
+                  : "ci",
+            runOnce: true,
+            idempotencyKey: prefix + "a".repeat(64),
+          };
+    const job = await engine.enqueue(input);
+    await engine.tick();
+    expect(await engine.job(job.id)).toMatchObject({
+      status: "queued",
+      message: expect.stringContaining("automation is paused"),
+    });
+    expect(f.options.prepareJob).not.toHaveBeenCalled();
+    pause(false);
+    await engine.tick();
+    expect(await engine.job(job.id)).toMatchObject({ status: "running" });
+    expect(f.calls.filter((call) => call.id === job.id)).toHaveLength(1);
+  },
+);
+
+it("enforces one coder's concurrency across disjoint queues, preserves paused work and permits a selected paused one-off", async () => {
+  const f = fixture();
+  await f.ready();
+  pauseProjectFixture(f.root);
+  const path = join(f.root, "projects/demo/areas.json"),
+    areas = JSON.parse(readFileSync(path, "utf8"));
+  areas.areas.core.paths = ["core/"];
+  areas.areas.core.sharedTouchpoints = [];
+  areas.areas.other = {
+    ...areas.areas.core,
+    name: "Other PM",
+    label: "pm:other",
+    paths: ["other/"],
+  };
+  writeFileSync(path, JSON.stringify(areas));
+  const save = (enabled: boolean) => {
+    const view = readCodingAgents(f.root, "demo"),
+      previous = view.agents.find((coder) => coder.key === "builder");
+    return saveCodingAgents(f.root, "demo", {
+      revision: view.revision,
+      agents: [
+        {
+          key: "builder",
+          ...(previous ? { instanceId: previous.instanceId } : {}),
+          name: "Independent builder",
+          enabled,
+          areas: ["core", "other"],
+          maxConcurrent: 1,
+        },
+      ],
+    }).agents[0]!;
+  };
+  const coder = save(true),
+    preparation = createJobPreparation({ root: f.root, env: {} }),
+    engine = createLocalRunners({
+      ...f.options,
+      admissionBlocker: preparation.admissionBlocker,
+    });
+  const secondWorker = await engine.create();
+  await engine.tick();
+  const verify = (await engine.jobs()).find(
+    (entry) => entry.type === "verify" && entry.workerId === secondWorker.id,
+  )!;
+  f.finish(verify.id);
+  await engine.tick();
+  const binding = { coderKey: coder.key, coderInstanceId: coder.instanceId },
+    first = await engine.enqueue({
+      type: "developer",
+      project: "demo",
+      area: "core",
+      ticket: "APP-1",
+      ...binding,
+    }),
+    second = await engine.enqueue({
+      type: "developer",
+      project: "demo",
+      area: "other",
+      ticket: "APP-2",
+      ...binding,
+    });
+  await engine.tick();
+  expect(await engine.job(first.id)).toMatchObject({ status: "running" });
+  expect(await engine.job(second.id)).toMatchObject({
+    status: "queued",
+    message: expect.stringContaining("concurrency limit"),
+  });
+  save(false);
+  f.finish(first.id);
+  await engine.tick();
+  expect(await engine.job(second.id)).toMatchObject({
+    status: "queued",
+    message: expect.stringContaining("coding agent is paused"),
+  });
+  const maintenance = await engine.enqueue({
+    type: "developer",
+    project: "demo",
+    area: "core",
+    ticket: "APP-4",
+    developerKind: "ci",
+    runOnce: true,
+    idempotencyKey: "qa-rework:" + "a".repeat(64),
+    ...binding,
+  });
+  await engine.tick();
+  expect(await engine.job(maintenance.id)).toMatchObject({
+    status: "queued",
+    message: expect.stringContaining("coding agent is paused"),
+  });
+  const once = await engine.enqueue({
+    type: "developer",
+    project: "demo",
+    area: "other",
+    ticket: "APP-3",
+    runOnce: true,
+    ...binding,
+  });
+  await engine.tick();
+  expect(await engine.job(once.id)).toMatchObject({ status: "running" });
+  f.finish(once.id);
+  await engine.tick();
+  save(true);
+  await engine.tick();
+  expect(await engine.job(second.id)).toMatchObject({ status: "running" });
+  expect(f.calls.filter((call) => call.id === second.id)).toHaveLength(1);
+});
+
+it("never hands a queued job to a replacement coding profile", async () => {
+  const f = fixture();
+  await f.ready();
+  pauseProjectFixture(f.root);
+  const save = (agents: unknown[]) =>
+    saveCodingAgents(f.root, "demo", {
+      revision: readCodingAgents(f.root, "demo").revision,
+      agents,
+    });
+  const profile = {
+      key: "builder",
+      name: "Independent builder",
+      enabled: true,
+      areas: ["core"],
+      maxConcurrent: 1,
+    },
+    coder = save([profile]).agents[0]!,
+    preparation = createJobPreparation({ root: f.root, env: {} }),
+    engine = createLocalRunners({
+      ...f.options,
+      admissionBlocker: preparation.admissionBlocker,
+    });
+  const job = await engine.enqueue({
+    type: "developer",
+    project: "demo",
+    area: "core",
+    ticket: "APP-1",
+    coderKey: coder.key,
+    coderInstanceId: coder.instanceId,
+  });
+  save([]);
+  expect(save([profile]).agents[0]!.instanceId).not.toBe(coder.instanceId);
+  await engine.tick();
+  expect(await engine.job(job.id)).toMatchObject({
+    status: "queued",
+    coderInstanceId: coder.instanceId,
+    message: expect.stringContaining("will not be reassigned"),
+  });
+  expect(f.options.prepareJob).not.toHaveBeenCalled();
+  expect(f.calls.filter((call) => call.id === job.id)).toEqual([]);
+});
+
+it.each(["pause", "replace"] as const)(
+  "rechecks a coder %s during asynchronous preparation before handing anything to Docker",
+  async (change) => {
+    const f = fixture();
+    await f.ready();
+    pauseProjectFixture(f.root);
+    const save = (agents: unknown[]) =>
+        saveCodingAgents(f.root, "demo", {
+          revision: readCodingAgents(f.root, "demo").revision,
+          agents,
+        }),
+      profile = {
+        key: "builder",
+        name: "Independent builder",
+        enabled: true,
+        areas: ["core"],
+        maxConcurrent: 1,
+      },
+      coder = save([profile]).agents[0]!,
+      preparation = createJobPreparation({ root: f.root, env: {} }),
+      release = vi.fn(async (_id: string) => {});
+    let changed = false;
+    const engine = createLocalRunners({
+      ...f.options,
+      admissionBlocker: preparation.admissionBlocker,
+      releaseJobResources: release,
+      prepareJob: async (job) => {
+        await Promise.resolve();
+        if (!changed) {
+          changed = true;
+          if (change === "pause") save([{ ...coder, enabled: false }]);
+          else {
+            save([]);
+            save([profile]);
+          }
+        }
+        return f.options.prepareJob(job);
+      },
+    });
+    const job = await engine.enqueue({
+      type: "developer",
+      project: "demo",
+      area: "core",
+      ticket: "APP-1",
+      coderKey: coder.key,
+      coderInstanceId: coder.instanceId,
+    });
+    await engine.tick();
+    expect(await engine.job(job.id)).toMatchObject({
+      status: "queued",
+      coderInstanceId: coder.instanceId,
+      message: expect.stringContaining(
+        change === "pause"
+          ? "coding agent is paused"
+          : "will not be reassigned",
+      ),
+    });
+    expect((await engine.job(job.id))?.budget).toBeUndefined();
+    expect(f.calls.filter((call) => call.id === job.id)).toEqual([]);
+    expect(release).toHaveBeenCalledWith(job.id);
+    if (change === "pause") {
+      save([coder]);
+      await engine.tick();
+      expect(await engine.job(job.id)).toMatchObject({ status: "running" });
+      expect(f.calls.filter((call) => call.id === job.id)).toHaveLength(1);
+    } else {
+      await engine.tick();
+      expect(f.calls.filter((call) => call.id === job.id)).toEqual([]);
+    }
+  },
+);
 
 it("persists daily run limits across restart, isolates projects, and resumes on the next UTC day", async () => {
   const f = fixture();

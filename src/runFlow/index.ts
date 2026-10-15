@@ -60,6 +60,8 @@ type EnrichedJob<T extends LocalJob> = Omit<T, "flow" | "ai"> & {
   ai?: AiSelection;
 };
 function identity(job: LocalJob) {
+  const hasCoder =
+    job.coderKey !== undefined || job.coderInstanceId !== undefined;
   if (
     !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(job.id) ||
     !Number.isSafeInteger(job.runId) ||
@@ -73,7 +75,15 @@ function identity(job: LocalJob) {
     (job.projectInstanceId !== undefined &&
       !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(
         job.projectInstanceId,
-      ))
+      )) ||
+    (hasCoder &&
+      (job.type !== "developer" ||
+        typeof job.coderKey !== "string" ||
+        !/^[a-z][a-z0-9-]{0,62}$/.test(job.coderKey) ||
+        typeof job.coderInstanceId !== "string" ||
+        !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(
+          job.coderInstanceId,
+        )))
   )
     throw fail();
   const value = JSON.stringify([
@@ -90,6 +100,8 @@ function identity(job: LocalJob) {
     job.pr ?? null,
     job.createdAt,
     job.pmMode ?? null,
+    // Preserve old authorization identities verbatim for unbound legacy runs.
+    ...(hasCoder ? [job.coderKey, job.coderInstanceId] : []),
   ]);
   if (value.length > 4096) throw fail();
   return value;

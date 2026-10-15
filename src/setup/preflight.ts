@@ -9,6 +9,7 @@ import {
   type AiSelection,
 } from "../ai/provider.ts";
 import { projectAiTarget } from "../ai/routing.ts";
+import { readCodingAgents, effectiveCodingAi } from "../codingAgents/index.ts";
 import { telemetrySecrets } from "../telemetry/config.ts";
 import { isExampleHub, validateName } from "./files.ts";
 import type { SourceStatus } from "../sourceControl/types.ts";
@@ -192,19 +193,22 @@ export function inspectSetup(
       const project = loadProject(root, name);
       let activeAi = false;
       for (const area of project.areas) {
-        for (const role of ["pm", "coder"] as const) {
-          if (
-            role === "pm" ? area.enabled : (area.codingEnabled ?? area.enabled)
-          ) {
-            const selection = resolveAiSelection(
-              root,
-              deps.env,
-              projectAiTarget(project, role, area),
-            );
-            selectedAi.set(selection.provider, selection);
-            activeAi = true;
-          }
+        if (area.enabled) {
+          const selection = resolveAiSelection(
+            root,
+            deps.env,
+            projectAiTarget(project, "pm", area),
+          );
+          selectedAi.set(selection.provider, selection);
+          activeAi = true;
         }
+      }
+      for (const agent of readCodingAgents(root, name).agents.filter(
+        (agent) => agent.enabled,
+      )) {
+        const selection = effectiveCodingAi(root, project, agent, deps.env);
+        selectedAi.set(selection.provider, selection);
+        activeAi = true;
       }
       if (!activeAi) {
         const selection = resolveAiSelection(

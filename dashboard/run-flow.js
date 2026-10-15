@@ -264,6 +264,10 @@
         (item) =>
           item.key === job.area &&
           (item.instanceId ?? null) === (job.areaInstanceId ?? null),
+      ),
+      coder = project?.coders?.agents?.find(
+        (item) =>
+          item.key === job.coderKey && item.instanceId === job.coderInstanceId,
       );
     const root = node(
       "article",
@@ -299,7 +303,14 @@
         "run-flow-role",
         [
           role,
-          job.type === "developer" ? area?.name || job.area : null,
+          job.type === "developer"
+            ? copy(
+                job.coderName ||
+                  coder?.name ||
+                  (job.coderKey ? "Previous coding agent" : "Coding agent"),
+                100,
+              )
+            : null,
           state.provider,
         ]
           .filter(Boolean)

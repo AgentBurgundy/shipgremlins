@@ -436,7 +436,17 @@ describe("first useful mission guidance", () => {
     for (const areas of [[], [{ key: "foundation", name: "Foundation" }]]) {
       const state = next({
         ...connected(),
-        projects: [project({ areas, foundation: { needed: true } })],
+        projects: [
+          project({
+            areas,
+            foundation: { needed: true },
+            coders: {
+              agents: [
+                { key: "builder", enabled: false, areas: ["foundation"] },
+              ],
+            },
+          }),
+        ],
       });
       expect(state).toMatchObject({
         index: 4,
@@ -462,6 +472,23 @@ describe("first useful mission guidance", () => {
       ],
     );
     expect(state).toMatchObject({ active: true, label: "Review foundation" });
+  });
+  it("routes a new idea to a named foundation coder without requiring automatic pickup", () => {
+    for (const agents of [[], [{ key: "other", areas: ["core"] }]]) {
+      const state = next({
+        ...connected(),
+        projects: [
+          project({
+            foundation: { needed: true, stage: "review" },
+            coders: { agents },
+          }),
+        ],
+      });
+      expect(state).toMatchObject({
+        label: "Add coding agent",
+        href: "/projects/my-app?tab=crew",
+      });
+    }
   });
   it.each([
     ["worker", "/runners#workers", "Set up a runner"],
@@ -648,10 +675,10 @@ describe("first useful mission guidance", () => {
       ],
     });
     expect(value).toMatchObject({
-      label: "Start autopilot",
+      label: "Start PM investigations",
       href: "/projects/my-app?tab=crew",
     });
-    expect(value.description).toContain("saved approval policy");
+    expect(value.description).toContain("coding agents separately");
   });
   it.each([undefined, { enabled: false }])(
     "keeps a fully active legacy crew on monitoring when its autonomy summary is %j",
@@ -688,7 +715,7 @@ describe("first useful mission guidance", () => {
       expect(value.title).not.toBe("Ready for autopilot.");
     },
   );
-  it("offers activation to a fully ready mixed crew with one coding pickup still paused", () => {
+  it("does not enable coding when PM investigations are active but an old coding flag is paused", () => {
     const value = next({
       ...connected(),
       projects: [
@@ -713,8 +740,8 @@ describe("first useful mission guidance", () => {
       ],
     });
     expect(value).toMatchObject({
-      label: "Start autopilot",
-      href: "/projects/my-app?tab=crew",
+      label: "Open project",
+      href: "/projects/my-app",
     });
   });
 });

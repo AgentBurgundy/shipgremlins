@@ -168,18 +168,14 @@
         ready = (id) =>
           readiness?.steps?.find((item) => item.id === id)?.ready === true,
         hasCrew = Boolean(project.areas?.length),
-        needsPromotionEnvironment = readiness?.areas?.some((area) =>
-          area.coding?.enableBlockers?.some(
-            (item) => item.id === "promotion_environment",
-          ),
-        ),
+        needsPromotionEnvironment = false,
         allReady =
           hasCrew &&
           project.areas.every((area) => {
             const state = readiness?.areas?.find(
               (item) => item.key === area.key,
             );
-            return state?.canRun && state.canEnable && state.coding?.canEnable;
+            return state?.canRun && state.canEnable;
           }),
         canVerifyAndActivate =
           hasCrew &&
@@ -194,16 +190,10 @@
             return (
               state &&
               (state.canRun || onlyVerification(state.blockers)) &&
-              (state.canEnable || onlyVerification(state.enableBlockers)) &&
-              (state.coding?.canEnable ||
-                onlyVerification(state.coding?.enableBlockers))
+              (state.canEnable || onlyVerification(state.enableBlockers))
             );
           }),
-        activeCrew =
-          hasCrew &&
-          project.areas.every(
-            (area) => area.enabled && (area.codingEnabled ?? area.enabled),
-          ),
+        activeCrew = hasCrew && project.areas.every((area) => area.enabled),
         steps = [
           [
             "Connect repository",
@@ -249,7 +239,7 @@
                 : ready("test_access") && ready("browser_verification")),
             `/projects/${encodeURIComponent(project.name)}?tab=environment`,
           ],
-          ["Autopilot", activeCrew && allReady, "activate"],
+          ["Scheduled PM investigations", activeCrew && allReady, "activate"],
         ],
         section = el(
           "section",
@@ -349,8 +339,8 @@
           s.busy
             ? "Checking crew…"
             : canVerifyAndActivate
-              ? "Verify & start autopilot"
-              : "Start autopilot",
+              ? "Verify & start PM investigations"
+              : "Start PM investigations",
           async () => {
             if (unavailable(s) || !current(s)) return;
             s.busy = true;
@@ -398,8 +388,7 @@
                   result.readiness.areas.some(
                     (saved) =>
                       saved.key === area.key &&
-                      typeof saved.enabled === "boolean" &&
-                      typeof saved.codingEnabled === "boolean",
+                      typeof saved.enabled === "boolean",
                   ),
                 )
               )
@@ -413,13 +402,12 @@
                     return {
                       ...area,
                       enabled: saved.enabled,
-                      codingEnabled: saved.codingEnabled,
                     };
                   }),
                 };
               s.notice =
                 result.message ||
-                "Your ready crew is active. No epic was approved by activation.";
+                "Scheduled PM investigations are enabled. Coding agents and approval policy are unchanged.";
               try {
                 await onSaved(project.name);
               } catch {
@@ -482,12 +470,12 @@
           s.suggestionsOnly
             ? project.workflow?.kind === "promotion" &&
               project.workflow.approvalPolicy === "epic"
-              ? "Complete setup to activate daily work. Activation does not approve any epic."
-              : "Complete setup to activate daily work. Your approval policy stays in control."
+              ? "Complete setup to start scheduled PM investigations. This does not approve any epic or enable coding agents."
+              : "Complete setup to start scheduled PM investigations. Coding agents have independent settings."
             : project.workflow?.kind === "promotion" &&
                 project.workflow.approvalPolicy === "epic"
-              ? "Approve epics, then review your PMs’ promotion batches. Activate daily PMs and coding for approved epic work; without an approved epic, PMs investigate only. Activation does not approve any epic."
-              : "Patrols start only after setup is ready and you activate the crew. Review your configured delivery policy before enabling coding.",
+              ? "PMs investigate and review approved changes. Create a separate coding agent to implement approved epic work. Starting PM investigations does not approve epics or enable coding agents."
+              : "PM patrols start after setup is ready. Create and enable coding agents separately when you want approved tickets implemented.",
           "welcome-note",
         ),
       );

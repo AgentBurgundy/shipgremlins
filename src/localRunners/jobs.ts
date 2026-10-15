@@ -15,7 +15,6 @@ import {
   listProjectNames,
   loadHub,
   loadProject,
-  codingPickupEnabled,
   type AreaConfig,
   type Project,
 } from "../config.ts";
@@ -28,6 +27,7 @@ import {
 } from "../setup/connections.ts";
 import { assertNoSymlinks, validateName } from "../setup/files.ts";
 import type { LocalJob, LocalJobInput } from "./types.ts";
+import { isAutomaticLocalJob } from "./types.ts";
 import type { DockerJobPayload } from "./docker.ts";
 import { LABELS } from "../dispatcher/notes.ts";
 import { pmTelemetrySnapshot } from "../telemetry/snapshot.ts";
@@ -101,6 +101,14 @@ import { createAutomationDiagnostics } from "../setup/automationDiagnostics.ts";
 import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import { assertPublicBuildValues } from "../testEnvironments/recipe.ts";
 import { createCodingPickup } from "./codingPickup.ts";
+import {
+  codingAgentsForArea,
+  effectiveCodingAi,
+  readCodingAgents,
+  resolveCodingAgent,
+  type CodingAgent,
+} from "../codingAgents/index.ts";
+import { jobBelongsToProject } from "../projectIdentity.ts";
 
 export class JobReadinessError extends Error {
   constructor(message: string) {
@@ -288,6 +296,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
   const diagnostics = createAutomationDiagnostics(options.root);
   const automaticApprovals = createAutomaticApprovals(options.root);
   const codingPickup = createCodingPickup(options.root, { now: options.now });
+  // Old jobs may predate the owner-area field; keep resolved scope inside this preparation only.
+  const preparingAreas = new Map<string, string>();
   const { root } = options;
   const env = options.env ?? process.env;
   const identities = createTestIdentityLeases(root);
@@ -484,6 +494,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     area: AreaConfig,
     input: LocalJobInput,
     checkConnections: boolean,
+    coder?: CodingAgent,
   ) {
     if (
       input.pmMode !== "discovery" &&
@@ -493,7 +504,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
       throw new JobReadinessError(
         "Map this PM to a Linear project in Edit project → Linear mappings before running it.",
       );
-    if (!hasPmMandate(project, area))
+    if (
+      (input.type === "pm" ||
+        readCodingAgents(root, project.config.name).legacy) &&
+      !hasPmMandate(project, area)
+    )
       throw new JobReadinessError(
         "Write and review this PM's mandate before running it.",
       );
@@ -502,15 +517,13 @@ export function createJobPreparation(options: JobPreparationOptions) {
       !hasAiCredentials(
         root,
         connections(),
-        resolveAiSelection(
-          root,
-          connections(),
-          projectAiTarget(
-            project,
-            input.type === "developer" ? "coder" : "pm",
-            area,
-          ),
-        ),
+        coder
+          ? effectiveCodingAi(root, project, coder, connections())
+          : resolveAiSelection(
+              root,
+              connections(),
+              projectAiTarget(project, "pm", area),
+            ),
       )
     )
       throw new JobReadinessError(
@@ -531,6 +544,91 @@ export function createJobPreparation(options: JobPreparationOptions) {
     }
   }
 
+  function coderLoad(project: Project, coder: CodingAgent, jobs: LocalJob[]) {
+    return jobs.filter(
+      (job) =>
+        job.type === "developer" &&
+        jobBelongsToProject(project.config, job) &&
+        ["queued", "running"].includes(job.status) &&
+        (job.coderKey
+          ? job.coderKey === coder.key &&
+            job.coderInstanceId === coder.instanceId
+          : historicalCoderMatches(job)),
+    ).length;
+    function historicalCoderMatches(job: LocalJob) {
+      try {
+        const previous = resolveCodingAgent(root, project, job);
+        return (
+          previous.key === coder.key && previous.instanceId === coder.instanceId
+        );
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  /** Selection does not change ticket ownership: the PM remains its approval scope. */
+  function chooseCoder(
+    project: Project,
+    area: AreaConfig,
+    input: LocalJobInput,
+    history: LocalJob[] = [],
+    queued = false,
+  ): CodingAgent {
+    if (input.coderInstanceId && !input.coderKey)
+      throw new JobReadinessError("Choose the coding agent for this run.");
+    // Historical jobs must be resolved using their original identity, including the
+    // store's narrowly scoped pre-migration exception. Never assign them a new profile.
+    if (queued || input.coderInstanceId)
+      return checkedCoder(
+        resolveCodingAgent(root, project, {
+          ...input,
+          area: area.key,
+          ...(!queued ? { projectInstanceId: project.config.instanceId } : {}),
+        }),
+      );
+    const view = readCodingAgents(root, project.config.name);
+    const candidates = view.agents
+      .filter(
+        (coder) =>
+          coder.areas.includes(area.key) &&
+          (!input.coderKey || coder.key === input.coderKey) &&
+          (coder.enabled ||
+            (!isAutomaticLocalJob(input) && (!!input.coderKey || view.legacy))),
+      )
+      .sort(
+        (a, b) =>
+          coderLoad(project, a, history) - coderLoad(project, b, history) ||
+          a.key.localeCompare(b.key),
+      );
+    const coder = candidates[0];
+    if (!coder)
+      throw new JobReadinessError(
+        "Choose a coding agent assigned to this PM's approved queue. Enable coding pickup for scheduled work; a selected paused coding agent can run once.",
+      );
+    return checkedCoder(
+      resolveCodingAgent(root, project, {
+        ...input,
+        area: area.key,
+        projectInstanceId: project.config.instanceId,
+        coderKey: coder.key,
+        coderInstanceId: coder.instanceId,
+      }),
+    );
+
+    function checkedCoder(coder: CodingAgent) {
+      if (!coder.areas.includes(area.key))
+        throw new JobReadinessError(
+          "This coding agent is no longer assigned to the ticket's owning PM queue.",
+        );
+      if (!coder.enabled && isAutomaticLocalJob(input))
+        throw new JobReadinessError(
+          "Coding pickup is paused for this coding agent. Resume it or explicitly run it once.",
+        );
+      return coder;
+    }
+  }
+
   async function validate(
     input: LocalJobInput,
     requireQueuedBinding = false,
@@ -541,6 +639,7 @@ export function createJobPreparation(options: JobPreparationOptions) {
     linearWorkspaceId?: string;
     linearBinding?: LocalJobInput["linearBinding"];
     discoveryRevision?: string;
+    coder?: CodingAgent;
   }> {
     if (input.developerKind === "sync")
       throw new JobReadinessError(
@@ -689,13 +788,10 @@ export function createJobPreparation(options: JobPreparationOptions) {
     const ticket = await linear(credential.authorization).getTicket(
       input.ticket,
     );
-    const area =
-      ticket &&
-      project.areas.find(
-        (item) =>
-          (codingPickupEnabled(item) || input.runOnce) &&
-          approvedForArea(ticket, item),
-      );
+    const owners = ticket
+      ? project.areas.filter((item) => approvedForArea(ticket, item))
+      : [];
+    const area = owners.length === 1 ? owners[0] : undefined;
     if (
       input.linearBinding?.ticketId &&
       ticket?.id !== input.linearBinding.ticketId
@@ -706,12 +802,20 @@ export function createJobPreparation(options: JobPreparationOptions) {
     if (
       !ticket ||
       !area ||
+      (input.area && input.area !== area.key) ||
       (project.config.linear?.teamId &&
         ticket.teamId !== project.config.linear.teamId)
     )
       throw new JobReadinessError(
         "The ticket must be open, approved, and mapped to this project's PM area. Enable coding pickup for scheduled work; manual runs can use paused areas. Proposal and needs-human tickets cannot run.",
       );
+    const coder = chooseCoder(
+      project,
+      area,
+      input,
+      !requireQueuedBinding && options.listJobs ? await options.listJobs() : [],
+      requireQueuedBinding,
+    );
     if (!acceptanceCriteria(ticket.description).length)
       throw new JobReadinessError(
         "Add a finite, observable bullet list under ## Acceptance criteria in this Linear ticket before coding. Describe the user outcome and how to verify it; approval alone is not a definition of done.",
@@ -731,10 +835,17 @@ export function createJobPreparation(options: JobPreparationOptions) {
       linear(credential.authorization),
     );
     if (epicBlocker) throw new JobReadinessError(epicBlocker);
-    await manualPrerequisites(project, area, input, !requireQueuedBinding);
+    await manualPrerequisites(
+      project,
+      area,
+      input,
+      !requireQueuedBinding,
+      coder,
+    );
     return {
       project,
       area,
+      coder,
       ticket,
       linearWorkspaceId: credential.workspaceId,
       linearBinding: {
@@ -813,6 +924,14 @@ export function createJobPreparation(options: JobPreparationOptions) {
       );
     const project = projectFor(input);
     assertCodingEnvironment(project);
+    const coderView = readCodingAgents(root, project.config.name);
+    if (
+      input.coderKey &&
+      !coderView.agents.some((coder) => coder.key === input.coderKey)
+    )
+      throw new JobReadinessError(
+        "Choose an existing coding agent for this project.",
+      );
     if (input.area && !project.areas.some((area) => area.key === input.area))
       throw new JobReadinessError(
         "Choose an existing PM or let Coding search all PMs.",
@@ -821,11 +940,17 @@ export function createJobPreparation(options: JobPreparationOptions) {
       (area) =>
         (!input.area || area.key === input.area) &&
         hasPmMapping(area) &&
-        hasPmMandate(project, area),
+        (!coderView.legacy || hasPmMandate(project, area)) &&
+        coderView.agents.some(
+          (coder) =>
+            coder.areas.includes(area.key) &&
+            (!input.coderKey || coder.key === input.coderKey) &&
+            (coder.enabled || !!input.coderKey || coderView.legacy),
+        ),
     );
     if (!areas.length)
       throw new JobReadinessError(
-        "Set up a PM mandate and its Linear mapping before looking for coding work.",
+        "Map an owning PM queue in Linear and assign a coding agent before looking for coding work.",
       );
     const connectionId = project.config.linear?.connectionId ?? "default";
     let credential;
@@ -918,11 +1043,14 @@ export function createJobPreparation(options: JobPreparationOptions) {
         (await epicCodingBlocker(root, project, candidate.area, ticket, client))
       )
         continue;
+      const coder = chooseCoder(project, candidate.area, input, previousJobs);
       return {
         ...input,
         area: candidate.area.key,
         ticket: ticket.identifier,
         projectInstanceId: project.config.instanceId,
+        coderKey: coder.key,
+        coderInstanceId: coder.instanceId,
         linearBinding: {
           connectionId,
           ...(workspaceId ? { workspaceId } : {}),
@@ -953,12 +1081,18 @@ export function createJobPreparation(options: JobPreparationOptions) {
       // and approval before building the private payload from that reference.
       validated = await validate(job, true);
     }
-    const { project, area, ticket, linearWorkspaceId } = validated;
-    const selectedAi = resolveAiSelection(
-      root,
-      connections(),
-      projectAiTarget(project, job.type === "developer" ? "coder" : "pm", area),
-    );
+    const { project, area, coder, ticket, linearWorkspaceId } = validated;
+    if (coder) preparingAreas.set(job.id, area.key);
+    const selectedAi = coder
+      ? effectiveCodingAi(root, project, coder, connections(), {
+          ...job,
+          area: job.area ?? area.key,
+        })
+      : resolveAiSelection(
+          root,
+          connections(),
+          projectAiTarget(project, "pm", area),
+        );
     const ownerRevision = ticket ? knowledgeRevision(project, area) : undefined;
     if (job.pmMode === "discovery") {
       const saved = connections();
@@ -1235,6 +1369,9 @@ export function createJobPreparation(options: JobPreparationOptions) {
           project.config.name,
           await options.listJobs(),
         );
+        pickupContext.needsReview = pickupContext.needsReview.filter(
+          (hold) => hold.area === area.key,
+        );
       } catch {
         pickupContext = { state: "unavailable" as const, needsReview: [] };
       }
@@ -1416,15 +1553,27 @@ export function createJobPreparation(options: JobPreparationOptions) {
   function assertCurrentAi(payload: DockerJobPayload, job: LocalJob) {
     if (!payload.ai) return payload;
     const project = projectFor(job);
-    const current = resolveAiSelection(
-      root,
-      connections(),
-      projectAiTarget(
-        project,
-        job.type === "developer" ? "coder" : "pm",
-        project.areas.find((area) => area.key === job.area),
-      ),
-    );
+    const current =
+      job.type === "developer"
+        ? effectiveCodingAi(
+            root,
+            project,
+            resolveCodingAgent(root, project, {
+              ...job,
+              area: job.area ?? preparingAreas.get(job.id),
+            }),
+            connections(),
+            { ...job, area: job.area ?? preparingAreas.get(job.id) },
+          )
+        : resolveAiSelection(
+            root,
+            connections(),
+            projectAiTarget(
+              project,
+              "pm",
+              project.areas.find((area) => area.key === job.area),
+            ),
+          );
     if (
       current.provider !== payload.ai!.provider ||
       current.model !== payload.ai!.model
@@ -1547,6 +1696,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
       )
         throw new LocalJobDeferredError();
       throw error;
+    } finally {
+      preparingAreas.delete(job.id);
     }
   }
 
@@ -1567,11 +1718,38 @@ export function createJobPreparation(options: JobPreparationOptions) {
         const project = loadProject(root, name);
         currentProject = project;
         pickupObservation = codingPickup.begin(project);
+        if (project.config.automationPaused) continue;
+        let coders: CodingAgent[] = [];
+        let codingAreas = new Set<string>();
+        let codingConfigAvailable = true;
+        try {
+          coders = readCodingAgents(root, name).agents.filter(
+            (coder) => coder.enabled,
+          );
+          codingAreas = new Set(
+            project.areas
+              .filter(
+                (area) =>
+                  codingAgentsForArea(root, project, area.key).length > 0,
+              )
+              .map((area) => area.key),
+          );
+        } catch {
+          codingConfigAvailable = false;
+          codingPickup.unavailable(pickupObservation);
+          diagnostics.fail(project, "scheduler", "setup", undefined, now);
+        }
         const history = previousJobs.filter(
           (job) =>
             job.type === "developer" &&
             job.project === name &&
             job.projectInstanceId === project.config.instanceId,
+        );
+        const coderLoads = new Map(
+          coders.map((coder) => [
+            coder.key,
+            coderLoad(project, coder, history),
+          ]),
         );
         const due = new Map(
           project.areas.map((area) => {
@@ -1629,11 +1807,11 @@ export function createJobPreparation(options: JobPreparationOptions) {
               })
               .catch(() => null)
           : null;
-        if (!linearCredential && project.areas.some(codingPickupEnabled))
+        if (!linearCredential && codingAreas.size)
           diagnostics.fail(project, "source", "source", undefined, now);
         else diagnostics.resolve(project, "source", undefined, now);
         for (const area of project.areas.filter(
-          (item) => item.enabled || codingPickupEnabled(item),
+          (item) => item.enabled || codingAreas.has(item.key),
         )) {
           if (
             area.enabled &&
@@ -1657,12 +1835,12 @@ export function createJobPreparation(options: JobPreparationOptions) {
             });
           if (
             !linearCredential ||
-            !codingPickupEnabled(area) ||
+            !codingAreas.has(area.key) ||
             !hasPmMapping(area) ||
             codingEnvironmentBlocker(project) ||
             !diagnostics.ready(project, "tickets", area.key, now)
           ) {
-            if (codingPickupEnabled(area))
+            if (codingAreas.has(area.key))
               codingPickup.unavailable(pickupObservation, area);
             continue;
           }
@@ -1737,6 +1915,14 @@ export function createJobPreparation(options: JobPreparationOptions) {
             .filter(
               (item) =>
                 approvedForArea(item, area) &&
+                project.areas.filter((owner) => approvedForArea(item, owner))
+                  .length === 1 &&
+                !jobs.some(
+                  (job) =>
+                    job.type === "developer" &&
+                    job.linearBinding?.ticketId === item.id &&
+                    job.project === name,
+                ) &&
                 !history.some((job) =>
                   job.linearBinding?.ticketId
                     ? job.linearBinding.ticketId === item.id
@@ -1757,6 +1943,17 @@ export function createJobPreparation(options: JobPreparationOptions) {
                 (a.priority || 5) - (b.priority || 5) ||
                 a.createdAt.localeCompare(b.createdAt),
             )) {
+            // Provider pagination may repeat an issue. Recheck after each admission,
+            // rather than only in the materialized candidate filter above.
+            if (
+              jobs.some(
+                (job) =>
+                  job.type === "developer" &&
+                  job.project === name &&
+                  job.linearBinding?.ticketId === ticket.id,
+              )
+            )
+              continue;
             if (
               await epicCodingBlocker(
                 root,
@@ -1767,7 +1964,36 @@ export function createJobPreparation(options: JobPreparationOptions) {
               )
             )
               continue;
-            if (picked++ >= room) break;
+            if (picked >= room) break;
+            const candidates = codingAgentsForArea(root, project, area.key)
+              .filter((coder) => {
+                const load =
+                  coderLoads.get(coder.key) ??
+                  coderLoad(project, coder, history);
+                return (
+                  coder.enabled &&
+                  load < coder.maxConcurrent &&
+                  hasAiCredentials(
+                    root,
+                    connections(),
+                    effectiveCodingAi(root, project, coder, connections()),
+                  )
+                );
+              })
+              .sort((a, b) => {
+                const load = (coder: CodingAgent) =>
+                  coderLoads.get(coder.key) ??
+                  coderLoad(project, coder, history);
+                return load(a) - load(b) || a.key.localeCompare(b.key);
+              });
+            const coder = candidates[0];
+            if (!coder) break;
+            picked++;
+            coderLoads.set(
+              coder.key,
+              (coderLoads.get(coder.key) ??
+                coderLoad(project, coder, history)) + 1,
+            );
             jobs.push({
               type: "developer",
               project: name,
@@ -1775,6 +2001,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
                 ? { projectInstanceId: project.config.instanceId }
                 : {}),
               area: area.key,
+              coderKey: coder.key,
+              coderInstanceId: coder.instanceId,
               ticket: ticket.identifier,
               linearBinding: {
                 connectionId: project.config.linear?.connectionId ?? "default",
@@ -1787,7 +2015,8 @@ export function createJobPreparation(options: JobPreparationOptions) {
             });
           }
         }
-        diagnostics.resolve(project, "scheduler", undefined, now);
+        if (codingConfigAvailable)
+          diagnostics.resolve(project, "scheduler", undefined, now);
       } catch {
         if (pickupObservation) codingPickup.unavailable(pickupObservation);
         if (currentProject)
@@ -1852,6 +2081,22 @@ export function createJobPreparation(options: JobPreparationOptions) {
         return undefined;
       const project = loadProject(root, job.project),
         overlaps = projectKnowledge.ownership(project);
+      let coder: CodingAgent;
+      try {
+        coder = resolveCodingAgent(root, project, job);
+      } catch {
+        return "This coding agent was replaced or its PM assignments changed. Review the queued run and choose a current coding agent; it will not be reassigned automatically.";
+      }
+      if (!coder.enabled && isAutomaticLocalJob(job))
+        return "This coding agent is paused. Its queued work will wait until it is resumed.";
+      if (
+        coderLoad(
+          project,
+          coder,
+          active.filter((other) => other.id !== job.id),
+        ) >= coder.maxConcurrent
+      )
+        return "Waiting for this coding agent's current run to finish. Its configured concurrency limit applies across all assigned queues.";
       const collision = active.find(
         (other) =>
           other.type === "developer" &&

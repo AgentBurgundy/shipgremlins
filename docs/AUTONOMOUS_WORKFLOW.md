@@ -27,8 +27,11 @@ flowchart TD
   Clarify --> Probe
   Probe -->|Fails| Repair[Show exact failed step and repair action]
   Repair --> Probe
-  Probe -->|Passes| Activate[Activate ready crew in one revision-guarded action]
-  Activate --> Patrol[Daily PM patrols and eligible coding pickup]
+  Probe -->|Passes| Activate[Activate ready PMs]
+  Activate --> Patrol[Daily PM patrols]
+  Adopt --> Coder[Create named coding agents; assign PM queues and models]
+  Coder --> Enable[Enable each coder independently]
+  Enable --> Pickup[Eligible approved-ticket pickup]
 ```
 
 Source inspection suggests up to four PMs from the code it actually reads. It

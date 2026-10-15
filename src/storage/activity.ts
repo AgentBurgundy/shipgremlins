@@ -360,6 +360,8 @@ export function createActivityStore(options: {
           "project",
           "projectInstanceId",
           "area",
+          "coderKey",
+          "coderInstanceId",
           "ticket",
           "workerId",
           "status",

@@ -60,6 +60,10 @@ describe("project autonomy HTTP controls", () => {
     expect((await f.call({}, true, "PUT")).status).toBe(405);
     const initial = ((await (await f.call()).json()) as AutonomyResponse)
       .autonomy;
+    const originalAreas = readFileSync(
+      join(root, "projects/app/areas.json"),
+      "utf8",
+    );
     expect(initial).toMatchObject({ enabled: true, state: "blocked" });
     const input = {
       enabled: false,
@@ -74,8 +78,9 @@ describe("project autonomy HTTP controls", () => {
     expect(paused).toMatchObject({
       enabled: false,
       state: "paused",
-      investigationEnabled: false,
-      codingEnabled: false,
+      investigationEnabled: true,
+      codingEnabled: true,
+      projectPaused: true,
     });
     expect((await f.call({ ...input, enabled: true })).status).toBe(409);
     expect(
@@ -90,9 +95,9 @@ describe("project autonomy HTTP controls", () => {
     const saved = JSON.parse(
       readFileSync(join(root, "projects/app/areas.json"), "utf8"),
     );
-    expect(saved.areas.core).toMatchObject({
-      enabled: true,
-      codingEnabled: true,
-    });
+    expect(saved.areas.core).toMatchObject({ enabled: true });
+    expect(readFileSync(join(root, "projects/app/areas.json"), "utf8")).toBe(
+      originalAreas,
+    );
   });
 });

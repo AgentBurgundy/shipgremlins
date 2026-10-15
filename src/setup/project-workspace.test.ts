@@ -290,6 +290,22 @@ describe("progressive PM product brief", () => {
 });
 
 describe("focused project crew workspace", () => {
+  it("routes canonical coding work to named agents instead of launching an anonymous developer", () => {
+    const rendered = fixture().renderCodingLauncher(
+      {
+        name: "shop",
+        coders: { agents: [{ key: "builder", name: "Builder" }] },
+      },
+      {},
+    );
+    expect(text(rendered)).toContain("Open coding agents");
+    expect(all(rendered).find((item) => item.tagName === "A")?.href).toBe(
+      "/projects/shop?tab=crew",
+    );
+    expect(
+      all(rendered).some((item) => item.dataset.launchCrew === "developer"),
+    ).toBe(false);
+  });
   it("explains approved previous-attempt holds without asking for approval again or launching a retry", () => {
     const rendered = fixture().renderCodingLauncher(
       {
@@ -488,15 +504,28 @@ describe("focused project crew workspace", () => {
         protectFocus: () => false,
         isBusy: () => false,
       });
+    const codingAgents = {
+      mount: vi.fn((container: Element) => {
+        const section = new Element("SECTION");
+        section.className = "coding-agents";
+        section.textContent = "Coding agents · Add coding agent";
+        container.append(section);
+      }),
+      protectFocus: () => false,
+      isDirty: () => false,
+      isBusy: () => false,
+      forget: vi.fn(),
+    };
     const view = ui.createProjectWorkspace(root, {
       pages,
       api,
       getJobs: () => jobs,
+      codingAgents,
     });
     view.setStatus(state, false);
     return { root, pages, project, state, view, jobs, ui };
   }
-  it("keeps live work and both automations together while retaining optional reference expansion across polls", async () => {
+  it("keeps live PM work and its investigation control together while retaining reference expansion across polls", async () => {
     const f = workspace();
     Object.assign(f.project, { verification: { mode: "repository" } });
     Object.assign(f.project.readiness, {
@@ -510,7 +539,7 @@ describe("focused project crew workspace", () => {
     )!;
     expect(
       all(command).filter((item) => item.attributes.get("role") === "switch"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       all(command).some((item) => item.dataset.launchArea === f.pages.pm),
     ).toBe(true);
@@ -691,7 +720,7 @@ describe("focused project crew workspace", () => {
     f.view.render();
     expect(text(f.root)).toContain("Choose how your gremlin signs in");
   });
-  it("keeps PM controls and both independent automations on the crew page, with settings separate", () => {
+  it("separates PM investigations from first-class coding agents on the crew page", () => {
     const { root, pages, view } = workspace();
     const row = all(root).find((item) => item.className === "project-pm-row")!;
     expect(row.children.map((item) => item.className)).toEqual([
@@ -712,7 +741,7 @@ describe("focused project crew workspace", () => {
     });
     expect(
       all(row).filter((item) => item.attributes.get("role") === "switch"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(text(row)).not.toContain("Open workspace");
     expect(text(root)).not.toContain("Run discovery");
     const header = all(root).find(
@@ -721,17 +750,15 @@ describe("focused project crew workspace", () => {
     expect(text(header)).not.toContain("Run coding");
     expect(text(header)).toContain("shipgremlins");
     expect(text(root)).toContain("Look for new improvements");
-    expect(text(root)).toContain("Automatically build approved work");
+    expect(text(row)).not.toContain("Automatically build approved work");
     expect(text(root)).not.toContain("Project details");
     const coding = all(root).find(
-      (item) => item.className === "coding-launch",
+      (item) => item.className === "coding-agents",
     )!;
-    expect(text(coding)).toContain("next approved ticket");
-    expect(text(coding)).toContain("Start coding");
-    expect(
-      all(coding).find((item) => item.dataset.launchCrew === "developer")
-        ?.dataset.launchProject,
-    ).toBe("shipgremlins");
+    expect(text(coding)).toContain("Add coding agent");
+    expect(all(root).some((item) => item.className === "coding-launch")).toBe(
+      false,
+    );
     pages.tab = "settings";
     view.render();
     const details = all(root).find((item) =>

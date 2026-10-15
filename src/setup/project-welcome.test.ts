@@ -365,15 +365,17 @@ describe("repository-first project welcome", () => {
       (item) => item.attributes.get("aria-current") === "step",
     );
     expect(current).toHaveLength(1);
-    expect(text(current[0]!)).toContain("Autopilot");
-    await byText(f.root, "Start autopilot").fire("click");
+    expect(text(current[0]!)).toContain("Scheduled PM investigations");
+    await byText(f.root, "Start PM investigations").fire("click");
     expect(api).toHaveBeenLastCalledWith("/api/projects/app/crew/activate", {
       projectRevision: "fresh-project",
       areasRevision: "fresh-areas",
     });
     expect(f.onSaved).toHaveBeenCalledExactlyOnceWith("app");
     expect(text(f.root)).toContain("Crew enabled.");
-    expect(text(f.root)).toContain("Activation does not approve any epic.");
+    expect(text(f.root)).toContain(
+      "does not approve any epic or enable coding agents",
+    );
     expect(f.onCreatePm).not.toHaveBeenCalled();
     f.view.destroy();
   });
@@ -385,7 +387,7 @@ describe("repository-first project welcome", () => {
       setupOnly: true,
     });
     expect(text(f.root)).toContain("Your crew is ready.");
-    expect(text(f.root)).toContain("Start autopilot");
+    expect(text(f.root)).toContain("Start PM investigations");
     expect(text(f.root)).not.toContain("Grow your crew");
     expect(text(f.root)).not.toContain("Meet Pip");
     f.view.destroy();
@@ -406,7 +408,7 @@ describe("repository-first project welcome", () => {
       ["BUTTON", "A"].includes(node.tagName),
     );
     expect(actions).toHaveLength(1);
-    expect(actions[0]!.textContent).toBe("Start autopilot");
+    expect(actions[0]!.textContent).toBe("Start PM investigations");
     expect(checklist.contains(actions[0]!)).toBe(false);
     f.view.destroy();
   });
@@ -424,7 +426,7 @@ describe("repository-first project welcome", () => {
       suggestionsOnly: true,
       setupOnly: true,
     });
-    await byText(f.root, "Start autopilot").fire("click");
+    await byText(f.root, "Start PM investigations").fire("click");
     expect(text(f.root)).toContain("Browser access changed. Test it again.");
     expect(
       walk(f.root).some((node) => node.attributes.get("role") === "alert"),
@@ -463,8 +465,8 @@ describe("repository-first project welcome", () => {
       suggestionsOnly: true,
       setupOnly: true,
     });
-    await byText(f.root, "Start autopilot").fire("click");
-    expect(byText(f.root, "Start autopilot")).toBeUndefined();
+    await byText(f.root, "Start PM investigations").fire("click");
+    expect(byText(f.root, "Start PM investigations")).toBeUndefined();
     expect(text(f.root)).toContain("Autopilot is on.");
     expect(text(f.root)).toContain(
       "Refresh the dashboard to see the saved status.",
@@ -485,7 +487,7 @@ describe("repository-first project welcome", () => {
       suggestionsOnly: true,
       setupOnly: true,
     });
-    expect(byText(f.root, "Start autopilot")).toBeDefined();
+    expect(byText(f.root, "Start PM investigations")).toBeDefined();
     expect(walk(f.root).filter((node) => node.tagName === "A")).toHaveLength(0);
     expect(api).toHaveBeenCalledExactlyOnceWith("/api/projects/app/onboarding");
     f.view.destroy();
@@ -501,7 +503,7 @@ describe("repository-first project welcome", () => {
       f = fixture(api);
     await settle();
     f.view.mount(f.root, readyProject(), { suggestionsOnly: true });
-    await byText(f.root, "Start autopilot").fire("click");
+    await byText(f.root, "Start PM investigations").fire("click");
     expect(
       api.mock.calls.filter(([url]) => url.endsWith("/crew/activate")),
     ).toHaveLength(1);
@@ -534,7 +536,7 @@ describe("repository-first project welcome", () => {
     });
     await settle();
     f.view.mount(f.root, project, { suggestionsOnly: true });
-    await byText(f.root, "Verify & start autopilot").fire("click");
+    await byText(f.root, "Verify & start PM investigations").fire("click");
     expect(api.mock.calls.slice(-3).map(([url]) => url)).toEqual([
       "/api/projects/app/verify",
       "/api/projects/app/readiness",
@@ -575,7 +577,7 @@ describe("repository-first project welcome", () => {
     });
     await settle();
     f.view.mount(f.root, project, { suggestionsOnly: true });
-    await byText(f.root, "Verify & start autopilot").fire("click");
+    await byText(f.root, "Verify & start PM investigations").fire("click");
     expect(api.mock.calls.some(([url]) => url.endsWith("/crew/activate"))).toBe(
       false,
     );
@@ -596,7 +598,7 @@ describe("repository-first project welcome", () => {
     )!.ready = false;
     project.readiness.areas[0]!.canRun = false;
     f.view.mount(f.root, project, { suggestionsOnly: true });
-    expect(byText(f.root, "Start autopilot")).toBeUndefined();
+    expect(byText(f.root, "Start PM investigations")).toBeUndefined();
     const environment = walk(f.root).find(
       (item) => item.tagName === "A" && item.textContent === "Test app access",
     )!;
@@ -606,7 +608,7 @@ describe("repository-first project welcome", () => {
     const badSchedule = readyProject();
     badSchedule.readiness.areas[0]!.canEnable = false;
     f.view.mount(f.root, badSchedule, { suggestionsOnly: true });
-    expect(byText(f.root, "Start autopilot")).toBeUndefined();
+    expect(byText(f.root, "Start PM investigations")).toBeUndefined();
     f.view.destroy();
   });
   it("does not ask repository-only projects to connect browser hosting or sign-in", async () => {
@@ -624,7 +626,7 @@ describe("repository-first project welcome", () => {
     );
     expect(text(f.root)).toContain("Confirm repository checks");
     expect(text(f.root)).not.toContain("Test app access");
-    expect(byText(f.root, "Start autopilot")).toBeDefined();
+    expect(byText(f.root, "Start PM investigations")).toBeDefined();
     f.view.destroy();
   });
   it("keeps an active ready crew focused without repeating the completed setup checklist", async () => {
@@ -639,7 +641,7 @@ describe("repository-first project welcome", () => {
           item.attributes.get("aria-label") === "Project setup progress",
       ),
     ).toBeUndefined();
-    expect(byText(f.root, "Start autopilot")).toBeUndefined();
+    expect(byText(f.root, "Start PM investigations")).toBeUndefined();
     expect(text(f.root)).toContain("Grow your crew");
     f.view.destroy();
   });
@@ -674,7 +676,7 @@ describe("repository-first project welcome", () => {
     expect(f.onCreatePm).not.toHaveBeenCalled();
     f.view.destroy();
   });
-  it("points repository-first promotion setup to a deployment before activating coders", async () => {
+  it("allows repository-first PM investigations independently of coding deployment readiness", async () => {
     const f = fixture(async () => setup(true)),
       project = readyProject();
     await settle();
@@ -693,15 +695,9 @@ describe("repository-first project welcome", () => {
       { ...project, verification: { mode: "repository" } },
       { suggestionsOnly: true },
     );
-    expect(byText(f.root, "Start autopilot")).toBeUndefined();
-    const action = walk(f.root).find(
-      (item) =>
-        item.tagName === "A" &&
-        item.textContent === "Prepare integration deployment",
-    )!;
-    expect((action as Element & { href: string }).href).toBe(
-      "/projects/app?tab=environment",
-    );
+    expect(byText(f.root, "Start PM investigations")).toBeDefined();
+    expect(text(f.root)).not.toContain("Prepare integration deployment");
+    expect(text(f.root)).toContain("enable coding agents");
     f.view.destroy();
   });
   it("only reads on mount and requires exact selected commands plus reviewed revisions to confirm", async () => {

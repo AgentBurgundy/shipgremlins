@@ -19,6 +19,7 @@ import {
 } from "./notes.ts";
 import { codingPickupEnabled } from "../config.ts";
 import { resolve } from "node:path";
+import { lstatSync } from "node:fs";
 import { createAutomaticApprovals } from "../autonomy/approval.ts";
 import { epicCodingBlocker, usesEpicApproval } from "../epics.ts";
 import {
@@ -42,6 +43,12 @@ export interface DeveloperArgs {
 
 const CLOSED_STATES = new Set(["completed", "canceled"]);
 const LIVE_RUN = new Set<WorkflowRun["status"]>(["queued", "in_progress"]);
+const hasNamedCoders = (ctx: Ctx) =>
+  Boolean(
+    lstatSync(resolve(ctx.project.dir, "coders.json"), {
+      throwIfNoEntry: false,
+    }),
+  );
 
 /** The exact workflow_dispatch inputs developer.yml declares (all strings). */
 export function developerInputs(args: DeveloperArgs): Record<string, string> {
@@ -63,6 +70,14 @@ export async function fireDeveloper(
   args: DeveloperArgs,
   recovery?: RecoveryLane,
 ): Promise<WorkflowRun> {
+  if (ctx.project.config.automationPaused)
+    throw new Error(
+      "Project automation is paused. Resume it before dispatching coding work.",
+    );
+  if (hasNamedCoders(ctx))
+    throw new Error(
+      "Named coding agents require the local controller with local or remote Docker workers. The legacy CI workflow cannot execute their saved identities or model choices.",
+    );
   const ticket = await ctx.linear.getTicket(args.ticket);
   if (!["sync", "port"].includes(args.kind)) {
     const epicBlocker = await developerEpicBlocker(
@@ -212,6 +227,16 @@ export async function runDispatch(
 ): Promise<DigestRow[]> {
   const rows: DigestRow[] = [];
   const projectName = ctx.project.config.name;
+  if (ctx.project.config.automationPaused)
+    return [{ rule: "dispatch", text: "Project automation is paused." }];
+  if (hasNamedCoders(ctx))
+    return [
+      {
+        rule: "dispatch",
+        text: "Use the local controller and local or remote Docker workers for named coding agents. The legacy CI workflow cannot execute their saved identities or model choices.",
+        needsYou: true,
+      },
+    ];
 
   for (const area of ctx.project.areas) {
     if (!codingPickupEnabled(area) && !opts.recovery) {

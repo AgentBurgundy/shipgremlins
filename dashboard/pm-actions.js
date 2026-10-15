@@ -56,10 +56,8 @@
         readiness.blockers.every((blocker) =>
           ["linear_mapping", "verification"].includes(blocker.id),
         ));
-    const isAutomation = (mode) =>
-      ["automation", "coding-automation"].includes(mode);
-    const automationReadiness = (readiness, mode) =>
-      mode === "coding-automation" ? readiness?.coding || readiness : readiness;
+    const isAutomation = (mode) => mode === "automation";
+    const automationReadiness = (readiness) => readiness;
     function finish() {
       if (checking) return;
       dialog.close();
@@ -85,9 +83,7 @@
       const current = target(context.project, context.area);
       const automation = isAutomation(context.mode);
       title.textContent = automation
-        ? context.mode === "coding-automation"
-          ? "Build approved work automatically"
-          : "Look for new improvements"
+        ? "Look for new improvements"
         : context.mode === "exploration"
           ? "Explore product ideas"
           : "Start this PM";
@@ -110,7 +106,7 @@
           node(
             "p",
             automation
-              ? "Finish these steps to enable this recurring work. The other automation setting stays unchanged."
+              ? "Finish these steps to enable scheduled PM investigations. Coding agents have their own controls."
               : "Finish these steps, then run this PM. Automation will stay unchanged.",
           ),
         );
@@ -196,9 +192,7 @@
       if (isLocked() || states.get(key)?.busy || !current) return;
       const { project, area, readiness } = current;
       const automation = isAutomation(mode);
-      const codingEnabled = area.codingEnabled ?? area.enabled;
-      const currentlyEnabled =
-        mode === "coding-automation" ? codingEnabled : area.enabled;
+      const currentlyEnabled = area.enabled;
       if (!automation) {
         const jobs = getJobs() || [];
         let accepted = acceptedJobs.get(key);
@@ -267,17 +261,12 @@
           await api(
             `/api/projects/${encodeURIComponent(projectName)}/areas/${encodeURIComponent(areaKey)}/status`,
             {
-              enabled:
-                mode === "automation" ? !area.enabled : Boolean(area.enabled),
-              codingEnabled:
-                mode === "coding-automation"
-                  ? !codingEnabled
-                  : Boolean(codingEnabled),
+              enabled: !area.enabled,
               revision: project.areasRevision,
               projectRevision: project.projectRevision,
             },
           );
-          confirmedMessage = `${mode === "coding-automation" ? "Automatic approved-work pickup" : "Scheduled investigations"} ${currentlyEnabled ? "off. Current runs keep going." : "on."} The other automation setting is unchanged.`;
+          confirmedMessage = `Scheduled investigations ${currentlyEnabled ? "off. Current runs keep going." : "on."} Coding agents are unchanged.`;
           states.set(key, { busy: true, mode, message: confirmedMessage });
         }
         await onChanged();
@@ -305,12 +294,9 @@
       explore: (project, area, trigger) =>
         execute(project, area, "exploration", trigger),
       toggle: (project, area, trigger, kind) =>
-        execute(
-          project,
-          area,
-          kind === "coding" ? "coding-automation" : "automation",
-          trigger,
-        ),
+        kind === "coding"
+          ? undefined
+          : execute(project, area, "automation", trigger),
       isBusy: () =>
         checking || [...states.values()].some((value) => value.busy),
     };

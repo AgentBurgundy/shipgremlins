@@ -1,0 +1,308 @@
+.coding-agents {
+  margin: 24px 0;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-inset);
+  min-width: 0;
+}
+.coding-agents-heading,
+.coder-card-title,
+.coder-editor-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.coding-agents-heading {
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.coding-agents-heading h2 {
+  margin: 0;
+  font-size: 21px;
+}
+.coding-agents-heading p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.coder-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  align-items: start;
+  gap: 14px;
+}
+.coder-card {
+  min-width: 0;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.coder-card h3 {
+  margin: 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.coder-card-role,
+.coder-card-capacity {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.coder-card-role {
+  margin: 5px 0 0;
+}
+.coder-state {
+  flex: none;
+  max-width: 48%;
+  padding: 5px 8px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: 11px/1.4 var(--font-mono);
+}
+.coder-state.is-ready {
+  color: var(--success);
+  border-color: var(--accent-line);
+}
+.coder-state.is-working {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+.coder-card-scope {
+  margin: 18px 0 8px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.coder-card-ai {
+  margin: 0;
+  color: var(--accent);
+  font: 12px/1.6 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.coder-card-capacity {
+  padding-top: 12px;
+  margin: 12px 0 16px;
+  border-top: 1px solid var(--line);
+}
+.coder-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.coder-blockers {
+  border-left: 2px solid var(--warning-line);
+  padding: 8px 12px;
+  margin: 14px 0;
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.coder-blockers p {
+  margin: 0 0 6px;
+}
+.coder-setup-link {
+  color: var(--warning);
+}
+.coder-empty,
+.coder-legacy-note {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.coder-editor {
+  width: min(680px, calc(100vw - 24px));
+  max-height: 90dvh;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.coder-editor[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.coder-editor::backdrop {
+  background: rgb(5 10 15 / 72%);
+  backdrop-filter: blur(3px);
+}
+.coder-editor-header {
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.coder-editor-header h2 {
+  margin: 6px 0;
+  font-size: 22px;
+}
+.coder-editor-header p {
+  margin: 0;
+  color: var(--muted);
+  font: 12px/1.6 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.coder-editor-header > button {
+  flex: none;
+}
+.coder-editor-form {
+  min-height: 0;
+  overflow: auto;
+}
+.coder-editor-fields {
+  margin: 0;
+  padding: 22px 24px;
+  min-width: 0;
+  border: 0;
+}
+.coder-editor-fields > .field,
+.coder-ai-fields {
+  margin-bottom: 20px;
+}
+.coder-editor input[type="text"],
+.coder-editor select {
+  display: block;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-inset);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.coder-editor input:focus-visible,
+.coder-editor select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.coder-queue-fields {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px;
+  margin: 0 0 20px;
+}
+.coder-queue-fields legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.coder-queue-choice,
+.coder-enabled-field {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.coder-queue-choice {
+  padding: 6px 0;
+}
+.coder-queue-choice input,
+.coder-enabled-field input {
+  flex: none;
+  margin-top: 4px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.coder-ai-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.coder-ai-fields > .field {
+  min-width: 0;
+}
+.coder-ai-fields > p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.coder-effective {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.coder-editor-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.coder-editor-footer .button-row {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.coder-editor-notice {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.coder-editor-discard {
+  margin: 0 24px 20px;
+  padding: 16px;
+  border: 1px solid var(--warning-line);
+  border-radius: 6px;
+  background: var(--warning-soft);
+}
+.coder-editor-discard p {
+  margin: 0 0 12px;
+  color: var(--warning);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.coder-editor-discard button + button {
+  margin-left: 8px;
+}
+.pm-simple-controls .pm-automation-controls,
+.project-pm-row .pm-simple-controls .pm-automation-controls,
+.pm-command-band .pm-simple-controls .pm-automation-controls {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 600px) {
+  .coding-agents {
+    padding: 16px;
+  }
+  .coder-card {
+    padding: 16px;
+  }
+  .coder-card-title {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .coder-state {
+    max-width: 100%;
+  }
+  .coder-editor-header,
+  .coder-editor-fields {
+    padding: 18px;
+  }
+  .coder-editor-header h2 {
+    font-size: 20px;
+  }
+  .coder-ai-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .coder-editor-footer {
+    padding: 14px 18px;
+  }
+  .coder-editor-footer .button-row > button {
+    flex: 1 1 auto;
+  }
+}

@@ -237,6 +237,21 @@ async function addOtherImplementation(w: Awaited<ReturnType<typeof world>>) {
 describe("bounded replacement drafts for pre-merge repair", () => {
   it("recovers lost queue replies and restart without duplicating a repair", async () => {
     const w = await world();
+    const binding = {
+      coderKey: "original-builder",
+      coderInstanceId: "11111111-1111-4111-8111-111111111111",
+    };
+    w.jobs.push({
+      id: "job-original",
+      runId: 1,
+      type: "developer",
+      project: "game",
+      area: "core",
+      ticket: w.ticket.identifier,
+      status: "succeeded",
+      createdAt: "2026-10-05T00:00:00Z",
+      ...binding,
+    });
     w.lose();
     await expect(
       w.controller().reconcileIntegrationRepairs("game"),
@@ -245,6 +260,7 @@ describe("bounded replacement drafts for pre-merge repair", () => {
     await w.controller().reconcileIntegrationRepairs("game");
     await w.controller().reconcileIntegrationRepairs("game");
     expect(w.enqueue).toHaveBeenCalledTimes(1);
+    expect(w.enqueue).toHaveBeenCalledWith(expect.objectContaining(binding));
     expect(w.ledger().list()[0]!.integrationRepair?.jobId).toBe("job-repair");
   });
   it.each(["none", "failure"] as const)(

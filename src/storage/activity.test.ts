@@ -143,14 +143,26 @@ describe("durable safe run activity", () => {
     );
     await store.close();
   });
-  it("retains project incarnation identity in archived history", async () => {
+  it("retains exact project and independent coder incarnation identity in archived history", async () => {
     const { store } = setup();
     const projectInstanceId = "a1b2c3d4-1111-2222-3333-444444444444";
     await store.ensure();
-    await store.recordRun({ ...job, projectInstanceId });
-    expect(await store.getRun(job.id)).toMatchObject({ projectInstanceId });
+    const coder = {
+      coderKey: "builder",
+      coderInstanceId: "22222222-2222-4222-8222-222222222222",
+    };
+    await store.recordRun({
+      ...job,
+      type: "developer",
+      projectInstanceId,
+      ...coder,
+    });
+    expect(await store.getRun(job.id)).toMatchObject({
+      projectInstanceId,
+      ...coder,
+    });
     expect(await store.listRuns()).toContainEqual(
-      expect.objectContaining({ projectInstanceId }),
+      expect.objectContaining({ projectInstanceId, ...coder }),
     );
     await store.close();
   });
